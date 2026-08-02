@@ -123,7 +123,7 @@ Expected: no whitespace errors; no file under `data/` and no PDF is staged.
 - Consumes: The staged and audited files from Task 2.
 - Produces: A traceable initial commit and a GitHub branch that future `codex/<topic>` branches can use as their base.
 
-- [ ] **Step 1: Create the initial commit**
+- [x] **Step 1: Create the initial commit**
 
 Run:
 
@@ -133,7 +133,7 @@ git commit -m "chore: establish planning harness"
 
 Expected: one root commit containing only the approved governance files.
 
-- [ ] **Step 2: Re-authenticate GitHub if required**
+- [x] **Step 2: Re-authenticate GitHub if required**
 
 Run:
 
@@ -145,7 +145,7 @@ gh auth status
 
 Expected: GitHub reports the `wodnjsv` account as authenticated. Browser confirmation remains a user-controlled step.
 
-- [ ] **Step 3: Push the initial branch**
+- [x] **Step 3: Push the initial branch**
 
 Run:
 
@@ -155,7 +155,7 @@ git push -u origin main
 
 Expected: `main` tracks `origin/main` and no rejected or force update occurs.
 
-- [ ] **Step 4: Verify remote state**
+- [x] **Step 4: Verify remote state**
 
 Run:
 
