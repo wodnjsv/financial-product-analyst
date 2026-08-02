@@ -1,0 +1,46 @@
+# macOS and editor state
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+credentials/
+
+# Organizer-provided competition materials
+data/
+docs/*.pdf
+
+# Local data products and search indexes
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.parquet
+indexes/
+vector_store/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# JavaScript
+node_modules/
+dist/
+build/
+
+# Logs and temporary output
+*.log
+tmp/
+output/
+outputs/
