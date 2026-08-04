@@ -48,6 +48,8 @@ The Financial Product Agent is an **internal financial-product desk Copilot** th
 
 It is not primarily a conversational search box and is not an autonomous investment adviser. Its value comes from completing an end-to-end product-analysis workflow that a user can reproduce and defend.
 
+The approved implementation direction is a purpose-built, conditional-parallel multi-agent graph. Architecture is a core competition differentiator: it must route only the necessary specialists, run independent work concurrently, constrain every handoff with typed contracts, and refuse answers that cannot pass deterministic evidence checks.
+
 ### Core job flow
 
 1. **Clarify the request.** Identify product families, conditions, metrics, comparison basis, and missing critical information.
@@ -82,11 +84,13 @@ The following problems connect the competition task to a credible internal workf
 
 1. **Competition alignment over persona-specific expansion.** Evaluated requirements and official guidance take priority over optimizing for one department, channel, or hypothetical paying user.
 2. **Accuracy and evidence over answer coverage.** An explicit limitation is better than a plausible but unsupported financial answer.
-3. **Deterministic execution over free-form model autonomy.** Filters, sorting, ranking, aggregation, and arithmetic must be reproducible and testable.
-4. **Valid and usable comparisons over long candidate lists.** The Agent must prefer a smaller set with compatible metrics and disclosed availability over a larger but misleading result.
-5. **Organizer data over external data.** The organizer-provided snapshot is the evaluation baseline and wins when sources conflict.
-6. **Clarification or abstention over guessing.** Missing critical conditions or unavailable fields must produce a clarifying question or a clear inability statement.
-7. **Operational simplicity over architectural novelty.** A small, observable, reproducible service is more valuable than additional frameworks that increase failure modes.
+3. **Bounded multi-agent architecture over monolithic or unbounded autonomy.** A deterministic orchestrator must conditionally route typed work to specialized agents and prevent recursive, free-form delegation.
+4. **Deterministic execution over model-generated arithmetic.** Filters, sorting, ranking, aggregation, and financial calculations must be reproducible and testable.
+5. **Latency and error containment over agent count.** Invoke only the agents needed for the question, execute independent work in parallel, and bound retries and deadlines.
+6. **Valid and usable comparisons over long candidate lists.** The Agent must prefer a smaller set with compatible metrics and disclosed availability over a larger but misleading result.
+7. **Organizer data over external data.** The organizer-provided snapshot is the evaluation baseline and wins when sources conflict.
+8. **Clarification or abstention over guessing.** Missing critical conditions or unavailable fields must produce a clarifying question or a clear inability statement.
+9. **Observable execution over architectural novelty alone.** Every architectural component must improve evaluated correctness, latency, evidence, or failure handling and expose enough structured trace data to verify that improvement.
 
 ## 5. Hard Constraints
 
@@ -95,6 +99,11 @@ The following problems connect the competition task to a credible internal workf
 - Do not create unsupported return forecasts or definitive investment recommendations.
 - Do not compare metrics across incompatible periods, meanings, units, currencies, or populations without an explicit normalization method and disclosed source.
 - Do not present presence in a master as proof of saleability, eligibility, tradability, or current availability when the required field is absent or negative.
+- Use a deterministic application orchestrator as the only component allowed to schedule agents, tools, retries, and deadlines. Agents must not recursively invoke other agents.
+- Route only the product specialists required by the validated query plan and run independent specialist work concurrently.
+- Pass typed, schema-validated state between components. Free-form agent prose must not become executable filters, calculations, or evidence.
+- Generate final answer claims only from a verified evidence bundle. A claim without a valid source reference must be removed or cause abstention.
+- Permit at most one bounded repair attempt for a failed plan or draft before returning a clarification, partial limitation, or inability statement.
 - Preserve raw organizer data unchanged and keep it out of the personal GitHub repository.
 - The evaluation API must remain publicly reachable and reproducible for the required evaluation window.
 - No code, data, or deployment changes may be pushed after the official submission freeze takes effect.
@@ -108,28 +117,37 @@ These capabilities define the initial product behavior. They do not select an im
    - Parse product family, region, asset class, risk, fee, return, size, date, and requested operation when present.
    - Ask for a period, currency, risk basis, result count, or other critical condition when omission would materially change the result.
 
-2. **Deterministic candidate screening and calculation**
+2. **Conditional routing and parallel specialist execution**
+   - Route the validated intent only to relevant domestic-bond, domestic-ETF, overseas-ETF, and public-fund specialists.
+   - Run independent specialist plans concurrently and skip unnecessary agents and comparison stages on the fast path.
+
+3. **Deterministic candidate screening and calculation**
    - Execute exact lookup, filtering, sorting, ranking, aggregation, and supported calculation through testable tools.
    - Return the same result for the same validated query plan and data version.
 
-3. **Comparison-compatibility gate**
+4. **Comparison-compatibility gate**
    - Validate period, definition, unit, currency, tax basis, and aggregation population.
    - Reject, separate, or explicitly normalize incompatible values rather than silently placing them in one ranking or total.
 
-4. **Operational-relevance filtering**
+5. **Operational-relevance filtering**
    - Use available sale status, pension eligibility, bond purchase availability, and similar fields when relevant to the request.
    - State when the dataset cannot establish operational availability.
 
-5. **Evidence and exclusion packet**
+6. **Evidence and exclusion packet**
    - Identify source table, product identifier, source field, unit, snapshot date, applied filter, calculation, and material exclusion reason.
    - Explain why a named product was excluded or why a requested fact is unavailable.
 
-6. **Missingness and data-quality handling**
+7. **Missingness and data-quality handling**
    - Distinguish zero, blank, placeholder, unavailable, stale, and structurally inapplicable values.
    - Prevent invalid duplicate aggregation and disclose data-quality limitations that affect the result.
 
-7. **Grounded, risk-aware explanation**
+8. **Independent evidence and policy verification**
+   - Verify numeric results, source coverage, comparison compatibility, missingness, and prohibited claims before answer composition.
+   - Allow one repair attempt and otherwise fail closed with a clarification, limitation, partial answer, or abstention.
+
+9. **Grounded, risk-aware explanation**
    - Explain supplied product data in plain language, including material limitations.
+   - Compose only from the verified evidence bundle and require every factual claim to reference evidence.
    - Treat a request to “recommend” as candidate screening under stated conditions unless an approved policy and required suitability inputs explicitly support more.
 
 ## 7. Competition Requirement Mapping
@@ -138,7 +156,7 @@ These capabilities define the initial product behavior. They do not select an im
 | --- | --- | --- |
 | Condition-based product search and information lookup | Parse compound conditions and query the correct family-specific fields. | Curated lookup and multi-filter cases match deterministic expected results. |
 | Product comparison and calculation | Validate comparison compatibility and run sorting, ranking, and aggregation outside the language model. | Gold query plans and calculations reproduce exactly. |
-| Cross-product-family questions | Map only defensible common concepts and retain family-specific meaning. | Incompatible comparisons are blocked or disclosed in cross-family test cases. |
+| Cross-product-family questions | Route only the needed product specialists in parallel, then map defensible common concepts while retaining family-specific meaning. | Routing and cross-family tests verify invoked agents, latency, and blocked or disclosed incompatibilities. |
 | Evidence-based explanations | Ground every material fact in returned source fields and the snapshot date. | Evidence completeness checks pass for every factual answer. |
 | Hallucination prevention | Avoid inferred missing values, forecasts, and unsupported recommendations. | Adversarial unsupported questions follow abstention rules. |
 | Conditional guidance | Ask a focused question when missing information materially changes the result. | Ambiguity cases select the expected clarification or safe default. |
@@ -147,6 +165,8 @@ These capabilities define the initial product behavior. They do not select an im
 ## 8. In Scope
 
 - Ingestion and validation of the four organizer-provided product masters.
+- A deterministic orchestrator, typed execution state, conditional routing, bounded retries, and deadline management.
+- Specialized domestic-bond, domestic-ETF, overseas-ETF, and public-fund agents that produce family-specific execution plans.
 - A common product-search axis plus product-family-specific detail fields.
 - Natural-language intent and condition parsing.
 - Exact lookup, filtering, comparison, ranking, aggregation, and supported calculation.
@@ -162,7 +182,8 @@ These capabilities define the initial product behavior. They do not select an im
 - Unsupported price or return forecasting.
 - Real-time market-data replacement of the organizer snapshot.
 - A persona-specific authorization model or production user-interface suite.
-- A general-purpose autonomous multi-agent platform.
+- An unbounded, self-organizing agent swarm, recursive agent delegation, or debate-and-vote architecture on the critical path.
+- Additional agents whose contribution to correctness, latency, evidence, or failure handling cannot be measured.
 - Uploading organizer-provided source files to a personal public or private repository without explicit permission.
 
 ## 10. Success Measures
@@ -174,6 +195,11 @@ These capabilities define the initial product behavior. They do not select an im
 - Operational conditions such as sale status, pension eligibility, or purchase availability are applied when supported and identified as unknown when not supported.
 - Material exclusions, missing fields, and data-quality limitations that affect the conclusion are visible in the answer or evidence packet.
 - The core evaluated query types have deterministic benchmark cases covering supported, ambiguous, incompatible, and unsupported variants.
+- Router tests invoke every required specialist and no irrelevant specialist for the benchmark query set.
+- Independent specialist work runs concurrently for cross-product queries, and stage-level latency is observable.
+- Gold-set filters, rankings, aggregates, and financial calculations match deterministic expected results exactly.
+- Every data-backed factual claim in the benchmark answer set has a valid evidence reference, with no unsupported factual claims.
+- Initial performance targets are p95 at or below 4 seconds for simple supported queries and 10 seconds for supported cross-product queries; these targets must be recalibrated from measured HyperCLOVA X and infrastructure latency before becoming an SLA.
 - The service can be rebuilt from tracked source, dependency definitions, ingestion instructions, and approved fixtures without relying on untracked developer state.
 - The submitted API contract remains stable and its deployment can be health-checked throughout the evaluation period.
 
@@ -188,11 +214,19 @@ These defaults prevent unsafe assumptions and may be superseded by a later accep
 - Do not infer missing fees, yields, returns, risk grades, saleability, eligibility, or tradability from similar products.
 - Interpret “recommend” as “show candidates satisfying stated conditions” unless suitability inputs and an approved policy explicitly support more.
 
-## 12. Proposed Technical Direction, Not Yet an Accepted Decision
+## 12. Accepted Multi-Agent Architecture Direction
 
-The current leading option is a SQL-first hybrid: immutable raw tables, a normalized common product registry, product-family detail tables, a validated query-plan schema, deterministic query tools, limited semantic retrieval for narrative fields, and HyperCLOVA X for intent parsing and grounded response composition.
+The approved top-level architecture is a purpose-built, conditional-parallel multi-agent graph controlled by a deterministic application orchestrator.
 
-This direction remains proposed until its architecture ADR is explicitly approved. Implementation must not treat it as final merely because it appears in this document.
+- A HyperCLOVA X Intent Planner produces a schema-validated, domain-neutral query plan.
+- The orchestrator routes only the relevant product-family specialists and runs independent work concurrently.
+- Specialists produce typed, family-specific execution plans; they do not calculate financial results or compose the final answer.
+- A deterministic data engine performs retrieval, filtering, sorting, ranking, aggregation, and financial calculations. A SQL-first hybrid remains a leading implementation choice for this data layer, not the top-level product architecture.
+- A cross-product comparator handles compatible common concepts and refuses or discloses invalid comparisons.
+- An independent evidence and policy verifier checks results before an Answer Synthesizer can compose from the verified evidence bundle.
+- A deterministic claim gate rejects factual statements without valid evidence references.
+
+The full component contracts, execution paths, failure handling, latency strategy, and verification plan are defined in [Multi-Agent Architecture](architecture/MULTI_AGENT_ARCHITECTURE.md) and accepted by [ADR-0004](decisions/ADR-0004-conditional-parallel-multi-agent-graph.md).
 
 ## 13. Decision Records
 
@@ -201,6 +235,7 @@ Accepted and superseded decisions live in `docs/planning/decisions/`. Each recor
 - [ADR-0001: Use a Project-Local Planning Harness](decisions/ADR-0001-planning-harness.md)
 - [ADR-0002: Keep Organizer Data Out of the Personal Repository](decisions/ADR-0002-repository-data-policy.md)
 - [ADR-0003: Frame the Competition Entry as an Internal Product Desk Copilot](decisions/ADR-0003-internal-product-desk-copilot.md)
+- [ADR-0004: Use a Conditional-Parallel Multi-Agent Graph](decisions/ADR-0004-conditional-parallel-multi-agent-graph.md)
 
 ## 14. Change Procedure
 
