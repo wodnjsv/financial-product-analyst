@@ -2,7 +2,7 @@
 
 **Status:** Approved project direction
 
-**Last updated:** 2026-08-04
+**Last updated:** 2026-08-12
 
 **Purpose:** Keep the project's `what` and `why` stable while allowing capable agents freedom over `how` within approved constraints.
 
@@ -52,7 +52,7 @@ The approved implementation direction is a purpose-built, conditional-parallel m
 
 ### Core job flow
 
-1. **Clarify the request.** Identify product families, conditions, metrics, comparison basis, and missing critical information.
+1. **Resolve the request.** Identify product families, conditions, metrics, comparison basis, and missing critical information; in competition mode, apply an approved single-turn fallback rather than asking a follow-up question.
 2. **Screen candidates.** Apply exact product and operational-availability conditions to the relevant masters.
 3. **Validate comparability.** Check period, meaning, unit, currency, and population before comparing or aggregating values.
 4. **Calculate deterministically.** Perform filtering, sorting, ranking, aggregation, and supported financial calculations outside the language model.
@@ -76,6 +76,7 @@ The following problems connect the competition task to a credible internal workf
 ### Evidence boundary
 
 - The competition brief defines the evaluated data, query types, evidence rules, and risk controls.
+- The [official evaluation API specification](../reference/official-evaluation-api.md) defines the public `GET /answer` contract, sequential invocation, 300-second timeout, retry behavior, string-only JSON response, and stateless single-question interaction.
 - The [Financial Services Commission](https://www.fsc.go.kr/edu/news/84957) has identified incomplete suitability inputs, explanation focused on formal information transfer, and insufficiently detailed reasons in actual sales processes.
 - The [Korea Financial Investment Association's standard investment-recommendation rules](https://law.kofia.or.kr/service/law/lawFullScreenContent.do?historySeq=1421&seq=149) require product-risk classification, risk and cost explanations, investor-understanding checks, and records supporting the sales process.
 - Until direct interviews or official competition Q&A provide stronger evidence, competition alignment governs priority when a pain-point hypothesis and an evaluated requirement diverge.
@@ -89,7 +90,7 @@ The following problems connect the competition task to a credible internal workf
 5. **Latency and error containment over agent count.** Invoke only the agents needed for the question, execute independent work in parallel, and bound retries and deadlines.
 6. **Valid and usable comparisons over long candidate lists.** The Agent must prefer a smaller set with compatible metrics and disclosed availability over a larger but misleading result.
 7. **Organizer data over external data.** The organizer-provided snapshot is the evaluation baseline and wins when sources conflict.
-8. **Clarification or abstention over guessing.** Missing critical conditions or unavailable fields must produce a clarifying question or a clear inability statement.
+8. **Deterministic fallback or abstention over guessing.** Competition requests do not support a follow-up turn, so missing critical conditions must use an approved default, return bounded alternatives with limitations, or abstain.
 9. **Observable execution over architectural novelty alone.** Every architectural component must improve evaluated correctness, latency, evidence, or failure handling and expose enough structured trace data to verify that improvement.
 
 ## 5. Hard Constraints
@@ -103,11 +104,13 @@ The following problems connect the competition task to a credible internal workf
 - Route only the product specialists required by the validated query plan and run independent specialist work concurrently.
 - Pass typed, schema-validated state between components. Free-form agent prose must not become executable filters, calculations, or evidence.
 - Generate final answer claims only from a verified evidence bundle. A claim without a valid source reference must be removed or cause abstention.
-- Permit at most one bounded repair attempt for a failed plan or draft before returning a clarification, partial limitation, or inability statement.
+- Permit at most one bounded internal repair attempt for a failed plan or draft before returning a partial limitation or inability statement.
 - Preserve raw organizer data unchanged and keep it out of the personal GitHub repository.
-- The evaluation API must remain publicly reachable and reproducible for the required evaluation window.
+- The evaluation API must expose public `GET /answer`, accept `question_id` and `question` query parameters without an authentication header, and return `application/json` containing string values for `question_id`, `question`, `retrieved_context`, `think_trace`, and `answer`.
+- Evaluation requests arrive one at a time, have a 300-second timeout, and may be retried up to twice after timeout or 5xx. Request handling must be idempotent and must not depend on earlier requests.
+- The submitted End-point must be recorded in `README.md` and remain publicly reachable and reproducible for the required evaluation window.
 - No code, data, or deployment changes may be pushed after the official submission freeze takes effect.
-- Raw hidden model reasoning is not a project artifact. Expose a concise, structured execution trace containing intent, filters, tools, calculations, sources, and exclusion reasons.
+- Raw hidden model reasoning is not a project artifact. Populate the required `think_trace` string with a concise, structured execution trace containing intent, subtasks, filters, tools, calculations, sources, exclusions, and limitations.
 
 ## 6. Required Product Capabilities
 
@@ -115,7 +118,7 @@ These capabilities define the initial product behavior. They do not select an im
 
 1. **Intent and ambiguity gate**
    - Parse product family, region, asset class, risk, fee, return, size, date, and requested operation when present.
-   - Ask for a period, currency, risk basis, result count, or other critical condition when omission would materially change the result.
+   - In competition mode, resolve omitted conditions through approved defaults, bounded alternatives, explicit limitation, or abstention; never require a second user turn.
 
 2. **Conditional routing and parallel specialist execution**
    - Route the validated intent only to relevant domestic-bond, domestic-ETF, overseas-ETF, and public-fund specialists.
@@ -143,7 +146,7 @@ These capabilities define the initial product behavior. They do not select an im
 
 8. **Independent evidence and policy verification**
    - Verify numeric results, source coverage, comparison compatibility, missingness, and prohibited claims before answer composition.
-   - Allow one repair attempt and otherwise fail closed with a clarification, limitation, partial answer, or abstention.
+   - Allow one internal repair attempt and otherwise fail closed with a limitation, partial answer, or abstention.
 
 9. **Grounded, risk-aware explanation**
    - Explain supplied product data in plain language, including material limitations.
@@ -159,7 +162,8 @@ These capabilities define the initial product behavior. They do not select an im
 | Cross-product-family questions | Route only the needed product specialists in parallel, then map defensible common concepts while retaining family-specific meaning. | Routing and cross-family tests verify invoked agents, latency, and blocked or disclosed incompatibilities. |
 | Evidence-based explanations | Ground every material fact in returned source fields and the snapshot date. | Evidence completeness checks pass for every factual answer. |
 | Hallucination prevention | Avoid inferred missing values, forecasts, and unsupported recommendations. | Adversarial unsupported questions follow abstention rules. |
-| Conditional guidance | Ask a focused question when missing information materially changes the result. | Ambiguity cases select the expected clarification or safe default. |
+| Single-turn ambiguity handling | Apply an approved default, return bounded alternatives with limitations, or abstain when missing information materially changes the result. | Ambiguity cases select the expected fallback, limitation, or abstention without a follow-up turn. |
+| Official evaluation API | Accept the fixed GET request and return the five required string fields within the organizer timeout. | Contract tests verify path, parameters, content type, exact fields, string types, idempotent retry, and stateless handling. |
 | Workplace usefulness and risk management | Complete screening, validation, explanation, and evidence as one inspectable workflow. | End-to-end scenarios produce usable candidates plus evidence and limitations. |
 
 ## 8. In Scope
@@ -171,7 +175,7 @@ These capabilities define the initial product behavior. They do not select an im
 - Natural-language intent and condition parsing.
 - Exact lookup, filtering, comparison, ranking, aggregation, and supported calculation.
 - Comparison-compatibility and operational-relevance checks.
-- Evidence construction, exclusion reasons, data-date disclosure, clarification, abstention, and recommendation guardrails.
+- Evidence construction, exclusion reasons, data-date disclosure, deterministic fallback, abstention, and recommendation guardrails.
 - Data-quality rules for missing values, placeholders, duplicate aggregation, and unavailable fields.
 - A reproducible evaluation API, containerized runtime, tests, operational checks, and technical documentation.
 
@@ -190,7 +194,7 @@ These capabilities define the initial product behavior. They do not select an im
 
 - A supported query produces the same filtered products and calculations when repeated against the same data version.
 - Every returned product fact can be traced to a table, product identifier, field, unit, and applicable date.
-- Unsupported, ambiguous, or data-missing questions follow a tested clarification or abstention path.
+- Unsupported, ambiguous, or data-missing questions follow a tested fallback, limitation, or abstention path without relying on another request.
 - Cross-product comparisons exclude, separate, or disclose incompatible metrics instead of silently normalizing them.
 - Operational conditions such as sale status, pension eligibility, or purchase availability are applied when supported and identified as unknown when not supported.
 - Material exclusions, missing fields, and data-quality limitations that affect the conclusion are visible in the answer or evidence packet.
@@ -203,7 +207,7 @@ These capabilities define the initial product behavior. They do not select an im
 - The service can be rebuilt from tracked source, dependency definitions, ingestion instructions, and approved fixtures without relying on untracked developer state.
 - The submitted API contract remains stable and its deployment can be health-checked throughout the evaluation period.
 
-## 11. Temporary Safe Defaults Until Official Clarification
+## 11. Temporary Safe Defaults Pending Remaining Official Clarifications
 
 These defaults prevent unsafe assumptions and may be superseded by a later accepted ADR after official Q&A:
 

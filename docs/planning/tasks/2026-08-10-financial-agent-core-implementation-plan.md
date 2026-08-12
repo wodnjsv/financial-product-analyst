@@ -27,6 +27,8 @@
 - Do not directly compare incompatible periods, meanings, units, currencies, tax bases, populations, or data dates.
 - Every returned financial fact or calculated value must bind to a source table, product identifier, source field, unit, and applicable date.
 - The competition interaction mode is one question followed by one answer. Never ask a follow-up question; apply an approved deterministic fallback and disclose its basis, return a bounded answer with limitations, or abstain when no defensible answer exists.
+- The official external contract is public `GET /answer` with `question_id` and `question`, no authentication header, sequential requests, a 300-second timeout, and up to two retries after timeout or 5xx. The response is `application/json` with string-only `question_id`, `question`, `retrieved_context`, `think_trace`, and `answer`; see `docs/reference/official-evaluation-api.md`.
+- Treat every evaluation request as stateless. Resolve multi-sentence context only inside the current `question`; never use `question_id` as a conversation key or depend on an earlier request.
 - Interpret an unqualified `연간수익률` as trailing one-year historical cumulative return. Compute it from approved official inputs when possible; use CAGR only for a valid multi-year cumulative period; label bond YTM and other expected annual rates as economically different rather than silently equating them with historical return.
 - Use KRW as the default comparison currency. For every currency conversion, use the official exchange-rate observation applicable on 2026-07-11, or the latest official observation on or before that date when no same-day observation exists, and disclose the rate type, actual observation date, source, and formula.
 - Agents cannot invoke other Agents. A deterministic orchestrator is the only component that may route work, call tools, retry, or enforce deadlines.
@@ -222,6 +224,7 @@ Each file has one primary responsibility. `semantic_index.py` remains a disabled
 - Reference: `docs/reference/domestic-etf-master.md`
 - Reference: `docs/reference/overseas-etf-master.md`
 - Reference: `docs/reference/public-fund-master.md`
+- Reference: `docs/reference/official-evaluation-api.md`
 
 **Produces:** A reviewed question catalog in which each case has `id`, `archetype`, `category`, `question`, `segments`, `intent`, `subtasks`, `dependencies`, `product_families`, `required_fields`, `required_relations`, `data_requirements`, `business_rules`, `reference_resolution`, `similarity_basis`, an optional `similarity_policy_id`, `support_level`, `target_support_level`, `expected_route`, `expected_disposition`, `expected_evidence`, and `risk_note`. Also produces a question-to-data requirement matrix identifying organizer fields, missing external fields, authoritative-source criteria, observation and availability cutoff handling, and whether KRX·ECOS·FRED or another official file is actually needed.
 
@@ -945,6 +948,8 @@ Every factual sentence or structured table cell must bind to one or more evidenc
 
 Cover four dispositions: verified answer, partial answer with explicit limitation, abstention, and controlled internal error. Also prove that competition mode never emits a follow-up clarification question. Each path must expose only the approved concise trace.
 
+The concise trace must be serializable into the required `think_trace` string without exposing raw hidden reasoning. The verified evidence summary must be serializable into `retrieved_context`, while `answer` contains only the released answer.
+
 - [ ] **Step 4: Implement deterministic verification before language generation**
 
 Run source coverage, calculation reproduction, comparison compatibility, missingness, filter, exclusion, and policy checks before the Synthesizer is called.
@@ -1083,7 +1088,7 @@ Do not mark completion because individual demonstrations look convincing or beca
 
 - [ ] **Step 4: Request approval for a separate server and deployment plan**
 
-Only after core acceptance, plan the evaluation API contract, container, public endpoint, credentials, quota controls, health checks, and freeze procedure. None of those actions are authorized by this document.
+Only after core acceptance, plan implementation of the already-fixed official API contract, container, public endpoint, README End-point declaration, health checks, idempotent retry handling, 300-second deadline budget, evaluation-window operations, IP allowlisting after organizer notice, and freeze procedure. None of those implementation actions are authorized by this document.
 
 - [ ] **Step 5: Commit the acceptance record**
 
