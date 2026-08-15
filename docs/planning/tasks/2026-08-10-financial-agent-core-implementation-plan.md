@@ -4,13 +4,13 @@
 
 **Date:** 2026-08-10
 
-**Status:** Task 1 approved and complete; Task 2 not started
+**Status:** Task 1 reinforced with official briefs on 2026-08-15; Task 2 design review in progress; implementation not started
 
-**Goal:** Build the non-server core of the Financial Product Agent: question-driven financial ontology, validated product data, deterministic screening and calculations, hybrid retrieval, conditional multi-agent orchestration, and evidence-bound answers.
+**Goal:** Build the non-server core of the Financial Product Agent: question-driven operational ontology, validated product data, deterministic screening and calculations, federated RDB·Graph·Vector retrieval, the smallest justified orchestration, and evidence-bound answers.
 
-**Architecture:** Start from evaluation questions and financial business rules, then build a deterministic SQL baseline over normalized organizer data. Add an RDF/OWL ontology and knowledge graph for terminology, relationships, inference, and validation; use graph, keyword, optional vector, and SQL retrieval only where each is strongest. HyperCLOVA X Agents produce typed plans and grounded language, while application code owns routing, calculations, evidence checks, and final claim release.
+**Architecture:** Start from evaluation questions and financial business rules, then build a deterministic SQL baseline over normalized organizer data. Add an RDF/OWL ontology and knowledge graph for terminology, relationships, inference, and validation; use graph, keyword, vector, and SQL retrieval only where each is strongest. HyperCLOVA X produces typed plans and grounded language, while application code owns routing, calculations, evidence checks, and final claim release. Multiple Agent roles are introduced only if benchmark evidence shows a correctness or evidence benefit that justifies their latency.
 
-**Tech Stack:** Proposed baseline pending Task 2 approval: Python 3.12, Pydantic v2, pytest, DuckDB, RDF/OWL in Turtle, RDFLib, pySHACL, and HyperCLOVA X Structured Outputs. Semantic embeddings and a separate vector or graph database are deferred until benchmark evidence shows they are needed and official competition rules confirm the allowed model.
+**Tech Stack:** Proposed baseline pending Task 2 approval: Python 3.12, Pydantic v2, pytest, DuckDB, RDF/OWL in Turtle, RDFLib, pySHACL, and HyperCLOVA X Structured Outputs. A minimal Vector retrieval capability is required for official narrative cases, but separate vector and graph database products are deferred until benchmark evidence shows they are needed and official competition rules confirm the allowed embedding model.
 
 ## Global Constraints
 
@@ -28,10 +28,11 @@
 - Every returned financial fact or calculated value must bind to a source table, product identifier, source field, unit, and applicable date.
 - The competition interaction mode is one question followed by one answer. Never ask a follow-up question; apply an approved deterministic fallback and disclose its basis, return a bounded answer with limitations, or abstain when no defensible answer exists.
 - The official external contract is public `GET /answer` with `question_id` and `question`, no authentication header, sequential requests, a 300-second timeout, and up to two retries after timeout or 5xx. The response is `application/json` with string-only `question_id`, `question`, `retrieved_context`, `think_trace`, and `answer`; see `docs/reference/official-evaluation-api.md`.
+- Treat 60 seconds as the organizer's recommended response ceiling. Undefined query parameters must not cause a 500, and unanswerable questions return `200 OK` with the same five string fields.
 - Treat every evaluation request as stateless. Resolve multi-sentence context only inside the current `question`; never use `question_id` as a conversation key or depend on an earlier request.
 - Interpret an unqualified `연간수익률` as trailing one-year historical cumulative return. Compute it from approved official inputs when possible; use CAGR only for a valid multi-year cumulative period; label bond YTM and other expected annual rates as economically different rather than silently equating them with historical return.
 - Use KRW as the default comparison currency. For every currency conversion, use the official exchange-rate observation applicable on 2026-07-11, or the latest official observation on or before that date when no same-day observation exists, and disclose the rate type, actual observation date, source, and formula.
-- Agents cannot invoke other Agents. A deterministic orchestrator is the only component that may route work, call tools, retry, or enforce deadlines.
+- If multiple Agents are used, Agents cannot invoke other Agents. A deterministic application orchestrator is the only component that may route work, call tools, retry, or enforce deadlines.
 - Permit at most one bounded repair of an invalid plan or answer draft.
 - Do not expose hidden chain-of-thought. Store only a concise execution trace of intent, filters, tools, calculations, sources, and exclusion reasons.
 - Server provisioning, public endpoints, TLS, deployment, and cloud operations are outside this plan and require a separate approved plan after the core passes Task 12.
@@ -41,11 +42,11 @@
 ## 1. Assumptions
 
 - The approved product is an internal financial-product desk Copilot covering domestic bonds, domestic ETFs, overseas ETFs, and public funds.
-- The approved top-level architecture is the conditional-parallel multi-agent graph in ADR-0004.
+- ADR-0004 records the earlier conditional-parallel multi-agent direction. The user subsequently approved re-evaluating it because the official materials require ontology, knowledge graph, and federated retrieval but do not require multiple Agents. Task 2 must add a superseding ADR before implementation and must not silently rewrite ADR-0004.
 - The four existing field-reference documents are the current source for known schema semantics and data-quality hazards.
 - The project supplements the organizer masters only where approved questions expose a material data gap. ETF constituent holdings are a mandatory additional dataset for the holdings questions; other external sources remain conditional on a mapped requirement.
 - The transcript's main technical direction is treated as guidance: question-driven ontology, knowledge graph, entity resolution, business-rule validation, hybrid retrieval, and answer grounding.
-- The explanation transcript ends before the detailed assignment briefing resumes, so exact hidden-test composition and scoring weights must not be invented.
+- The official task brief announces 30 questions with a planned 10/10/10 difficulty mix and about five intentionally unanswerable questions, while warning that counts may change. Internal coverage must not assume the hidden set is limited to this composition.
 - The first useful milestone is a correct offline core and benchmark, not fine-tuning, a graphical interface, or deployment.
 
 ## 2. Intended Outcome
@@ -55,9 +56,9 @@ At the end of this plan, a local request can travel through the following verifi
 ```text
 Natural-language question
 → typed intent and ambiguity decision
-→ only the required product Specialists
+→ the smallest approved planning path and required product domains
 → deterministic structured filters and calculations
-→ ontology-guided graph, keyword, and optional semantic retrieval
+→ ontology-guided graph, keyword, and targeted semantic retrieval
 → comparison, missingness, and evidence verification
 → grounded answer with source bindings and visible limitations
 ```
@@ -77,7 +78,7 @@ The same validated question and data version must produce the same products, cal
 
 ## 4. Verifiable Success Criteria
 
-- A reviewed gold set covers exact lookup, compound filtering, ranking, aggregation, cross-family comparison, family-specific product similarity, explanation, ambiguity, missing data, and unsupported requests.
+- A reviewed 52-case gold set covers exact lookup, compound filtering, ranking, aggregation, cross-family comparison, family-specific product similarity, official document explanation, temporal relationship history, ambiguity, missing data, and unsupported requests.
 - Every gold question maps to required concepts, source fields, business rules, expected routing, and expected answer or refusal behavior.
 - The catalog contains at least 30 distinct question archetypes rather than repeated phrasings of a few operations, plus context, missingness, and safety edge cases.
 - Every required external fact maps to an approved question, an unresolved organizer-data gap, an authoritative-source category, and both observation and knowledge-availability cutoff rules before ingestion begins.
@@ -87,10 +88,12 @@ The same validated question and data version must produce the same products, cal
 - Entity resolution links product aliases and document references without silently merging distinct products or public-fund share classes.
 - Multi-sentence requests resolve phrases such as `이 상품`, `그 운용사`, and `위 상품들` to a unique earlier entity or intermediate result; genuinely ambiguous references use the approved single-turn fallback without guessing one candidate.
 - Vector-only retrieval is not the sole source for any structured fact or numeric condition.
+- Every complex official example has an explicit RDB·Graph·Vector·Keyword subtask route, and every ordinary case resolves to a catalog retrieval profile.
+- The answerability gate rejects invalid ontology values, absent cutoff-date products, and unproven entity-product relationships without fuzzy substitution.
 - Every final factual claim has a valid evidence ID; an unsupported claim cannot pass the Claim Gate.
 - Incompatible comparisons are separated, explicitly normalized through an approved method, answered with a stated limitation, or rejected.
-- Router tests invoke every required Specialist and no irrelevant Specialist for the gold set.
-- Cross-family independent work is observably concurrent.
+- Routing tests select every required product domain and no irrelevant domain for the gold set; if Specialist Agents are approved, the same rule applies to Agent invocation.
+- Independent retrieval or domain work is observably concurrent where concurrency reduces latency without weakening evidence checks.
 - The hybrid system is compared against SQL-only, text-only, and one-Agent baselines using the same benchmark.
 - Core acceptance tests pass before any server or deployment work begins.
 
@@ -102,9 +105,9 @@ These choices are proposals, not silent implementation decisions. Task 2 records
 
 | Option | Benefit | Cost or risk | Recommendation |
 | --- | --- | --- | --- |
-| Custom typed async state machine | Small dependency surface; directly enforces ADR-0004; easy to test exact routing | More application code to own | Recommended for the competition core |
-| Agent framework | Faster visual graph assembly and built-in integrations | Framework behavior can obscure retries, state, and latency | Use only if a short spike proves a measurable advantage |
-| One general Agent with tool access | Lowest initial code volume | Conflicts with approved conditional Specialist architecture and enlarges the failure domain | Reject |
+| One typed Planner plus deterministic services | Fewest model calls, lowest latency, clear execution ownership | Product-family interpretation may need stronger schemas and examples | Recommended initial baseline |
+| Conditional Product Specialists | Can isolate genuinely different family semantics | More prompts, calls, contracts, and failure points | Add only when the fixed benchmark proves a measurable gain |
+| Always-on multi-agent graph or Agent framework | Visually expressive orchestration | Unnecessary calls and hidden framework behavior can increase latency and complexity | Reject unless a short spike proves a specific advantage |
 
 ### 5.2 Structured and graph storage
 
@@ -124,7 +127,7 @@ These choices are proposals, not silent implementation decisions. Task 2 records
 ### 5.4 Semantic retrieval and fine-tuning
 
 - Implement exact lookup, SQL, graph traversal, and keyword retrieval first.
-- Add embeddings only when a named benchmark failure requires semantic matching of narrative fields and the allowed embedding model is confirmed.
+- Implement the smallest permitted embedding index needed for the official strategy·structure·risk·trend cases after the allowed embedding model is confirmed. Keep Vector retrieval out of structured filters and numeric rankings.
 - Consider fine-tuning only after Task 11 error analysis shows a persistent model-behavior failure that cannot be corrected by contracts, retrieval, prompt examples, or deterministic validation.
 
 ## 6. Planned File Structure
@@ -134,8 +137,14 @@ The paths below are the proposed ownership boundaries after Task 2 approval.
 ```text
 pyproject.toml
 ontology/
-  financial-products.ttl
-  financial-product-shapes.ttl
+  common.ttl
+  bond_kr.ttl
+  etf_kr.ttl
+  etf_gl.ttl
+  fund_pub.ttl
+  shapes/
+    common.shacl.ttl
+    domain.shacl.ttl
 config/
   field-mappings/
     domestic-bond.json
@@ -206,7 +215,7 @@ tests/
     core_questions.json
 ```
 
-Each file has one primary responsibility. `semantic_index.py` remains a disabled adapter until Task 8's benchmark gate authorizes embeddings.
+Each file has one primary responsibility. `semantic_index.py` is activated in Task 8 only after the permitted embedding model and version are recorded; it remains outside structured filters and numeric rankings.
 
 ---
 
@@ -225,8 +234,9 @@ Each file has one primary responsibility. `semantic_index.py` remains a disabled
 - Reference: `docs/reference/overseas-etf-master.md`
 - Reference: `docs/reference/public-fund-master.md`
 - Reference: `docs/reference/official-evaluation-api.md`
+- Reference: `docs/reference/official-competition-requirements.md`
 
-**Produces:** A reviewed question catalog in which each case has `id`, `archetype`, `category`, `question`, `segments`, `intent`, `subtasks`, `dependencies`, `product_families`, `required_fields`, `required_relations`, `data_requirements`, `business_rules`, `reference_resolution`, `similarity_basis`, an optional `similarity_policy_id`, `support_level`, `target_support_level`, `expected_route`, `expected_disposition`, `expected_evidence`, and `risk_note`. Also produces a question-to-data requirement matrix identifying organizer fields, missing external fields, authoritative-source criteria, observation and availability cutoff handling, and whether KRX·ECOS·FRED or another official file is actually needed.
+**Produces:** A reviewed question catalog in which each case has `id`, `archetype`, `category`, `question`, `segments`, `intent`, `subtasks`, `dependencies`, `product_families`, `required_fields`, `required_relations`, `data_requirements`, `business_rules`, `reference_resolution`, `similarity_basis`, an optional `similarity_policy_id`, `support_level`, `target_support_level`, `expected_route`, a resolved or explicit `retrieval_profile`, optional `subtask_routes`, `ontology_checks`, `temporal_scope`, `answerability_basis`, `expected_disposition`, `expected_evidence`, and `risk_note`. Also produces a question-to-data requirement matrix identifying organizer fields, missing external fields, authoritative-source criteria, observation and availability cutoff handling, and whether KRX·ECOS·FRED or another official file is actually needed.
 
 - [x] **Step 1: Write the evaluation-case schema and acceptance rules**
 
@@ -267,9 +277,9 @@ Use this JSON shape for every machine-readable case:
 
 - [x] **Step 2: Write at least four cases for each required behavior**
 
-Define at least 30 genuinely different question archetypes, then add at least 10 context, missingness, incompatibility, and safety edge cases. The first tracked set therefore contains at least 40 total cases without counting simple wording variations as different archetypes.
+Define at least 30 genuinely different question archetypes, then add at least 10 context, missingness, incompatibility, and safety edge cases. The official-brief reinforcement contains 52 total cases without counting simple wording variations as different archetypes.
 
-Cover these ten capability groups:
+Cover these eleven capability groups:
 
 1. exact product lookup;
 2. compound filtering;
@@ -281,6 +291,7 @@ Cover these ten capability groups:
 8. missing or incompatible data;
 9. ambiguous question requiring a deterministic single-turn fallback, limitation, or abstention;
 10. unsupported forecast or personalized recommendation requiring limitation or abstention.
+11. official document and temporal-relation questions requiring federated retrieval.
 
 - [x] **Step 3: Include known data traps in the gold set**
 
@@ -318,7 +329,7 @@ python3 -m json.tool tests/gold/core_questions.json >/dev/null
 rg -n 'DET-|answer|limitation|abstention|domestic_bond|domestic_etf|overseas_etf|public_fund' docs/planning/specs/core-evaluation-set.md tests/gold/core_questions.json
 ```
 
-Expected: valid JSON; all four product families and answer, limitation, and abstention dispositions appear, while no case asks a follow-up question; at least 40 unique case IDs and 30 unique archetypes are present; the catalog contains both resolved and ambiguous reference cases; every external data requirement uses cutoff `2026-07-11`.
+Expected: valid JSON; all four product families and answer, limitation, and abstention dispositions appear, while no case asks a follow-up question; exactly 52 unique case IDs and archetypes are present; all eight official sample IDs are present; the catalog contains both resolved and ambiguous reference cases; every external data requirement uses cutoff `2026-07-11`.
 
 - [x] **Step 7: Commit the independent deliverable**
 
@@ -328,14 +339,29 @@ git diff --cached --check
 git commit -m "test: define financial agent core evaluation set"
 ```
 
-**Completion gate:** Satisfied on 2026-08-11. The user approved the question coverage and additional-data priority. Task 2 remains a separate decision checkpoint before implementation files are created.
+- [x] **Step 8: Reconcile the official task brief and technical session**
+
+Record the organizer's announced question mix, five intentionally unanswerable questions, exact official examples, required domain TTL filenames, runtime ontology role, TBox/ABox distinction, and RDB·Graph·Vector federation. Promote official product documents, temporal theme relations, corporate control and listing relations, and risk passages to mandatory source gaps where the official examples require them. Keep the raw PDFs untracked.
+
+- [x] **Step 9: Commit the official-brief reinforcement**
+
+```bash
+git add docs/reference/official-competition-requirements.md docs/reference/official-evaluation-api.md docs/planning/specs/core-evaluation-set.md docs/planning/specs/authoritative-data-requirements.md docs/planning/specs/official-api-source-matrix.md tests/gold/core_questions.json docs/planning/tasks/2026-08-10-financial-agent-core-implementation-plan.md
+git diff --cached --check
+git commit -m "docs: align task1 with official competition briefs"
+```
+
+**Completion gate:** Satisfied initially on 2026-08-11 and reinforced on 2026-08-15 after the user supplied the official task brief and technical session. Task 2 remains a separate decision checkpoint before implementation files are created.
 
 **Task 1 approval record:**
 
-- 45 unique question archetypes cover the four organizer product families, compound and dependent multi-step questions, multi-sentence reference resolution, family-specific similarity, missingness, incompatible comparisons, and unsupported requests.
-- ETF holdings and weights, canonical product/security/institution identities, comparable dated performance inputs, index/strategy/classification data, fund class structure, bond ratings and terms, fees and distributions, conditional FX, official product documents, and full provenance are the approved additional-data requirements.
+- 52 unique question archetypes cover the four organizer product families, compound and dependent multi-step questions, multi-sentence reference resolution, family-specific similarity, official document and temporal-relation questions, missingness, incompatible comparisons, and unsupported requests.
+- All eight organizer sample questions are represented: five answerable target cases and three explicit answerability-gate cases.
+- ETF holdings and weights, canonical product/security/institution identities, comparable dated performance inputs, index/strategy/classification data, corporate control and listing status, temporal theme relations, fund class structure, bond ratings and terms, fees and distributions, conditional FX, official product·policy·risk documents, and full provenance are the approved additional-data requirements.
 - External data is selected from question requirements rather than API availability. KRX, ECOS, and FRED remain conditional candidates and are not mandatory integrations.
 - The evaluation snapshot permits only facts applicable on or before 2026-07-11 and, where verifiable, published, available, and vintaged on or before that cutoff.
+- The knowledge base must expose RDB, Graph, and Vector capabilities plus exact keyword lookup, but these roles do not require separate physical database products.
+- Ontology is an operational semantic layer for decomposition, entity resolution, routing, relation paths, inference, and validation; it is not prompt documentation alone.
 - The tracked gold set contains behavioral expectations and source requirements only; organizer rows and externally collected raw snapshots remain untracked.
 
 ---
@@ -370,7 +396,7 @@ The recommended choice is Python 3.12, Pydantic v2 contracts, pytest, a custom a
 
 - [ ] **Step 3: Record the ontology and retrieval choice in ADR-0006**
 
-The recommended choice is a competency-question-driven RDF/OWL ontology in Turtle, SHACL validation, RDFLib tooling, and graph edges materialized into deterministic tables. Retrieval order is exact/SQL and graph first, keyword for narrative fields, embeddings only behind a benchmark and rules gate.
+The recommended choice is a competency-question-driven RDF/OWL ontology in Turtle, SHACL validation, RDFLib tooling, and graph edges materialized into deterministic tables. Retrieval order is exact/SQL and graph first, keyword for exact narrative matching, and a minimal versioned Vector index for the official structure·strategy·risk·trend cases after the allowed embedding model is confirmed.
 
 - [ ] **Step 4: Obtain explicit user approval**
 
@@ -448,7 +474,7 @@ class StrictContract(BaseModel):
     schema_version: str = "1.0"
 ```
 
-`QueryPlan` must contain the normalized intent, request segments, subtasks, dependency edges, resolved references, requested product families, filters, metrics, periods, units, currencies, operations, result limit, ambiguity decision, selected fallback and normalization decisions, and required Specialists. It must not contain or emit a follow-up question in competition mode. `EvidenceBundle` must contain only verified facts, calculations, exclusions, limitations, allowed conclusions, and evidence references.
+`QueryPlan` must contain the normalized intent, request segments, subtasks, dependency edges, resolved references, requested product families, filters, metrics, periods, units, currencies, operations, result limit, ambiguity decision, selected fallback and normalization decisions, retrieval profile, and required execution roles. It must not contain or emit a follow-up question in competition mode. `EvidenceBundle` must contain only verified facts, calculations, exclusions, limitations, allowed conclusions, and evidence references.
 
 - [ ] **Step 4: Run contract tests**
 
@@ -474,8 +500,13 @@ git commit -m "feat: add strict financial agent contracts"
 
 **Files:**
 
-- Create: `ontology/financial-products.ttl`
-- Create: `ontology/financial-product-shapes.ttl`
+- Create: `ontology/common.ttl`
+- Create: `ontology/bond_kr.ttl`
+- Create: `ontology/etf_kr.ttl`
+- Create: `ontology/etf_gl.ttl`
+- Create: `ontology/fund_pub.ttl`
+- Create: `ontology/shapes/common.shacl.ttl`
+- Create: `ontology/shapes/domain.shacl.ttl`
 - Create: `config/field-mappings/domestic-bond.json`
 - Create: `config/field-mappings/domestic-etf.json`
 - Create: `config/field-mappings/overseas-etf.json`
@@ -494,9 +525,9 @@ git commit -m "feat: add strict financial agent contracts"
 
 - [ ] **Step 1: Write failing tests for the minimum vocabulary**
 
-Require classes for `FinancialProduct`, `Bond`, `ExchangeTradedProduct`, `ETF`, `ETN`, `PublicFund`, `PublicFundShareClass`, `RepresentativeFund`, `Organization`, `AssetManager`, `Issuer`, `Index`, `Currency`, `Region`, `AssetClass`, `RiskGrade`, `FeeMetric`, `ReturnMetric`, and `AvailabilityStatus`.
+Require classes for `FinancialProduct`, `Bond`, `ExchangeTradedProduct`, `ETF`, `ETN`, `PublicFund`, `PublicFundShareClass`, `RepresentativeFund`, `Organization`, `AssetManager`, `Issuer`, `Company`, `Security`, `Index`, `Theme`, `OfficialDocument`, `RelationAssertion`, `RiskFactor`, `Currency`, `Region`, `AssetClass`, `RiskGrade`, `FeeMetric`, `ReturnMetric`, and `AvailabilityStatus`.
 
-Require relations used by the gold set, including `managedBy`, `issuedBy`, `tracksIndex`, `hasRiskGrade`, `hasFee`, `hasReturnMetric`, `hasCurrency`, `investsInRegion`, `investsInAssetClass`, `belongsToRepresentativeFund`, and explicitly justified inverse relations.
+Require relations used by the gold set, including `managedBy`, `issuedBy`, `tracksIndex`, `holdsSecurity`, `hasSubsidiary`, `representedBySecurity`, `listedOn`, `associatedWithTheme`, `describedByDocument`, `hasRiskFactor`, `hasRiskGrade`, `hasFee`, `hasReturnMetric`, `hasCurrency`, `investsInRegion`, `investsInAssetClass`, `belongsToRepresentativeFund`, and explicitly justified inverse relations.
 
 - [ ] **Step 2: Write failing constraint tests**
 
@@ -803,9 +834,9 @@ Require these behaviors:
 
 - exact structured lookup uses SQL without keyword, graph, or semantic calls;
 - relationship questions use graph traversal;
-- narrative strategy or rationale questions may use keyword retrieval;
+- narrative strategy, structure, risk, or trend questions use keyword and approved semantic retrieval as planned by the case profile;
 - mixed questions intersect hard SQL filters with graph and narrative candidates;
-- semantic retrieval is unavailable unless explicitly enabled by an approved model and index version.
+- semantic retrieval fails closed unless explicitly enabled by an approved model and index version.
 
 - [ ] **Step 2: Write failing fusion tests**
 
@@ -823,14 +854,16 @@ Use hard-filter intersection for mandatory conditions. Use rank fusion only amon
 
 Compare SQL-only, keyword-only, graph-only, and routed hybrid retrieval on the same Task 1 cases. Record recall, exact condition satisfaction, evidence coverage, and latency.
 
-- [ ] **Step 6: Apply the embedding gate**
+- [ ] **Step 6: Confirm and implement the minimum Vector retrieval gate**
 
-Enable `semantic_index.py` only if:
+Enable `semantic_index.py` for the official narrative cases only if:
 
 1. the official rules confirm the selected embedding model is permitted;
-2. named narrative cases still fail after entity resolution and keyword retrieval;
-3. the semantic index improves those cases without reducing hard-condition accuracy or evidence coverage;
-4. the index records model name, version, source field, source product ID, and data version.
+2. the index records model name, version, source field, source product ID, document ID, chunk location, and data version;
+3. retrieved claims are validated against exact document spans rather than accepted from similarity alone;
+4. the semantic index does not reduce hard-condition accuracy or evidence coverage.
+
+If no embedding model is permitted, stop this step and record the official-rule blocker instead of silently declaring the RDB·Graph·Vector requirement satisfied.
 
 - [ ] **Step 7: Run retrieval tests and commit**
 
@@ -843,55 +876,54 @@ git commit -m "feat: add ontology-routed hybrid retrieval"
 
 ---
 
-### Task 9: Implement HyperCLOVA X planning, Specialists, and orchestration
+### Task 9: Implement HyperCLOVA X planning and the approved minimal orchestration
 
 **Files:**
 
-- Create: `prompts/intent-planner.md`
-- Create: `prompts/domestic-bond-specialist.md`
-- Create: `prompts/domestic-etf-specialist.md`
-- Create: `prompts/overseas-etf-specialist.md`
-- Create: `prompts/public-fund-specialist.md`
+- Create: `prompts/query-planner.md`
+- Create: `prompts/answer-synthesizer.md`
+- Conditional after Task 2 benchmark approval: domain Specialist prompt files
 - Create: `src/financial_agent/agents/client.py`
 - Create: `src/financial_agent/agents/planner.py`
-- Create: `src/financial_agent/agents/specialists.py`
+- Conditional after Task 2 benchmark approval: `src/financial_agent/agents/specialists.py`
 - Create: `src/financial_agent/orchestration/state.py`
 - Create: `src/financial_agent/orchestration/orchestrator.py`
 - Create: `tests/orchestration/test_planner.py`
 - Create: `tests/orchestration/test_routing.py`
 - Create: `tests/orchestration/test_parallelism.py`
+- Create: `tests/orchestration/test_architecture_value.py`
 - Create: `tests/orchestration/test_failures.py`
 
 **Interfaces:**
 
 - Produces: `plan(question: str) -> QueryPlan`.
-- Produces: `specialize(plan: QueryPlan, family: ProductFamily) -> DomainExecutionPlan`.
+- Conditional: `specialize(plan: QueryPlan, family: ProductFamily) -> DomainExecutionPlan` only if Task 2 approves Specialists.
 - Produces: `run_core(question: str, data_version: str) -> CoreRunResult`.
 - Constraint: Structured Outputs creates typed plans; application code validates and dispatches them. The same model call does not combine Structured Outputs and Function calling.
 
 - [ ] **Step 1: Write tests with a fake HyperCLOVA X client**
 
-Cover valid plans, unknown fields, schema failure, critical ambiguity, unsupported operations, irrelevant Specialist requests, and one successful repair followed by a second failure.
+Cover valid plans, unknown fields, schema failure, critical ambiguity, unsupported operations, irrelevant product-domain requests, and one successful repair followed by a second failure.
 
 - [ ] **Step 2: Write routing tests from the gold set**
 
-Prove that exact domestic ETF questions invoke only the domestic ETF Specialist, bond-and-fund questions invoke exactly those two Specialists, and no question automatically fans out to all four.
+Prove that exact domestic ETF questions select only the domestic ETF domain, bond-and-fund questions select exactly those two domains, and no question automatically fans out to all four. If Specialists are approved, also verify exact Agent invocation.
 
 - [ ] **Step 3: Write concurrency tests**
 
-Use controlled fake delays and assert that independent Specialist and retrieval tasks overlap in elapsed time rather than execute sequentially.
+Use controlled fake delays and assert that independent retrieval and domain tasks overlap in elapsed time rather than execute sequentially. Do not require additional Agent calls merely to satisfy this test.
 
 - [ ] **Step 4: Implement the minimum HyperCLOVA X client boundary**
 
 Keep credentials in environment variables, never logs or tracked configuration. Record model ID, prompt version, request ID, latency, token usage when available, schema-validation result, and repair count.
 
-- [ ] **Step 5: Implement Planner and Specialist prompts**
+- [ ] **Step 5: Implement the approved Planner and optional Specialist prompts**
 
-Prompts may interpret intent and map concepts to allowlisted fields. They must not calculate, write SQL, select unapproved fields, fabricate missing values, or compose the final user answer.
+Prompts may interpret intent and map concepts to allowlisted fields. Start with the single typed Planner. Add Product Specialist prompts only if the approved Task 2 benchmark gate selects them. Prompts must not calculate, write SQL, select unapproved fields, fabricate missing values, or compose unsupported factual answers.
 
 - [ ] **Step 6: Implement the deterministic orchestrator**
 
-The orchestrator owns state transitions, routing, concurrency, one repair attempt, deadlines, failure disposition, and the concise execution trace. Agents cannot call each other.
+The orchestrator owns state transitions, retrieval routing, optional domain routing, concurrency, one repair attempt, deadlines, failure disposition, and the concise execution trace. If multiple Agents are used, they cannot call each other.
 
 - [ ] **Step 7: Run orchestration tests**
 
@@ -912,7 +944,7 @@ Use a non-secret local environment and the fixed Task 1 subset. Compare parsed f
 ```bash
 git add prompts src/financial_agent/agents src/financial_agent/orchestration tests/orchestration
 git diff --cached --check
-git commit -m "feat: orchestrate typed product specialists"
+git commit -m "feat: orchestrate typed financial queries"
 ```
 
 ---
@@ -1016,8 +1048,8 @@ The runner must execute the same cases against:
 1. deterministic SQL baseline;
 2. text-only retrieval baseline where applicable;
 3. graph plus routed hybrid retrieval;
-4. one-Agent baseline;
-5. approved conditional-parallel multi-agent system.
+4. one-Planner orchestrated baseline;
+5. conditional multi-agent variant only if Task 2 authorizes it.
 
 - [ ] **Step 3: Run all offline tests**
 
@@ -1048,7 +1080,7 @@ Every improvement must add or update a regression case before implementation.
 
 - [ ] **Step 6: Compare architecture value**
 
-The conditional multi-agent system must improve evaluated correctness, latency on cross-family work, evidence completeness, or failure isolation relative to the one-Agent baseline. Remove or bypass a stage that has no measurable benefit.
+Every additional model or Agent stage must improve evaluated correctness, evidence completeness, failure isolation, or end-to-end latency relative to the one-Planner baseline. Remove or bypass a stage that has no measurable benefit.
 
 - [ ] **Step 7: Commit the verified benchmark tooling and sanitized reports**
 
@@ -1104,7 +1136,7 @@ git commit -m "docs: record financial agent core acceptance"
 
 The first work session should do only the following:
 
-1. Create the Task 1 question catalog and 45-case gold set.
+1. Maintain the Task 1 question catalog and reinforced 52-case gold set.
 2. Review those cases against the four existing field references and the need-based source matrix.
 3. Obtain approval of the competency-question coverage and the question-linked external-data priority.
 4. Run the three small Task 2 proof spikes.
@@ -1115,7 +1147,7 @@ Do not start fine-tuning, vector-database construction, a large ontology, Agent 
 ## 8. Plan Self-Review
 
 - **Specification coverage:** Every transcript theme is assigned to a task: ontology and rules in Task 4, missingness and integrity in Task 5, deterministic filtering in Task 6, knowledge graph and entity resolution in Task 7, hybrid retrieval in Task 8, answer quality in Tasks 9 and 10, and measured iteration in Task 11.
-- **Accepted-decision coverage:** ADR-0001 planning discipline, ADR-0002 data policy, ADR-0003 product scope, and ADR-0004 conditional-parallel orchestration are preserved.
+- **Accepted-decision coverage:** ADR-0001 planning discipline, ADR-0002 data policy, and ADR-0003 product scope are preserved. ADR-0004 remains historical until Task 2 records the user's approved minimal-orchestration direction in a superseding ADR.
 - **Scope control:** Server, deployment, personalized advice, live data, speculative infrastructure, and premature fine-tuning remain excluded.
 - **Type consistency:** Later tasks consume the exact contract and function names introduced by earlier tasks.
 - **Data safety:** Every raw-data integration step writes only to ignored local paths and includes a staging audit.
