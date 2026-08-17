@@ -571,7 +571,7 @@ def test_request_context_rejects_unknown_segment_reference(load_fixture) -> None
 
 def test_request_context_deadline_is_at_most_55_seconds(load_fixture) -> None:
     payload = load_fixture("request_context.json")
-    payload["deadline_at"] = "2026-07-11T00:00:56Z"
+    payload["deadline_at"] = "2026-08-17T00:00:56Z"
     with pytest.raises(ValidationError):
         RequestContext.model_validate(payload)
 ```
