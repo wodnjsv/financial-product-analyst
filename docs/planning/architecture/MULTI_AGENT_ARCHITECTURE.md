@@ -1,12 +1,14 @@
 # Financial Product Agent Multi-Agent Architecture
 
-**Status:** Approved design; official evaluation API contract incorporated 2026-08-12
+**Status:** Approved foundation; LLM role topology and runtime contracts superseded by ADR-0005 on 2026-08-17
 
 **Date:** 2026-08-04
 
 **Decision:** [ADR-0004: Use a Conditional-Parallel Multi-Agent Graph](../decisions/ADR-0004-conditional-parallel-multi-agent-graph.md)
 
-**Competition-mode override:** The official API contract and the 2026-08-12 Harness revision supersede ADR-0004's follow-up clarification path for evaluation requests. ADR-0008 will record the complete single-turn fallback policy; the conditional-parallel architecture remains unchanged.
+**Current runtime decision:** [ADR-0005](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md) replaces mandatory Product Specialist Agent and LLM Verifier calls with one Intent Resolver, deterministic typed Capability Executors, deterministic verification, and one Answer Composer. The canonical handoff schemas are defined in [Runtime Contracts](RUNTIME_CONTRACTS.md). References below to mandatory Specialist or Verifier Agent calls are historical and must not be used as the implementation contract.
+
+**Competition-mode override:** The official API contract and the 2026-08-12 Harness revision supersede ADR-0004's follow-up clarification path for evaluation requests. The separate failure-disposition design will record the complete single-turn fallback policy; conditional routing and request-internal parallelism remain unchanged.
 
 ## 1. Objective
 

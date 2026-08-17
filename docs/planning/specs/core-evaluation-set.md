@@ -50,12 +50,19 @@ LLM이 이 전체 과정을 한 번에 자유롭게 답하지 않는다. 질문�
 RequestContext
 ├─ segments
 ├─ named_entities
-├─ intermediate_result_bindings
-├─ reference_mentions
+└─ reference_mentions
+
+QueryPlan
+├─ subtasks
+├─ binding_specs
+├─ resolved_references
 └─ dependency_edges
+
+ToolResult
+└─ binding_values
 ```
 
-청크는 검색 단위일 수 있지만 문맥의 소유 단위가 아니다. 검색 청크마다 원 요청 ID, 문장 ID, 선행 문장, 부모 상품 또는 문서 ID를 함께 전달한다.
+원문의 문맥은 `RequestContext`가 소유하고, 실행 전에 알 수 없는 중간 결과의 자리와 의존성은 `QueryPlan`이 정의한다. 결정론적 실행 후 확정된 상품·기업·문서 ID는 `ToolResult.binding_values`에 저장한다. 청크는 검색 단위일 수 있지만 문맥의 소유 단위가 아니다. 검색 청크마다 원 요청 ID, 문장 ID, 선행 문장, 부모 상품 또는 문서 ID를 함께 전달한다.
 
 ### 2.3 지시어 해소 우선순위
 
