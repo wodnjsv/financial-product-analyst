@@ -105,10 +105,11 @@ The following problems connect the competition task to a credible internal workf
 - Pass typed, schema-validated state between components. Free-form model prose must not become executable filters, calculations, or evidence.
 - Use one Intent Resolver and one Answer Composer on the normal path. A Product Specialist LLM requires a separate benchmark-backed ADR.
 - Generate final answer claims only from a verified evidence bundle. A claim without a valid source reference must be removed or cause abstention.
-- Permit at most one bounded internal repair attempt for a failed plan or draft before returning a partial limitation or inability statement.
+- Permit one shared LLM repair attempt per request across the Intent Resolver and Answer Composer. Semantic boundaries return `answer`, `partial`, `limitation`, or `abstain`; execution failures use the approved 5xx path.
 - Preserve raw organizer data unchanged and keep it out of the personal GitHub repository.
 - The evaluation API must expose public `GET /answer`, accept `question_id` and `question` query parameters without an authentication header, and return `application/json` containing string values for `question_id`, `question`, `retrieved_context`, `think_trace`, and `answer`.
 - Evaluation requests arrive one at a time, have a 300-second timeout, and may be retried up to twice after timeout or 5xx. Request handling must be idempotent and must not depend on earlier requests.
+- Use an initial 55-second internal hard deadline, preserve the final 5 seconds for safe release, and recalibrate stage budgets from measured NCP benchmarks without removing evidence checks.
 - The submitted End-point must be recorded in `README.md` and remain publicly reachable and reproducible for the required evaluation window.
 - No code, data, or deployment changes may be pushed after the official submission freeze takes effect.
 - Raw hidden model reasoning is not a project artifact. Populate the required `think_trace` string with a concise, structured execution trace containing intent, subtasks, filters, tools, calculations, sources, exclusions, and limitations.
@@ -147,7 +148,7 @@ These capabilities define the initial product behavior. They do not select an im
 
 8. **Independent evidence and policy verification**
    - Verify numeric results, source coverage, comparison compatibility, missingness, and prohibited claims before answer composition.
-   - Allow one internal repair attempt and otherwise fail closed with a limitation, partial answer, or abstention.
+   - Use the request-wide bounded recovery budgets, then return a verified semantic disposition or the approved 5xx system-failure response.
 
 9. **Grounded, risk-aware explanation**
    - Explain supplied product data in plain language, including material limitations.
@@ -232,7 +233,7 @@ The approved top-level architecture is a bounded, conditionally parallel executi
 - A deterministic Claim Gate rejects factual statements without valid evidence references.
 - Product Specialist LLMs may be added only through a later benchmark-backed ADR.
 
-ADR-0004 remains the historical basis for deterministic control, conditional routing, request-internal parallelism, bounded retries, and Claim Gate behavior. [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) supersedes its mandatory Specialist and Verifier Agent topology. The canonical handoff schemas are defined in [Runtime Contracts](architecture/RUNTIME_CONTRACTS.md).
+ADR-0004 remains the historical basis for deterministic control, conditional routing, request-internal parallelism, bounded retries, and Claim Gate behavior. [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) supersedes its mandatory Specialist and Verifier Agent topology. [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) separates answer disposition from execution failure and fixes the initial recovery and deadline policy. The canonical handoff schemas are defined in [Runtime Contracts](architecture/RUNTIME_CONTRACTS.md), and the state transitions are defined in [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md).
 
 ## 13. Decision Records
 
@@ -243,6 +244,7 @@ Accepted and superseded decisions live in `docs/planning/decisions/`. Each recor
 - [ADR-0003: Frame the Competition Entry as an Internal Product Desk Copilot](decisions/ADR-0003-internal-product-desk-copilot.md)
 - [ADR-0004: Use a Conditional-Parallel Multi-Agent Graph](decisions/ADR-0004-conditional-parallel-multi-agent-graph.md)
 - [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](decisions/ADR-0005-bounded-llm-typed-capability-execution.md)
+- [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](decisions/ADR-0006-separate-disposition-and-bound-recovery.md)
 
 ## 14. Change Procedure
 

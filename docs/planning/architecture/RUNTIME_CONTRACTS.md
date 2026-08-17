@@ -4,9 +4,9 @@
 
 **Date:** 2026-08-17
 
-**Decision:** [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md)
+**Decisions:** [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md)
 
-**Related:** [Multi-Agent Architecture](MULTI_AGENT_ARCHITECTURE.md), [NCP Deployment Architecture](NCP_DEPLOYMENT_ARCHITECTURE.md), [Core Evaluation Set](../specs/core-evaluation-set.md)
+**Related:** [Multi-Agent Architecture](MULTI_AGENT_ARCHITECTURE.md), [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md), [NCP Deployment Architecture](NCP_DEPLOYMENT_ARCHITECTURE.md), [Core Evaluation Set](../specs/core-evaluation-set.md)
 
 ## 1. 목적
 
@@ -52,11 +52,13 @@ flowchart LR
     EXE --> TR["ToolResult"]
     TR --> EB["EvidenceBundle"]
     EB --> VR["VerificationReport"]
-    VR -->|PASS 또는 PARTIAL| AC["Answer Composer"]
+    VR -->|PASS + ANSWER/PARTIAL| AC["Answer Composer"]
+    VR -->|PASS + LIMITATION/ABSTAIN| SAFE["결정론적 Safe Renderer"]
     AC --> AD["AnswerDraft"]
+    SAFE --> AD
     AD --> CG["Claim Gate"]
     CG --> RA["ReleasedAnswer"]
-    VR -->|LIMITATION 또는 ABSTAIN| RA
+    VR -->|FAIL| ORCH
 ```
 
 7개 핵심 계약 그룹은 다음과 같다. `AnswerDraft`와 `ReleasedAnswer`는 하나의 응답 계약 그룹으로 본다.
@@ -219,17 +221,18 @@ Verifier는 `EvidenceBundle`을 수정하지 않고 독립된 판정을 반환�
 
 | 필드 | 의미 |
 | --- | --- |
-| `disposition` | `pass`, `partial`, `limitation`, `abstain`, `repairable_failure`, `internal_failure` |
+| `verification_status` | `pass`, `fail` |
+| `recommended_answer_disposition` | `answer`, `partial`, `limitation`, `abstain` 또는 실행 실패 시 `null` |
 | `coverage` | 질문의 하위 작업별 답변 가능 여부 |
 | `source_checks` | 사실·수치와 출처 연결 결과 |
 | `calculation_checks` | 입력값·수식·결과 재현 결과 |
 | `compatibility_checks` | 기간·정의·단위·통화·모집단 검사 |
 | `cutoff_checks` | 관측·적용·공개일 컷오프 검사 |
 | `policy_checks` | 예측·단정적 추천·누락값 추정 검사 |
-| `repair_actions` | 허용된 한 번의 내부 수정 지시 |
+| `repair_actions` | 요청 전체 회복 예산 안에서 허용된 수정 지시 |
 | `releaseable_claim_ids` | 답변에 사용해도 되는 주장 ID |
 
-`pass`와 `partial`만 Answer Composer를 호출할 수 있다. `limitation`과 `abstain`은 Orchestrator가 템플릿 기반으로 안전한 답변을 구성할 수 있다. 정확한 판정 조건과 재시도 전이는 다음 설계 단계에서 확정한다.
+`verification_status=pass`는 판정과 근거가 출시 가능하다는 뜻이므로 `limitation`과 `abstain`도 `pass`일 수 있다. `pass`인 `answer`와 `partial`만 Answer Composer를 호출하고, `limitation`과 `abstain`은 Orchestrator가 검증된 판정 사유를 템플릿으로 구성한다. 두 경로 모두 Claim Gate를 통과해야 한다. 시스템 실패는 `AnswerDisposition`으로 표현하지 않는다. 세부 판정과 재시도 규칙은 [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md)를 따른다.
 
 ### 5.7 `AnswerDraft` 및 `ReleasedAnswer`
 
@@ -239,7 +242,7 @@ Claim Gate를 통과한 `ReleasedAnswer`는 다음을 포함한다.
 
 | 필드 | 의미 |
 | --- | --- |
-| `disposition` | 최종 답변 상태 |
+| `answer_disposition` | `answer`, `partial`, `limitation`, `abstain` 중 최종 답변 상태 |
 | `answer_text` | 검증된 최종 답변 |
 | `retrieved_context_text` | 실제 사용한 근거만 요약한 문자열 |
 | `think_trace_text` | 의도·하위 작업·필터·계산·출처·제외·한계의 간결한 실행 기록 |
@@ -330,11 +333,12 @@ t5 similarity depends_on t4
 
 ## 9. 시간 예산 전달 원칙
 
-- `RequestContext.deadline_at`은 외부 300초 제한보다 짧은 내부 마감을 사용한다.
+- `RequestContext.deadline_at`은 초기에 요청 시작 후 55초로 설정한다.
 - Orchestrator는 `ExecutionGraph.total_budget_ms`를 선행 작업과 병렬 작업에 배분한다.
 - 하위 작업은 상위 마감을 넘는 시간 예산을 받을 수 없다.
 - 마감이 임박하면 선택적 Vector 확장 검색과 부가 설명을 중단할 수 있지만 근거 검증을 생략할 수는 없다.
-- 시간 예산과 재시도 횟수는 다음 실패 처리 설계에서 정확한 수치로 확정한다.
+- 50초 이후에는 새 LLM 호출이나 조회를 시작하지 않고, 마지막 5초를 검증된 JSON의 직렬화·전송에 보존한다.
+- 재시도와 실측 후 시간 조정은 [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md)를 따른다.
 
 ## 10. 수용 기준
 
@@ -347,7 +351,8 @@ t5 similarity depends_on t4
 - 검증을 통과하지 않은 주장이 `ReleasedAnswer`에 포함되지 않는다.
 - 최종 응답이 공식 API의 다섯 문자열로 손실 없이 변환된다.
 - 기본 정상 경로에서 LLM 호출이 Intent Resolver와 Answer Composer 두 번을 넘지 않는다.
+- 요청 전체 LLM 보정은 한 번을 넘지 않고, 실행 장애를 `abstain`으로 위장하지 않는다.
 
-## 11. 다음 설계 단계
+## 11. 확정 상태와 재평가
 
-다음에는 `VerificationReport.disposition`의 정확한 판정 규칙을 설계한다. 질문의 일부만 지원될 때 `partial`, 유용한 제한 정보만 제공할 때 `limitation`, 어떤 실질적 주장도 지지할 수 없을 때 `abstain`으로 분리하는 기준과 재시도·시간 예산 전이를 확정해야 한다.
+답변 판정, HTTP 매핑, 재시도 상한은 확정된 기본안이다. 4·7·10초 p95 목표와 20·40·45·50·55초 단계 종료 시각은 실제 NCP 환경의 골드 질문 벤치마크로 재평가한다. 시간 조정을 위해 근거 검증·컷오프·Claim Gate를 생략하지 않는다.

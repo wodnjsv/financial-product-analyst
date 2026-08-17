@@ -6,9 +6,9 @@
 
 **Decision:** [ADR-0004: Use a Conditional-Parallel Multi-Agent Graph](../decisions/ADR-0004-conditional-parallel-multi-agent-graph.md)
 
-**Current runtime decision:** [ADR-0005](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md) replaces mandatory Product Specialist Agent and LLM Verifier calls with one Intent Resolver, deterministic typed Capability Executors, deterministic verification, and one Answer Composer. The canonical handoff schemas are defined in [Runtime Contracts](RUNTIME_CONTRACTS.md). References below to mandatory Specialist or Verifier Agent calls are historical and must not be used as the implementation contract.
+**Current runtime decisions:** [ADR-0005](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md) replaces mandatory Product Specialist Agent and LLM Verifier calls with one Intent Resolver, deterministic typed Capability Executors, deterministic verification, and one Answer Composer. [ADR-0006](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md) defines answer disposition, execution failures, recovery budgets, HTTP mapping, and the initial 55-second hard deadline. The canonical handoff schemas are defined in [Runtime Contracts](RUNTIME_CONTRACTS.md), and failure transitions are defined in [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md). References below to mandatory Specialist or Verifier Agent calls are historical and must not be used as the implementation contract.
 
-**Competition-mode override:** The official API contract and the 2026-08-12 Harness revision supersede ADR-0004's follow-up clarification path for evaluation requests. The separate failure-disposition design will record the complete single-turn fallback policy; conditional routing and request-internal parallelism remain unchanged.
+**Competition-mode override:** The official API contract and the 2026-08-12 Harness revision supersede ADR-0004's follow-up clarification path for evaluation requests. The failure-disposition policy records the complete single-turn fallback path; conditional routing and request-internal parallelism remain unchanged.
 
 ## 1. Objective
 
@@ -83,7 +83,7 @@ flowchart LR
 
 - Only the orchestrator calls Agents and tools.
 - Agent-to-Agent invocation is prohibited.
-- A failed stage receives at most one repair attempt.
+- The Intent Resolver and Answer Composer share one LLM repair attempt per request. Transient dependency retries use a separate request-wide budget.
 - The orchestrator does not reinterpret financial facts returned by the data engine.
 
 ### 4.3 Intent Planner Agent
@@ -187,17 +187,14 @@ Use for questions spanning multiple product families:
 
 ## 7. Failure Handling
 
-| Failure | Response |
-| --- | --- |
-| Planner output fails schema validation | One constrained internal repair; then controlled limitation or inability response |
-| Planner omits a materially required condition | Apply an approved fallback; otherwise return a limitation or abstention before retrieval |
-| One Specialist fails while its domain is required | Retry that Specialist once; otherwise abstain or return a clearly labeled partial result only if the question can still be answered |
-| Data Engine rejects a field, operation, or calculation | Do not let an Agent rewrite the result; return limitation or controlled error |
-| Comparison is incompatible | Separate results, disclose an approved normalization, return a limitation, or reject the comparison |
-| Evidence is missing or inconsistent | One repair using the existing tool results; no new unsupported facts |
-| Claim Gate finds an unsupported statement | Remove it only if the answer remains complete; otherwise return to one repair or abstain |
-| Deadline is nearly exhausted | Stop optional stages and return the safest complete disposition available; never release an unverified draft |
-| Provider quota or transient API failure | Bounded retry with jitter only when the request deadline permits; record the failure stage |
+Failure handling follows [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md).
+
+- `ExecutionOutcome`, `VerificationStatus`, and `AnswerDisposition` are separate state axes.
+- Semantic boundaries return `200` with `answer`, `partial`, `limitation`, or `abstain`.
+- Critical transient execution failures return `503` after bounded internal retries, deadline exhaustion returns `504`, and repeated invariant failures return `500`.
+- One request has one shared LLM repair, two shared transient retries, and at most one transient retry for the same operation.
+- A complete zero-row result is an `answer`; an incomplete query must not look like a zero-row result.
+- Composer failure falls back to deterministic rendering of verified claims before the request becomes a 5xx.
 
 ## 8. Latency Strategy
 
@@ -210,6 +207,7 @@ Use for questions spanning multiple product families:
 - Bound every model call by token, time, and repair budgets.
 - Reserve time inside the 300-second external timeout for JSON serialization and network delivery; internal targets remain much lower than the external maximum.
 - Return one complete JSON object after verification. The official contract does not define streaming or progress events.
+- Use an initial 55-second internal hard deadline. Complete Claim Gate by 50 seconds, do not start new model or retrieval work after that point, and preserve the final 5 seconds for serialization and network delivery.
 
 ### Initial targets
 
@@ -219,7 +217,7 @@ Use for questions spanning multiple product families:
 | Supported single-family analysis | 7 seconds |
 | Supported cross-product analysis | 10 seconds |
 
-These are design targets, not an SLA. Benchmark measured HyperCLOVA X, database, deployment-region, cold-start, and concurrency latency before freezing them.
+These are design targets, not an SLA. Benchmark measured HyperCLOVA X, database, deployment-region, cold-start, and concurrency latency before freezing them. Reallocate stage deadlines from measured p99 latency and accuracy impact; changing the 55-second hard deadline or retry counts requires a new approval and ADR.
 
 ## 9. Verification Strategy
 
