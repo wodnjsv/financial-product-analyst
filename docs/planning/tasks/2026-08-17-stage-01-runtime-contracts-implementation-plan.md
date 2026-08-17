@@ -1674,4 +1674,4 @@ Stage 01 is complete only when all of the following are evidenced by fresh comma
 
 ## Stage 02 Handoff
 
-The next implementation-plan stage may start only after Stage 01 is implemented, verified, and reviewed. Stage 02 will map these contract IDs and immutable artifacts to PostgreSQL 15 DDL, Alembic migrations, foreign keys, normalized association tables, indexes, and NCP Cloud DB integration tests. It must consume the exported Stage 01 schemas without renaming the frozen public interfaces.
+The [Stage 02 PostgreSQL Storage implementation plan](2026-08-17-stage-02-postgresql-storage-implementation-plan.md) may start only after Stage 01 is implemented, verified, and reviewed. Stage 02 maps these contract IDs and immutable artifacts to PostgreSQL 15 DDL, Alembic migrations, foreign keys, normalized association tables, indexes, and NCP Cloud DB integration tests. It must consume the exported Stage 01 schemas without renaming the frozen public interfaces.
