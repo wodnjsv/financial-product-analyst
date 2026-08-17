@@ -1,4 +1,3 @@
-import json
 from copy import deepcopy
 
 import pytest
@@ -12,6 +11,7 @@ from financial_agent.contracts import (
     EvaluationApiResponse,
     ReleasedAnswer,
     VerificationReport,
+    VerificationStatus,
 )
 from financial_agent.contracts.enums import AnswerDisposition
 
@@ -33,6 +33,20 @@ def test_pass_can_recommend_limitation(load_fixture) -> None:
     }
     report = VerificationReport.model_validate(payload)
     assert report.recommended_answer_disposition is AnswerDisposition.LIMITATION
+
+
+def test_fail_with_no_disposition_or_releaseable_claims_is_valid(load_fixture) -> None:
+    payload = load_fixture("verification_report.json") | {
+        "verification_status": "fail",
+        "recommended_answer_disposition": None,
+        "releaseable_claim_ids": [],
+    }
+
+    report = VerificationReport.model_validate(payload)
+
+    assert report.verification_status is VerificationStatus.FAIL
+    assert report.recommended_answer_disposition is None
+    assert report.releaseable_claim_ids == ()
 
 
 @pytest.mark.parametrize(
@@ -129,15 +143,55 @@ def test_verification_report_rejects_duplicate_ids(load_fixture, mutation) -> No
         VerificationReport.model_validate(payload)
 
 
-def test_answer_plan_contains_ids_but_no_factual_text_fields(load_fixture) -> None:
+def test_answer_plan_contains_ids_but_no_factual_content_fields(load_fixture) -> None:
     plan = AnswerPlan.model_validate(load_fixture("answer_plan.json"))
-    schema = json.dumps(AnswerPlan.model_json_schema()).lower()
+    schema = AnswerPlan.model_json_schema()
+    property_names: set[str] = set()
+
+    def collect_property_names(node: object) -> None:
+        if isinstance(node, dict):
+            properties = node.get("properties")
+            if isinstance(properties, dict):
+                property_names.update(properties)
+            for value in node.values():
+                collect_property_names(value)
+        elif isinstance(node, list):
+            for value in node:
+                collect_property_names(value)
+
+    collect_property_names(schema)
+
     assert plan.blocks[0].template_id == "ranking.intro.v1"
-    for forbidden in ("text", "product_name_value", "source_name", "rendered_value"):
-        assert forbidden not in schema
+    assert property_names.isdisjoint(
+        {
+            "text",
+            "title",
+            "value",
+            "product_name_value",
+            "source_name",
+            "rendered_value",
+            "markdown",
+            "html",
+        }
+    )
 
 
-def test_answer_plan_exposes_only_structural_fields() -> None:
+def test_answer_plan_exposes_exact_approved_structural_fields() -> None:
+    assert set(AnswerPlan.model_fields) == {
+        "schema_version",
+        "request_key",
+        "run_id",
+        "dataset_version",
+        "cutoff_date",
+        "producer",
+        "created_at",
+        "verification_report_id",
+        "answer_disposition",
+        "renderer_profile_id",
+        "blocks",
+        "source_display",
+        "plan_hash",
+    }
     assert set(ClaimSlot.model_fields) == {"slot_id", "claim_id"}
     assert set(AnswerRow.model_fields) == {"cells"}
     assert set(AnswerBlock.model_fields) == {

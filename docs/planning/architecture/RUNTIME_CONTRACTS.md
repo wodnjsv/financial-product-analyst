@@ -240,6 +240,8 @@ Verifier는 `EvidenceBundle`을 수정하지 않고 독립된 판정을 반환�
 
 `AnswerPlan`은 자유 문장 초안이 아니라 검증된 Claim을 등록된 문단·표·비교·제한 템플릿에 배치하는 구조화 계획이다. Claim Gate는 Claim·블록·열·커버리지를 검사하고, Renderer가 숫자·날짜·단위·출처를 실제 문자열로 만든다.
 
+Stage 01의 `AnswerPlan` 계약은 `renderer_profile_id`, `template_id`, `columns`, block·slot ID와 Claim ID를 일반 `Identifier`로 유지하며 사실값을 담는 필드가 없다는 구조만 보장한다. 이 단계의 타입 검증은 등록부 승인이나 호환성을 증명하지 않는다. 출시 전의 Claim Gate는 등록되지 않은 renderer profile, template, column, block·slot 사용을 모두 거부하고, Claim과 template·column·slot의 바인딩 호환성까지 반드시 검증해야 한다. 이 검사를 통과한 계획만 Renderer와 `ReleasedAnswer`로 전달할 수 있다.
+
 Claim Gate를 통과한 `ReleasedAnswer`는 다음을 포함한다.
 
 | 필드 | 의미 |
