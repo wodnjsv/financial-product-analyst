@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "request_key": "5fb658a65798ff794b8f3ac0414da936ecd806469109317e2a27c11e513d78b4",
+  "run_id": "run-syn-001",
+  "dataset_version": "2026-07-11-v1",
+  "cutoff_date": "2026-07-11",
+  "producer": "evidence-builder",
+  "created_at": "2026-08-17T00:00:00Z",
+  "bundle_id": "bundle-syn-001",
+  "answered_subtasks": ["s1", "s2"],
+  "unanswered_subtasks": [],
+  "evidence_ids": ["evidence-aum-1"],
+  "calculation_ids": ["calculation-rank-1"],
+  "candidate_claim_ids": ["claim-rank-1"],
+  "exclusion_evidence_ids": [],
+  "missing_data": [],
+  "applied_defaults": [],
+  "limitations": [],
+  "bundle_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+}
