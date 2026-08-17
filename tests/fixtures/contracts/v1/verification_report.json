@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "request_key": "5fb658a65798ff794b8f3ac0414da936ecd806469109317e2a27c11e513d78b4",
+  "run_id": "run-syn-001",
+  "dataset_version": "2026-07-11-v1",
+  "cutoff_date": "2026-07-11",
+  "producer": "verifier",
+  "created_at": "2026-08-17T00:00:00Z",
+  "verification_report_id": "verification-syn-001",
+  "verification_status": "pass",
+  "recommended_answer_disposition": "answer",
+  "claim_checks": [
+    {
+      "check_id": "check-claim-rank-1",
+      "target_type": "claim",
+      "target_id": "claim-rank-1",
+      "rule_id": "rule-claim-support",
+      "rule_version": "v1",
+      "status": "pass",
+      "reason_code": "claim-supported",
+      "related_evidence_ids": ["evidence-aum-1"],
+      "repairability": "none"
+    }
+  ],
+  "calculation_checks": [
+    {
+      "check_id": "check-calculation-rank-1",
+      "target_type": "calculation",
+      "target_id": "calculation-rank-1",
+      "rule_id": "rule-calculation-reproducible",
+      "rule_version": "v1",
+      "status": "pass",
+      "reason_code": "calculation-reproduced",
+      "related_evidence_ids": ["evidence-aum-1"],
+      "repairability": "none"
+    }
+  ],
+  "subtask_coverage": [
+    {
+      "subtask_id": "q1",
+      "importance": "critical",
+      "answered": true,
+      "reason_code": null
+    },
+    {
+      "subtask_id": "q2",
+      "importance": "critical",
+      "answered": true,
+      "reason_code": null
+    }
+  ],
+  "releaseable_claim_ids": ["claim-rank-1"],
+  "rejected_claims": [],
+  "warnings": [],
+  "disposition_reasons": [],
+  "repair_actions": []
+}
