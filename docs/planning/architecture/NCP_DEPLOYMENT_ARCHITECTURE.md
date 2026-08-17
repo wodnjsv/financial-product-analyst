@@ -6,11 +6,11 @@
 
 **Scope:** Naver Cloud Platform의 저장소 배치, 서버 사양, 네트워크, 백업, 모니터링 기준
 
-**Related:** [공식 평가 API 규격](../../reference/official-evaluation-api.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [Financial Agent Core 구현 계획](../tasks/2026-08-10-financial-agent-core-implementation-plan.md)
+**Related:** [공식 평가 API 규격](../../reference/official-evaluation-api.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [Stage 01 Runtime Contracts 구현 계획](../tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md)
 
 이 문서는 금융상품 Agent를 Naver Cloud Platform에 배포할 때 사용할 인프라 기준을 기록한다. 금융 데이터는 계속 **2026-07-11**을 컷오프로 사용한다. 인프라 제품과 소프트웨어 버전은 실제 배포 시점에 NCP가 지원하는 안정 버전을 사용하되, 금융 데이터 기준일을 바꾸지 않는다.
 
-현재 구현 계획에 적힌 DuckDB·로컬 인덱스는 이 결정 이전의 제안이다. Task 2 전체 설계를 확정할 때 새 ADR과 수정 구현 계획에서 이 문서를 참조한다. 기존 계획이나 ADR을 소급해서 덮어쓰지 않는다.
+폐기된 2026-08-10 구현 계획의 DuckDB·로컬 인덱스는 이 결정 이전의 제안이다. 새 단계별 구현 계획은 이 문서를 NCP 기준으로 사용하며, 기존 계획이나 ADR을 소급해서 덮어쓰지 않는다.
 
 ## 1. 결정 요약
 
