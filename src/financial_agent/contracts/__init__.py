@@ -15,6 +15,17 @@ from .canonical import (
     canonical_sha256,
     normalize_question,
 )
+from .execution import (
+    BindingValue,
+    Exclusion,
+    ExecutionGraph,
+    ExecutionTask,
+    NamedValue,
+    ResultField,
+    ResultRow,
+    ResultWarning,
+    ToolResult,
+)
 from .enums import (
     AnswerDisposition,
     BlockType,
@@ -114,4 +125,13 @@ __all__ = [
     "canonical_json_bytes",
     "canonical_sha256",
     "normalize_question",
+    "BindingValue",
+    "Exclusion",
+    "ExecutionGraph",
+    "ExecutionTask",
+    "NamedValue",
+    "ResultField",
+    "ResultRow",
+    "ResultWarning",
+    "ToolResult",
 ]
