@@ -1,0 +1,322 @@
+{
+  "$defs": {
+    "BindingSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_name": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Binding Name",
+          "type": "string"
+        },
+        "cardinality": {
+          "$ref": "#/$defs/Cardinality"
+        },
+        "producer_subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Producer Subtask Id",
+          "type": "string"
+        },
+        "value_type": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Value Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_name",
+        "value_type",
+        "producer_subtask_id",
+        "cardinality"
+      ],
+      "title": "BindingSpec",
+      "type": "object"
+    },
+    "Capability": {
+      "enum": [
+        "rdb_lookup",
+        "graph_traversal",
+        "keyword_search",
+        "vector_search",
+        "financial_calculation",
+        "ranking",
+        "similarity",
+        "comparison"
+      ],
+      "title": "Capability",
+      "type": "string"
+    },
+    "Cardinality": {
+      "enum": [
+        "one",
+        "many"
+      ],
+      "title": "Cardinality",
+      "type": "string"
+    },
+    "ExecutionTask": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_inputs": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Binding Inputs",
+          "type": "array"
+        },
+        "budget_ms": {
+          "exclusiveMinimum": 0,
+          "title": "Budget Ms",
+          "type": "integer"
+        },
+        "capability": {
+          "$ref": "#/$defs/Capability"
+        },
+        "depends_on": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "expected_output_type": {
+          "$ref": "#/$defs/ResultType"
+        },
+        "literal_inputs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/NamedValue"
+          },
+          "title": "Literal Inputs",
+          "type": "array"
+        },
+        "operation_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "required_evidence_fields": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Required Evidence Fields",
+          "type": "array"
+        },
+        "task_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Task Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "capability",
+        "operation_id",
+        "expected_output_type",
+        "required_evidence_fields",
+        "budget_ms"
+      ],
+      "title": "ExecutionTask",
+      "type": "object"
+    },
+    "NamedValue": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "format": "date",
+                    "type": "string"
+                  },
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "NamedValue",
+      "type": "object"
+    },
+    "ResultType": {
+      "enum": [
+        "row_set",
+        "scalar",
+        "entity_ref",
+        "relation_path",
+        "calculation",
+        "comparison_decision"
+      ],
+      "title": "ResultType",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "binding_specs": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/BindingSpec"
+      },
+      "title": "Binding Specs",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "critical_path": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Critical Path",
+      "type": "array"
+    },
+    "cutoff_date": {
+      "default": "2026-07-11",
+      "format": "date",
+      "title": "Cutoff Date",
+      "type": "string"
+    },
+    "dataset_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "graph_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Graph Id",
+      "type": "string"
+    },
+    "producer": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Producer",
+      "type": "string"
+    },
+    "request_key": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Key",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "tasks": {
+      "items": {
+        "$ref": "#/$defs/ExecutionTask"
+      },
+      "title": "Tasks",
+      "type": "array"
+    },
+    "total_budget_ms": {
+      "maximum": 55000,
+      "minimum": 0,
+      "title": "Total Budget Ms",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "request_key",
+    "run_id",
+    "dataset_version",
+    "producer",
+    "created_at",
+    "graph_id",
+    "tasks",
+    "critical_path",
+    "total_budget_ms"
+  ],
+  "title": "ExecutionGraph",
+  "type": "object"
+}

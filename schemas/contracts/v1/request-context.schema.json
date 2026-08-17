@@ -1,0 +1,224 @@
+{
+  "$defs": {
+    "EntityResolutionStatus": {
+      "enum": [
+        "unresolved",
+        "resolved",
+        "ambiguous",
+        "not_found",
+        "invalid_at_cutoff"
+      ],
+      "title": "EntityResolutionStatus",
+      "type": "string"
+    },
+    "InteractionMode": {
+      "enum": [
+        "competition"
+      ],
+      "title": "InteractionMode",
+      "type": "string"
+    },
+    "NamedEntityMention": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_entity_types": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Expected Entity Types",
+          "type": "array"
+        },
+        "mention_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Mention Id",
+          "type": "string"
+        },
+        "resolution_status": {
+          "$ref": "#/$defs/EntityResolutionStatus",
+          "default": "unresolved"
+        },
+        "segment_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mention_id",
+        "segment_id",
+        "text",
+        "expected_entity_types"
+      ],
+      "title": "NamedEntityMention",
+      "type": "object"
+    },
+    "ReferenceMention": {
+      "additionalProperties": false,
+      "properties": {
+        "end_char": {
+          "title": "End Char",
+          "type": "integer"
+        },
+        "mention_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Mention Id",
+          "type": "string"
+        },
+        "segment_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "start_char": {
+          "title": "Start Char",
+          "type": "integer"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mention_id",
+        "segment_id",
+        "text",
+        "start_char",
+        "end_char"
+      ],
+      "title": "ReferenceMention",
+      "type": "object"
+    },
+    "Segment": {
+      "additionalProperties": false,
+      "properties": {
+        "ordinal": {
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "segment_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "ordinal",
+        "text"
+      ],
+      "title": "Segment",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "cutoff_date": {
+      "default": "2026-07-11",
+      "format": "date",
+      "title": "Cutoff Date",
+      "type": "string"
+    },
+    "dataset_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "deadline_at": {
+      "format": "date-time",
+      "title": "Deadline At",
+      "type": "string"
+    },
+    "mode": {
+      "$ref": "#/$defs/InteractionMode",
+      "default": "competition"
+    },
+    "named_entities": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/NamedEntityMention"
+      },
+      "title": "Named Entities",
+      "type": "array"
+    },
+    "producer": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Producer",
+      "type": "string"
+    },
+    "question": {
+      "title": "Question",
+      "type": "string"
+    },
+    "question_id": {
+      "title": "Question Id",
+      "type": "string"
+    },
+    "reference_mentions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ReferenceMention"
+      },
+      "title": "Reference Mentions",
+      "type": "array"
+    },
+    "request_key": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Key",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/Segment"
+      },
+      "title": "Segments",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_key",
+    "run_id",
+    "dataset_version",
+    "producer",
+    "created_at",
+    "question_id",
+    "question",
+    "segments",
+    "deadline_at"
+  ],
+  "title": "RequestContext",
+  "type": "object"
+}

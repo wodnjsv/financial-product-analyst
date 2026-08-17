@@ -1,0 +1,246 @@
+{
+  "$defs": {
+    "AppliedDefault": {
+      "additionalProperties": false,
+      "properties": {
+        "policy_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Subtask Id",
+          "type": "string"
+        },
+        "value_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Value Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subtask_id",
+        "policy_id",
+        "value_id"
+      ],
+      "title": "AppliedDefault",
+      "type": "object"
+    },
+    "Limitation": {
+      "additionalProperties": false,
+      "properties": {
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "related_evidence_ids": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Related Evidence Ids",
+          "type": "array"
+        },
+        "subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Subtask Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subtask_id",
+        "reason_code"
+      ],
+      "title": "Limitation",
+      "type": "object"
+    },
+    "MissingData": {
+      "additionalProperties": false,
+      "properties": {
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "requirement_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Requirement Id",
+          "type": "string"
+        },
+        "subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Subtask Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subtask_id",
+        "requirement_id",
+        "reason_code"
+      ],
+      "title": "MissingData",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "answered_subtasks": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Answered Subtasks",
+      "type": "array"
+    },
+    "applied_defaults": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AppliedDefault"
+      },
+      "title": "Applied Defaults",
+      "type": "array"
+    },
+    "bundle_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Bundle Hash",
+      "type": "string"
+    },
+    "bundle_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Bundle Id",
+      "type": "string"
+    },
+    "calculation_ids": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Calculation Ids",
+      "type": "array"
+    },
+    "candidate_claim_ids": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Candidate Claim Ids",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "cutoff_date": {
+      "default": "2026-07-11",
+      "format": "date",
+      "title": "Cutoff Date",
+      "type": "string"
+    },
+    "dataset_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "evidence_ids": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Evidence Ids",
+      "type": "array"
+    },
+    "exclusion_evidence_ids": {
+      "default": [],
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Exclusion Evidence Ids",
+      "type": "array"
+    },
+    "limitations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Limitation"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "missing_data": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/MissingData"
+      },
+      "title": "Missing Data",
+      "type": "array"
+    },
+    "producer": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Producer",
+      "type": "string"
+    },
+    "request_key": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Key",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "unanswered_subtasks": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Unanswered Subtasks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_key",
+    "run_id",
+    "dataset_version",
+    "producer",
+    "created_at",
+    "bundle_id",
+    "answered_subtasks",
+    "unanswered_subtasks",
+    "evidence_ids",
+    "calculation_ids",
+    "candidate_claim_ids",
+    "bundle_hash"
+  ],
+  "title": "EvidenceBundle",
+  "type": "object"
+}

@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "SupportKind": {
+      "enum": [
+        "direct",
+        "calculation",
+        "scope",
+        "exclusion",
+        "policy"
+      ],
+      "title": "SupportKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "calculation_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Calculation Id"
+    },
+    "claim_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Claim Id",
+      "type": "string"
+    },
+    "evidence_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Evidence Id"
+    },
+    "ordinal": {
+      "title": "Ordinal",
+      "type": "integer"
+    },
+    "support_kind": {
+      "$ref": "#/$defs/SupportKind"
+    },
+    "support_role": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Support Role",
+      "type": "string"
+    }
+  },
+  "required": [
+    "claim_id",
+    "support_kind",
+    "support_role",
+    "ordinal"
+  ],
+  "title": "ClaimSupport",
+  "type": "object"
+}

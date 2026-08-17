@@ -1,0 +1,210 @@
+{
+  "$defs": {
+    "AnswerBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "block_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Block Id",
+          "type": "string"
+        },
+        "block_type": {
+          "$ref": "#/$defs/BlockType"
+        },
+        "claim_slots": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ClaimSlot"
+          },
+          "title": "Claim Slots",
+          "type": "array"
+        },
+        "columns": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "rows": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AnswerRow"
+          },
+          "title": "Rows",
+          "type": "array"
+        },
+        "template_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Template Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "block_id",
+        "block_type",
+        "template_id"
+      ],
+      "title": "AnswerBlock",
+      "type": "object"
+    },
+    "AnswerDisposition": {
+      "enum": [
+        "answer",
+        "partial",
+        "limitation",
+        "abstain"
+      ],
+      "title": "AnswerDisposition",
+      "type": "string"
+    },
+    "AnswerRow": {
+      "additionalProperties": false,
+      "properties": {
+        "cells": {
+          "items": {
+            "$ref": "#/$defs/ClaimSlot"
+          },
+          "title": "Cells",
+          "type": "array"
+        }
+      },
+      "required": [
+        "cells"
+      ],
+      "title": "AnswerRow",
+      "type": "object"
+    },
+    "BlockType": {
+      "enum": [
+        "summary",
+        "fact_list",
+        "table",
+        "comparison",
+        "calculation",
+        "limitation",
+        "abstention"
+      ],
+      "title": "BlockType",
+      "type": "string"
+    },
+    "ClaimSlot": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "slot_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Slot Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slot_id",
+        "claim_id"
+      ],
+      "title": "ClaimSlot",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "answer_disposition": {
+      "$ref": "#/$defs/AnswerDisposition"
+    },
+    "blocks": {
+      "items": {
+        "$ref": "#/$defs/AnswerBlock"
+      },
+      "title": "Blocks",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "cutoff_date": {
+      "default": "2026-07-11",
+      "format": "date",
+      "title": "Cutoff Date",
+      "type": "string"
+    },
+    "dataset_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "plan_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Plan Hash",
+      "type": "string"
+    },
+    "producer": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Producer",
+      "type": "string"
+    },
+    "renderer_profile_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Renderer Profile Id",
+      "type": "string"
+    },
+    "request_key": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Key",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_display": {
+      "const": "inline_numbered",
+      "default": "inline_numbered",
+      "title": "Source Display",
+      "type": "string"
+    },
+    "verification_report_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Verification Report Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_key",
+    "run_id",
+    "dataset_version",
+    "producer",
+    "created_at",
+    "verification_report_id",
+    "answer_disposition",
+    "renderer_profile_id",
+    "blocks",
+    "plan_hash"
+  ],
+  "title": "AnswerPlan",
+  "type": "object"
+}

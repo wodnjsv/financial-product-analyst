@@ -1,0 +1,656 @@
+{
+  "$defs": {
+    "AmbiguityDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "disclosure_required": {
+          "title": "Disclosure Required",
+          "type": "boolean"
+        },
+        "issue_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Issue Code",
+          "type": "string"
+        },
+        "outcome_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Outcome Id",
+          "type": "string"
+        },
+        "policy_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Policy Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "issue_code",
+        "policy_id",
+        "outcome_id",
+        "disclosure_required"
+      ],
+      "title": "AmbiguityDecision",
+      "type": "object"
+    },
+    "BindingSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_name": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Binding Name",
+          "type": "string"
+        },
+        "cardinality": {
+          "$ref": "#/$defs/Cardinality"
+        },
+        "producer_subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Producer Subtask Id",
+          "type": "string"
+        },
+        "value_type": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Value Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "binding_name",
+        "value_type",
+        "producer_subtask_id",
+        "cardinality"
+      ],
+      "title": "BindingSpec",
+      "type": "object"
+    },
+    "Capability": {
+      "enum": [
+        "rdb_lookup",
+        "graph_traversal",
+        "keyword_search",
+        "vector_search",
+        "financial_calculation",
+        "ranking",
+        "similarity",
+        "comparison"
+      ],
+      "title": "Capability",
+      "type": "string"
+    },
+    "Cardinality": {
+      "enum": [
+        "one",
+        "many"
+      ],
+      "title": "Cardinality",
+      "type": "string"
+    },
+    "DependencyEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "downstream_subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Downstream Subtask Id",
+          "type": "string"
+        },
+        "upstream_subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Upstream Subtask Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "upstream_subtask_id",
+        "downstream_subtask_id"
+      ],
+      "title": "DependencyEdge",
+      "type": "object"
+    },
+    "EntityResolutionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_entity_types": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Expected Entity Types",
+          "type": "array"
+        },
+        "mention_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Mention Id",
+          "type": "string"
+        },
+        "resolution_request_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Resolution Request Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resolution_request_id",
+        "mention_id",
+        "expected_entity_types"
+      ],
+      "title": "EntityResolutionRequest",
+      "type": "object"
+    },
+    "FilterSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "field_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Field Id",
+          "type": "string"
+        },
+        "operator_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Operator Id",
+          "type": "string"
+        },
+        "subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Subtask Id",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "format": "date",
+                    "type": "string"
+                  },
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "subtask_id",
+        "field_id",
+        "operator_id",
+        "value"
+      ],
+      "title": "FilterSpec",
+      "type": "object"
+    },
+    "InitialAnswerability": {
+      "enum": [
+        "supported",
+        "requires_normalization",
+        "requires_additional_data",
+        "unsupported"
+      ],
+      "title": "InitialAnswerability",
+      "type": "string"
+    },
+    "IntentType": {
+      "enum": [
+        "lookup",
+        "screen",
+        "rank",
+        "compare",
+        "aggregate",
+        "calculate",
+        "similar",
+        "explain"
+      ],
+      "title": "IntentType",
+      "type": "string"
+    },
+    "MetricSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "metric_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Metric Id",
+          "type": "string"
+        },
+        "period_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Period Id"
+        },
+        "return_type_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Return Type Id"
+        },
+        "subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Subtask Id",
+          "type": "string"
+        },
+        "unit_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit Id"
+        }
+      },
+      "required": [
+        "subtask_id",
+        "metric_id"
+      ],
+      "title": "MetricSpec",
+      "type": "object"
+    },
+    "OperationSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "operation_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "parameter_ids": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Parameter Ids",
+          "type": "array"
+        },
+        "subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Subtask Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subtask_id",
+        "operation_id"
+      ],
+      "title": "OperationSpec",
+      "type": "object"
+    },
+    "ProductFamily": {
+      "enum": [
+        "domestic_bond",
+        "domestic_etf",
+        "overseas_etf",
+        "public_fund"
+      ],
+      "title": "ProductFamily",
+      "type": "string"
+    },
+    "ReferenceMentionType": {
+      "enum": [
+        "explicit",
+        "ellipsis"
+      ],
+      "title": "ReferenceMentionType",
+      "type": "string"
+    },
+    "ReferenceTargetKind": {
+      "enum": [
+        "entity_mention",
+        "binding"
+      ],
+      "title": "ReferenceTargetKind",
+      "type": "string"
+    },
+    "ResolvedReference": {
+      "additionalProperties": false,
+      "properties": {
+        "mention_type": {
+          "$ref": "#/$defs/ReferenceMentionType"
+        },
+        "reference_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reference Id",
+          "type": "string"
+        },
+        "segment_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "target_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Target Id",
+          "type": "string"
+        },
+        "target_kind": {
+          "$ref": "#/$defs/ReferenceTargetKind"
+        }
+      },
+      "required": [
+        "reference_id",
+        "segment_id",
+        "mention_type",
+        "target_kind",
+        "target_id"
+      ],
+      "title": "ResolvedReference",
+      "type": "object"
+    },
+    "ResultShape": {
+      "enum": [
+        "single_value",
+        "product_list",
+        "top_k",
+        "comparison_table",
+        "explanation"
+      ],
+      "title": "ResultShape",
+      "type": "string"
+    },
+    "Subtask": {
+      "additionalProperties": false,
+      "properties": {
+        "importance": {
+          "$ref": "#/$defs/SubtaskImportance"
+        },
+        "intent_type": {
+          "$ref": "#/$defs/IntentType"
+        },
+        "operation_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Operation Ids",
+          "type": "array"
+        },
+        "subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Subtask Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subtask_id",
+        "intent_type",
+        "importance",
+        "operation_ids"
+      ],
+      "title": "Subtask",
+      "type": "object"
+    },
+    "SubtaskImportance": {
+      "enum": [
+        "critical",
+        "required_independent",
+        "optional"
+      ],
+      "title": "SubtaskImportance",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "ambiguity_decisions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/AmbiguityDecision"
+      },
+      "title": "Ambiguity Decisions",
+      "type": "array"
+    },
+    "binding_specs": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/BindingSpec"
+      },
+      "title": "Binding Specs",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "cutoff_date": {
+      "default": "2026-07-11",
+      "format": "date",
+      "title": "Cutoff Date",
+      "type": "string"
+    },
+    "dataset_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "dependency_edges": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/DependencyEdge"
+      },
+      "title": "Dependency Edges",
+      "type": "array"
+    },
+    "entity_resolution_requests": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/EntityResolutionRequest"
+      },
+      "title": "Entity Resolution Requests",
+      "type": "array"
+    },
+    "filters": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/FilterSpec"
+      },
+      "title": "Filters",
+      "type": "array"
+    },
+    "initial_answerability": {
+      "$ref": "#/$defs/InitialAnswerability"
+    },
+    "intent_types": {
+      "items": {
+        "$ref": "#/$defs/IntentType"
+      },
+      "title": "Intent Types",
+      "type": "array"
+    },
+    "metrics": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/MetricSpec"
+      },
+      "title": "Metrics",
+      "type": "array"
+    },
+    "operations": {
+      "items": {
+        "$ref": "#/$defs/OperationSpec"
+      },
+      "title": "Operations",
+      "type": "array"
+    },
+    "producer": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Producer",
+      "type": "string"
+    },
+    "product_families": {
+      "items": {
+        "$ref": "#/$defs/ProductFamily"
+      },
+      "title": "Product Families",
+      "type": "array"
+    },
+    "request_key": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Key",
+      "type": "string"
+    },
+    "requested_capabilities": {
+      "items": {
+        "$ref": "#/$defs/Capability"
+      },
+      "title": "Requested Capabilities",
+      "type": "array"
+    },
+    "resolved_references": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ResolvedReference"
+      },
+      "title": "Resolved References",
+      "type": "array"
+    },
+    "result_shape": {
+      "$ref": "#/$defs/ResultShape"
+    },
+    "run_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "subtasks": {
+      "items": {
+        "$ref": "#/$defs/Subtask"
+      },
+      "title": "Subtasks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_key",
+    "run_id",
+    "dataset_version",
+    "producer",
+    "created_at",
+    "intent_types",
+    "product_families",
+    "subtasks",
+    "operations",
+    "result_shape",
+    "requested_capabilities",
+    "initial_answerability"
+  ],
+  "title": "QueryPlan",
+  "type": "object"
+}

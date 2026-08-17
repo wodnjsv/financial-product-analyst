@@ -1,0 +1,34 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "answer": {
+      "title": "Answer",
+      "type": "string"
+    },
+    "question": {
+      "title": "Question",
+      "type": "string"
+    },
+    "question_id": {
+      "title": "Question Id",
+      "type": "string"
+    },
+    "retrieved_context": {
+      "title": "Retrieved Context",
+      "type": "string"
+    },
+    "think_trace": {
+      "title": "Think Trace",
+      "type": "string"
+    }
+  },
+  "required": [
+    "question_id",
+    "question",
+    "retrieved_context",
+    "think_trace",
+    "answer"
+  ],
+  "title": "EvaluationApiResponse",
+  "type": "object"
+}

@@ -1,0 +1,318 @@
+{
+  "$defs": {
+    "CalculationParameter": {
+      "additionalProperties": false,
+      "properties": {
+        "parameter_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Parameter Id",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "format": "date",
+                    "type": "string"
+                  },
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "parameter_id",
+        "value"
+      ],
+      "title": "CalculationParameter",
+      "type": "object"
+    },
+    "CalculationType": {
+      "enum": [
+        "conversion",
+        "return",
+        "ranking",
+        "aggregation",
+        "comparison",
+        "similarity"
+      ],
+      "title": "CalculationType",
+      "type": "string"
+    },
+    "PopulationDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "filter_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Filter Ids",
+          "type": "array"
+        },
+        "member_count": {
+          "minimum": 0,
+          "title": "Member Count",
+          "type": "integer"
+        },
+        "population_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Population Hash",
+          "type": "string"
+        },
+        "population_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Population Id",
+          "type": "string"
+        },
+        "scope_evidence_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Scope Evidence Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "population_id",
+        "scope_evidence_id",
+        "filter_ids",
+        "member_count",
+        "population_hash"
+      ],
+      "title": "PopulationDefinition",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "calculation_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Calculation Hash",
+      "type": "string"
+    },
+    "calculation_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Calculation Id",
+      "type": "string"
+    },
+    "calculation_type": {
+      "$ref": "#/$defs/CalculationType"
+    },
+    "currency": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Currency"
+    },
+    "exclusion_evidence_ids": {
+      "default": [],
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Exclusion Evidence Ids",
+      "type": "array"
+    },
+    "formula_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Formula Id",
+      "type": "string"
+    },
+    "formula_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Formula Version",
+      "type": "string"
+    },
+    "input_calculation_ids": {
+      "default": [],
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Input Calculation Ids",
+      "type": "array"
+    },
+    "input_evidence_ids": {
+      "default": [],
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Input Evidence Ids",
+      "type": "array"
+    },
+    "parameters": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/CalculationParameter"
+      },
+      "title": "Parameters",
+      "type": "array"
+    },
+    "population_definition": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PopulationDefinition"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "result_value": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Result Value"
+    },
+    "rounding_rule": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rounding Rule"
+    },
+    "tie_break_rule": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tie Break Rule"
+    },
+    "unit": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Unit"
+    }
+  },
+  "required": [
+    "calculation_id",
+    "calculation_type",
+    "formula_id",
+    "formula_version",
+    "result_value",
+    "calculation_hash"
+  ],
+  "title": "CalculationRecord",
+  "type": "object"
+}

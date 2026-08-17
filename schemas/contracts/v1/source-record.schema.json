@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "authority_tier": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Authority Tier",
+      "type": "string"
+    },
+    "content_checksum": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Content Checksum",
+      "type": "string"
+    },
+    "eligible_for_claim": {
+      "title": "Eligible For Claim",
+      "type": "boolean"
+    },
+    "license_or_usage_note": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License Or Usage Note"
+    },
+    "publisher": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Publisher",
+      "type": "string"
+    },
+    "publisher_type": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Publisher Type",
+      "type": "string"
+    },
+    "source_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "source_locator_root": {
+      "title": "Source Locator Root",
+      "type": "string"
+    },
+    "source_title": {
+      "title": "Source Title",
+      "type": "string"
+    },
+    "source_type": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Source Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_id",
+    "publisher",
+    "publisher_type",
+    "source_title",
+    "source_type",
+    "authority_tier",
+    "source_locator_root",
+    "content_checksum",
+    "eligible_for_claim"
+  ],
+  "title": "SourceRecord",
+  "type": "object"
+}

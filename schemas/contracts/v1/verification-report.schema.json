@@ -1,0 +1,388 @@
+{
+  "$defs": {
+    "AnswerDisposition": {
+      "enum": [
+        "answer",
+        "partial",
+        "limitation",
+        "abstain"
+      ],
+      "title": "AnswerDisposition",
+      "type": "string"
+    },
+    "CheckResult": {
+      "additionalProperties": false,
+      "properties": {
+        "check_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Check Id",
+          "type": "string"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "related_evidence_ids": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Related Evidence Ids",
+          "type": "array"
+        },
+        "repairability": {
+          "$ref": "#/$defs/Repairability"
+        },
+        "rule_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "rule_version": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Rule Version",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CheckStatus"
+        },
+        "target_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Target Id",
+          "type": "string"
+        },
+        "target_type": {
+          "$ref": "#/$defs/CheckTargetType"
+        }
+      },
+      "required": [
+        "check_id",
+        "target_type",
+        "target_id",
+        "rule_id",
+        "rule_version",
+        "status",
+        "reason_code",
+        "repairability"
+      ],
+      "title": "CheckResult",
+      "type": "object"
+    },
+    "CheckStatus": {
+      "enum": [
+        "pass",
+        "fail",
+        "warning",
+        "not_applicable"
+      ],
+      "title": "CheckStatus",
+      "type": "string"
+    },
+    "CheckTargetType": {
+      "enum": [
+        "claim",
+        "evidence",
+        "calculation",
+        "subtask"
+      ],
+      "title": "CheckTargetType",
+      "type": "string"
+    },
+    "DispositionReason": {
+      "additionalProperties": false,
+      "properties": {
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "related_claim_ids": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Related Claim Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "reason_code"
+      ],
+      "title": "DispositionReason",
+      "type": "object"
+    },
+    "RejectedClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "reason_code"
+      ],
+      "title": "RejectedClaim",
+      "type": "object"
+    },
+    "RepairAction": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Action Id",
+          "type": "string"
+        },
+        "action_type": {
+          "enum": [
+            "ledger_rebuild",
+            "llm_repair"
+          ],
+          "title": "Action Type",
+          "type": "string"
+        },
+        "target_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Target Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_id",
+        "action_type",
+        "target_id"
+      ],
+      "title": "RepairAction",
+      "type": "object"
+    },
+    "Repairability": {
+      "enum": [
+        "none",
+        "ledger_rebuild",
+        "llm_repair"
+      ],
+      "title": "Repairability",
+      "type": "string"
+    },
+    "SubtaskCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "answered": {
+          "title": "Answered",
+          "type": "boolean"
+        },
+        "importance": {
+          "$ref": "#/$defs/SubtaskImportance"
+        },
+        "reason_code": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason Code"
+        },
+        "subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Subtask Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subtask_id",
+        "importance",
+        "answered"
+      ],
+      "title": "SubtaskCoverage",
+      "type": "object"
+    },
+    "SubtaskImportance": {
+      "enum": [
+        "critical",
+        "required_independent",
+        "optional"
+      ],
+      "title": "SubtaskImportance",
+      "type": "string"
+    },
+    "VerificationStatus": {
+      "enum": [
+        "pass",
+        "fail"
+      ],
+      "title": "VerificationStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "calculation_checks": {
+      "items": {
+        "$ref": "#/$defs/CheckResult"
+      },
+      "title": "Calculation Checks",
+      "type": "array"
+    },
+    "claim_checks": {
+      "items": {
+        "$ref": "#/$defs/CheckResult"
+      },
+      "title": "Claim Checks",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "cutoff_date": {
+      "default": "2026-07-11",
+      "format": "date",
+      "title": "Cutoff Date",
+      "type": "string"
+    },
+    "dataset_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "disposition_reasons": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/DispositionReason"
+      },
+      "title": "Disposition Reasons",
+      "type": "array"
+    },
+    "producer": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Producer",
+      "type": "string"
+    },
+    "recommended_answer_disposition": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AnswerDisposition"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "rejected_claims": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RejectedClaim"
+      },
+      "title": "Rejected Claims",
+      "type": "array"
+    },
+    "releaseable_claim_ids": {
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Releaseable Claim Ids",
+      "type": "array"
+    },
+    "repair_actions": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RepairAction"
+      },
+      "title": "Repair Actions",
+      "type": "array"
+    },
+    "request_key": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Key",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "subtask_coverage": {
+      "items": {
+        "$ref": "#/$defs/SubtaskCoverage"
+      },
+      "title": "Subtask Coverage",
+      "type": "array"
+    },
+    "verification_report_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Verification Report Id",
+      "type": "string"
+    },
+    "verification_status": {
+      "$ref": "#/$defs/VerificationStatus"
+    },
+    "warnings": {
+      "default": [],
+      "items": {
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_key",
+    "run_id",
+    "dataset_version",
+    "producer",
+    "created_at",
+    "verification_report_id",
+    "verification_status",
+    "recommended_answer_disposition",
+    "claim_checks",
+    "calculation_checks",
+    "subtask_coverage",
+    "releaseable_claim_ids"
+  ],
+  "title": "VerificationReport",
+  "type": "object"
+}

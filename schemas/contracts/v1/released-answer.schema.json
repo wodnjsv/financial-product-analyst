@@ -1,0 +1,133 @@
+{
+  "$defs": {
+    "AnswerDisposition": {
+      "enum": [
+        "answer",
+        "partial",
+        "limitation",
+        "abstain"
+      ],
+      "title": "AnswerDisposition",
+      "type": "string"
+    },
+    "ClaimBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "evidence_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "output_locator": {
+          "title": "Output Locator",
+          "type": "string"
+        }
+      },
+      "required": [
+        "output_locator",
+        "claim_ids",
+        "evidence_ids"
+      ],
+      "title": "ClaimBinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "answer_disposition": {
+      "$ref": "#/$defs/AnswerDisposition"
+    },
+    "answer_text": {
+      "title": "Answer Text",
+      "type": "string"
+    },
+    "claim_bindings": {
+      "items": {
+        "$ref": "#/$defs/ClaimBinding"
+      },
+      "title": "Claim Bindings",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "cutoff_date": {
+      "default": "2026-07-11",
+      "format": "date",
+      "title": "Cutoff Date",
+      "type": "string"
+    },
+    "dataset_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "producer": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Producer",
+      "type": "string"
+    },
+    "request_key": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Key",
+      "type": "string"
+    },
+    "response_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Response Hash",
+      "type": "string"
+    },
+    "retrieved_context_text": {
+      "title": "Retrieved Context Text",
+      "type": "string"
+    },
+    "run_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "think_trace_text": {
+      "title": "Think Trace Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "request_key",
+    "run_id",
+    "dataset_version",
+    "producer",
+    "created_at",
+    "answer_disposition",
+    "answer_text",
+    "retrieved_context_text",
+    "think_trace_text",
+    "claim_bindings",
+    "response_hash"
+  ],
+  "title": "ReleasedAnswer",
+  "type": "object"
+}
