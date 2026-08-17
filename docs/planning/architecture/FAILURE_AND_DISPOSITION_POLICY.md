@@ -6,7 +6,7 @@
 
 **Decision:** [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md)
 
-**Related:** [Runtime Contracts](RUNTIME_CONTRACTS.md), [Multi-Agent Architecture](MULTI_AGENT_ARCHITECTURE.md), [Official Evaluation API](../../reference/official-evaluation-api.md), [Core Evaluation Set](../specs/core-evaluation-set.md)
+**Related:** [Runtime Contracts](RUNTIME_CONTRACTS.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [Multi-Agent Architecture](MULTI_AGENT_ARCHITECTURE.md), [Official Evaluation API](../../reference/official-evaluation-api.md), [Core Evaluation Set](../specs/core-evaluation-set.md)
 
 ## 1. 목적
 
@@ -146,7 +146,7 @@ Orchestrator는 수치형 신뢰도 점수나 LLM의 자유 판단으로 최종 
 | `deadline` | 내부 55초 마감 초과 | 없음 | 504 |
 | `internal_invariant` | 계약·데이터 버전·근거 불변식 반복 훼손 | 결정론적 재구성만 1회 | 500 |
 | `planner_contract` | Intent Resolver 응답의 JSON Schema 오류 | 요청 전체 LLM 보정 1회 | 복구 불가 시 503 |
-| `answer_contract` | `AnswerDraft` Schema 또는 Claim 바인딩 오류 | 남은 LLM 보정 또는 결정론적 템플릿 | 템플릿 불변식도 깨지면 500 |
+| `answer_contract` | `AnswerPlan` Schema 또는 Claim 바인딩 오류 | 남은 LLM 보정 또는 결정론적 템플릿 | 템플릿 불변식도 깨지면 500 |
 
 5xx 응답은 가능하면 `application/json`과 공식 다섯 문자열 필드를 유지한다. `answer`에는 재시도 가능한 시스템 실패임을 간결히 나타내고, `think_trace`에는 비밀정보나 스택 트레이스 대신 단계·오류 코드만 넣는다. 5xx 본문은 `ReleasedAnswer`로 간주하거나 완성 답변으로 캐시하지 않는다.
 
@@ -154,7 +154,7 @@ Orchestrator는 수치형 신뢰도 점수나 LLM의 자유 판단으로 최종 
 
 | 예산 | 요청당 최대 | 사용처 |
 | --- | ---: | --- |
-| `llm_repair_budget` | 1 | 응답은 받았지만 `QueryPlan` 스키마 또는 `AnswerDraft` 근거 바인딩이 잘못된 경우 |
+| `llm_repair_budget` | 1 | 응답은 받았지만 `QueryPlan` 스키마 또는 `AnswerPlan` Claim 바인딩이 잘못된 경우 |
 | `transient_retry_budget` | 2 | 응답을 받지 못한 모델·DB·Graph·외부 의존성 장애 |
 | `same_operation_retry` | 1 | 같은 작업의 무한 반복 방지 |
 
@@ -194,7 +194,7 @@ Orchestrator는 수치형 신뢰도 점수나 LLM의 자유 판단으로 최종 
 - 검증된 근거가 있다면 Composer 장애로 요청 전체를 실패시키지 않는다.
 - 모델 응답 미수신은 예산이 있을 때만 일시적 재시도한다.
 - Claim 바인딩 오류는 남은 LLM 보정권이 있을 때 한 번 보정한다.
-- 복구하지 못하면 검증된 `allowed_claims`를 결정론적 템플릿으로 렌더링한다.
+- 복구하지 못하면 검증된 `releaseable_claim_ids`를 결정론적 템플릿으로 배치한다.
 - Claim Gate가 선택적 부가 문장만 거부하면 그 문장을 제거하고 완전성을 다시 판정한다.
 - 템플릿 답변도 Claim Gate를 통과해야 한다.
 

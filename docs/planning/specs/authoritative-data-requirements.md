@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-10
 
-**Status:** Approved Task 1 requirements; concrete source activation deferred to ADR-0007
+**Status:** Approved Task 1 requirements; concrete source activation deferred to ADR-0008
 
 **Snapshot cutoff:** 2026-07-11
 
@@ -375,7 +375,7 @@ source_id
 - 당일 승인된 공식 관측값이 없으면 그 이전의 최신 공식 관측값만 사용한다.
 - 실제 관측일을 2026-07-11로 바꾸어 표기하지 않는다.
 - 환산 증거에는 `base_currency`, `quote_currency`, `rate`, `rate_type`, `applicable_date`, 공식 게시기관, 원문 식별자, 수집 체크섬, 환산 공식을 포함한다.
-- 서로 다른 공식 환율 종류가 존재하면 ADR-0007의 승인된 종류만 사용하며 임의 평균을 만들지 않는다.
+- 서로 다른 공식 환율 종류가 존재하면 ADR-0008의 승인된 종류만 사용하며 임의 평균을 만들지 않는다.
 
 환율 원천이 승인되기 전에는 통화가 다른 AUM을 직접 합산하거나 순위화하지 않는다. 승인 후에는 위 규칙으로 KRW 환산한 값을 사용하고 실제 환율 관측일과 출처를 답변에 표시한다.
 

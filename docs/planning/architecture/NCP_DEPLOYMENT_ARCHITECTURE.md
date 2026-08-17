@@ -6,7 +6,7 @@
 
 **Scope:** Naver Cloud Platform의 저장소 배치, 서버 사양, 네트워크, 백업, 모니터링 기준
 
-**Related:** [공식 평가 API 규격](../../reference/official-evaluation-api.md), [Financial Agent Core 구현 계획](../tasks/2026-08-10-financial-agent-core-implementation-plan.md)
+**Related:** [공식 평가 API 규격](../../reference/official-evaluation-api.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [Financial Agent Core 구현 계획](../tasks/2026-08-10-financial-agent-core-implementation-plan.md)
 
 이 문서는 금융상품 Agent를 Naver Cloud Platform에 배포할 때 사용할 인프라 기준을 기록한다. 금융 데이터는 계속 **2026-07-11**을 컷오프로 사용한다. 인프라 제품과 소프트웨어 버전은 실제 배포 시점에 NCP가 지원하는 안정 버전을 사용하되, 금융 데이터 기준일을 바꾸지 않는다.
 
@@ -138,12 +138,29 @@ API 서버는 금융 원본과 영속 인덱스를 로컬 디스크에 저장하
 | `relation` | Graph 투영 전 관계 원장과 관계 이력 |
 | `document` | 공식 문서, 청크, 페이지, 절, 게시·적용일 |
 | `search` | 임베딩, Vector 인덱스, Full Text Search 보조 컬럼 |
-| `evidence` | 출처, 계산, 제외 사유, claim-evidence 연결 |
+| `evidence` | 정규화 출처·원본 근거·계산·원자적 Claim·ClaimSupport |
 | `operations` | 데이터 버전, 적재 실행, 요청 실행, 오류와 지연 |
 
 PostgreSQL은 정제된 구조화 사실과 관계의 기준 저장소다. Fuseki와 Vector 인덱스는 PostgreSQL의 안정된 ID와 `dataset_version`을 사용한다.
 
-### 5.3 초기 용량 추정
+### 5.3 `evidence`와 `operations` 역할 분리
+
+| 논리 테이블 | 저장 대상 |
+| --- | --- |
+| `evidence.source_record` | 제공기관, 공식성, 원본 위치, 체크섬 |
+| `evidence.evidence_record` | 직접값, 관계, 문서 구절, 검색 범위, 제외, 정책 근거 |
+| `evidence.calculation_record` | 환산·수익률·순위·집계·비교·유사도 계보 |
+| `evidence.atomic_claim` | 결정론적으로 생성된 원자적 주장 |
+| `evidence.claim_support` | Claim과 Evidence·Calculation의 연결 |
+| `operations.request_artifact` | EvidenceBundle, VerificationReport, AnswerPlan, ReleasedAnswer 버전과 해시 |
+
+기준 원본과 파생 계보는 `evidence`에 정규화하고, 요청별 묶음과 응답은 `operations`에 불변 JSON과 참조 ID로 남긴다. 요청별 Artifact에 원본 레코드를 중복 복사하지 않는다.
+
+Graph의 relation edge는 PostgreSQL `relation` 인스턴스 ID와 Evidence ID를 주석으로 사용한다. `urn:evidence:*` named graph는 이 식별자를 제공하는 투영본이며 기준 근거 원장이 아니다.
+
+세부 필드와 불변성·컷오프·Claim 생성 규칙은 [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md)을 따른다.
+
+### 5.4 초기 용량 추정
 
 | 데이터 | 초기 예상 |
 | --- | ---: |

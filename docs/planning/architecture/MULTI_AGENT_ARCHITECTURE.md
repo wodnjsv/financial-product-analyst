@@ -6,7 +6,7 @@
 
 **Decision:** [ADR-0004: Use a Conditional-Parallel Multi-Agent Graph](../decisions/ADR-0004-conditional-parallel-multi-agent-graph.md)
 
-**Current runtime decisions:** [ADR-0005](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md) replaces mandatory Product Specialist Agent and LLM Verifier calls with one Intent Resolver, deterministic typed Capability Executors, deterministic verification, and one Answer Composer. [ADR-0006](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md) defines answer disposition, execution failures, recovery budgets, HTTP mapping, and the initial 55-second hard deadline. The canonical handoff schemas are defined in [Runtime Contracts](RUNTIME_CONTRACTS.md), and failure transitions are defined in [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md). References below to mandatory Specialist or Verifier Agent calls are historical and must not be used as the implementation contract.
+**Current runtime decisions:** [ADR-0005](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md) replaces mandatory Product Specialist Agent and LLM Verifier calls with one Intent Resolver, deterministic typed Capability Executors, deterministic verification, and one Answer Composer. [ADR-0006](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md) defines answer disposition, execution failures, recovery budgets, HTTP mapping, and the initial 55-second hard deadline. [ADR-0007](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) defines the normalized evidence ledger and limits the Composer to a structured `AnswerPlan`. The canonical handoff schemas are defined in [Runtime Contracts](RUNTIME_CONTRACTS.md), evidence release follows [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), and failure transitions follow [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md). References below to mandatory Specialist or Verifier Agent calls are historical and must not be used as the implementation contract.
 
 **Competition-mode override:** The official API contract and the 2026-08-12 Harness revision supersede ADR-0004's follow-up clarification path for evaluation requests. The failure-disposition policy records the complete single-turn fallback path; conditional routing and request-internal parallelism remain unchanged.
 
@@ -154,8 +154,8 @@ Each factual statement must bind to one or more evidence IDs. The deterministic 
 | `ToolResult` | Data Engine | Result Merger | Rows, calculated values, exclusions, warnings, source bindings, data version, result hash |
 | `ComparisonDecision` | Comparator and rules engine | Verifier | Compatibility per dimension, normalization method, disclosures, rejected comparisons |
 | `EvidenceBundle` | Evidence ledger and Verifier | Synthesizer | Verified facts, calculations, evidence IDs, exclusions, limitations, allowed conclusions |
-| `AnswerDraft` | Synthesizer | Claim Gate | Structured sections and claim-to-evidence bindings |
-| `VerificationReport` | Verifier or Claim Gate | Orchestrator | Pass or fail, deterministic failures, repairable issues, required disposition |
+| `AnswerPlan` | Answer Composer | Claim Gate | Registered blocks, templates, columns, and releaseable Claim bindings |
+| `VerificationReport` | Verifier | Orchestrator·Answer Composer | Claim·계산 검사, 출시 가능 Claim, 경고, 필수 판정 |
 
 Contract schemas must be versioned. Unknown fields, missing required fields, invalid enums, and operations outside an allowlist are hard validation failures.
 

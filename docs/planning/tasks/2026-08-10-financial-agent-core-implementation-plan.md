@@ -4,7 +4,9 @@
 
 **Date:** 2026-08-10
 
-**Status:** Task 1 reinforced with official briefs on 2026-08-15; Task 2 design review in progress; implementation not started
+**Status:** Task 1 reinforced with official briefs on 2026-08-15; Task 2 decisions accepted; this implementation plan is superseded and implementation has not started
+
+> **Task 2 supersession notice (2026-08-17):** The proposed technology baseline, ADR names and numbering, storage layout, runtime contracts, failure policy, and evidence-release steps below predate the accepted Task 2 decisions. Do not execute this plan until it is rewritten against ADR-0005 through ADR-0007, the NCP deployment architecture, Runtime Contracts, and Evidence, Verification, and Rendering design. In particular, later occurrences of the old proposed `ADR-0007` topic and `AnswerDraft` contract are historical placeholders, not current decision or contract references.
 
 **Goal:** Build the non-server core of the Financial Product Agent: question-driven operational ontology, validated product data, deterministic screening and calculations, federated RDB·Graph·Vector retrieval, the smallest justified orchestration, and evidence-bound answers.
 

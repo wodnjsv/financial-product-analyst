@@ -104,7 +104,9 @@ The following problems connect the competition task to a credible internal workf
 - Route only the Capability Executors required by the validated query plan and run independent work concurrently.
 - Pass typed, schema-validated state between components. Free-form model prose must not become executable filters, calculations, or evidence.
 - Use one Intent Resolver and one Answer Composer on the normal path. A Product Specialist LLM requires a separate benchmark-backed ADR.
-- Generate final answer claims only from a verified evidence bundle. A claim without a valid source reference must be removed or cause abstention.
+- Generate final answer claims only from a verified evidence bundle. A claim without valid support must be removed, and the answer disposition must be recalculated under the approved failure policy; the unsupported claim must never be released.
+- Store source, evidence, calculation, atomic Claim, and Claim-support lineage in the normalized PostgreSQL evidence ledger. Treat Graph and Vector results as projections or candidates until they bind back to that ledger.
+- Make the Answer Composer output a structured `AnswerPlan` containing only approved Claim IDs and registered layout IDs. A deterministic Renderer, not the model, creates factual values, dates, units, and source strings.
 - Permit one shared LLM repair attempt per request across the Intent Resolver and Answer Composer. Semantic boundaries return `answer`, `partial`, `limitation`, or `abstain`; execution failures use the approved 5xx path.
 - Preserve raw organizer data unchanged and keep it out of the personal GitHub repository.
 - The evaluation API must expose public `GET /answer`, accept `question_id` and `question` query parameters without an authentication header, and return `application/json` containing string values for `question_id`, `question`, `retrieved_context`, `think_trace`, and `answer`.
@@ -233,7 +235,7 @@ The approved top-level architecture is a bounded, conditionally parallel executi
 - A deterministic Claim Gate rejects factual statements without valid evidence references.
 - Product Specialist LLMs may be added only through a later benchmark-backed ADR.
 
-ADR-0004 remains the historical basis for deterministic control, conditional routing, request-internal parallelism, bounded retries, and Claim Gate behavior. [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) supersedes its mandatory Specialist and Verifier Agent topology. [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) separates answer disposition from execution failure and fixes the initial recovery and deadline policy. The canonical handoff schemas are defined in [Runtime Contracts](architecture/RUNTIME_CONTRACTS.md), and the state transitions are defined in [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md).
+ADR-0004 remains the historical basis for deterministic control, conditional routing, request-internal parallelism, bounded retries, and Claim Gate behavior. [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) supersedes its mandatory Specialist and Verifier Agent topology. [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) separates answer disposition from execution failure and fixes the initial recovery and deadline policy. [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) fixes the evidence authority, atomic Claim, structured AnswerPlan, and deterministic rendering model. The canonical handoff schemas are defined in [Runtime Contracts](architecture/RUNTIME_CONTRACTS.md), evidence release is defined in [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), and the state transitions are defined in [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md).
 
 ## 13. Decision Records
 
@@ -245,6 +247,7 @@ Accepted and superseded decisions live in `docs/planning/decisions/`. Each recor
 - [ADR-0004: Use a Conditional-Parallel Multi-Agent Graph](decisions/ADR-0004-conditional-parallel-multi-agent-graph.md)
 - [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](decisions/ADR-0005-bounded-llm-typed-capability-execution.md)
 - [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](decisions/ADR-0006-separate-disposition-and-bound-recovery.md)
+- [ADR-0007: Use a Normalized Evidence Ledger and Structured Answer Plans](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md)
 
 ## 14. Change Procedure
 

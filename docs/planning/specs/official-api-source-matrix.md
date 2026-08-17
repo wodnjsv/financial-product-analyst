@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-10
 
-**Status:** Approved conditional-source policy; source activation deferred to ADR-0007
+**Status:** Approved conditional-source policy; source activation deferred to ADR-0008
 
 **Evaluation snapshot cutoff:** 2026-07-11
 
@@ -139,7 +139,7 @@ FRED는 거시·시장 문맥용이다. 개별 해외 ETF의 보유종목, AUM, 
 
 ### 3.4 API 밖의 공식 파일·문서 원천
 
-공식 예상 질문 다수는 KRX·ECOS·FRED API만으로 답할 수 없다. 다음은 실제 수집을 확정한 목록이 아니라 ADR-0007에서 원문 위치, 과거 스냅샷, 이용조건을 검증할 후보 유형이다.
+공식 예상 질문 다수는 KRX·ECOS·FRED API만으로 답할 수 없다. 다음은 실제 수집을 확정한 목록이 아니라 ADR-0008에서 원문 위치, 과거 스냅샷, 이용조건을 검증할 후보 유형이다.
 
 | 후보 게시기관·원천 | 필요한 데이터 | 연결 질문 | 필수 검증 |
 | --- | --- | --- | --- |

@@ -4,9 +4,9 @@
 
 **Date:** 2026-08-17
 
-**Decisions:** [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md)
+**Decisions:** [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md), [ADR-0007: Use a Normalized Evidence Ledger and Structured Answer Plans](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md)
 
-**Related:** [Multi-Agent Architecture](MULTI_AGENT_ARCHITECTURE.md), [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md), [NCP Deployment Architecture](NCP_DEPLOYMENT_ARCHITECTURE.md), [Core Evaluation Set](../specs/core-evaluation-set.md)
+**Related:** [Multi-Agent Architecture](MULTI_AGENT_ARCHITECTURE.md), [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [NCP Deployment Architecture](NCP_DEPLOYMENT_ARCHITECTURE.md), [Core Evaluation Set](../specs/core-evaluation-set.md)
 
 ## 1. 목적
 
@@ -15,7 +15,7 @@
 기본 경로에서 LLM은 다음 두 번만 호출한다.
 
 1. **Intent Resolver:** 질문을 구조화된 `QueryPlan`으로 해석
-2. **Answer Composer:** 검증된 `EvidenceBundle`로 답변 초안을 작성
+2. **Answer Composer:** 검증된 Claim을 승인된 블록·템플릿에 배치한 `AnswerPlan`을 작성
 
 조회, 관계 탐색, 필터, 정렬, 순위, 집계, 수익률 계산, 유사도, 비교 가능성, 근거 검증은 Capability Executor와 규칙 엔진이 수행한다.
 
@@ -53,15 +53,16 @@ flowchart LR
     TR --> EB["EvidenceBundle"]
     EB --> VR["VerificationReport"]
     VR -->|PASS + ANSWER/PARTIAL| AC["Answer Composer"]
-    VR -->|PASS + LIMITATION/ABSTAIN| SAFE["결정론적 Safe Renderer"]
-    AC --> AD["AnswerDraft"]
-    SAFE --> AD
-    AD --> CG["Claim Gate"]
-    CG --> RA["ReleasedAnswer"]
+    VR -->|PASS + LIMITATION/ABSTAIN| SAFE["결정론적 Safe Plan Builder"]
+    AC --> AP["AnswerPlan"]
+    SAFE --> AP
+    AP --> CG["Claim Gate"]
+    CG --> RENDER["결정론적 Renderer"]
+    RENDER --> RA["ReleasedAnswer"]
     VR -->|FAIL| ORCH
 ```
 
-7개 핵심 계약 그룹은 다음과 같다. `AnswerDraft`와 `ReleasedAnswer`는 하나의 응답 계약 그룹으로 본다.
+7개 핵심 계약 그룹은 다음과 같다. `AnswerPlan`과 `ReleasedAnswer`는 하나의 응답 계약 그룹으로 본다.
 
 | 번호 | 계약 그룹 | 생성자 | 주요 소비자 |
 | ---: | --- | --- | --- |
@@ -71,7 +72,7 @@ flowchart LR
 | 4 | `ToolResult` | Capability Executors | 결과 통합기·근거 원장 |
 | 5 | `EvidenceBundle` | 결과 통합기·근거 원장 | Verifier |
 | 6 | `VerificationReport` | Verifier | Orchestrator·Answer Composer |
-| 7 | `AnswerDraft` / `ReleasedAnswer` | Answer Composer / Claim Gate | 평가 API |
+| 7 | `AnswerPlan` / `ReleasedAnswer` | Answer Composer / Claim Gate·Renderer | 평가 API |
 
 ## 4. 모든 계약의 공통 규칙
 
@@ -105,7 +106,7 @@ flowchart LR
 - 모든 실행 작업은 허용된 작업·필드·계산식 등록부를 통과해야 한다.
 - 하위 계약의 `dataset_version`은 `RequestContext`와 같아야 한다.
 - 실행 결과는 상품명만이 아니라 안정된 상품·기업·증권·문서 ID를 포함해야 한다.
-- Answer Composer는 `EvidenceBundle`과 통과한 `VerificationReport`에 없는 사실을 추가할 수 없다.
+- Answer Composer는 `releaseable_claim_ids`에 없는 Claim을 선택할 수 없고, 상품명·수치·날짜·단위·출처 문자열을 생성할 수 없다.
 - 원시 모델 사고과정은 계약, 로그, `think_trace`에 저장하지 않는다.
 
 ## 5. 계약 참고 규격
@@ -200,20 +201,20 @@ ExecutionGraph
 
 ```text
 EvidenceBundle
+├─ bundle_id
 ├─ answered_subtasks
 ├─ unanswered_subtasks
-├─ facts
-├─ calculations
-├─ comparison_decisions
-├─ evidence_refs
-├─ exclusions
+├─ evidence_ids
+├─ calculation_ids
+├─ candidate_claim_ids
+├─ exclusion_evidence_ids
 ├─ missing_data
 ├─ applied_defaults
 ├─ limitations
-└─ allowed_claims
+└─ bundle_hash
 ```
 
-`allowed_claims`는 자유로운 답변 문장이 아니라 근거 ID가 결합된 구조화 주장이다. 예를 들어 `product_rank`, `metric_value`, `holds_security`, `similarity_reason`, `data_limitation`과 같은 주장 유형을 사용한다.
+`candidate_claim_ids`는 Capability별 결정론적 생성 규칙이 만든 원자적 Claim을 가리킨다. Verifier 통과 전이므로 `allowed`라고 부르지 않는다. 세부 원장과 필수 근거는 [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md)을 따른다.
 
 ### 5.6 `VerificationReport`
 
@@ -221,22 +222,23 @@ Verifier는 `EvidenceBundle`을 수정하지 않고 독립된 판정을 반환�
 
 | 필드 | 의미 |
 | --- | --- |
+| `verification_report_id` | 불변 검증 보고서 ID |
 | `verification_status` | `pass`, `fail` |
 | `recommended_answer_disposition` | `answer`, `partial`, `limitation`, `abstain` 또는 실행 실패 시 `null` |
-| `coverage` | 질문의 하위 작업별 답변 가능 여부 |
-| `source_checks` | 사실·수치와 출처 연결 결과 |
+| `claim_checks` | Claim별 계약·출처·시간·온톨로지·정책 검사 결과 |
 | `calculation_checks` | 입력값·수식·결과 재현 결과 |
-| `compatibility_checks` | 기간·정의·단위·통화·모집단 검사 |
-| `cutoff_checks` | 관측·적용·공개일 컷오프 검사 |
-| `policy_checks` | 예측·단정적 추천·누락값 추정 검사 |
-| `repair_actions` | 요청 전체 회복 예산 안에서 허용된 수정 지시 |
+| `subtask_coverage` | 질문의 하위 작업별 답변 가능 여부 |
 | `releaseable_claim_ids` | 답변에 사용해도 되는 주장 ID |
+| `rejected_claims` | 거부 Claim과 안정된 사유 코드 |
+| `warnings` | 중심 결론을 바꾸지 않는 경고 |
+| `disposition_reasons` | 최종 답변 판정의 근거 |
+| `repair_actions` | 요청 전체 회복 예산 안에서 허용된 수정 지시 |
 
 `verification_status=pass`는 판정과 근거가 출시 가능하다는 뜻이므로 `limitation`과 `abstain`도 `pass`일 수 있다. `pass`인 `answer`와 `partial`만 Answer Composer를 호출하고, `limitation`과 `abstain`은 Orchestrator가 검증된 판정 사유를 템플릿으로 구성한다. 두 경로 모두 Claim Gate를 통과해야 한다. 시스템 실패는 `AnswerDisposition`으로 표현하지 않는다. 세부 판정과 재시도 규칙은 [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md)를 따른다.
 
-### 5.7 `AnswerDraft` 및 `ReleasedAnswer`
+### 5.7 `AnswerPlan` 및 `ReleasedAnswer`
 
-`AnswerDraft`는 사용자에게 보일 결과, 조건, 비교표, 설명, 한계, 출처 요약으로 구성된다. 모든 사실 문장과 표의 셀은 `claim_id`와 `evidence_ids`를 가져야 한다.
+`AnswerPlan`은 자유 문장 초안이 아니라 검증된 Claim을 등록된 문단·표·비교·제한 템플릿에 배치하는 구조화 계획이다. Claim Gate는 Claim·블록·열·커버리지를 검사하고, Renderer가 숫자·날짜·단위·출처를 실제 문자열로 만든다.
 
 Claim Gate를 통과한 `ReleasedAnswer`는 다음을 포함한다.
 
@@ -246,7 +248,7 @@ Claim Gate를 통과한 `ReleasedAnswer`는 다음을 포함한다.
 | `answer_text` | 검증된 최종 답변 |
 | `retrieved_context_text` | 실제 사용한 근거만 요약한 문자열 |
 | `think_trace_text` | 의도·하위 작업·필터·계산·출처·제외·한계의 간결한 실행 기록 |
-| `claim_bindings` | 최종 문장과 근거 ID 연결 |
+| `claim_bindings` | 최종 문장·표 셀과 Claim·근거 ID 연결 |
 | `response_hash` | 최종 응답 문자열의 해시 |
 
 평가 API Adapter는 `ReleasedAnswer`를 주최측이 요구한 `question_id`, `question`, `retrieved_context`, `think_trace`, `answer` 다섯 문자열로 변환한다.
@@ -320,6 +322,7 @@ t5 similarity depends_on t4
 | `ToolResult` | 상태, 선택된 결과, 근거, 제외, 결과 해시, 지연 |
 | `EvidenceBundle` | 최종 답변 판단에 사용된 사실·계산·근거 |
 | `VerificationReport` | 검사별 통과 여부와 최종 판정 |
+| `AnswerPlan` | 검증된 Claim의 블록·템플릿·표 셀 배치 |
 | `ReleasedAnswer` | 공식 5필드 응답, claim 바인딩, 응답 해시 |
 
 대용량 중간 행 전체를 무조건 영구 저장하지 않는다. 최종 선택 행, 제외 요약, 소스 참조, `result_hash`를 저장하고 전체 재현에 필요한 실행 계획을 유지한다.
