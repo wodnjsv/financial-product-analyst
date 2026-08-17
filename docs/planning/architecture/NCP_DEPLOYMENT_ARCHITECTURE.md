@@ -127,7 +127,20 @@ API 서버는 금융 원본과 영속 인덱스를 로컬 디스크에 저장하
 - `pg_trgm`: 상품명, 기업명, 운용사명, 별칭 검색
 - `unaccent`: 검색 정규화 보조
 - `pg_stat_statements`: 느린 쿼리 분석
-- `pgcrypto` 또는 `uuid-ossp`: 내부 식별자 지원
+- `pgcrypto`: 내부 식별자와 해시 지원
+
+#### NCP Extension 설치 경계
+
+[NCP 공식 Extension 관리 문서](https://guide.ncloud-docs.com/docs/clouddbforpostgresql-postgresqlextension)에 따라 확장을 두 그룹으로 나눈다.
+
+| 그룹 | Extension | 설치 주체와 위치 |
+| --- | --- | --- |
+| NCP 콘솔 관리 | `pgvector`(`vector`), `pg_stat_statements` | 마이그레이션 전에 NCP 콘솔에서 설치, `cdb_admin` 스키마 사용 |
+| 애플리케이션 마이그레이션 관리 | `pg_trgm`, `unaccent`, `pgcrypto` | 사전 점검 통과 후 Alembic이 직접 설치 |
+
+pgvector 최초 설치는 DB 서비스 재시작을 동반하므로 평가 운영 전에 완료한다. Alembic은 `vector`, `pg_stat_statements`, `cdb_admin`을 생성·이동·삭제하지 않는다. 모든 마이그레이션·빌드·런타임 연결은 `search_path='"$user", public, cdb_admin'`을 사용하거나 `cdb_admin.vector`처럼 명시적으로 스키마를 적는다.
+
+실행 순서는 **NCP 콘솔 설치 → migration/build/runtime 역할 준비 → preflight → Alembic → postflight**로 고정한다. 로컬 PostgreSQL도 `cdb_admin` 스키마에 두 콘솔 관리 확장을 설치해 같은 배치를 시험한다.
 
 ### 5.2 논리 스키마
 
@@ -152,7 +165,13 @@ PostgreSQL은 정제된 구조화 사실과 관계의 기준 저장소다. Fusek
 | `evidence.calculation_record` | 환산·수익률·순위·집계·비교·유사도 계보 |
 | `evidence.atomic_claim` | 결정론적으로 생성된 원자적 주장 |
 | `evidence.claim_support` | Claim과 Evidence·Calculation의 연결 |
+| `operations.dataset_version` | 고정 컷오프와 manifest를 가진 불변 데이터 버전 |
+| `operations.dataset_validation_run` | 데이터 버전별 검증 실행, 보고서 해시와 결과 |
+| `operations.dataset_readiness` | PostgreSQL·Graph·Vector·Evidence manifest와 검증 실행 연결 |
+| `operations.active_dataset` | 검증된 한 데이터 버전만 가리키는 단일 활성 포인터 |
+| `operations.failure_event` | 단계·재시도·남은 시간·의존성을 포함한 추가 전용 실패 사건 |
 | `operations.request_artifact` | EvidenceBundle, VerificationReport, AnswerPlan, ReleasedAnswer 버전과 해시 |
+| `operations.release_cache` | 최종 통과 VerificationReport와 같은 실행에 연결된 검증 완료 응답 |
 
 기준 원본과 파생 계보는 `evidence`에 정규화하고, 요청별 묶음과 응답은 `operations`에 불변 JSON과 참조 ID로 남긴다. 요청별 Artifact에 원본 레코드를 중복 복사하지 않는다.
 
@@ -268,12 +287,12 @@ flowchart LR
     SHACL -->|통과| FUSEKI["Fuseki named graph 적재"]
     PG --> EMB["문서 임베딩 생성"]
     EMB --> VECTOR["pgvector 적재"]
-    FUSEKI --> READY{"모든 저장소 준비"}
+    FUSEKI --> READY{"검증 실행·manifest 일치"}
     VECTOR --> READY
-    READY --> ACTIVE["active_dataset_version 전환"]
+    READY --> ACTIVE["operations.activate_dataset 실행"]
 ```
 
-새 버전은 PostgreSQL·Fuseki·Vector·근거 manifest가 모두 일치하고 검증을 통과한 뒤에만 활성화한다. 한 저장소의 적재만 끝난 상태에서는 API가 새 버전을 사용하지 않는다.
+새 버전은 PostgreSQL·Fuseki·Vector·근거 manifest가 모두 일치하고, 각 구성요소의 준비 레코드가 성공한 검증 실행을 참조한 뒤에만 `operations.activate_dataset`으로 활성화한다. 빌드 계정은 준비 상태나 활성 포인터를 직접 수정할 수 없다. 한 저장소의 적재만 끝난 상태에서는 API가 새 버전을 사용하지 않는다.
 
 ## 9. VPC와 접근 제어
 
@@ -379,11 +398,14 @@ OpenSearch 도입은 자동 단계가 아니다. 같은 골드 질문으로 pgve
 - [ ] Load Balancer Idle Timeout이 360초다.
 - [ ] API 서버 두 대의 `/health/ready`가 통과한다.
 - [ ] PostgreSQL HA와 자동 백업이 활성화돼 있다.
-- [ ] `pgvector`, `pg_trgm`, `pg_stat_statements`가 설치돼 있다.
+- [ ] `pgvector`와 `pg_stat_statements`가 NCP 콘솔을 통해 `cdb_admin`에 설치돼 있고 pgvector 재시작이 완료됐다.
+- [ ] `pg_trgm`, `unaccent`, `pgcrypto`가 Alembic 관리 위치에 설치돼 있다.
+- [ ] migration/build/runtime 역할과 `search_path='"$user", public, cdb_admin'`이 사전·사후 점검을 통과한다.
 - [ ] PostgreSQL과 Fuseki는 Private Subnet에서만 접근된다.
 - [ ] Fuseki는 활성 데이터 버전을 읽기 전용으로 제공한다.
 - [ ] PostgreSQL·Fuseki·Vector의 `dataset_version`이 일치한다.
-- [ ] 모든 금융 사실의 관측일·적용일·공개일이 2026-07-11 컷오프를 통과한다.
+- [ ] 활성 버전의 네 준비 레코드가 동일 manifest와 성공한 검증 실행을 참조한다.
+- [ ] 모든 금융 사실의 적용일·공개일·가용일·빈티지일이 2026-07-11 컷오프와 일치하는 상태로 저장된다.
 - [ ] 원본 데이터, PDF, Parquet, 임베딩, DB 파일, 비밀정보가 Git에 포함되지 않는다.
 - [ ] Graph와 PostgreSQL 백업 복구를 사전에 1회 시험한다.
 - [ ] 52개 골드 질문의 p50·p95·최대 응답시간을 기록한다.
