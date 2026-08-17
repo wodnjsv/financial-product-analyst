@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "request_key": "5fb658a65798ff794b8f3ac0414da936ecd806469109317e2a27c11e513d78b4",
+  "run_id": "run-syn-001",
+  "dataset_version": "2026-07-11-v1",
+  "cutoff_date": "2026-07-11",
+  "producer": "request-normalizer",
+  "created_at": "2026-08-17T00:00:00Z",
+  "question_id": "Q-SYN-001",
+  "question": "합성전자 편입 ETF를 AUM순으로 5개 알려줘. 이 상품들 중 수익률이 가장 높은 상품을 알려줘.",
+  "mode": "competition",
+  "segments": [
+    {
+      "segment_id": "s1",
+      "ordinal": 0,
+      "text": "합성전자 편입 ETF를 AUM순으로 5개 알려줘."
+    },
+    {
+      "segment_id": "s2",
+      "ordinal": 1,
+      "text": "이 상품들 중 수익률이 가장 높은 상품을 알려줘."
+    }
+  ],
+  "named_entities": [
+    {
+      "mention_id": "mention-synthetic-company",
+      "segment_id": "s1",
+      "text": "합성전자",
+      "expected_entity_types": ["company"],
+      "resolution_status": "unresolved"
+    }
+  ],
+  "reference_mentions": [
+    {
+      "mention_id": "reference-s2-products",
+      "segment_id": "s2",
+      "text": "이 상품들",
+      "start_char": 0,
+      "end_char": 5
+    }
+  ],
+  "deadline_at": "2026-08-17T00:00:55Z"
+}

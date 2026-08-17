@@ -42,6 +42,24 @@ from .enums import (
     ToolStatus,
     VerificationStatus,
 )
+from .query import (
+    AmbiguityDecision,
+    BindingSpec,
+    DependencyEdge,
+    EntityResolutionRequest,
+    FilterSpec,
+    MetricSpec,
+    OperationSpec,
+    QueryPlan,
+    ResolvedReference,
+    Subtask,
+)
+from .request import (
+    NamedEntityMention,
+    ReferenceMention,
+    RequestContext,
+    Segment,
+)
 
 __all__ = [
     "CONTRACT_SCHEMA_VERSION",
@@ -53,6 +71,20 @@ __all__ = [
     "ScalarValue",
     "Sha256Hex",
     "UtcDateTime",
+    "AmbiguityDecision",
+    "BindingSpec",
+    "DependencyEdge",
+    "EntityResolutionRequest",
+    "FilterSpec",
+    "MetricSpec",
+    "OperationSpec",
+    "QueryPlan",
+    "ResolvedReference",
+    "Subtask",
+    "NamedEntityMention",
+    "ReferenceMention",
+    "RequestContext",
+    "Segment",
     "AnswerDisposition",
     "BlockType",
     "CalculationType",

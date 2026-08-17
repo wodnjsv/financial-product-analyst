@@ -1,0 +1,97 @@
+{
+  "schema_version": "1.0",
+  "request_key": "5fb658a65798ff794b8f3ac0414da936ecd806469109317e2a27c11e513d78b4",
+  "run_id": "run-syn-001",
+  "dataset_version": "2026-07-11-v1",
+  "cutoff_date": "2026-07-11",
+  "producer": "intent-resolver",
+  "created_at": "2026-08-17T00:00:00Z",
+  "intent_types": ["screen", "rank"],
+  "product_families": ["domestic_etf"],
+  "subtasks": [
+    {
+      "subtask_id": "q1",
+      "intent_type": "screen",
+      "importance": "critical",
+      "operation_ids": ["op-screen-top5"]
+    },
+    {
+      "subtask_id": "q2",
+      "intent_type": "rank",
+      "importance": "critical",
+      "operation_ids": ["op-rank-return"]
+    }
+  ],
+  "entity_resolution_requests": [
+    {
+      "resolution_request_id": "resolve-synthetic-company",
+      "mention_id": "mention-synthetic-company",
+      "expected_entity_types": ["company"]
+    }
+  ],
+  "resolved_references": [
+    {
+      "reference_id": "reference-s2-products",
+      "segment_id": "s2",
+      "mention_type": "ellipsis",
+      "target_kind": "binding",
+      "target_id": "s1.top5_products"
+    }
+  ],
+  "binding_specs": [
+    {
+      "binding_name": "s1.top5_products",
+      "value_type": "product_ref_list",
+      "producer_subtask_id": "q1",
+      "cardinality": "many"
+    }
+  ],
+  "dependency_edges": [
+    {
+      "upstream_subtask_id": "q1",
+      "downstream_subtask_id": "q2"
+    }
+  ],
+  "filters": [
+    {
+      "subtask_id": "q1",
+      "field_id": "field-constituent-company",
+      "operator_id": "operator-contains",
+      "value": "security-syn-company"
+    }
+  ],
+  "metrics": [
+    {
+      "subtask_id": "q1",
+      "metric_id": "metric-aum",
+      "period_id": "period-as-of-cutoff",
+      "unit_id": "unit-krw",
+      "currency": "KRW",
+      "return_type_id": null
+    },
+    {
+      "subtask_id": "q2",
+      "metric_id": "metric-return",
+      "period_id": "period-annual",
+      "unit_id": "unit-percent",
+      "currency": null,
+      "return_type_id": "return-total"
+    }
+  ],
+  "operations": [
+    {
+      "subtask_id": "q1",
+      "operation_id": "op-screen-top5",
+      "parameter_ids": ["parameter-top5"]
+    },
+    {
+      "subtask_id": "q2",
+      "operation_id": "op-rank-return",
+      "parameter_ids": []
+    }
+  ],
+  "result_shape": "top_k",
+  "ambiguity_decisions": [],
+  "requested_capabilities": ["rdb_lookup", "ranking"],
+  "initial_answerability": "supported"
+}
