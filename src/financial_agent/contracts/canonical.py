@@ -2,6 +2,7 @@ import hashlib
 import json
 import unicodedata
 from collections.abc import Collection, Mapping
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel
@@ -12,16 +13,33 @@ def normalize_question(question: str) -> str:
     return " ".join(normalized.split())
 
 
+def _json_native(value: object) -> object:
+    if isinstance(value, Enum):
+        raise TypeError("schema-less mappings cannot contain Enum values")
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, list):
+        return [_json_native(item) for item in value]
+    if isinstance(value, Mapping):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("canonical mapping keys must be strings")
+        return {key: _json_native(item) for key, item in value.items()}
+    raise TypeError(f"unsupported canonical JSON value: {type(value).__name__}")
+
+
 def canonical_json_bytes(
     value: BaseModel | Mapping[str, Any],
     *,
     exclude_fields: Collection[str] = (),
 ) -> bytes:
-    payload = (
+    serialized = (
         value.model_dump(mode="json", exclude=set(exclude_fields))
         if isinstance(value, BaseModel)
         else dict(value)
     )
+    payload = _json_native(serialized)
     return json.dumps(
         payload,
         ensure_ascii=False,
