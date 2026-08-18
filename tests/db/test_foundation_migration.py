@@ -793,6 +793,14 @@ def _truncate_foundation_tables(database_url: str) -> None:
         connection.execute(
             """
             TRUNCATE TABLE
+                search.document_embedding,
+                search.embedding_model,
+                document.document_chunk,
+                document.document_record,
+                observation.observation_record,
+                observation.metric_definition,
+                relation.relation_record,
+                evidence.source_record,
                 catalog.alias,
                 catalog.identifier,
                 catalog.product,
