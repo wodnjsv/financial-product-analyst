@@ -125,6 +125,12 @@ def _model_bytes(model: BaseModel) -> bytes:
     return canonical_json_bytes(model.model_dump(mode="json"))
 
 
+def _models_bytes(models: tuple[BaseModel, ...]) -> bytes:
+    return canonical_json_bytes(
+        {"items": [model.model_dump(mode="json") for model in models]}
+    )
+
+
 def _evidence_bytes(
     evidence: EvidenceRecord, origin: OriginReference | None
 ) -> bytes:
@@ -385,15 +391,13 @@ class EvidenceLedgerRepository:
                 raise EvidenceLedgerConflict(
                     "AtomicClaim", f"{scope.run_id}/{claim.claim_id}"
                 ) from error
-            for support in supports:
-                existing_support = await self._get_support(
-                    scope.run_id, claim.claim_id, support.ordinal
-                )
-                if _model_bytes(existing_support) != _model_bytes(support):
-                    raise EvidenceLedgerConflict(
-                        "ClaimSupport",
-                        f"{scope.run_id}/{claim.claim_id}/{support.ordinal}",
-                    ) from error
+            existing_supports = await self._get_supports(
+                scope.run_id, claim.claim_id
+            )
+            if _models_bytes(existing_supports) != _models_bytes(supports):
+                raise EvidenceLedgerConflict(
+                    "ClaimSupport", f"{scope.run_id}/{claim.claim_id}"
+                ) from error
 
     async def append_support(
         self, scope: RequestScope, support: ClaimSupport
@@ -706,6 +710,35 @@ class EvidenceLedgerRepository:
             "ordinal": row["ordinal"],
         }
         return _validate_contract_json(ClaimSupport, payload)
+
+    async def _get_supports(
+        self, run_id: str, claim_id: str
+    ) -> tuple[ClaimSupport, ...]:
+        async with self._engine.connect() as connection:
+            rows = (
+                await connection.execute(
+                    sa.select(claim_support)
+                    .where(
+                        claim_support.c.run_id == run_id,
+                        claim_support.c.claim_id == claim_id,
+                    )
+                    .order_by(claim_support.c.ordinal)
+                )
+            ).mappings().all()
+        return tuple(
+            _validate_contract_json(
+                ClaimSupport,
+                {
+                    "claim_id": row["claim_id"],
+                    "support_kind": row["support_kind"],
+                    "evidence_id": row["evidence_id"],
+                    "calculation_id": row["calculation_id"],
+                    "support_role": row["support_role"],
+                    "ordinal": row["ordinal"],
+                },
+            )
+            for row in rows
+        )
 
     async def _insert_calculation_associations(
         self,

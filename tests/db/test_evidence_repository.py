@@ -207,6 +207,55 @@ async def persist_ranking_prerequisites(
     return direct, scope, exclusion, calculation
 
 
+async def persist_claim_prerequisites(
+    repository: Any,
+    context: RepositoryContext,
+) -> tuple[AtomicClaim, ClaimSupport, ClaimSupport]:
+    await repository.append_source(
+        context.dataset_version,
+        source_record(context),
+    )
+    direct, _, _, calculation = await persist_ranking_prerequisites(
+        repository, context
+    )
+    claim = AtomicClaim(
+        claim_id="claim-one",
+        claim_type=ClaimType.RANK,
+        subtask_id=context.subtask_id,
+        subject_id=context.subject_id,
+        predicate_id="rank",
+        value=encode_contract_value(1),
+        unit="rank",
+        qualifiers=(
+            ClaimQualifier(
+                qualifier_id="population",
+                value=encode_contract_value("population-one"),
+            ),
+            ClaimQualifier(
+                qualifier_id="tie-break",
+                value=encode_contract_value("entity-id-ascending"),
+            ),
+        ),
+        display_policy_id="rank.v1",
+        claim_hash="a" * 64,
+    )
+    initial_support = ClaimSupport(
+        claim_id=claim.claim_id,
+        support_kind=SupportKind.DIRECT,
+        evidence_id=direct.evidence_id,
+        support_role="ranked-value",
+        ordinal=0,
+    )
+    later_support = ClaimSupport(
+        claim_id=claim.claim_id,
+        support_kind=SupportKind.CALCULATION,
+        calculation_id=calculation.calculation_id,
+        support_role="ranking-calculation",
+        ordinal=1,
+    )
+    return claim, initial_support, later_support
+
+
 @pytest_asyncio.fixture
 async def repository_engine(migrated_database_url: str) -> AsyncEngine:
     engine = create_async_engine(migrated_database_url, pool_size=5, max_overflow=0)
@@ -400,49 +449,15 @@ async def test_claim_and_initial_support_are_atomic_then_accept_later_support(
 ) -> None:
     api = repository_api()
     repository = api.EvidenceLedgerRepository(repository_engine)
-    await repository.append_source(
-        repository_context.dataset_version,
-        source_record(repository_context),
-    )
-    direct, _, _, calculation = await persist_ranking_prerequisites(
+    claim, initial_support, later_support = await persist_claim_prerequisites(
         repository, repository_context
     )
-    claim = AtomicClaim(
-        claim_id="claim-one",
-        claim_type=ClaimType.RANK,
-        subtask_id=repository_context.subtask_id,
-        subject_id=repository_context.subject_id,
-        predicate_id="rank",
-        value=encode_contract_value(1),
-        unit="rank",
-        qualifiers=(
-            ClaimQualifier(
-                qualifier_id="population",
-                value=encode_contract_value("population-one"),
-            ),
-            ClaimQualifier(
-                qualifier_id="tie-break",
-                value=encode_contract_value("entity-id-ascending"),
-            ),
-        ),
-        display_policy_id="rank.v1",
-        claim_hash="a" * 64,
-    )
-    initial_support = ClaimSupport(
-        claim_id=claim.claim_id,
-        support_kind=SupportKind.DIRECT,
-        evidence_id=direct.evidence_id,
-        support_role="ranked-value",
-        ordinal=0,
-    )
-    later_support = ClaimSupport(
-        claim_id=claim.claim_id,
-        support_kind=SupportKind.CALCULATION,
-        calculation_id=calculation.calculation_id,
-        support_role="ranking-calculation",
-        ordinal=1,
-    )
 
+    await repository.append_claim(
+        request_scope(repository_context),
+        claim,
+        supports=(initial_support,),
+    )
     await repository.append_claim(
         request_scope(repository_context),
         claim,
@@ -452,7 +467,7 @@ async def test_claim_and_initial_support_are_atomic_then_accept_later_support(
     await repository.append_claim(
         request_scope(repository_context),
         claim,
-        supports=(initial_support,),
+        supports=(initial_support, later_support),
     )
     await repository.append_support(request_scope(repository_context), later_support)
 
@@ -497,7 +512,7 @@ async def test_claim_and_initial_support_are_atomic_then_accept_later_support(
         await repository.append_claim(
             request_scope(repository_context),
             conflicting_claim,
-            supports=(initial_support,),
+            supports=(initial_support, later_support),
         )
     conflicting_support = later_support.model_copy(
         update={"support_role": "different-role"}
@@ -505,6 +520,90 @@ async def test_claim_and_initial_support_are_atomic_then_accept_later_support(
     with pytest.raises(api.EvidenceLedgerConflict):
         await repository.append_support(
             request_scope(repository_context), conflicting_support
+        )
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_append_claim_retry_rejects_a_shorter_support_graph(
+    repository_engine: AsyncEngine,
+    repository_context: RepositoryContext,
+) -> None:
+    api = repository_api()
+    repository = api.EvidenceLedgerRepository(repository_engine)
+    claim, initial_support, later_support = await persist_claim_prerequisites(
+        repository, repository_context
+    )
+    await repository.append_claim(
+        request_scope(repository_context),
+        claim,
+        supports=(initial_support,),
+    )
+    await repository.append_claim(
+        request_scope(repository_context),
+        claim,
+        supports=(initial_support,),
+    )
+    await repository.append_support(request_scope(repository_context), later_support)
+
+    with pytest.raises(api.EvidenceLedgerConflict):
+        await repository.append_claim(
+            request_scope(repository_context),
+            claim,
+            supports=(initial_support,),
+        )
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_append_claim_retry_rejects_a_longer_new_ordinal_support_graph(
+    repository_engine: AsyncEngine,
+    repository_context: RepositoryContext,
+) -> None:
+    api = repository_api()
+    repository = api.EvidenceLedgerRepository(repository_engine)
+    claim, initial_support, later_support = await persist_claim_prerequisites(
+        repository, repository_context
+    )
+    await repository.append_claim(
+        request_scope(repository_context),
+        claim,
+        supports=(initial_support,),
+    )
+
+    with pytest.raises(api.EvidenceLedgerConflict):
+        await repository.append_claim(
+            request_scope(repository_context),
+            claim,
+            supports=(initial_support, later_support),
+        )
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_append_claim_retry_rejects_a_changed_support_graph(
+    repository_engine: AsyncEngine,
+    repository_context: RepositoryContext,
+) -> None:
+    api = repository_api()
+    repository = api.EvidenceLedgerRepository(repository_engine)
+    claim, initial_support, later_support = await persist_claim_prerequisites(
+        repository, repository_context
+    )
+    await repository.append_claim(
+        request_scope(repository_context),
+        claim,
+        supports=(initial_support, later_support),
+    )
+    changed_support = later_support.model_copy(
+        update={"support_role": "changed-ranking-calculation"}
+    )
+
+    with pytest.raises(api.EvidenceLedgerConflict):
+        await repository.append_claim(
+            request_scope(repository_context),
+            claim,
+            supports=(initial_support, changed_support),
         )
 
 
