@@ -1,0 +1,74 @@
+# Financial Product Agent 계획·구현 현황
+
+**Updated:** 2026-08-18
+
+이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.
+
+## 1. 상위 상태
+
+| 구분 | 현재 상태 | 기준 문서 |
+| --- | --- | --- |
+| Task 1 요구사항·평가 질문·추가 데이터 | 완료; 52개 질문 유형과 공식 데이터 공백 기록 | [Core Evaluation Set](specs/core-evaluation-set.md), [Authoritative Data Requirements](specs/authoritative-data-requirements.md), [Official API Source Matrix](specs/official-api-source-matrix.md) |
+| Task 2 상위 아키텍처 | 확정; 2개 제한 LLM 역할 + 결정론적 Orchestrator·Capability·Verifier | [Planning Harness](HARNESS.md), [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) |
+| 실패·판정·시간 예산 | 확정 기본안; 55초 내부 마감은 NCP 벤치마크 후 단계별 재배분 가능 | [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md), [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) |
+| 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
+| 3개 물리 저장소·5개 논리 계층·NCP 사양 | 확정 기본안; 실제 부하 테스트 후 사양 재검증 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
+| 온톨로지 논리 구조 | 최소 클래스와 13개 핵심 관계를 현재 기본안으로 기록; TTL·SHACL 필드 매핑은 후속 계획 필요 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md) |
+| 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
+
+## 2. 구현 Stage
+
+### Stage 01 런타임 계약
+
+**상태: 구현 중, 아직 완료 아님**
+
+- 기본 계약과 JSON Schema는 커밋 `c5d387d`∼`36ffa82`에 구현되었다.
+- AnswerPlan의 구조적 경계는 `4dc6c30`에 잠겼다.
+- 의존성 lock과 `.dockerignore` 보강은 `69998f5`, 컨테이너 검증 입력 누락 수정은 `822fbf0`에 들어갔다.
+- NCP Ubuntu/Linux-amd64에서 이미지 build, 내부 83개 contract test, `docker run` 종료 코드 0을 확인했다.
+- 현재 작업은 `ExecutionTask.subtask_id`, `produces_bindings`, 바인딩·임계 경로·ToolResult 교차 검증 보강이다.
+
+기준 계획:
+
+- [Stage 01 Runtime Contracts](tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md)
+- [Stage 01 Execution Contract Hardening](tasks/2026-08-18-stage-01-execution-contract-hardening-plan.md)
+
+### Stage 02 PostgreSQL 저장 계층
+
+**상태: 구현 전 대기**
+
+- 상세 계획과 차단급 리뷰 보강은 작성되어 있다.
+- Stage 01 실행 계약 보강과 종료 검토를 통과한 뒤 스키마를 동결한다.
+- 그 전에는 PostgreSQL 구현을 시작하지 않는다.
+
+기준 계획: [Stage 02 PostgreSQL Storage](tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
+
+## 3. 현재 실행하면 안 되는 계획
+
+[2026-08-10 Core Implementation Plan](tasks/2026-08-10-financial-agent-core-implementation-plan.md)은 질문·데이터·온톨로지 요구사항의 역사적 출처로만 유지한다. DuckDB, 로컬 인덱스, 옛 ADR 번호, 이전 에이전트 역할을 포함한 실행 순서는 현재 아키텍처와 맞지 않으므로 그대로 구현하지 않는다.
+
+[Multi-Agent Architecture](architecture/MULTI_AGENT_ARCHITECTURE.md)의 Specialist Agent·LLM Verifier 기본 호출 부분은 역사적 설명이다. 현재 런타임은 ADR-0005∼0007과 Runtime Contracts를 따른다.
+
+## 4. 기록되었지만 아직 새 구현 계획이 필요한 단계
+
+아래 항목은 방향과 제약은 문서화되었지만, 현재 NCP·PostgreSQL·런타임 계약에 맞춘 실행 계획은 아직 없다.
+
+1. 주최 측 4개 마스터 적재·표준화·품질 검증
+2. 공식 추가 데이터 원천 승인과 2026-07-11 스냅샷 수집
+3. TTL·SHACL 온톨로지와 PostgreSQL→Fuseki ABox 투영
+4. SQL·Graph·Keyword·Vector 통합 검색과 상품군별 계산·유사도
+5. Intent Resolver·Orchestrator·Capability Executor·Verifier 연결
+6. Claim Gate Registry, Renderer, 검증된 응답 캐시
+7. `GET /answer`, NCP API 이중화, Load Balancer, 모니터링·부하 테스트
+
+각 단계는 직전 Stage의 실측 결과와 동결된 계약을 입력으로 받아 별도 계획으로 작성한다.
+
+## 5. 다음 순서
+
+1. Stage 01 실행 계약 보강 구현
+2. Stage 01 종료 리뷰 대기 항목 확정·보강
+3. 전체 contract test, Schema, Linux/amd64, NCP 컨테이너 재검증
+4. Stage 01 필드 스키마 동결
+5. Stage 02 계획 최종 재리뷰 후 PostgreSQL 구현
+
+이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

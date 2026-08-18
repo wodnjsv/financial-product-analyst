@@ -14,7 +14,7 @@
 
 ## 1. 결정 요약
 
-초기 운영 구조는 다음 네 저장·실행 구성요소를 사용한다.
+초기 운영 구조는 다음 네 저장·실행 구성요소를 사용한다. 데이터 저장소만 세면 **Object Storage, PostgreSQL, Fuseki의 3개 물리 구성**이고, Agent API는 이 세 저장소를 사용하는 실행 구성요소다.
 
 1. **Object Storage:** 원본 파일, 공식 문서, 정제 산출물, 백업
 2. **Cloud DB for PostgreSQL:** 표준 상품 데이터, 관측값, 관계 원장, 문서 청크, `pgvector`, 근거와 실행 기록
@@ -22,6 +22,22 @@
 4. **Agent API Server:** 질문 해석, 결정론적 오케스트레이션, 통합 검색, 검증, 평가 API 응답
 
 Vector 검색은 초기에는 PostgreSQL의 `pgvector`를 사용한다. 별도 OpenSearch 클러스터는 데이터량과 검색 지연이 분리 기준을 넘을 때만 추가한다.
+
+### 1.1 3개 물리 저장소와 5개 논리 계층
+
+5개 논리 계층은 별도 데이터베이스 5개를 뜻하지 않는다. 하나의 레코드가 원천에서 답변 근거가 될 때까지 거치는 책임 계층이며, 각 계층은 아래 3개 물리 저장소에 배치된다.
+
+| 논리 계층 | 한글 역할 | 주요 작업 | 물리 저장 위치 |
+| --- | --- | --- | --- |
+| 1. Source | 원천 보존소 | 주최 측 원본, 공식 외부 파일·API 응답, 체크섬과 manifest를 수정 없이 보존 | Object Storage |
+| 2. Normalized | 데이터 정리 작업장 | 상품·기업·증권·기관 ID 통합, 결측·단위·날짜 표준화, 관측값·문서·관계 이력 적재 | PostgreSQL `catalog`, `observation`, `document`, `relation` |
+| 3. Semantic | 의미·관계 계층 | 클래스·속성·관계·허용값을 TTL·SHACL로 검증하고 버전 고정 RDF Graph를 생성 | PostgreSQL 관계 원장 + Fuseki/TDB2 투영본 |
+| 4. Retrieval | 검색·실행 계층 | SQL 필터·정렬·집계, SPARQL 경로 탐색, Keyword·Vector 문서 후보 검색 | PostgreSQL + pgvector + Fuseki |
+| 5. Evidence & Release | 근거·답변 출시 계층 | Source·Evidence·Calculation·Claim 계보, 요청 실행 기록, Claim Gate, 검증된 응답 캐시 | PostgreSQL `evidence`, `operations` |
+
+사용자가 물어본 “데이터 정리 작업장”은 2계층을 뜻한다. 이 계층은 원본을 덮어쓰지 않고, 원본에서 읽은 값을 공통 ID·단위·통화·시간 기준으로 정리하며, 어떤 원천의 어느 필드에서 왔는지를 보존한다. 3계층은 값을 다시 정리하는 작업장이 아니라, 2계층에서 통합된 엔티티에 “운용한다”, “편입한다”, “추종한다” 같은 의미 관계와 제약을 부여한다.
+
+PostgreSQL의 7개 논리 스키마는 이 5개 계층을 추가로 늘린 것이 아니라, 하나의 물리 PostgreSQL 안에서 테이블 책임을 나눈 namespace다.
 
 ```mermaid
 flowchart TB

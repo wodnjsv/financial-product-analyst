@@ -6,6 +6,8 @@
 
 **Purpose:** Keep the project's `what` and `why` stable while allowing capable agents freedom over `how` within approved constraints.
 
+**Current status:** See [Planning and Implementation Status](STATUS.md) for the active Stage, frozen decisions, superseded plans, and work that still requires a fresh implementation plan.
+
 ## 1. Problem Definition
 
 ### Who

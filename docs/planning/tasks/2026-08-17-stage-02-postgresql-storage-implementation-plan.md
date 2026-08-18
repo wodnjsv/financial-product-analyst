@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-17
 
-**Status:** Revised after blocking review; implementation starts only after the Stage 01 completion gate, a fresh plan review, and explicit user approval
+**Status:** Revised after blocking review; waiting for the amended Stage 01 completion gate, a fresh plan review, and explicit user approval
 
 **Goal:** Implement the PostgreSQL 15 physical storage boundary for the seven approved logical schemas, preserve the Stage 01 contract IDs and immutable artifacts without renaming public interfaces, and prove that the migrations and persistence layer run in an NCP-compatible Linux/amd64 environment.
 
@@ -38,7 +38,7 @@ docker run --rm --platform linux/amd64 financial-agent-contracts:stage-01
 git status --short
 ```
 
-The Stage 01 exported JSON Schemas and these public symbols are frozen inputs:
+After the approved 2026-08-18 execution-contract hardening is implemented and the amended Stage 01 completion gate passes, the freshly exported JSON Schemas and these public symbols become frozen inputs:
 
 ```python
 from financial_agent.contracts import (
@@ -60,7 +60,7 @@ from financial_agent.contracts import (
 )
 ```
 
-Stage 02 may add persistence-only scope columns and association tables. It must not rename a contract field, change a contract Enum, relax contract validation, or turn a contract model into an ORM model.
+The expected final `ExecutionTask` contract includes `subtask_id` and `produces_bindings`; Stage 02 must preserve them in immutable request-artifact JSON and any indexed execution metadata it chooses to add. Stage 02 may add persistence-only scope columns and association tables. After the amended Stage 01 freeze, it must not rename a contract field, change a contract Enum, relax contract validation, or turn a contract model into an ORM model.
 
 ### 1.1 Blocking review closure matrix
 

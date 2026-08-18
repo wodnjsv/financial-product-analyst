@@ -1,8 +1,8 @@
 # Financial Product Agent 실행 계약
 
-**Status:** Task 2 승인 설계
+**Status:** Task 2 승인 설계; 2026-08-18 실행 계약 보강안 승인
 
-**Date:** 2026-08-17
+**Date:** 2026-08-17 (2026-08-18 실행 계약 보강)
 
 **Decisions:** [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md), [ADR-0007: Use a Normalized Evidence Ledger and Structured Answer Plans](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md)
 
@@ -161,10 +161,12 @@ ExecutionGraph
 ├─ graph_id
 ├─ tasks
 │  ├─ task_id
+│  ├─ subtask_id
 │  ├─ capability
 │  ├─ operation_id
 │  ├─ literal_inputs
 │  ├─ binding_inputs
+│  ├─ produces_bindings
 │  ├─ depends_on
 │  ├─ expected_output_type
 │  ├─ required_evidence_fields
@@ -175,6 +177,12 @@ ExecutionGraph
 ```
 
 기본 Capability는 `rdb_lookup`, `graph_traversal`, `keyword_search`, `vector_search`, `financial_calculation`, `ranking`, `similarity`, `comparison`이다. Capability는 역할을 나타낼 뿐 해당 역할을 LLM이 수행한다는 뜻이 아니다.
+
+`subtask_id`는 해당 실행 작업이 `QueryPlan`의 어느 하위 질문을 구현하는지 나타낸다. `operation_id`는 해당 하위 질문에 속한 `QueryPlan.operations.operation_id`를 참조한다. 하나의 논리 작업이 여러 Capability 작업으로 컴파일될 수 있으므로 여러 `ExecutionTask`가 같은 `operation_id`를 가질 수 있다.
+
+`produces_bindings`는 해당 작업이 성공했을 때 생성할 수 있는 중간 결과 이름이다. 모든 입력·출력 바인딩은 `ExecutionGraph.binding_specs`에 선언되어야 하며, 하나의 바인딩은 하나의 작업만 생성한다. 생성 작업의 `subtask_id`는 `BindingSpec.producer_subtask_id`와 같아야 하고, 소비 작업은 생성 작업에 직접 또는 전이적으로 의존해야 한다. 같은 작업이 같은 바인딩을 동시에 입력과 출력으로 선언할 수 없다.
+
+`critical_path`는 중복 없는 작업 ID의 연속 경로이다. 인접한 작업은 DAG에서 직접 의존 관계여야 하며, 경로의 `budget_ms` 합은 `total_budget_ms`를 넘을 수 없다. 병렬 분기의 예산은 합산하지 않고, 명시된 임계 경로만 검사한다.
 
 ### 5.4 `ToolResult`
 
@@ -194,6 +202,24 @@ ExecutionGraph
 | `latency_ms` | 작업 소요 시간 |
 
 `empty`는 실행 오류가 아니다. 조건에 맞는 결과가 없다는 증거가 될 수 있으므로 조회 범위와 적용한 필터를 근거로 남긴다.
+
+`success` 상태에서만 검증 가능한 결과 행 또는 바인딩 값을 실을 수 있다. `empty`와 오류 상태는 `result_rows`나 `binding_values`를 실어 성공 데이터와 실패 상태를 섞을 수 없다. 다만 검색 범위, 제외, 경고 등 실패와 독립적인 감사 정보는 보존할 수 있다.
+
+#### 5.4.1 계약 간 교차 검증
+
+개별 Pydantic 모델의 구조 검증만으로는 서로 다른 산출물 사이의 일치를 보장할 수 없다. Orchestrator는 다음 두 교차 검증을 결정론적으로 실행한다.
+
+1. `QueryPlan → ExecutionGraph`
+   - `request_key`, `run_id`, `dataset_version`, `cutoff_date`가 같은지 검사한다.
+   - Graph의 바인딩 정의가 Plan의 이름·타입·생산 하위 작업·카디널리티와 같은지 검사한다.
+   - 모든 `ExecutionTask.subtask_id`와 `operation_id`가 Plan에 존재하고 서로 같은 하위 작업에 속하는지 검사한다.
+   - Graph가 사용하는 Capability가 Plan의 `requested_capabilities`에 포함되는지 검사한다.
+2. `ExecutionGraph → ToolResult`
+   - 실행 메타데이터와 `task_id`가 같은 질문·데이터셋·작업을 가리키는지 검사한다.
+   - `result_type`이 작업의 `expected_output_type`과 같은지 검사한다.
+   - `binding_values`가 해당 작업의 `produces_bindings`에만 속하고, 선언된 `value_type`과 `cardinality`를 따르는지 검사한다. `one`은 단일 스칼라, `many`는 튜플을 사용한다.
+
+교차 검증 실패는 LLM이 보정할 자연어 문제가 아니라 계약 또는 컴파일러 결함이다. 검증되지 않은 Graph 또는 ToolResult를 다음 계층으로 전달하지 않는다.
 
 ### 5.5 `EvidenceBundle`
 
@@ -350,6 +376,9 @@ t5 similarity depends_on t4
 - 모든 최상위 계약에 `schema_version`, `request_key`, `run_id`, `dataset_version`, `cutoff_date`가 존재한다.
 - 알 수 없는 필드, 허용되지 않은 작업, 잘못된 바인딩 타입을 거부한다.
 - 여러 문장의 지시어가 선행 작업의 중간 결과에 타입 안전하게 바인딩된다.
+- 모든 실행 작업의 하위 질문·작업·Capability 출처가 `QueryPlan`까지 역추적된다.
+- 바인딩의 유일한 생산자, 의존 경로, 값 타입, 단수·복수가 `ExecutionGraph`과 `ToolResult` 사이에서 일치한다.
+- 임계 경로의 작업 예산 합이 `total_budget_ms`를 넘지 않는다.
 - 동일한 `request_key`와 `dataset_version`의 결정론적 결과가 같다.
 - 모든 수치 결과는 소스 필드, 단위, 기준일, 상품 ID에 연결된다.
 - 계산은 등록된 입력과 수식으로 재현된다.

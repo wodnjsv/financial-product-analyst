@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-17
 
-**Status:** Approved Stage 01 scope; ready for implementation after plan review
+**Status:** Core contracts and NCP container verification implemented; approved execution-contract hardening remains before Stage 01 completion
 
 **Goal:** Create the executable, immutable, schema-exportable runtime contracts that every later data, ontology, orchestration, verification, rendering, API, and Naver Cloud component must use.
 
@@ -15,6 +15,21 @@
 ### Approved 2026-08-18 container-hardening amendment
 
 The Naver Cloud host runs Ubuntu, while the Stage 01 verification image keeps a portable Linux/amd64 Python slim userland. The host distribution does not require changing the container base image. Container verification must install the exact contract runtime and test dependency graph recorded in `requirements/contracts.lock`; any lock refresh is an explicit reviewed change. A repository-root `.dockerignore` must keep Git metadata, organizer data, secrets, local databases, virtual environments, caches, logs, and generated outputs out of the Docker build context. This amendment does not implement the final Agent API image or change any public runtime contract.
+
+### Approved 2026-08-18 execution-contract-hardening amendment
+
+`ExecutionTask` adds `subtask_id` and `produces_bindings` so the Orchestrator can prove which QueryPlan subtask owns each compiled task and which task uniquely produces each intermediate result. Local graph validation must reject undeclared, duplicate, self-consumed, incorrectly owned, or dependency-disconnected bindings and reject a critical path whose consecutive tasks are not directly connected or whose serial budget exceeds `total_budget_ms`. Deterministic cross-artifact validation must prove QueryPlan–ExecutionGraph identity, subtask, operation, capability, and binding-spec compatibility, then prove ExecutionGraph–ToolResult task, result-type, binding-type, and cardinality compatibility. Error and empty ToolResult states cannot carry successful rows or binding values.
+
+The exact implementation sequence is defined in [Stage 01 Execution Contract Hardening Plan](2026-08-18-stage-01-execution-contract-hardening-plan.md). This amendment changes internal Stage 01 schema fields before the Stage 02 freeze; it does not change the organizer-facing five-string evaluation API.
+
+## Implementation Status at 2026-08-18
+
+- Tasks 1–7 were implemented in commits `c5d387d` through `36ffa82`.
+- AnswerPlan's Stage 01 structural boundary was locked in `4dc6c30`; Claim Gate Registry compatibility remains a mandatory later-layer check.
+- Dependency locking and Docker build-context protection were added in `69998f5`.
+- The verification image was corrected to include its own Dockerfile and `.dockerignore` test inputs in `822fbf0`.
+- NCP Ubuntu/Linux-amd64 verification completed successfully: the image built, 83 contract tests passed inside the image, and the container command exited with code 0.
+- Stage 01 is not complete because the approved execution-contract hardening and the closure-review register below remain unresolved.
 
 **Authoritative design references:**
 
@@ -156,7 +171,7 @@ All seven runtime fixtures describe one synthetic request and use these exact sh
 
 ## Public Interface Freeze
 
-The following imports are the Stage 01 public boundary. Later stages may add models without renaming these symbols unless an approved ADR changes the contract.
+The following imports are the Stage 01 public symbol boundary. Their names remain stable. Field-level schemas become frozen only after the 2026-08-18 execution-contract amendment passes the revised Stage 01 completion gate and the schemas are freshly exported. Later stages may add models without renaming these symbols unless an approved ADR changes the contract.
 
 ```python
 from financial_agent.contracts import (
@@ -1684,6 +1699,10 @@ Stage 01 is complete only when all of the following are evidenced by fresh comma
 - The verification image installs through the reviewed exact dependency lock, and the build context excludes repository-policy-protected local artifacts.
 - Every public model rejects extra fields and top-level runtime artifacts enforce the fixed cutoff.
 - `QueryPlan` and `ExecutionGraph` reject unknown references and cyclic dependencies.
+- Every `ExecutionTask` identifies its owning QueryPlan subtask and explicitly declares the bindings it can produce.
+- `ExecutionGraph` rejects undeclared or duplicate binding producers, disconnected consumers, invalid critical paths, and critical-path budgets above `total_budget_ms`.
+- Deterministic compatibility checks reject QueryPlan–ExecutionGraph and ExecutionGraph–ToolResult identity, ownership, operation, capability, result-type, binding-type, or cardinality mismatches.
+- `ToolResult` rejects successful payloads attached to `empty` or error states.
 - Evidence contracts preserve after-cutoff and unsupported records for rejection without releasing them.
 - `VerificationReport` keeps execution failure separate from answer disposition.
 - `AnswerPlan` contains only approved IDs and layout structure, never factual strings.
@@ -1693,4 +1712,14 @@ Stage 01 is complete only when all of the following are evidenced by fresh comma
 
 ## Stage 02 Handoff
 
-The [Stage 02 PostgreSQL Storage implementation plan](2026-08-17-stage-02-postgresql-storage-implementation-plan.md) may start only after Stage 01 is implemented, verified, and reviewed. Stage 02 maps these contract IDs and immutable artifacts to PostgreSQL 15 DDL, Alembic migrations, foreign keys, normalized association tables, indexes, and NCP Cloud DB integration tests. It must consume the exported Stage 01 schemas without renaming the frozen public interfaces.
+The [Stage 02 PostgreSQL Storage implementation plan](2026-08-17-stage-02-postgresql-storage-implementation-plan.md) may start only after Stage 01, including the 2026-08-18 execution-contract amendment, is implemented, verified, and reviewed. Stage 02 maps these contract IDs and immutable artifacts to PostgreSQL 15 DDL, Alembic migrations, foreign keys, normalized association tables, indexes, and NCP Cloud DB integration tests. It must consume the freshly exported final Stage 01 schemas without renaming the frozen public interfaces.
+
+## Stage 01 Closure-Review Register
+
+The final review also identified the following items. They are recorded so they cannot be lost, but they are not silently included in the approved execution-contract implementation scope. Each item requires a focused decision before Stage 01 can be declared complete.
+
+1. Define strict Python-versus-JSON ingress behavior without breaking ISO date and datetime parsing.
+2. Document that exported JSON Schema proves structural validation while Pydantic custom validators remain semantic runtime checks, then add parity tests where feasible.
+3. Verify canonical serialization for `Decimal`, `date`, `datetime`, zero values, and nested tuple inputs.
+4. Decide whether `ClaimSupport.ordinal` must be non-negative and whether `support_kind` must constrain evidence-versus-calculation targets.
+5. Add schema-check mutation tests that prove stale, missing, and extra generated schema files are rejected.
