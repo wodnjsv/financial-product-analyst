@@ -251,6 +251,11 @@ request_run = sa.Table(
         "http_status IS NULL OR http_status BETWEEN 100 AND 599",
         name="http_status",
     ),
+    sa.UniqueConstraint(
+        "run_id",
+        "dataset_version",
+        name="uq_request_run_run_dataset",
+    ),
     schema="operations",
 )
 

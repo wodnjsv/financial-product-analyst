@@ -793,6 +793,20 @@ def _truncate_foundation_tables(database_url: str) -> None:
         connection.execute(
             """
             TRUNCATE TABLE
+                evidence.claim_support,
+                evidence.claim_qualifier,
+                evidence.atomic_claim,
+                evidence.calculation_population_filter,
+                evidence.calculation_population,
+                evidence.calculation_exclusion,
+                evidence.calculation_dependency,
+                evidence.calculation_evidence_input,
+                evidence.calculation_parameter,
+                evidence.calculation_record,
+                evidence.evidence_document_origin,
+                evidence.evidence_relation_origin,
+                evidence.evidence_observation_origin,
+                evidence.evidence_record,
                 search.document_embedding,
                 search.embedding_model,
                 document.document_chunk,
