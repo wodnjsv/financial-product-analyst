@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-17
 
-**Status:** Core contracts and NCP container verification implemented; approved execution-contract hardening remains before Stage 01 completion
+**Status:** Core contracts and execution-contract hardening implemented and NCP-verified; the closure-review register remains before Stage 01 completion
 
 **Goal:** Create the executable, immutable, schema-exportable runtime contracts that every later data, ontology, orchestration, verification, rendering, API, and Naver Cloud component must use.
 
@@ -28,8 +28,9 @@ The exact implementation sequence is defined in [Stage 01 Execution Contract Har
 - AnswerPlan's Stage 01 structural boundary was locked in `4dc6c30`; Claim Gate Registry compatibility remains a mandatory later-layer check.
 - Dependency locking and Docker build-context protection were added in `69998f5`.
 - The verification image was corrected to include its own Dockerfile and `.dockerignore` test inputs in `822fbf0`.
-- NCP Ubuntu/Linux-amd64 verification completed successfully: the image built, 83 contract tests passed inside the image, and the container command exited with code 0.
-- Stage 01 is not complete because the approved execution-contract hardening and the closure-review register below remain unresolved.
+- The execution-contract hardening amendment was implemented in `60de716`; the host passed 116 contract tests and the Schema freshness check.
+- NCP Ubuntu/Linux-amd64 verification of `60de716` completed successfully: the image build completed its locked install, full contract suite, and Schema check, and the container command exited with code 0.
+- Stage 01 is not complete because the closure-review register below remains unresolved.
 
 **Authoritative design references:**
 

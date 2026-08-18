@@ -25,8 +25,9 @@
 - 기본 계약과 JSON Schema는 커밋 `c5d387d`∼`36ffa82`에 구현되었다.
 - AnswerPlan의 구조적 경계는 `4dc6c30`에 잠겼다.
 - 의존성 lock과 `.dockerignore` 보강은 `69998f5`, 컨테이너 검증 입력 누락 수정은 `822fbf0`에 들어갔다.
-- NCP Ubuntu/Linux-amd64에서 이미지 build, 내부 83개 contract test, `docker run` 종료 코드 0을 확인했다.
-- 현재 작업은 `ExecutionTask.subtask_id`, `produces_bindings`, 바인딩·임계 경로·ToolResult 교차 검증 보강이다.
+- 실행 계약 보강은 `60de716`에 구현되었고, 호스트에서 116개 contract test와 Schema 최신성 검사를 통과했다.
+- NCP Ubuntu/Linux-amd64에서 최신 이미지 build, 이미지 내부 contract test·Schema 검사, `docker run` 종료 코드 0을 다시 확인했다.
+- 현재 남은 작업은 Stage 01 종료 리뷰 등록부의 5개 항목을 확정·보강하고 전체 계약을 다시 검증한 뒤 필드 스키마를 동결하는 것이다.
 
 기준 계획:
 
@@ -65,10 +66,9 @@
 
 ## 5. 다음 순서
 
-1. Stage 01 실행 계약 보강 구현
-2. Stage 01 종료 리뷰 대기 항목 확정·보강
-3. 전체 contract test, Schema, Linux/amd64, NCP 컨테이너 재검증
-4. Stage 01 필드 스키마 동결
-5. Stage 02 계획 최종 재리뷰 후 PostgreSQL 구현
+1. Stage 01 종료 리뷰 대기 항목 확정·보강
+2. 전체 contract test, Schema, Linux/amd64, NCP 컨테이너 최종 재검증
+3. Stage 01 필드 스키마 동결
+4. Stage 02 계획 최종 재리뷰 후 PostgreSQL 구현
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

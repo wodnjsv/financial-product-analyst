@@ -4,13 +4,21 @@
 
 **Date:** 2026-08-18
 
-**Status:** Direction approved; implementation starts after this documentation-only change is reviewed and committed
+**Status:** Implemented in `60de716` and verified on the development host and NCP Ubuntu/Linux-amd64; the separate Stage 01 closure-review register remains open
 
 **Goal:** Make every compiled task and intermediate binding traceable from `QueryPlan` through `ExecutionGraph` to `ToolResult`, and reject contradictory result states and impossible serial budgets before later storage or orchestration work begins.
 
 **Architecture:** Keep the official evaluation API unchanged. Add explicit subtask ownership and binding-output declarations to the internal `ExecutionTask`, enforce graph-local invariants inside Pydantic models, and add deterministic compatibility functions for invariants that span separately created artifacts. Do not infer binding ownership from names or LLM prose.
 
 **Tech Stack:** Python 3.12, Pydantic 2.x, pytest 8.x, deterministic JSON Schema export, Docker Linux/amd64 verification on Naver Cloud Ubuntu.
+
+## Implementation and Verification Record at 2026-08-18
+
+- `ExecutionTask` ownership and binding-output declarations, graph-local invariants, cross-artifact compatibility checks, coherent fixtures, and refreshed schemas were implemented in `60de716`.
+- The development host passed all 116 contract tests, deterministic Schema freshness checking, Python bytecode compilation, and repository diff checks before the commit was pushed.
+- The NCP Ubuntu host pulled `60de716` and successfully built the Linux/amd64 verification image. The image build completed its locked dependency installation, full contract suite, and Schema freshness check.
+- Running the resulting image without local volumes or secrets exited with code 0.
+- This completes the execution-contract hardening amendment only. Stage 01 remains open until every item in the closure-review register is decided, implemented where required, and reverified.
 
 ## Global Constraints
 
