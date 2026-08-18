@@ -1613,8 +1613,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+COPY .dockerignore ./
 COPY pyproject.toml ./
 COPY requirements/contracts.lock ./requirements/contracts.lock
+COPY docker/contracts.Dockerfile ./docker/contracts.Dockerfile
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY schemas/ ./schemas/
