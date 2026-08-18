@@ -1,4 +1,5 @@
 from copy import deepcopy
+from datetime import UTC, date, datetime
 
 import pytest
 from pydantic import ValidationError
@@ -7,6 +8,7 @@ from financial_agent.contracts import (
     AnswerBlock,
     AnswerPlan,
     AnswerRow,
+    ClaimBinding,
     ClaimSlot,
     EvaluationApiResponse,
     ReleasedAnswer,
@@ -16,8 +18,12 @@ from financial_agent.contracts import (
 from financial_agent.contracts.enums import AnswerDisposition
 
 
-def test_verification_report_preserves_verified_release_set(load_fixture) -> None:
-    report = VerificationReport.model_validate(load_fixture("verification_report.json"))
+def test_verification_report_preserves_verified_release_set(
+    load_fixture_json,
+) -> None:
+    report = VerificationReport.model_validate_json(
+        load_fixture_json("verification_report.json")
+    )
 
     assert report.verification_status.value == "pass"
     assert report.recommended_answer_disposition is AnswerDisposition.ANSWER
@@ -25,24 +31,26 @@ def test_verification_report_preserves_verified_release_set(load_fixture) -> Non
     assert isinstance(report.claim_checks, tuple)
 
 
-def test_pass_can_recommend_limitation(load_fixture) -> None:
+def test_pass_can_recommend_limitation(load_fixture, dump_json) -> None:
     payload = load_fixture("verification_report.json") | {
         "verification_status": "pass",
         "recommended_answer_disposition": "limitation",
         "releaseable_claim_ids": ["claim-limit-1"],
     }
-    report = VerificationReport.model_validate(payload)
+    report = VerificationReport.model_validate_json(dump_json(payload))
     assert report.recommended_answer_disposition is AnswerDisposition.LIMITATION
 
 
-def test_fail_with_no_disposition_or_releaseable_claims_is_valid(load_fixture) -> None:
+def test_fail_with_no_disposition_or_releaseable_claims_is_valid(
+    load_fixture, dump_json
+) -> None:
     payload = load_fixture("verification_report.json") | {
         "verification_status": "fail",
         "recommended_answer_disposition": None,
         "releaseable_claim_ids": [],
     }
 
-    report = VerificationReport.model_validate(payload)
+    report = VerificationReport.model_validate_json(dump_json(payload))
 
     assert report.verification_status is VerificationStatus.FAIL
     assert report.recommended_answer_disposition is None
@@ -69,21 +77,23 @@ def test_fail_with_no_disposition_or_releaseable_claims_is_valid(load_fixture) -
     ],
 )
 def test_verification_state_axes_reject_inconsistent_combinations(
-    load_fixture, payload_update: dict[str, object]
+    load_fixture, dump_json, payload_update: dict[str, object]
 ) -> None:
     payload = load_fixture("verification_report.json") | payload_update
 
     with pytest.raises(ValidationError):
-        VerificationReport.model_validate(payload)
+        VerificationReport.model_validate_json(dump_json(payload))
 
 
-def test_releaseable_and_rejected_claims_must_be_disjoint(load_fixture) -> None:
+def test_releaseable_and_rejected_claims_must_be_disjoint(
+    load_fixture, dump_json
+) -> None:
     payload = load_fixture("verification_report.json")
     payload["rejected_claims"] = [
         {"claim_id": "claim-rank-1", "reason_code": "SOURCE_INVALID"}
     ]
     with pytest.raises(ValidationError):
-        VerificationReport.model_validate(payload)
+        VerificationReport.model_validate_json(dump_json(payload))
 
 
 @pytest.mark.parametrize(
@@ -135,16 +145,20 @@ def test_releaseable_and_rejected_claims_must_be_disjoint(load_fixture) -> None:
         ),
     ],
 )
-def test_verification_report_rejects_duplicate_ids(load_fixture, mutation) -> None:
+def test_verification_report_rejects_duplicate_ids(
+    load_fixture, dump_json, mutation
+) -> None:
     payload = load_fixture("verification_report.json")
     mutation(payload)
 
     with pytest.raises(ValidationError):
-        VerificationReport.model_validate(payload)
+        VerificationReport.model_validate_json(dump_json(payload))
 
 
-def test_answer_plan_contains_ids_but_no_factual_content_fields(load_fixture) -> None:
-    plan = AnswerPlan.model_validate(load_fixture("answer_plan.json"))
+def test_answer_plan_contains_ids_but_no_factual_content_fields(
+    load_fixture_json,
+) -> None:
+    plan = AnswerPlan.model_validate_json(load_fixture_json("answer_plan.json"))
     schema = AnswerPlan.model_json_schema()
     property_names: set[str] = set()
 
@@ -217,13 +231,13 @@ def test_answer_plan_exposes_exact_approved_structural_fields() -> None:
     ],
 )
 def test_answer_plan_rejects_duplicate_block_or_slot_ids(
-    load_fixture, mutation
+    load_fixture, dump_json, mutation
 ) -> None:
     payload = load_fixture("answer_plan.json")
     mutation(payload)
 
     with pytest.raises(ValidationError):
-        AnswerPlan.model_validate(payload)
+        AnswerPlan.model_validate_json(dump_json(payload))
 
 
 def test_released_answer_preserves_exact_rendered_strings_and_bindings() -> None:
@@ -235,19 +249,19 @@ def test_released_answer_preserves_exact_rendered_strings_and_bindings() -> None
         ),
         run_id="run-syn-001",
         dataset_version="2026-07-11-v1",
-        cutoff_date="2026-07-11",
+        cutoff_date=date(2026, 7, 11),
         producer="renderer",
-        created_at="2026-08-17T00:00:00Z",
-        answer_disposition="answer",
+        created_at=datetime(2026, 8, 17, tzinfo=UTC),
+        answer_disposition=AnswerDisposition.ANSWER,
         answer_text="합성 ETF의 AUM 순위는 1위입니다. [1]",
         retrieved_context_text="[SOURCE-1] 합성 ETF AUM 근거",
         think_trace_text="[의도] AUM 순위 조회 및 검증",
         claim_bindings=(
-            {
-                "output_locator": "answer:block-summary:slot-ranking",
-                "claim_ids": ("claim-rank-1",),
-                "evidence_ids": ("evidence-aum-1",),
-            },
+            ClaimBinding(
+                output_locator="answer:block-summary:slot-ranking",
+                claim_ids=("claim-rank-1",),
+                evidence_ids=("evidence-aum-1",),
+            ),
         ),
         response_hash="1" * 64,
     )

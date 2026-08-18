@@ -4,7 +4,12 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from financial_agent.contracts.enums import CutoffStatus
+from financial_agent.contracts.enums import (
+    CalculationType,
+    ClaimType,
+    CutoffStatus,
+    SupportKind,
+)
 from financial_agent.contracts.evidence import (
     AtomicClaim,
     CalculationRecord,
@@ -25,7 +30,7 @@ def test_claim_support_requires_exactly_one_support_target() -> None:
     with pytest.raises(ValidationError):
         ClaimSupport(
             claim_id="claim-1",
-            support_kind="direct",
+            support_kind=SupportKind.DIRECT,
             evidence_id="evidence-1",
             calculation_id="calculation-1",
             support_role="value",
@@ -35,7 +40,7 @@ def test_claim_support_requires_exactly_one_support_target() -> None:
     with pytest.raises(ValidationError):
         ClaimSupport(
             claim_id="claim-1",
-            support_kind="direct",
+            support_kind=SupportKind.DIRECT,
             evidence_id=None,
             calculation_id=None,
             support_role="value",
@@ -43,8 +48,12 @@ def test_claim_support_requires_exactly_one_support_target() -> None:
         )
 
 
-def test_evidence_bundle_keeps_candidate_claims_unreleased(load_fixture) -> None:
-    bundle = EvidenceBundle.model_validate(load_fixture("evidence_bundle.json"))
+def test_evidence_bundle_keeps_candidate_claims_unreleased(
+    load_fixture_json,
+) -> None:
+    bundle = EvidenceBundle.model_validate_json(
+        load_fixture_json("evidence_bundle.json")
+    )
     assert bundle.candidate_claim_ids == ("claim-rank-1",)
     assert "releaseable_claim_ids" not in EvidenceBundle.model_fields
 
@@ -133,7 +142,7 @@ def test_ranking_calculation_requires_population_definition() -> None:
     with pytest.raises(ValidationError):
         CalculationRecord(
             calculation_id="calculation-rank-1",
-            calculation_type="ranking",
+            calculation_type=CalculationType.RANKING,
             formula_id="ranking.desc.v1",
             formula_version="v1",
             input_evidence_ids=("evidence-aum-1",),
@@ -154,7 +163,7 @@ def test_aggregation_calculation_requires_population_definition() -> None:
     with pytest.raises(ValidationError):
         CalculationRecord(
             calculation_id="calculation-aggregate-1",
-            calculation_type="aggregation",
+            calculation_type=CalculationType.AGGREGATION,
             formula_id="sum.v1",
             formula_version="v1",
             input_evidence_ids=("evidence-aum-1",),
@@ -169,7 +178,7 @@ def test_calculation_requires_at_least_one_input() -> None:
     with pytest.raises(ValidationError):
         CalculationRecord(
             calculation_id="calculation-conversion-1",
-            calculation_type="conversion",
+            calculation_type=CalculationType.CONVERSION,
             formula_id="conversion.v1",
             formula_version="v1",
             result_value=encode_contract_value(Decimal("125000000")),
@@ -183,7 +192,7 @@ def test_ranking_calculation_requires_tie_break_rule() -> None:
     with pytest.raises(ValidationError):
         CalculationRecord(
             calculation_id="calculation-rank-1",
-            calculation_type="ranking",
+            calculation_type=CalculationType.RANKING,
             formula_id="ranking.desc.v1",
             formula_version="v1",
             input_evidence_ids=("evidence-aum-1",),
@@ -204,7 +213,7 @@ def test_atomic_claim_rejects_object_and_value_together() -> None:
     with pytest.raises(ValidationError):
         AtomicClaim(
             claim_id="claim-invalid-1",
-            claim_type="direct_fact",
+            claim_type=ClaimType.DIRECT_FACT,
             subtask_id="q1",
             subject_id="product-syn-etf-a",
             predicate_id="managedBy",
@@ -222,7 +231,7 @@ def test_atomic_claim_requires_object_or_value() -> None:
     with pytest.raises(ValidationError):
         AtomicClaim(
             claim_id="claim-invalid-1",
-            claim_type="direct_fact",
+            claim_type=ClaimType.DIRECT_FACT,
             subtask_id="q1",
             subject_id="product-syn-etf-a",
             predicate_id="aum",
@@ -232,9 +241,12 @@ def test_atomic_claim_requires_object_or_value() -> None:
         )
 
 
-@pytest.mark.parametrize("claim_type", ["data_limitation", "policy_boundary"])
+@pytest.mark.parametrize(
+    "claim_type",
+    [ClaimType.DATA_LIMITATION, ClaimType.POLICY_BOUNDARY],
+)
 def test_limitation_claims_allow_structured_qualifier_only(
-    claim_type: str,
+    claim_type: ClaimType,
 ) -> None:
     claim = AtomicClaim(
         claim_id="claim-limitation-1",
@@ -257,8 +269,13 @@ def test_limitation_claims_allow_structured_qualifier_only(
     assert claim.value is None
 
 
-@pytest.mark.parametrize("claim_type", ["data_limitation", "policy_boundary"])
-def test_qualifier_only_claim_requires_a_qualifier(claim_type: str) -> None:
+@pytest.mark.parametrize(
+    "claim_type",
+    [ClaimType.DATA_LIMITATION, ClaimType.POLICY_BOUNDARY],
+)
+def test_qualifier_only_claim_requires_a_qualifier(
+    claim_type: ClaimType,
+) -> None:
     with pytest.raises(ValidationError):
         AtomicClaim(
             claim_id="claim-limitation-1",
@@ -283,7 +300,9 @@ def test_qualifier_only_claim_requires_a_qualifier(claim_type: str) -> None:
         "exclusion_evidence_ids",
     ],
 )
-def test_evidence_bundle_rejects_duplicate_ids(load_fixture, id_field: str) -> None:
+def test_evidence_bundle_rejects_duplicate_ids(
+    load_fixture, dump_json, id_field: str
+) -> None:
     payload = load_fixture("evidence_bundle.json")
     values = payload[id_field]
     assert isinstance(values, list)
@@ -291,22 +310,26 @@ def test_evidence_bundle_rejects_duplicate_ids(load_fixture, id_field: str) -> N
     payload[id_field] = [duplicate, duplicate]
 
     with pytest.raises(ValidationError):
-        EvidenceBundle.model_validate(payload)
+        EvidenceBundle.model_validate_json(dump_json(payload))
 
 
-def test_evidence_bundle_rejects_answered_unanswered_overlap(load_fixture) -> None:
+def test_evidence_bundle_rejects_answered_unanswered_overlap(
+    load_fixture, dump_json
+) -> None:
     payload = load_fixture("evidence_bundle.json") | {
         "answered_subtasks": ["s1"],
         "unanswered_subtasks": ["s1"],
     }
 
     with pytest.raises(ValidationError):
-        EvidenceBundle.model_validate(payload)
+        EvidenceBundle.model_validate_json(dump_json(payload))
 
 
-def test_evidence_bundle_rejects_invalid_bundle_hash(load_fixture) -> None:
+def test_evidence_bundle_rejects_invalid_bundle_hash(
+    load_fixture, dump_json
+) -> None:
     payload = deepcopy(load_fixture("evidence_bundle.json"))
     payload["bundle_hash"] = "F" * 64
 
     with pytest.raises(ValidationError):
-        EvidenceBundle.model_validate(payload)
+        EvidenceBundle.model_validate_json(dump_json(payload))
