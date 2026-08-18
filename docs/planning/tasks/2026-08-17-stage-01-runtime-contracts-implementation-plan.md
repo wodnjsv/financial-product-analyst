@@ -1719,6 +1719,8 @@ The [Stage 02 PostgreSQL Storage implementation plan](2026-08-17-stage-02-postgr
 
 The final review also identified the following items. They are recorded so they cannot be lost, but they are not silently included in the approved execution-contract implementation scope. Each item requires a focused decision before Stage 01 can be declared complete.
 
+The decisions for these items are recorded in the [Stage 01 Closure Hardening Design](../specs/2026-08-18-stage-01-closure-hardening-design.md). Implementation remains gated on review of that written specification and approval of its dedicated implementation plan.
+
 1. Define strict Python-versus-JSON ingress behavior without breaking ISO date and datetime parsing.
 2. Document that exported JSON Schema proves structural validation while Pydantic custom validators remain semantic runtime checks, then add parity tests where feasible.
 3. Verify canonical serialization for `Decimal`, `date`, `datetime`, zero values, and nested tuple inputs.

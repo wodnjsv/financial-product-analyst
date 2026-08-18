@@ -28,11 +28,13 @@
 - 실행 계약 보강은 `60de716`에 구현되었고, 호스트에서 116개 contract test와 Schema 최신성 검사를 통과했다.
 - NCP Ubuntu/Linux-amd64에서 최신 이미지 build, 이미지 내부 contract test·Schema 검사, `docker run` 종료 코드 0을 다시 확인했다.
 - 현재 남은 작업은 Stage 01 종료 리뷰 등록부의 5개 항목을 확정·보강하고 전체 계약을 다시 검증한 뒤 필드 스키마를 동결하는 것이다.
+- 종료 리뷰 5개 항목의 승인 설계는 [Stage 01 Closure Hardening Design](specs/2026-08-18-stage-01-closure-hardening-design.md)에 기록되었으며, 작성된 설계 검토와 별도 구현 계획 승인을 기다린다.
 
 기준 계획:
 
 - [Stage 01 Runtime Contracts](tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md)
 - [Stage 01 Execution Contract Hardening](tasks/2026-08-18-stage-01-execution-contract-hardening-plan.md)
+- [Stage 01 Closure Hardening Design](specs/2026-08-18-stage-01-closure-hardening-design.md)
 
 ### Stage 02 PostgreSQL 저장 계층
 
