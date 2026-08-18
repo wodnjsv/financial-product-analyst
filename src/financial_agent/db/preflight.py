@@ -38,12 +38,17 @@ class PreflightFailure(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class PreflightSnapshot:
+    current_user: str
     postgres_major: int
     server_encoding: str
     timezone: str
     search_path: str
     extensions: Mapping[str, str]
     role_login: Mapping[str, bool]
+    role_public_usage: Mapping[str, bool]
+    role_public_create: Mapping[str, bool]
+    role_cdb_admin_usage: Mapping[str, bool]
+    role_pg_stat_statements_select: Mapping[str, bool]
     vector_usable: bool
     pg_stat_statements_usable: bool
 
@@ -115,6 +120,38 @@ def validate_pre_migration_snapshot(
             "DB_ROLE_LAYOUT_MISMATCH",
             "logical database roles mix incompatible login modes",
         )
+    if (
+        permission_layout == "direct_users"
+        and snapshot.current_user != "fa_migration"
+    ):
+        raise PreflightFailure(
+            "MIGRATION_IDENTITY_MISMATCH",
+            "direct-user migrations must connect as fa_migration",
+        )
+    expected_public_usage = {name: True for name in EXPECTED_ROLES}
+    expected_public_create = {
+        "fa_migration": True,
+        "fa_build": False,
+        "fa_runtime": False,
+    }
+    if (
+        snapshot.role_public_usage != expected_public_usage
+        or snapshot.role_public_create != expected_public_create
+    ):
+        raise PreflightFailure(
+            "PUBLIC_SCHEMA_PERMISSION_MISMATCH",
+            "public schema privileges are incompatible",
+        )
+    expected_extension_access = {name: True for name in EXPECTED_ROLES}
+    if (
+        snapshot.role_cdb_admin_usage != expected_extension_access
+        or snapshot.role_pg_stat_statements_select
+        != expected_extension_access
+    ):
+        raise PreflightFailure(
+            "NCP_EXTENSION_PERMISSION_MISMATCH",
+            "NCP extension read privileges are incompatible",
+        )
     return PreflightReport(permission_layout=permission_layout)
 
 
@@ -140,6 +177,8 @@ def collect_preflight_snapshot(
     connection: psycopg.Connection,
 ) -> PreflightSnapshot:
     with connection.cursor() as cursor:
+        cursor.execute("SELECT current_user")
+        current_user = str(cursor.fetchone()[0])
         cursor.execute("SHOW server_version_num")
         postgres_major = int(cursor.fetchone()[0]) // 10_000
         cursor.execute("SHOW server_encoding")
@@ -170,14 +209,69 @@ def collect_preflight_snapshot(
             """
         )
         role_login = {str(name): bool(can_login) for name, can_login in cursor.fetchall()}
+        cursor.execute(
+            """
+            SELECT
+                role_name,
+                pg_catalog.has_schema_privilege(
+                    role_name, 'public', 'USAGE'
+                ),
+                pg_catalog.has_schema_privilege(
+                    role_name, 'public', 'CREATE'
+                ),
+                CASE
+                    WHEN pg_catalog.to_regnamespace('cdb_admin') IS NULL
+                    THEN false
+                    ELSE pg_catalog.has_schema_privilege(
+                        role_name, 'cdb_admin', 'USAGE'
+                    )
+                END,
+                CASE
+                    WHEN pg_catalog.to_regclass(
+                        'cdb_admin.pg_stat_statements'
+                    ) IS NULL
+                    THEN false
+                    ELSE pg_catalog.has_table_privilege(
+                        role_name,
+                        'cdb_admin.pg_stat_statements',
+                        'SELECT'
+                    )
+                END
+            FROM unnest(ARRAY[
+                'fa_migration', 'fa_build', 'fa_runtime'
+            ]) AS role_name
+            WHERE role_name IN (
+                SELECT role_record.rolname
+                FROM pg_catalog.pg_roles AS role_record
+            )
+            """
+        )
+        permission_rows = cursor.fetchall()
+        role_public_usage = {
+            str(row[0]): bool(row[1]) for row in permission_rows
+        }
+        role_public_create = {
+            str(row[0]): bool(row[2]) for row in permission_rows
+        }
+        role_cdb_admin_usage = {
+            str(row[0]): bool(row[3]) for row in permission_rows
+        }
+        role_pg_stat_statements_select = {
+            str(row[0]): bool(row[4]) for row in permission_rows
+        }
 
     return PreflightSnapshot(
+        current_user=current_user,
         postgres_major=postgres_major,
         server_encoding=server_encoding,
         timezone=timezone,
         search_path=search_path,
         extensions=extensions,
         role_login=role_login,
+        role_public_usage=role_public_usage,
+        role_public_create=role_public_create,
+        role_cdb_admin_usage=role_cdb_admin_usage,
+        role_pg_stat_statements_select=role_pg_stat_statements_select,
         vector_usable=_extension_is_usable(
             connection,
             "SELECT '[1,2,3]'::cdb_admin.vector(3)::text",

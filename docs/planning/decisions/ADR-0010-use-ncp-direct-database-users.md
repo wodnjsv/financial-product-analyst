@@ -35,6 +35,12 @@ The sanitized result selected the pre-approved `direct_users` branch. NCP consol
 
 The probe rolled back its transaction and emitted no endpoint, address, database identifier, account name, or credential.
 
+## Provisioning Observation
+
+The console-created `fa_migration` user initially had LOGIN access but no database `CREATE` privilege. A transactional schema probe failed without leaving an object. The bootstrap identity then granted `CREATE` only on the application database to `fa_migration`; a repeated probe confirmed schema creation, hardened `SECURITY DEFINER`, and grant/revoke while role administration and ownership transfer remained unavailable. This grant is part of migration provisioning and does not extend to `fa_build` or `fa_runtime`.
+
+Before the first NCP Alembic run, the bootstrap identity must revoke `public.CREATE` from `PUBLIC`, `fa_build`, and `fa_runtime`, then grant `fa_migration` `USAGE, CREATE` on `public`, because Alembic owns `public.alembic_version` and revision `0001` installs `pg_trgm`, `unaccent`, and `pgcrypto` there. Build/runtime receive only `public.USAGE`. All three direct users need `USAGE` on the NCP-managed `cdb_admin` schema and `SELECT` on `cdb_admin.pg_stat_statements` so preflight and later diagnostics can verify the console-managed extensions. Preflight verifies this entire role-specific bootstrap boundary before Alembic runs. Application roles receive neither `CREATE` on the database nor `CREATE` on `public` or `cdb_admin`.
+
 ## Rejected Alternatives
 
 ### Continue with NOLOGIN group roles

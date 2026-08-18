@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config
 
 
-@pytest.fixture
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(scope="session")
 def postgres_database_url() -> str:
     database_url = os.getenv("FINANCIAL_AGENT_TEST_DATABASE_URL")
     if database_url is None:
@@ -26,3 +32,11 @@ def ncp_database_url() -> str:
             "NCP integration test."
         )
     return database_url
+
+
+@pytest.fixture(scope="session")
+def migrated_database_url(postgres_database_url: str) -> str:
+    config = Config(PROJECT_ROOT / "alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_database_url)
+    command.upgrade(config, "head")
+    return postgres_database_url

@@ -407,7 +407,7 @@ Preserve every Stage 01 base and `dev` dependency and every tool setting. Put St
 
 Do not create a global engine at import time. Tests and the future API create and dispose engines explicitly.
 
-- [ ] **Step 4: Create the disposable PostgreSQL 15 service**
+- [x] **Step 4: Create the disposable PostgreSQL 15 service**
 
 `docker/postgres.compose.yml` must:
 
@@ -422,9 +422,9 @@ Do not create a global engine at import time. Tests and the future API create an
 
 Do not reuse this password or public port in NCP.
 
-The initialization script must create `cdb_admin`, install `vector` and `pg_stat_statements` into that schema, and create the three local NOLOGIN group roles used by permission tests. It models NCP's console-provisioned layout; Alembic does not own or remove these two extensions. Tests query `pg_extension.extnamespace` and usable objects such as `cdb_admin.vector`/`cdb_admin.pg_stat_statements`, not merely extension names. The NCP runbook provisions equivalent roles through an authorized bootstrap account before the pre-migration check.
+The initialization script must create `cdb_admin`, install `vector` and `pg_stat_statements` into that schema, create the three local NOLOGIN group roles used by permission tests, and grant those roles only the `cdb_admin` usage and `pg_stat_statements` read access required by preflight and diagnostics. It models NCP's console-provisioned layout; Alembic does not own or remove these two extensions. Tests query `pg_extension.extnamespace` and usable objects such as `cdb_admin.vector`/`cdb_admin.pg_stat_statements`, not merely extension names. The NCP runbook provisions equivalent roles through an authorized bootstrap account before the pre-migration check.
 
-- [ ] **Step 5: Implement the shared PostgreSQL fixture**
+- [x] **Step 5: Implement the shared PostgreSQL fixture**
 
 `tests/db/conftest.py` must read `FINANCIAL_AGENT_TEST_DATABASE_URL`, skip only tests marked `ncp_integration` when their explicit URL is absent, and fail ordinary database tests with an actionable start command when local PostgreSQL is unavailable. Ordinary constraint and repository tests run in one connection transaction that rolls back. Commit-time deferred-trigger, two-connection concurrency, permission, and migration-cycle tests receive a disposable per-test or per-module database and perform real commits. No NCP test may create, downgrade, or clean a shared or production database.
 
@@ -438,9 +438,9 @@ If all role capabilities pass, Task 2 uses the three NOLOGIN group roles. If NCP
 
 The 2026-08-18 non-production probe selected `direct_users`: schema creation, hardened `SECURITY DEFINER`, and grant/revoke succeeded; NOLOGIN role creation/deletion, membership management, and ownership transfer did not. ADR-0010 records this sanitized result and fixes the three NCP-compatible physical names as `fa_migration`, `fa_build`, and `fa_runtime`.
 
-Observed provisioning state on 2026-08-18: a non-production PostgreSQL 15.17 Standalone service was created in a Private Subnet at the approved 4 vCPU/16 GB size, and the NCP console installed `pgvector` and `pg_stat_statements` for the test database. The database ACG permits port 5432 only from the application server ACG in addition to NCP-managed internal rules, and automatic backup retention is seven days. No endpoint, address, account name, resource ID, or credential is recorded. Provisioning the three direct users and running preflight remain open gates.
+Observed provisioning state on 2026-08-18: a non-production PostgreSQL 15.17 Standalone service was created in a Private Subnet at the approved 4 vCPU/16 GB size, and the NCP console installed `pgvector` and `pg_stat_statements` for the test database. The database ACG permits port 5432 only from the application server ACG in addition to NCP-managed internal rules, and automatic backup retention is seven days. The three direct users were provisioned and preflight returned `permission_layout=direct_users`. The initial migration-user probe showed no database `CREATE` privilege; the bootstrap identity granted only `CREATE` on the application database to `fa_migration`, after which schema creation, hardened `SECURITY DEFINER`, and grant/revoke all passed while role administration and ownership transfer remained unavailable. Before the first NCP migration, bootstrap must additionally apply the documented role-specific `public` grants/revocations and read-only `cdb_admin` grants, then preflight must run while connected as `fa_migration`. No endpoint, address, account name, resource ID, or credential is recorded.
 
-- [ ] **Step 7: Run the focused tests**
+- [x] **Step 7: Run the focused tests**
 
 ```bash
 python -m pytest tests/db/test_database_config.py -v
@@ -455,7 +455,7 @@ FINANCIAL_AGENT_TEST_DATABASE_URL="postgresql+psycopg://financial_agent_test:fin
 
 Expected: configuration tests pass, Compose resolves without a secret-bearing host path, and the local database exposes the same `cdb_admin` extension layout required on NCP.
 
-- [ ] **Step 8: Commit the database harness**
+- [x] **Step 8: Commit the database harness**
 
 ```bash
 git add pyproject.toml requirements/storage.lock docker/initdb/001-ncp-extension-layout.sql docker/postgres.compose.yml scripts/db_preflight.py scripts/probe_ncp_db_capabilities.py src/financial_agent/db tests/db/__init__.py tests/db/conftest.py tests/db/test_container_config.py tests/db/test_database_config.py tests/db/test_db_preflight_cli.py tests/db/test_engine_metadata.py tests/db/test_storage_lock.py tests/db/test_extension_preflight.py tests/db/test_ncp_capability_probe.py
@@ -493,7 +493,7 @@ git commit -m "build: add postgres test harness"
 - database function `operations.start_request_run(...)`
 - database trigger function `operations.reject_nonbuilding_dataset_mutation()`
 
-- [ ] **Step 1: Write failing foundation tests**
+- [x] **Step 1: Write failing foundation tests**
 
 Cover all of these cases:
 
@@ -537,7 +537,7 @@ MIGRATION_MANAGED_EXTENSIONS = {
 - multiple `FailureEvent` rows preserve stage, category, retryability, attempt, remaining budget, duration, and dependency for one run.
 - a runtime role cannot alter schemas, datasets, readiness, registry rows, or prior audit rows.
 
-- [ ] **Step 2: Define the dataset tables**
+- [x] **Step 2: Define the dataset tables**
 
 `operations.dataset_version` uses these columns:
 
@@ -572,17 +572,17 @@ Only `operations.start_request_run(...)` may insert runtime requests. The `SECUR
 
 Dataset transitions are exactly `building -> validated|failed`, `validated -> active|failed`, and `active -> retired`; `retired` and `failed` are terminal. The activation function is the only path from validated to active.
 
-- [ ] **Step 3: Implement the migration environment**
+- [x] **Step 3: Implement the migration environment**
 
 Configure Alembic to import the shared metadata, compare server defaults and types, include only the seven named application schemas plus public `alembic_version`, and reject an empty or non-PostgreSQL URL. Its `include_name` filter explicitly excludes `cdb_admin`, so autogenerate cannot propose changes to NCP-managed objects. It first calls pre-migration preflight. Migration `0001` creates only `pg_trgm`, `unaccent`, and `pgcrypto`, then schemas, tables, constraints, immutable-event triggers, transition functions, and grants. It must never create, move, alter, or drop `vector`, `pg_stat_statements`, or `cdb_admin`.
 
-Use the three stable names `fa_migration`, `fa_build`, and `fa_runtime`, provisioned as separate NCP console-created login users before migration and checked by preflight. The disposable local harness uses NOLOGIN roles with the same names. Revoke default `PUBLIC` access. Migration owns DDL; build can write only building-version data and execute readiness/activation functions; runtime can read active data and append request-scoped records only through approved repositories/functions. Neither build nor runtime receives direct `INSERT` on `request_run`/`request_artifact`, or direct `UPDATE`/`DELETE` on readiness, active dataset, Evidence, Claim, audit, or artifact tables.
+Use the three stable names `fa_migration`, `fa_build`, and `fa_runtime`, provisioned as separate NCP console-created login users before migration and checked by preflight. In the `direct_users` layout, preflight rejects every migration connection whose current identity is not exactly `fa_migration`. The disposable local harness uses NOLOGIN roles with the same names and also tests a fresh base-to-`0001` migration through temporary direct logins. The bootstrap identity, not Alembic, revokes default `PUBLIC` creation access and denies build/runtime `CREATE` in `public`; preflight proves this before migration. Migration owns application DDL; build can write only building-version data and execute readiness/activation functions; runtime can read active data and append request-scoped records only through approved repositories/functions. Neither build nor runtime receives direct `INSERT` on `request_run`/`request_artifact`, or direct `UPDATE`/`DELETE` on readiness, active dataset, Evidence, Claim, audit, or artifact tables.
 
 Every `SECURITY DEFINER` routine is owned by `fa_migration`, revokes `PUBLIC EXECUTE`, grants only the required build/runtime `EXECUTE`, schema-qualifies referenced objects, and sets a function-specific search path containing only `pg_catalog`, required migration-owned schemas, and `pg_temp` last. Dynamic SQL is forbidden unless the routine has an approved test proving identifiers and values are safely bound. Permission tests inspect `pg_proc.prosecdef`, `proconfig`, owner and ACLs, and prove build/runtime cannot replace a routine or create objects in any referenced schema.
 
 All application-data foreign keys in this and later migrations explicitly use `RESTRICT` or `NO ACTION`. No migration may add `ON DELETE CASCADE`.
 
-- [ ] **Step 4: Run the migration and focused tests**
+- [x] **Step 4: Run the migration and focused tests**
 
 ```bash
 docker compose -f docker/postgres.compose.yml up -d --wait postgres
@@ -596,7 +596,7 @@ FINANCIAL_AGENT_TEST_DATABASE_URL="postgresql+psycopg://financial_agent_test:fin
 
 Expected: revision `0001` is current and every constraint case passes.
 
-- [ ] **Step 5: Commit the foundation**
+- [x] **Step 5: Commit the foundation**
 
 ```bash
 git add alembic.ini alembic src/financial_agent/db/schema tests/db/test_foundation_migration.py tests/db/test_database_permissions.py

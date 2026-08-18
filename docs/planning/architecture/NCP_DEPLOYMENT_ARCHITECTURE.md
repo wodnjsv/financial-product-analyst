@@ -167,6 +167,8 @@ pgvector 최초 설치는 DB 서비스 재시작을 동반하므로 평가 운�
 
 2026-08-18 비운영 capability probe는 NCP bootstrap 사용자가 NOLOGIN 역할과 멤버십을 관리할 수 없음을 확인했다. 따라서 ADR-0010에 따라 콘솔 생성 로그인 사용자 `fa_migration`, `fa_build`, `fa_runtime`에 직접 최소 권한을 부여한다. Bootstrap 사용자는 준비와 검증 이후 정상 migration/build/runtime 경로에서 사용하지 않는다.
 
+콘솔 생성 직후 `fa_migration`에는 스키마 생성 권한이 없으므로 bootstrap 사용자가 애플리케이션 데이터베이스의 `CREATE`와 `public` 스키마의 `USAGE, CREATE`만 명시적으로 부여한다. 전자는 버전별 애플리케이션 스키마 생성에, 후자는 `public.alembic_version`과 Alembic 관리 확장 세 개 설치에 필요하다. Bootstrap은 `PUBLIC`, `fa_build`, `fa_runtime`에서 `public.CREATE`를 명시적으로 회수하고 build/runtime에는 `USAGE`만 부여한다. 또한 세 사용자 모두에 `cdb_admin` 스키마 `USAGE`를, 사전·사후 점검에 필요한 `cdb_admin.pg_stat_statements` 조회 권한을 부여한다. 이 권한 배치는 Alembic보다 먼저 실행되고 preflight가 역할별로 검증한다. 이후 애플리케이션 스키마 객체 소유권과 직접 ACL은 revision `0001`이 설치하며, bootstrap 사용자는 정상 경로에서 제외한다.
+
 ### 5.2 논리 스키마
 
 | 스키마 | 저장 내용 |

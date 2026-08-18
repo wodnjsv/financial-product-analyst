@@ -27,3 +27,9 @@ BEGIN
     END IF;
 END
 $roles$;
+
+GRANT USAGE ON SCHEMA cdb_admin TO fa_migration, fa_build, fa_runtime;
+GRANT SELECT ON cdb_admin.pg_stat_statements TO fa_migration, fa_build, fa_runtime;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC, fa_build, fa_runtime;
+GRANT USAGE, CREATE ON SCHEMA public TO fa_migration;
+GRANT USAGE ON SCHEMA public TO fa_build, fa_runtime;

@@ -18,6 +18,7 @@ from financial_agent.db.preflight import (
 @pytest.fixture
 def valid_snapshot() -> PreflightSnapshot:
     return PreflightSnapshot(
+        current_user="financial_agent_test",
         postgres_major=15,
         server_encoding="UTF8",
         timezone="UTC",
@@ -30,6 +31,26 @@ def valid_snapshot() -> PreflightSnapshot:
             "fa_migration": False,
             "fa_build": False,
             "fa_runtime": False,
+        },
+        role_public_usage={
+            "fa_migration": True,
+            "fa_build": True,
+            "fa_runtime": True,
+        },
+        role_public_create={
+            "fa_migration": True,
+            "fa_build": False,
+            "fa_runtime": False,
+        },
+        role_cdb_admin_usage={
+            "fa_migration": True,
+            "fa_build": True,
+            "fa_runtime": True,
+        },
+        role_pg_stat_statements_select={
+            "fa_migration": True,
+            "fa_build": True,
+            "fa_runtime": True,
         },
         vector_usable=True,
         pg_stat_statements_usable=True,
@@ -56,12 +77,27 @@ def test_preflight_accepts_the_ncp_direct_user_layout(
 ) -> None:
     snapshot = replace(
         valid_snapshot,
+        current_user="fa_migration",
         role_login={name: True for name in valid_snapshot.role_login},
     )
 
     report = validate_pre_migration_snapshot(snapshot)
 
     assert report.permission_layout == "direct_users"
+
+
+def test_preflight_rejects_a_bootstrap_identity_for_direct_user_migrations(
+    valid_snapshot: PreflightSnapshot,
+) -> None:
+    snapshot = replace(
+        valid_snapshot,
+        role_login={name: True for name in valid_snapshot.role_login},
+    )
+
+    with pytest.raises(PreflightFailure) as captured:
+        validate_pre_migration_snapshot(snapshot)
+
+    assert captured.value.code == "MIGRATION_IDENTITY_MISMATCH"
 
 
 def test_preflight_accepts_equivalent_search_path_whitespace(
@@ -169,6 +205,59 @@ def test_preflight_rejects_a_mixed_role_layout(
         validate_pre_migration_snapshot(replace(valid_snapshot, role_login=roles))
 
     assert captured.value.code == "DB_ROLE_LAYOUT_MISMATCH"
+
+
+@pytest.mark.parametrize(
+    ("field", "role", "value", "code"),
+    (
+        (
+            "role_public_usage",
+            "fa_runtime",
+            False,
+            "PUBLIC_SCHEMA_PERMISSION_MISMATCH",
+        ),
+        (
+            "role_public_create",
+            "fa_migration",
+            False,
+            "PUBLIC_SCHEMA_PERMISSION_MISMATCH",
+        ),
+        (
+            "role_public_create",
+            "fa_build",
+            True,
+            "PUBLIC_SCHEMA_PERMISSION_MISMATCH",
+        ),
+        (
+            "role_cdb_admin_usage",
+            "fa_build",
+            False,
+            "NCP_EXTENSION_PERMISSION_MISMATCH",
+        ),
+        (
+            "role_pg_stat_statements_select",
+            "fa_runtime",
+            False,
+            "NCP_EXTENSION_PERMISSION_MISMATCH",
+        ),
+    ),
+)
+def test_preflight_rejects_incompatible_bootstrap_permissions(
+    valid_snapshot: PreflightSnapshot,
+    field: str,
+    role: str,
+    value: bool,
+    code: str,
+) -> None:
+    permissions = dict(getattr(valid_snapshot, field))
+    permissions[role] = value
+
+    with pytest.raises(PreflightFailure) as captured:
+        validate_pre_migration_snapshot(
+            replace(valid_snapshot, **{field: permissions})
+        )
+
+    assert captured.value.code == code
 
 
 def test_preflight_normalizes_sqlalchemy_psycopg_urls() -> None:

@@ -49,3 +49,16 @@ def test_local_init_models_the_ncp_extension_and_role_layout() -> None:
         "fa_runtime",
     ):
         assert f"CREATE ROLE {role_name} NOLOGIN" in init_sql
+    assert (
+        "GRANT USAGE ON SCHEMA cdb_admin "
+        "TO fa_migration, fa_build, fa_runtime"
+    ) in init_sql
+    assert (
+        "GRANT SELECT ON cdb_admin.pg_stat_statements "
+        "TO fa_migration, fa_build, fa_runtime"
+    ) in init_sql
+    assert "REVOKE CREATE ON SCHEMA public FROM PUBLIC" in init_sql
+    assert "GRANT USAGE, CREATE ON SCHEMA public TO fa_migration" in init_sql
+    assert (
+        "GRANT USAGE ON SCHEMA public TO fa_build, fa_runtime"
+    ) in init_sql
