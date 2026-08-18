@@ -183,12 +183,15 @@ class ClaimSupport(ContractModel):
     evidence_id: Identifier | None = None
     calculation_id: Identifier | None = None
     support_role: Identifier
-    ordinal: int
+    ordinal: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_support_target(self) -> "ClaimSupport":
-        if (self.evidence_id is None) == (self.calculation_id is None):
-            raise ValueError("claim support requires exactly one support target")
+        if self.support_kind is SupportKind.CALCULATION:
+            if self.calculation_id is None or self.evidence_id is not None:
+                raise ValueError("calculation support requires calculation_id only")
+        elif self.evidence_id is None or self.calculation_id is not None:
+            raise ValueError("evidence support requires evidence_id only")
         return self
 
 

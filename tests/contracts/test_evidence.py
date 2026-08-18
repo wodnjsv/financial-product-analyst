@@ -26,26 +26,81 @@ from financial_agent.contracts.values import (
 )
 
 
-def test_claim_support_requires_exactly_one_support_target() -> None:
+@pytest.mark.parametrize("support_kind", tuple(SupportKind))
+def test_claim_support_accepts_only_the_matching_target(
+    support_kind: SupportKind,
+) -> None:
+    is_calculation = support_kind is SupportKind.CALCULATION
+    support = ClaimSupport(
+        claim_id="claim-1",
+        support_kind=support_kind,
+        evidence_id=None if is_calculation else "evidence-1",
+        calculation_id="calculation-1" if is_calculation else None,
+        support_role="value",
+        ordinal=0,
+    )
+
+    assert support.ordinal == 0
+
+
+@pytest.mark.parametrize("support_kind", tuple(SupportKind))
+def test_claim_support_rejects_wrong_target(support_kind: SupportKind) -> None:
+    is_calculation = support_kind is SupportKind.CALCULATION
     with pytest.raises(ValidationError):
         ClaimSupport(
             claim_id="claim-1",
-            support_kind=SupportKind.DIRECT,
-            evidence_id="evidence-1",
-            calculation_id="calculation-1",
+            support_kind=support_kind,
+            evidence_id="evidence-1" if is_calculation else None,
+            calculation_id=None if is_calculation else "calculation-1",
             support_role="value",
             ordinal=0,
         )
 
+
+@pytest.mark.parametrize("support_kind", tuple(SupportKind))
+@pytest.mark.parametrize(
+    ("evidence_id", "calculation_id"),
+    [
+        ("evidence-1", "calculation-1"),
+        (None, None),
+    ],
+)
+def test_claim_support_rejects_ambiguous_or_missing_target(
+    support_kind: SupportKind,
+    evidence_id: str | None,
+    calculation_id: str | None,
+) -> None:
     with pytest.raises(ValidationError):
         ClaimSupport(
             claim_id="claim-1",
-            support_kind=SupportKind.DIRECT,
-            evidence_id=None,
-            calculation_id=None,
+            support_kind=support_kind,
+            evidence_id=evidence_id,
+            calculation_id=calculation_id,
             support_role="value",
             ordinal=0,
         )
+
+
+@pytest.mark.parametrize("support_kind", tuple(SupportKind))
+def test_claim_support_rejects_negative_ordinal(
+    support_kind: SupportKind,
+) -> None:
+    is_calculation = support_kind is SupportKind.CALCULATION
+    with pytest.raises(ValidationError):
+        ClaimSupport(
+            claim_id="claim-1",
+            support_kind=support_kind,
+            evidence_id=None if is_calculation else "evidence-1",
+            calculation_id="calculation-1" if is_calculation else None,
+            support_role="value",
+            ordinal=-1,
+        )
+
+
+def test_claim_support_schema_requires_nonnegative_ordinal() -> None:
+    schema = ClaimSupport.model_json_schema(mode="validation")
+
+    assert schema["properties"]["ordinal"]["minimum"] == 0
 
 
 def test_evidence_bundle_keeps_candidate_claims_unreleased(

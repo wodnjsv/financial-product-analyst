@@ -49,6 +49,7 @@
       "title": "Evidence Id"
     },
     "ordinal": {
+      "minimum": 0,
       "title": "Ordinal",
       "type": "integer"
     },
