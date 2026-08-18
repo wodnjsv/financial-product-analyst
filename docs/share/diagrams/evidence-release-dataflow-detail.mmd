@@ -1,0 +1,40 @@
+flowchart LR
+  TR["ToolResult<br/>결과 · 근거 참조 · 제외"]
+  LEDGER["PostgreSQL 근거 원장<br/>Source · Evidence · Calculation<br/>AtomicClaim · ClaimSupport"]
+  CLAIM["결정론적 Claim 생성<br/>등록된 유형과 필수 근거"]
+  EB["EvidenceBundle<br/>후보 Claim · 누락 · 한계<br/>적용 기본값 · bundle_hash"]
+  VERIFY["결정론적 Verifier<br/>계약 → 출처 → 시간 → 관계<br/>계산 → 커버리지·정책"]
+  VR["VerificationReport<br/>판정 · 하위작업 커버리지<br/>releaseable_claim_ids"]
+  COMP["Answer Composer<br/>LLM 2 · Claim과 틀만 배치"]
+  SAFE["Safe Plan Builder<br/>제한 · 답변 자제 · 후퇴 틀"]
+  AP["AnswerPlan<br/>template · block · column<br/>slot · Claim ID"]
+  GATE["Claim Gate<br/>등록부 · 타입 · 커버리지<br/>판정 일치 최종 검사"]
+  RENDER["결정론적 Renderer<br/>이름 · 숫자 · 날짜 · 단위 · 출처"]
+  RA["ReleasedAnswer<br/>answer · context · trace<br/>claim bindings · hash"]
+  OUT["평가 API Adapter<br/>5개 문자열 응답"]
+  RECOVERY["제한된 회복<br/>원장 재구성 1회<br/>불가하면 5xx"]
+
+  TR --> LEDGER
+  TR --> CLAIM
+  LEDGER -->|"검증 가능한 근거"| CLAIM
+  CLAIM --> EB
+  LEDGER --> EB
+  EB --> VERIFY --> VR
+  VR -->|"통과 · 답변/부분 답변"| COMP
+  VR -->|"통과 · 한계/답변 자제"| SAFE
+  VR -->|"실패 · 회복 지시"| RECOVERY
+  RECOVERY -->|"재구성 가능"| EB
+  COMP --> AP
+  SAFE --> AP
+  AP --> GATE --> RENDER --> RA --> OUT
+
+  classDef contract fill:#EDE9FE,stroke:#7C3AED,color:#2E1065,stroke-width:2px;
+  classDef llm fill:#FFF4D6,stroke:#D97706,color:#4A2C00,stroke-width:2px;
+  classDef deterministic fill:#FFE8E8,stroke:#DC2626,color:#4C1111,stroke-width:2px;
+  classDef store fill:#E7F8EF,stroke:#168A5B,color:#12372A,stroke-width:2px;
+  classDef output fill:#E8F2FF,stroke:#3B82F6,color:#102A43,stroke-width:2px;
+  class TR,EB,VR,AP,RA contract;
+  class COMP llm;
+  class CLAIM,VERIFY,SAFE,GATE,RENDER,RECOVERY deterministic;
+  class LEDGER store;
+  class OUT output;

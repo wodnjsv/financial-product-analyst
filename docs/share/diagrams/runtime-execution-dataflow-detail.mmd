@@ -1,0 +1,40 @@
+flowchart LR
+  API["평가 API 요청<br/>question_id · question"]
+  NORM["결정론적 입력 정규화<br/>문장 분리 · 표면 엔티티 · 기한"]
+  RC["RequestContext<br/>segments · named_entities<br/>references · deadline"]
+  IR["Intent Resolver<br/>HyperCLOVA X · LLM 1"]
+  QP["QueryPlan<br/>subtasks · filters · metrics<br/>bindings · dependencies"]
+  ORCH["결정론적 Orchestrator<br/>계약 검사 · 등록부 · 예산 · 재시도"]
+  EG["ExecutionGraph<br/>작업 DAG · 임계 경로<br/>입출력 binding · budget_ms"]
+  EXEC["Capability Executors<br/>RDB · Graph · Keyword · Vector<br/>계산 · 순위 · 유사도 · 비교"]
+  PG["PostgreSQL + pgvector<br/>catalog · observation · document<br/>search · active_dataset"]
+  GRAPH["Fuseki / TDB2<br/>온톨로지 · 관계 그래프<br/>읽기 전용 SPARQL"]
+  REG["승인 등록부<br/>작업 · 필드 · 수식 · 정책"]
+  TR["ToolResult<br/>status · rows · binding_values<br/>evidence_refs · exclusions · hash"]
+
+  API -->|"원시 요청"| NORM
+  NORM -->|"타입 검증"| RC
+  RC -->|"구조화 입력"| IR
+  IR -->|"Schema 검증"| QP
+  RC -->|"요청 문맥·마감"| ORCH
+  QP -->|"교차 계약 검사"| ORCH
+  REG -->|"허용 범위"| ORCH
+  ORCH -->|"컴파일"| EG
+  EG -->|"독립 작업은 병렬"| EXEC
+  REG -->|"실행 허용 목록"| EXEC
+  EXEC -->|"SQL · Keyword · Vector"| PG
+  PG -->|"정규 행 · 문서 후보"| EXEC
+  EXEC -->|"SPARQL 경로 탐색"| GRAPH
+  GRAPH -->|"관계 경로 · ID"| EXEC
+  EXEC -->|"작업당 결과 1개"| TR
+
+  classDef input fill:#E8F2FF,stroke:#3B82F6,color:#102A43,stroke-width:2px;
+  classDef llm fill:#FFF4D6,stroke:#D97706,color:#4A2C00,stroke-width:2px;
+  classDef contract fill:#EDE9FE,stroke:#7C3AED,color:#2E1065,stroke-width:2px;
+  classDef runtime fill:#FFE8E8,stroke:#DC2626,color:#4C1111,stroke-width:2px;
+  classDef store fill:#E7F8EF,stroke:#168A5B,color:#12372A,stroke-width:2px;
+  class API,NORM input;
+  class IR llm;
+  class RC,QP,EG,TR contract;
+  class ORCH,EXEC runtime;
+  class PG,GRAPH,REG store;

@@ -1,0 +1,22 @@
+%%{init: {"flowchart": {"wrappingWidth": 600, "htmlLabels": true}}}%%
+flowchart LR
+  IN["질문 받기<br/>평가 API"]
+  UNDERSTAND["1. 질문 이해<br/>정리 · 뜻 해석<br/>실행 계획"]
+  EXECUTE["2. 실행과 검증<br/>작업 지휘 · 도구 실행<br/>근거 묶기 · 규칙 검사"]
+  DATA["데이터 저장소<br/>숫자 · 관계 · 근거<br/>공식 문서 · 원본"]
+  RELEASE["3. 안전한 답변<br/>답변 순서 또는 안전한 틀<br/>근거 확인 · 문장 생성"]
+  OUT["최종 응답<br/>5개 문자열"]
+
+  IN --> UNDERSTAND --> EXECUTE --> RELEASE --> OUT
+  DATA --> EXECUTE
+
+  classDef api fill:#E8F2FF,stroke:#3B82F6,color:#102A43,stroke-width:2px;
+  classDef llm fill:#FFF4D6,stroke:#D97706,color:#4A2C00,stroke-width:2px;
+  classDef control fill:#EDE9FE,stroke:#7C3AED,color:#2E1065,stroke-width:2px;
+  classDef data fill:#E7F8EF,stroke:#168A5B,color:#12372A,stroke-width:2px;
+  classDef verify fill:#FFE8E8,stroke:#DC2626,color:#4C1111,stroke-width:2px;
+  class IN,OUT api;
+  class UNDERSTAND llm;
+  class RELEASE control;
+  class DATA data;
+  class EXECUTE verify;

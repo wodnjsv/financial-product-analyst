@@ -1,0 +1,48 @@
+flowchart LR
+  FP["금융상품<br/>FinancialProduct"]
+  BOND["국내채권<br/>DomesticBond"]
+  ETP["거래소 상품<br/>ExchangeTradedProduct"]
+  ETF["ETF<br/>국내 ETF · 해외 ETF"]
+  ETN["ETN"]
+  FUND["공모펀드<br/>PublicFund"]
+  REP["대표펀드<br/>RepresentativeFund"]
+  SHARE["펀드 클래스<br/>FundShareClass"]
+  ORG["조직<br/>운용사 · 발행사"]
+  INDEX["지수<br/>Index"]
+  SECURITY["증권<br/>주식 · 채무증권"]
+  COMPANY["기업<br/>Company"]
+  COMPANY2["다른 기업"]
+  CONTEXT["시장 · 업종 · 테마<br/>Market · Industry · Theme"]
+  EVIDENCE["공식 문서 · 위험요인<br/>OfficialDocument · RiskFactor"]
+
+  FP -->|"하위 종류"| BOND
+  FP -->|"하위 종류"| ETP
+  ETP -->|"하위 종류"| ETF
+  ETP -->|"하위 종류"| ETN
+  FP -->|"하위 종류"| FUND
+  FUND -->|"하위 종류"| REP
+  REP -->|"hasShareClass"| SHARE
+
+  FP -->|"managedBy · issuedBy"| ORG
+  ETF -->|"tracksIndex"| INDEX
+  ETF -->|"holdsSecurity"| SECURITY
+  FUND -->|"tracksIndex"| INDEX
+  FUND -->|"holdsSecurity"| SECURITY
+  INDEX -->|"containsSecurity"| SECURITY
+  SECURITY -->|"securityOfCompany"| COMPANY
+  COMPANY -->|"controlsCompany"| COMPANY2
+  SECURITY -->|"listedOn · classifiedAsIndustry"| CONTEXT
+  COMPANY -->|"classifiedAsIndustry · associatedWithTheme"| CONTEXT
+  FP -->|"associatedWithTheme"| CONTEXT
+  FP -->|"documentedBy · hasRiskFactor"| EVIDENCE
+
+  classDef root fill:#EDE9FE,stroke:#7C3AED,color:#2E1065,stroke-width:3px;
+  classDef product fill:#E8F2FF,stroke:#3B82F6,color:#102A43,stroke-width:2px;
+  classDef actor fill:#FFF4D6,stroke:#D97706,color:#4A2C00,stroke-width:2px;
+  classDef subject fill:#E7F8EF,stroke:#168A5B,color:#12372A,stroke-width:2px;
+  classDef context fill:#FFE8E8,stroke:#DC2626,color:#4C1111,stroke-width:2px;
+  class FP root;
+  class BOND,ETP,ETF,ETN,FUND,REP,SHARE product;
+  class ORG actor;
+  class INDEX,SECURITY,COMPANY,COMPANY2 subject;
+  class CONTEXT,EVIDENCE context;

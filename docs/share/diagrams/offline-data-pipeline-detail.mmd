@@ -1,0 +1,35 @@
+flowchart LR
+  SRC["원천 데이터<br/>주최 측 마스터 · 공식 API<br/>공시 · 설명서 · 지수 문서"]
+  OBJ["Object Storage<br/>원본 불변 보관<br/>checksum · manifest"]
+  BUILD["임시 데이터 빌드 서버<br/>적재할 때만 실행"]
+  CLEAN["정제 · 품질검사<br/>공통 ID · 단위 · 날짜 · 출처<br/>2026-07-11 컷오프"]
+  PG["PostgreSQL 새 버전<br/>catalog · observation · relation<br/>document · evidence"]
+  RDF["RDF ABox 생성<br/>안정 ID · 관계 · Evidence ID"]
+  SHACL["TTL · SHACL 검사<br/>클래스 · 관계 · 제약"]
+  FUSEKI["Fuseki named graph<br/>버전 고정 관계 투영"]
+  EMB["문서 청크 · 임베딩<br/>페이지 · 절 · 원문 위치 유지"]
+  VECTOR["pgvector · Keyword 인덱스<br/>문서 후보 검색"]
+  READY["준비 상태 검증<br/>PG · Graph · Vector · Evidence<br/>manifest와 검증 실행 일치"]
+  ACTIVE["active_dataset 전환<br/>검증된 단일 버전만 활성"]
+  API["Agent API<br/>평가 중 읽기 전용 조회"]
+
+  SRC --> OBJ --> BUILD --> CLEAN --> PG
+  PG --> RDF --> SHACL
+  SHACL -->|"통과"| FUSEKI
+  PG --> EMB --> VECTOR
+  PG --> READY
+  FUSEKI --> READY
+  VECTOR --> READY
+  READY -->|"모두 같은 dataset_version"| ACTIVE
+  ACTIVE --> API
+
+  classDef source fill:#E8F2FF,stroke:#3B82F6,color:#102A43,stroke-width:2px;
+  classDef build fill:#FFF4D6,stroke:#D97706,color:#4A2C00,stroke-width:2px;
+  classDef store fill:#E7F8EF,stroke:#168A5B,color:#12372A,stroke-width:2px;
+  classDef verify fill:#FFE8E8,stroke:#DC2626,color:#4C1111,stroke-width:2px;
+  classDef active fill:#EDE9FE,stroke:#7C3AED,color:#2E1065,stroke-width:3px;
+  class SRC,OBJ source;
+  class BUILD,CLEAN,RDF,EMB build;
+  class PG,FUSEKI,VECTOR store;
+  class SHACL,READY verify;
+  class ACTIVE,API active;
