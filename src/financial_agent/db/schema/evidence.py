@@ -186,6 +186,12 @@ evidence_observation_origin = sa.Table(
     sa.Column("evidence_id", sa.Text, nullable=False),
     sa.Column("observation_id", sa.Text, nullable=False),
     sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_evidence_observation_origin_dataset_version",
+        ondelete="RESTRICT",
+    ),
+    sa.ForeignKeyConstraint(
         ["dataset_version", "evidence_id"],
         ["evidence.evidence_record.dataset_version", "evidence.evidence_record.evidence_id"],
         name="fk_evidence_observation_origin_evidence",
@@ -214,6 +220,12 @@ evidence_relation_origin = sa.Table(
     sa.Column("evidence_id", sa.Text, nullable=False),
     sa.Column("relation_id", sa.Text, nullable=False),
     sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_evidence_relation_origin_dataset_version",
+        ondelete="RESTRICT",
+    ),
+    sa.ForeignKeyConstraint(
         ["dataset_version", "evidence_id"],
         ["evidence.evidence_record.dataset_version", "evidence.evidence_record.evidence_id"],
         name="fk_evidence_relation_origin_evidence",
@@ -238,6 +250,12 @@ evidence_document_origin = sa.Table(
     sa.Column("dataset_version", sa.Text, nullable=False),
     sa.Column("evidence_id", sa.Text, nullable=False),
     sa.Column("chunk_id", sa.Text, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_evidence_document_origin_dataset_version",
+        ondelete="RESTRICT",
+    ),
     sa.ForeignKeyConstraint(
         ["dataset_version", "evidence_id"],
         ["evidence.evidence_record.dataset_version", "evidence.evidence_record.evidence_id"],
@@ -273,6 +291,12 @@ calculation_record = sa.Table(
     sa.Column("rounding_rule", sa.Text),
     sa.Column("calculation_hash", sa.CHAR(64), nullable=False),
     sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False),
+    sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_calculation_record_dataset_version",
+        ondelete="RESTRICT",
+    ),
     sa.ForeignKeyConstraint(
         ["run_id", "dataset_version"],
         ["operations.request_run.run_id", "operations.request_run.dataset_version"],
@@ -319,6 +343,12 @@ calculation_parameter = sa.Table(
     sa.Column("parameter_id", sa.Text, nullable=False),
     sa.Column("value", postgresql.JSONB, nullable=False),
     sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_calculation_parameter_dataset_version",
+        ondelete="RESTRICT",
+    ),
+    sa.ForeignKeyConstraint(
         ["run_id", "dataset_version", "calculation_id"],
         [
             "evidence.calculation_record.run_id",
@@ -353,6 +383,12 @@ calculation_evidence_input = sa.Table(
     sa.Column("calculation_id", sa.Text, nullable=False),
     sa.Column("evidence_id", sa.Text, nullable=False),
     sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_calculation_evidence_input_dataset_version",
+        ondelete="RESTRICT",
+    ),
     sa.ForeignKeyConstraint(
         ["run_id", "dataset_version", "calculation_id"],
         [
@@ -391,6 +427,12 @@ calculation_dependency = sa.Table(
     sa.Column("calculation_id", sa.Text, nullable=False),
     sa.Column("input_calculation_id", sa.Text, nullable=False),
     sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_calculation_dependency_dataset_version",
+        ondelete="RESTRICT",
+    ),
     sa.ForeignKeyConstraint(
         ["run_id", "dataset_version", "calculation_id"],
         [
@@ -435,6 +477,12 @@ calculation_exclusion = sa.Table(
     sa.Column("evidence_id", sa.Text, nullable=False),
     sa.Column("ordinal", sa.Integer, nullable=False),
     sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_calculation_exclusion_dataset_version",
+        ondelete="RESTRICT",
+    ),
+    sa.ForeignKeyConstraint(
         ["run_id", "dataset_version", "calculation_id"],
         [
             "evidence.calculation_record.run_id",
@@ -474,6 +522,12 @@ calculation_population = sa.Table(
     sa.Column("scope_evidence_id", sa.Text, nullable=False),
     sa.Column("member_count", sa.Integer, nullable=False),
     sa.Column("population_hash", sa.CHAR(64), nullable=False),
+    sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_calculation_population_dataset_version",
+        ondelete="RESTRICT",
+    ),
     sa.ForeignKeyConstraint(
         ["run_id", "dataset_version", "calculation_id"],
         [
@@ -518,6 +572,12 @@ calculation_population_filter = sa.Table(
     sa.Column("calculation_id", sa.Text, nullable=False),
     sa.Column("ordinal", sa.Integer, nullable=False),
     sa.Column("filter_id", sa.Text, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_calculation_population_filter_dataset_version",
+        ondelete="RESTRICT",
+    ),
     sa.ForeignKeyConstraint(
         ["run_id", "dataset_version", "calculation_id"],
         [
@@ -565,6 +625,12 @@ atomic_claim = sa.Table(
     sa.Column("display_policy_id", sa.Text, nullable=False),
     sa.Column("claim_hash", sa.CHAR(64), nullable=False),
     sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False),
+    sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_atomic_claim_dataset_version",
+        ondelete="RESTRICT",
+    ),
     sa.ForeignKeyConstraint(
         ["run_id", "dataset_version"],
         ["operations.request_run.run_id", "operations.request_run.dataset_version"],
@@ -649,6 +715,12 @@ claim_qualifier = sa.Table(
     sa.Column("qualifier_id", sa.Text, nullable=False),
     sa.Column("value", postgresql.JSONB, nullable=False),
     sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_claim_qualifier_dataset_version",
+        ondelete="RESTRICT",
+    ),
+    sa.ForeignKeyConstraint(
         ["run_id", "dataset_version", "claim_id"],
         [
             "evidence.atomic_claim.run_id",
@@ -681,6 +753,12 @@ claim_support = sa.Table(
     sa.Column("calculation_id", sa.Text),
     sa.Column("support_role", sa.Text, nullable=False),
     sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["dataset_version"],
+        ["operations.dataset_version.dataset_version"],
+        name="fk_claim_support_dataset_version",
+        ondelete="RESTRICT",
+    ),
     sa.ForeignKeyConstraint(
         ["run_id", "dataset_version", "claim_id"],
         [

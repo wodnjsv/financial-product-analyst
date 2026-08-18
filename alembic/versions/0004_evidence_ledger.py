@@ -87,7 +87,8 @@ def upgrade() -> None:
                 RETURN true;
             ELSIF tag = 'datetime' THEN
                 IF value_type <> 'string'
-                   OR value_text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$'
+                   OR value_text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{6})?Z$'
+                   OR value_text ~ '\.000000Z$'
                 THEN
                     RETURN false;
                 END IF;
@@ -158,6 +159,7 @@ def upgrade() -> None:
     sa.Column('dataset_version', sa.Text(), nullable=False),
     sa.Column('evidence_id', sa.Text(), nullable=False),
     sa.Column('observation_id', sa.Text(), nullable=False),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_evidence_observation_origin_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'evidence_id'], ['evidence.evidence_record.dataset_version', 'evidence.evidence_record.evidence_id'], name='fk_evidence_observation_origin_evidence', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'observation_id'], ['observation.observation_record.dataset_version', 'observation.observation_record.observation_id'], name='fk_evidence_observation_origin_observation', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('dataset_version', 'evidence_id', name='pk_evidence_observation_origin'),
@@ -167,6 +169,7 @@ def upgrade() -> None:
     sa.Column('dataset_version', sa.Text(), nullable=False),
     sa.Column('evidence_id', sa.Text(), nullable=False),
     sa.Column('relation_id', sa.Text(), nullable=False),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_evidence_relation_origin_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'evidence_id'], ['evidence.evidence_record.dataset_version', 'evidence.evidence_record.evidence_id'], name='fk_evidence_relation_origin_evidence', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'relation_id'], ['relation.relation_record.dataset_version', 'relation.relation_record.relation_id'], name='fk_evidence_relation_origin_relation', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('dataset_version', 'evidence_id', name='pk_evidence_relation_origin'),
@@ -176,6 +179,7 @@ def upgrade() -> None:
     sa.Column('dataset_version', sa.Text(), nullable=False),
     sa.Column('evidence_id', sa.Text(), nullable=False),
     sa.Column('chunk_id', sa.Text(), nullable=False),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_evidence_document_origin_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'chunk_id'], ['document.document_chunk.dataset_version', 'document.document_chunk.chunk_id'], name='fk_evidence_document_origin_chunk', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'evidence_id'], ['evidence.evidence_record.dataset_version', 'evidence.evidence_record.evidence_id'], name='fk_evidence_document_origin_evidence', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('dataset_version', 'evidence_id', name='pk_evidence_document_origin'),
@@ -199,6 +203,7 @@ def upgrade() -> None:
     sa.CheckConstraint("calculation_hash ~ '^[0-9a-f]{64}$'", name=op.f('ck_calculation_record_calculation_hash')),
     sa.CheckConstraint("calculation_type IN ('conversion','return','ranking','aggregation','comparison','similarity')", name=op.f('ck_calculation_record_calculation_type')),
     sa.CheckConstraint("evidence.is_valid_tagged_value(result_value) AND result_value ->> 'type' <> 'tuple'", name=op.f('ck_calculation_record_result_value')),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_calculation_record_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version'], ['operations.request_run.run_id', 'operations.request_run.dataset_version'], name='fk_calculation_record_request_dataset', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('run_id', 'calculation_id', name='pk_calculation_record'),
     sa.UniqueConstraint('run_id', 'dataset_version', 'calculation_id', name='uq_calculation_record_run_dataset_calculation'),
@@ -228,6 +233,7 @@ def upgrade() -> None:
     sa.CheckConstraint("claim_hash ~ '^[0-9a-f]{64}$'", name=op.f('ck_atomic_claim_claim_hash')),
     sa.CheckConstraint("claim_type IN ('direct_fact','relation','derived_metric','rank','similarity','no_match','data_limitation','policy_boundary')", name=op.f('ck_atomic_claim_claim_type')),
     sa.CheckConstraint("value IS NULL OR (evidence.is_valid_tagged_value(value) AND value ->> 'type' <> 'tuple')", name=op.f('ck_atomic_claim_value')),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_atomic_claim_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'object_id'], ['catalog.entity.dataset_version', 'catalog.entity.entity_id'], name='fk_atomic_claim_object', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'subject_entity_id'], ['catalog.entity.dataset_version', 'catalog.entity.entity_id'], name='fk_atomic_claim_subject_entity', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version'], ['operations.request_run.run_id', 'operations.request_run.dataset_version'], name='fk_atomic_claim_request_dataset', ondelete='RESTRICT'),
@@ -246,6 +252,7 @@ def upgrade() -> None:
     sa.Column('ordinal', sa.Integer(), nullable=False),
     sa.CheckConstraint('calculation_id <> input_calculation_id', name=op.f('ck_calculation_dependency_not_self')),
     sa.CheckConstraint('ordinal >= 0', name=op.f('ck_calculation_dependency_ordinal')),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_calculation_dependency_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version', 'calculation_id'], ['evidence.calculation_record.run_id', 'evidence.calculation_record.dataset_version', 'evidence.calculation_record.calculation_id'], name='fk_calculation_dependency_calculation', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version', 'input_calculation_id'], ['evidence.calculation_record.run_id', 'evidence.calculation_record.dataset_version', 'evidence.calculation_record.calculation_id'], name='fk_calculation_dependency_input', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('run_id', 'calculation_id', 'ordinal', name='pk_calculation_dependency'),
@@ -261,6 +268,7 @@ def upgrade() -> None:
     sa.Column('value', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
     sa.CheckConstraint('evidence.is_valid_tagged_value(value)', name=op.f('ck_calculation_parameter_value')),
     sa.CheckConstraint('ordinal >= 0', name=op.f('ck_calculation_parameter_ordinal')),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_calculation_parameter_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version', 'calculation_id'], ['evidence.calculation_record.run_id', 'evidence.calculation_record.dataset_version', 'evidence.calculation_record.calculation_id'], name='fk_calculation_parameter_calculation', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('run_id', 'calculation_id', 'ordinal', name='pk_calculation_parameter'),
     sa.UniqueConstraint('run_id', 'calculation_id', 'parameter_id', name='uq_calculation_parameter_id'),
@@ -275,6 +283,7 @@ def upgrade() -> None:
     sa.Column('value', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
     sa.CheckConstraint('evidence.is_valid_tagged_value(value)', name=op.f('ck_claim_qualifier_value')),
     sa.CheckConstraint('ordinal >= 0', name=op.f('ck_claim_qualifier_ordinal')),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_claim_qualifier_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version', 'claim_id'], ['evidence.atomic_claim.run_id', 'evidence.atomic_claim.dataset_version', 'evidence.atomic_claim.claim_id'], name='fk_claim_qualifier_claim', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('run_id', 'claim_id', 'ordinal', name='pk_claim_qualifier'),
     sa.UniqueConstraint('run_id', 'claim_id', 'qualifier_id', name='uq_claim_qualifier_id'),
@@ -287,6 +296,7 @@ def upgrade() -> None:
     sa.Column('evidence_id', sa.Text(), nullable=False),
     sa.Column('ordinal', sa.Integer(), nullable=False),
     sa.CheckConstraint('ordinal >= 0', name=op.f('ck_calculation_evidence_input_ordinal')),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_calculation_evidence_input_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'evidence_id'], ['evidence.evidence_record.dataset_version', 'evidence.evidence_record.evidence_id'], name='fk_calculation_evidence_input_evidence', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version', 'calculation_id'], ['evidence.calculation_record.run_id', 'evidence.calculation_record.dataset_version', 'evidence.calculation_record.calculation_id'], name='fk_calculation_evidence_input_calculation', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('run_id', 'calculation_id', 'ordinal', name='pk_calculation_evidence_input'),
@@ -300,6 +310,7 @@ def upgrade() -> None:
     sa.Column('evidence_id', sa.Text(), nullable=False),
     sa.Column('ordinal', sa.Integer(), nullable=False),
     sa.CheckConstraint('ordinal >= 0', name=op.f('ck_calculation_exclusion_ordinal')),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_calculation_exclusion_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'evidence_id'], ['evidence.evidence_record.dataset_version', 'evidence.evidence_record.evidence_id'], name='fk_calculation_exclusion_evidence', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version', 'calculation_id'], ['evidence.calculation_record.run_id', 'evidence.calculation_record.dataset_version', 'evidence.calculation_record.calculation_id'], name='fk_calculation_exclusion_calculation', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('run_id', 'calculation_id', 'ordinal', name='pk_calculation_exclusion'),
@@ -316,6 +327,7 @@ def upgrade() -> None:
     sa.Column('population_hash', sa.CHAR(length=64), nullable=False),
     sa.CheckConstraint("population_hash ~ '^[0-9a-f]{64}$'", name=op.f('ck_calculation_population_population_hash')),
     sa.CheckConstraint('member_count >= 0', name=op.f('ck_calculation_population_member_count')),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_calculation_population_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'scope_evidence_id'], ['evidence.evidence_record.dataset_version', 'evidence.evidence_record.evidence_id'], name='fk_calculation_population_scope_evidence', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version', 'calculation_id'], ['evidence.calculation_record.run_id', 'evidence.calculation_record.dataset_version', 'evidence.calculation_record.calculation_id'], name='fk_calculation_population_calculation', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('run_id', 'calculation_id', name='pk_calculation_population'),
@@ -335,6 +347,7 @@ def upgrade() -> None:
     sa.CheckConstraint("(support_kind = 'calculation' AND calculation_id IS NOT NULL AND evidence_id IS NULL) OR (support_kind <> 'calculation' AND evidence_id IS NOT NULL AND calculation_id IS NULL)", name=op.f('ck_claim_support_target')),
     sa.CheckConstraint("support_kind IN ('direct','calculation','scope','exclusion','policy')", name=op.f('ck_claim_support_support_kind')),
     sa.CheckConstraint('ordinal >= 0', name=op.f('ck_claim_support_ordinal')),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_claim_support_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['dataset_version', 'evidence_id'], ['evidence.evidence_record.dataset_version', 'evidence.evidence_record.evidence_id'], name='fk_claim_support_evidence', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version', 'calculation_id'], ['evidence.calculation_record.run_id', 'evidence.calculation_record.dataset_version', 'evidence.calculation_record.calculation_id'], name='fk_claim_support_calculation', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version', 'claim_id'], ['evidence.atomic_claim.run_id', 'evidence.atomic_claim.dataset_version', 'evidence.atomic_claim.claim_id'], name='fk_claim_support_claim', ondelete='RESTRICT'),
@@ -350,6 +363,7 @@ def upgrade() -> None:
     sa.Column('ordinal', sa.Integer(), nullable=False),
     sa.Column('filter_id', sa.Text(), nullable=False),
     sa.CheckConstraint('ordinal >= 0', name=op.f('ck_calculation_population_filter_ordinal')),
+    sa.ForeignKeyConstraint(['dataset_version'], ['operations.dataset_version.dataset_version'], name='fk_calculation_population_filter_dataset_version', ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['run_id', 'dataset_version', 'calculation_id'], ['evidence.calculation_population.run_id', 'evidence.calculation_population.dataset_version', 'evidence.calculation_population.calculation_id'], name='fk_calculation_population_filter_population', ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('run_id', 'calculation_id', 'ordinal', name='pk_calculation_population_filter'),
     sa.UniqueConstraint('run_id', 'calculation_id', 'filter_id', name='uq_calculation_population_filter_id'),
@@ -538,6 +552,25 @@ def upgrade() -> None:
     )
     op.execute(
         """
+        CREATE FUNCTION evidence.serialize_calculation_dependency_run()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog, operations, pg_temp
+        AS $function$
+        BEGIN
+            PERFORM 1
+              FROM operations.request_run
+             WHERE run_id = NEW.run_id
+               AND dataset_version = NEW.dataset_version
+             FOR UPDATE;
+            RETURN NEW;
+        END
+        $function$
+        """
+    )
+    op.execute(
+        """
         CREATE FUNCTION evidence.reject_calculation_cycle()
         RETURNS trigger
         LANGUAGE plpgsql
@@ -685,6 +718,14 @@ def upgrade() -> None:
         )
     op.execute(
         """
+        CREATE TRIGGER serialize_calculation_dependency_run
+        BEFORE INSERT ON evidence.calculation_dependency
+        FOR EACH ROW
+        EXECUTE FUNCTION evidence.serialize_calculation_dependency_run()
+        """
+    )
+    op.execute(
+        """
         CREATE CONSTRAINT TRIGGER reject_calculation_cycle
         AFTER INSERT ON evidence.calculation_dependency
         DEFERRABLE INITIALLY DEFERRED
@@ -761,6 +802,7 @@ def upgrade() -> None:
         "validate_cutoff_status()",
         "validate_evidence_origin()",
         "validate_calculation_aggregate()",
+        "serialize_calculation_dependency_run()",
         "reject_calculation_cycle()",
         "validate_claim_aggregate()",
         "is_valid_tagged_value(jsonb)",
@@ -824,6 +866,9 @@ def downgrade() -> None:
         op.execute(f"DROP TABLE IF EXISTS evidence.{table}")
     op.execute("DROP FUNCTION IF EXISTS evidence.validate_claim_aggregate()")
     op.execute("DROP FUNCTION IF EXISTS evidence.reject_calculation_cycle()")
+    op.execute(
+        "DROP FUNCTION IF EXISTS evidence.serialize_calculation_dependency_run()"
+    )
     op.execute("DROP FUNCTION IF EXISTS evidence.validate_calculation_aggregate()")
     for table in (
         "evidence_record",

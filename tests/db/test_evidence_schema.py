@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime
+import time
 
 import psycopg
 import pytest
@@ -20,6 +22,22 @@ from tests.fixtures.db.synthetic_dataset import (
 
 
 VALID_TAGGED_STRING = {"type": "string", "value": "synthetic-value"}
+TASK5_VERSIONED_TABLES = (
+    "atomic_claim",
+    "calculation_dependency",
+    "calculation_evidence_input",
+    "calculation_exclusion",
+    "calculation_parameter",
+    "calculation_population",
+    "calculation_population_filter",
+    "calculation_record",
+    "claim_qualifier",
+    "claim_support",
+    "evidence_document_origin",
+    "evidence_observation_origin",
+    "evidence_record",
+    "evidence_relation_origin",
+)
 
 
 @pytest.fixture
@@ -409,6 +427,7 @@ def test_source_locator_components_round_trip_as_columns(
         {"type": "boolean", "value": True},
         {"type": "date", "value": "2026-07-11"},
         {"type": "datetime", "value": "2026-07-11T00:00:00Z"},
+        {"type": "datetime", "value": "2026-07-11T00:00:00.123456Z"},
         {
             "type": "tuple",
             "items": [
@@ -438,6 +457,9 @@ def test_tagged_value_function_accepts_exact_stage01_shapes(
         {"type": "decimal", "value": "1.0"},
         {"type": "date", "value": "2026-02-30"},
         {"type": "datetime", "value": "2026-07-11T09:00:00+09:00"},
+        {"type": "datetime", "value": "2026-07-11T00:00:00.1Z"},
+        {"type": "datetime", "value": "2026-07-11T00:00:00.000000Z"},
+        {"type": "datetime", "value": "2026-07-11T24:00:00Z"},
         {"type": "string", "value": "x", "extra": True},
         {
             "type": "tuple",
@@ -872,6 +894,99 @@ def test_calculation_and_claim_dataset_must_equal_the_request_dataset(
 
 
 @pytest.mark.postgres
+def test_every_task5_versioned_table_has_a_direct_restrict_dataset_fk(
+    connection: psycopg.Connection,
+) -> None:
+    versioned_tables = {
+        str(row[0])
+        for row in connection.execute(
+            """
+            SELECT column_row.table_name
+            FROM information_schema.columns AS column_row
+            JOIN information_schema.tables AS table_row
+              ON table_row.table_schema = column_row.table_schema
+             AND table_row.table_name = column_row.table_name
+            WHERE column_row.table_schema = 'evidence'
+              AND column_row.column_name = 'dataset_version'
+              AND column_row.table_name <> 'source_record'
+              AND table_row.table_type = 'BASE TABLE'
+            """
+        ).fetchall()
+    }
+    direct_dataset_fks = {
+        str(table_name): (
+            str(constraint_name),
+            tuple(child_columns),
+            str(parent_schema),
+            str(parent_table),
+            tuple(parent_columns),
+            str(delete_action),
+        )
+        for (
+            table_name,
+            constraint_name,
+            child_columns,
+            parent_schema,
+            parent_table,
+            parent_columns,
+            delete_action,
+        ) in connection.execute(
+            """
+            SELECT child.relname, constraint_row.conname,
+                   ARRAY(
+                       SELECT attribute.attname
+                       FROM unnest(constraint_row.conkey)
+                            WITH ORDINALITY AS key(attnum, position)
+                       JOIN pg_catalog.pg_attribute AS attribute
+                         ON attribute.attrelid = child.oid
+                        AND attribute.attnum = key.attnum
+                       ORDER BY key.position
+                   ),
+                   parent_namespace.nspname, parent.relname,
+                   ARRAY(
+                       SELECT attribute.attname
+                       FROM unnest(constraint_row.confkey)
+                            WITH ORDINALITY AS key(attnum, position)
+                       JOIN pg_catalog.pg_attribute AS attribute
+                         ON attribute.attrelid = parent.oid
+                        AND attribute.attnum = key.attnum
+                       ORDER BY key.position
+                   ),
+                   constraint_row.confdeltype
+            FROM pg_catalog.pg_constraint AS constraint_row
+            JOIN pg_catalog.pg_class AS child
+              ON child.oid = constraint_row.conrelid
+            JOIN pg_catalog.pg_namespace AS child_namespace
+              ON child_namespace.oid = child.relnamespace
+            JOIN pg_catalog.pg_class AS parent
+              ON parent.oid = constraint_row.confrelid
+            JOIN pg_catalog.pg_namespace AS parent_namespace
+              ON parent_namespace.oid = parent.relnamespace
+            WHERE constraint_row.contype = 'f'
+              AND child_namespace.nspname = 'evidence'
+              AND child.relname = ANY(%s)
+              AND parent_namespace.nspname = 'operations'
+              AND parent.relname = 'dataset_version'
+            """,
+            (list(TASK5_VERSIONED_TABLES),),
+        ).fetchall()
+    }
+
+    assert versioned_tables == set(TASK5_VERSIONED_TABLES)
+    assert direct_dataset_fks == {
+        table_name: (
+            f"fk_{table_name}_dataset_version",
+            ("dataset_version",),
+            "operations",
+            "dataset_version",
+            ("dataset_version",),
+            "r",
+        )
+        for table_name in TASK5_VERSIONED_TABLES
+    }
+
+
+@pytest.mark.postgres
 def test_calculation_dependency_rejects_cross_run_and_self_references(
     connection: psycopg.Connection,
 ) -> None:
@@ -949,6 +1064,126 @@ def test_deferred_calculation_cycle_check_rejects_multi_node_cycles(
 
     with pytest.raises(psycopg.errors.CheckViolation):
         connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+
+@pytest.mark.postgres
+def test_concurrent_same_run_dependencies_serialize_and_leave_an_acyclic_graph(
+    migrated_database_url: str,
+) -> None:
+    from tests.db.test_foundation_migration import _truncate_foundation_tables
+
+    database_url = normalize_psycopg_url(migrated_database_url)
+    _truncate_foundation_tables(database_url)
+    first_connection: psycopg.Connection | None = None
+    second_connection: psycopg.Connection | None = None
+    try:
+        with psycopg.connect(database_url) as setup_connection:
+            prepare_calculation_input(setup_connection)
+            for calculation_id in ("calculation-a", "calculation-b"):
+                insert_calculation(
+                    setup_connection,
+                    calculation_id=calculation_id,
+                )
+                insert_calculation_evidence_input(
+                    setup_connection,
+                    calculation_id=calculation_id,
+                )
+
+        first_connection = psycopg.connect(database_url)
+        second_connection = psycopg.connect(database_url)
+        first_connection.execute(
+            """
+            INSERT INTO evidence.calculation_dependency (
+                run_id, dataset_version, calculation_id,
+                input_calculation_id, ordinal
+            ) VALUES ('run-one', 'ledger-v1', 'calculation-a',
+                      'calculation-b', 0)
+            """
+        )
+
+        def insert_reverse_dependency() -> str:
+            assert second_connection is not None
+            try:
+                second_connection.execute(
+                    """
+                    INSERT INTO evidence.calculation_dependency (
+                        run_id, dataset_version, calculation_id,
+                        input_calculation_id, ordinal
+                    ) VALUES ('run-one', 'ledger-v1', 'calculation-b',
+                              'calculation-a', 0)
+                    """
+                )
+                second_connection.commit()
+            except psycopg.errors.CheckViolation:
+                second_connection.rollback()
+                return "cycle_rejected"
+            return "committed"
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            reverse_result = executor.submit(insert_reverse_dependency)
+            deadline = time.monotonic() + 2
+            wait_event_type = None
+            while time.monotonic() < deadline and not reverse_result.done():
+                with psycopg.connect(database_url, autocommit=True) as observer:
+                    wait_event_type = observer.execute(
+                        """
+                        SELECT wait_event_type
+                        FROM pg_catalog.pg_stat_activity
+                        WHERE pid = %s
+                        """,
+                        (second_connection.info.backend_pid,),
+                    ).fetchone()[0]
+                if wait_event_type == "Lock":
+                    break
+                time.sleep(0.01)
+
+            assert wait_event_type == "Lock", (
+                "the reverse dependency INSERT did not serialize on the run"
+            )
+            first_connection.commit()
+            assert reverse_result.result(timeout=2) == "cycle_rejected"
+
+        with psycopg.connect(database_url) as verification_connection:
+            stored_edges = verification_connection.execute(
+                """
+                SELECT calculation_id, input_calculation_id
+                FROM evidence.calculation_dependency
+                WHERE run_id = 'run-one'
+                ORDER BY calculation_id, input_calculation_id
+                """
+            ).fetchall()
+            cycle_count = verification_connection.execute(
+                """
+                WITH RECURSIVE dependency_path(
+                    origin_id, calculation_id, visited, is_cycle
+                ) AS (
+                    SELECT calculation_id, input_calculation_id,
+                           ARRAY[calculation_id, input_calculation_id],
+                           calculation_id = input_calculation_id
+                    FROM evidence.calculation_dependency
+                    WHERE run_id = 'run-one'
+                    UNION ALL
+                    SELECT path.origin_id, edge.input_calculation_id,
+                           path.visited || edge.input_calculation_id,
+                           edge.input_calculation_id = ANY(path.visited)
+                    FROM dependency_path AS path
+                    JOIN evidence.calculation_dependency AS edge
+                      ON edge.run_id = 'run-one'
+                     AND edge.calculation_id = path.calculation_id
+                    WHERE NOT path.is_cycle
+                )
+                SELECT count(*) FROM dependency_path WHERE is_cycle
+                """
+            ).fetchone()[0]
+
+        assert stored_edges == [("calculation-a", "calculation-b")]
+        assert cycle_count == 0
+    finally:
+        if first_connection is not None:
+            first_connection.close()
+        if second_connection is not None:
+            second_connection.close()
+        _truncate_foundation_tables(database_url)
 
 
 @pytest.mark.postgres
