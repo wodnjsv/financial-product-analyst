@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-17
 
-**Status:** Core contracts and execution-contract hardening implemented and NCP-verified; the closure-review register remains before Stage 01 completion
+**Status:** Complete; runtime contracts frozen for Stage 02 after closure hardening and NCP verification
 
 **Goal:** Create the executable, immutable, schema-exportable runtime contracts that every later data, ontology, orchestration, verification, rendering, API, and Naver Cloud component must use.
 
@@ -30,7 +30,9 @@ The exact implementation sequence is defined in [Stage 01 Execution Contract Har
 - The verification image was corrected to include its own Dockerfile and `.dockerignore` test inputs in `822fbf0`.
 - The execution-contract hardening amendment was implemented in `60de716`; the host passed 116 contract tests and the Schema freshness check.
 - NCP Ubuntu/Linux-amd64 verification of `60de716` completed successfully: the image build completed its locked install, full contract suite, and Schema check, and the container command exited with code 0.
-- Stage 01 is not complete because the closure-review register below remains unresolved.
+- Closure hardening was implemented in `57ce82e`∼`b5f42e7`; the host passed 224 contract tests and NCP commit `b5f42e777d7edb13f980a19bc531a360a3209b85` exited 0 in the locked Linux/amd64 verification container.
+- The development Mac had no Docker runtime. The user explicitly approved the successful NCP no-cache Linux/amd64 rebuild and run as the duplicate local-container verification substitute.
+- Stage 01 is complete. Its tagged value fields, public contract names, and 14 generated Schemas are frozen inputs to Stage 02.
 
 **Authoritative design references:**
 
@@ -1715,15 +1717,17 @@ Stage 01 is complete only when all of the following are evidenced by fresh comma
 
 The [Stage 02 PostgreSQL Storage implementation plan](2026-08-17-stage-02-postgresql-storage-implementation-plan.md) may start only after Stage 01, including the 2026-08-18 execution-contract amendment, is implemented, verified, and reviewed. Stage 02 maps these contract IDs and immutable artifacts to PostgreSQL 15 DDL, Alembic migrations, foreign keys, normalized association tables, indexes, and NCP Cloud DB integration tests. It must consume the freshly exported final Stage 01 schemas without renaming the frozen public interfaces.
 
-## Stage 01 Closure-Review Register
+## Stage 01 Closure-Review Register — Closed
 
-The final review also identified the following items. They are recorded so they cannot be lost, but they are not silently included in the approved execution-contract implementation scope. Each item requires a focused decision before Stage 01 can be declared complete.
+The final review identified the following items. ADR-0008, the closure design, and the closure implementation plan resolved and verified all six before the Stage 01 freeze.
 
-The decisions for these items are approved in the [Stage 01 Closure Hardening Design](../specs/2026-08-18-stage-01-closure-hardening-design.md) and [ADR-0008](../decisions/ADR-0008-lossless-tagged-contract-values.md). The review-ready [Stage 01 Closure Hardening Implementation Plan](2026-08-18-stage-01-closure-hardening-implementation-plan.md) replaces the discarded pre-amendment plan. Implementation remains gated on explicit approval of that new plan.
+The implementation evidence is recorded in the complete [Stage 01 Closure Hardening Implementation Plan](2026-08-18-stage-01-closure-hardening-implementation-plan.md).
 
-1. Define strict Python-versus-JSON ingress behavior without breaking ISO date and datetime parsing.
-2. Document that exported JSON Schema proves structural validation while Pydantic custom validators remain semantic runtime checks, then add parity tests where feasible.
-3. Verify canonical serialization for `Decimal`, `date`, `datetime`, zero values, and nested tuple inputs.
-4. Decide whether `ClaimSupport.ordinal` must be non-negative and whether `support_kind` must constrain evidence-versus-calculation targets.
-5. Add schema-check mutation tests that prove stale, missing, and extra generated schema files are rejected.
-6. Replace the ambiguous polymorphic value union with the tagged representation before freezing Stage 01.
+1. [x] Strict Python-versus-JSON ingress preserves valid raw JSON while rejecting Python coercion.
+2. [x] JSON Schema structural authority and Pydantic semantic authority are separately tested.
+3. [x] Canonical serialization covers tagged Decimal identity and rejects schema-less typed mappings, nested tuples, and unsupported values.
+4. [x] `ClaimSupport.ordinal` is nonnegative and `support_kind` constrains evidence-versus-calculation targets.
+5. [x] Exact Schema freshness tests reject modified, missing, and extra generated files.
+6. [x] All ten polymorphic value fields use the lossless tagged representation.
+
+The future Claim Gate Registry registration and template-slot compatibility check remains mandatory and unimplemented; closing this register does not waive it.

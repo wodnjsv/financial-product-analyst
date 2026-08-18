@@ -20,15 +20,17 @@
 
 ### Stage 01 런타임 계약
 
-**상태: 구현 중, 아직 완료 아님**
+**상태: 구현·검증 완료, Stage 02 인계용 동결**
 
 - 기본 계약과 JSON Schema는 커밋 `c5d387d`∼`36ffa82`에 구현되었다.
 - AnswerPlan의 구조적 경계는 `4dc6c30`에 잠겼다.
 - 의존성 lock과 `.dockerignore` 보강은 `69998f5`, 컨테이너 검증 입력 누락 수정은 `822fbf0`에 들어갔다.
-- 실행 계약 보강은 `60de716`에 구현되었고, 호스트에서 116개 contract test와 Schema 최신성 검사를 통과했다.
-- NCP Ubuntu/Linux-amd64에서 최신 이미지 build, 이미지 내부 contract test·Schema 검사, `docker run` 종료 코드 0을 다시 확인했다.
-- 현재 남은 작업은 Stage 01 종료 리뷰의 기존 5개 항목과 검토 중 추가로 확인된 다형 값 타입 손실을 함께 보강하고, 전체 계약을 다시 검증한 뒤 필드 스키마를 동결하는 것이다.
-- [Stage 01 Closure Hardening Design](specs/2026-08-18-stage-01-closure-hardening-design.md)과 [ADR-0008](decisions/ADR-0008-lossless-tagged-contract-values.md)로 타입 태그 기반 계약을 확정했다. 새 [Stage 01 Closure Hardening Implementation Plan](tasks/2026-08-18-stage-01-closure-hardening-implementation-plan.md)은 구현 승인 전 검토 상태다.
+- 종료 보강은 `57ce82e`∼`b5f42e7`의 5개 독립 커밋으로 구현했다.
+- 호스트에서 224개 contract test, Schema 바이트 최신성, Python 컴파일, diff 검사가 모두 통과했다.
+- NCP Ubuntu/Linux-amd64에서 커밋 `b5f42e777d7edb13f980a19bc531a360a3209b85`를 당겨 잠금 이미지를 무캐시 빌드했고, `docker run` 종료 코드 0을 확인했다.
+- 개발 Mac에는 Docker 실행 환경이 없어 로컬 중복 컨테이너 검증을 실행하지 못했다. 2026-08-18 사용자 승인에 따라 NCP의 동일 Linux/amd64 무캐시 빌드·실행을 완료 대체 근거로 채택했다.
+- 10개 다형 값 필드의 태그 wire shape과 14개 생성 Schema는 Stage 02가 그대로 사용할 동결 입력이다. Stage 02는 두 번째 Python 코덱을 만들지 않는다.
+- Claim Gate Registry 등록·호환성 검사는 Stage 01에서 구현하지 않았으며 후속 단계의 필수 구현 항목으로 유지한다.
 
 기준 계획:
 
@@ -39,11 +41,11 @@
 
 ### Stage 02 PostgreSQL 저장 계층
 
-**상태: 구현 전 대기**
+**상태: Stage 01 인계 조건 충족; 최종 계획 재리뷰·승인 대기**
 
 - 상세 계획과 차단급 리뷰 보강은 작성되어 있다.
-- Stage 01 실행 계약 보강과 종료 검토를 통과한 뒤 스키마를 동결한다.
-- 그 전에는 PostgreSQL 구현을 시작하지 않는다.
+- Stage 01 태그 값 API와 생성 Schema를 변경 없이 저장 계약의 입력으로 사용한다.
+- 작성된 Stage 02 계획을 동결 계약 기준으로 한 번 더 리뷰하고 명시적 구현 승인을 받는다.
 
 기준 계획: [Stage 02 PostgreSQL Storage](tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
 
@@ -69,9 +71,8 @@
 
 ## 5. 다음 순서
 
-1. Stage 01 종료 리뷰 대기 항목 확정·보강
-2. 전체 contract test, Schema, Linux/amd64, NCP 컨테이너 최종 재검증
-3. Stage 01 필드 스키마 동결
-4. Stage 02 계획 최종 재리뷰 후 PostgreSQL 구현
+1. Stage 02 계획을 Stage 01 동결 계약 기준으로 최종 재리뷰
+2. PostgreSQL DDL·Alembic·리포지터리·JSONB 경계의 구현 범위 승인
+3. 승인된 Stage 02 계획을 순차적으로 구현·검증
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

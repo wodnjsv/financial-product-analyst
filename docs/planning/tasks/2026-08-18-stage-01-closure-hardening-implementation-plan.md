@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-18
 
-**Status:** Review-ready; implementation requires explicit user approval
+**Status:** Complete
 
 **Goal:** Freeze Stage 01 with strict, immutable, lossless tagged contract values, deterministic canonical hashing, unambiguous ClaimSupport semantics, exact Schema freshness proof, and verified Linux/amd64 behavior on the NCP Ubuntu host.
 
@@ -97,7 +97,7 @@ At completion, a Decimal, date, datetime, Boolean, integer, string, null, or fla
 - Consumes: `ContractModel`, `UtcDateTime`, and `require_utc` from `contracts/base.py`.
 - Produces: `NullValue`, `StringValue`, `IntegerValue`, `DecimalValue`, `BooleanValue`, `DateValue`, `DateTimeValue`, `TupleValue`, `ScalarValue`, `ContractValue`, `ScalarPrimitive`, `ContractPrimitive`, `encode_contract_value`, and `decode_contract_value`.
 
-- [ ] **Step 1: Write failing scalar, Decimal, tuple, and rejection tests**
+- [x] **Step 1: Write failing scalar, Decimal, tuple, and rejection tests**
 
 Create `tests/contracts/test_values.py` with these exact behavioral groups:
 
@@ -159,7 +159,7 @@ def test_mixed_tuple_keeps_one_tag_per_item():
 
 Also add parameterized assertions for Boolean before integer, datetime before date, positive and negative zero, high-precision Decimal, exponent input, leading/trailing-zero JSON rejection, JSON numeric Decimal rejection, missing/unknown tag, extra key, tag/value mismatch, non-finite Decimal, float, list, mapping, nested tuple, naive datetime, and non-UTC datetime. Require the Decimal Schema `value` property to be a string with the approved canonical pattern.
 
-- [ ] **Step 2: Run the focused test and verify the missing module failure**
+- [x] **Step 2: Run the focused test and verify the missing module failure**
 
 Run:
 
@@ -169,7 +169,7 @@ Run:
 
 Expected: collection fails because `financial_agent.contracts.values` does not exist.
 
-- [ ] **Step 3: Implement the tagged models and exact Decimal boundary**
+- [x] **Step 3: Implement the tagged models and exact Decimal boundary**
 
 Create `src/financial_agent/contracts/values.py` using this implementation shape:
 
@@ -364,7 +364,7 @@ def decode_contract_value(value: ContractValue) -> ContractPrimitive:
 
 The branch order is part of the contract: Boolean precedes integer and datetime precedes date. Tuple encoding calls `_encode_scalar` for every item, so nested tuples fail instead of recursing.
 
-- [ ] **Step 4: Run the focused value tests**
+- [x] **Step 4: Run the focused value tests**
 
 Run:
 
@@ -374,7 +374,7 @@ Run:
 
 Expected: all value tests pass and no existing source file has changed.
 
-- [ ] **Step 5: Commit the isolated value boundary**
+- [x] **Step 5: Commit the isolated value boundary**
 
 ```bash
 git add src/financial_agent/contracts/values.py tests/contracts/test_values.py
@@ -414,7 +414,7 @@ git commit -m "feat: add lossless tagged contract values"
 - Consumes: all public types and conversion functions from Task 1.
 - Produces: one public `financial_agent.contracts` tagged-value API and ten migrated value fields.
 
-- [ ] **Step 1: Write failing cross-contract wire and cardinality tests**
+- [x] **Step 1: Write failing cross-contract wire and cardinality tests**
 
 Add assertions that:
 
@@ -429,7 +429,7 @@ assert evidence.value_or_object_id.type == "decimal"
 
 Mutate each fixture back to its old bare scalar or array and require Pydantic `ValidationError`. Add a ToolResult compatibility test where cardinality `one` receives tagged TupleValue and another where cardinality `many` receives tagged StringValue; both must fail for the intended cardinality reason.
 
-- [ ] **Step 2: Run the focused cross-contract tests and verify failure**
+- [x] **Step 2: Run the focused cross-contract tests and verify failure**
 
 Run:
 
@@ -443,7 +443,7 @@ Run:
 
 Expected: failures show that existing fields still accept or return untagged native values.
 
-- [ ] **Step 3: Move aliases out of base and export the Stage 01 value API**
+- [x] **Step 3: Move aliases out of base and export the Stage 01 value API**
 
 Remove Decimal/date-based `ScalarValue` and `ContractValue` aliases from `base.py`. Keep date/datetime imports needed by `SNAPSHOT_CUTOFF`, `UtcDateTime`, and RuntimeArtifact. In `__init__.py`, import and include in `__all__` all eight tagged models, both tagged aliases, both primitive aliases, and the two conversion functions from `values.py`.
 
@@ -464,7 +464,7 @@ from .values import TupleValue
 
 Keep the ten field names unchanged. Change only `AtomicClaim.value` to `ScalarValue | None`; every other migrated field requires a tagged value object.
 
-- [ ] **Step 4: Change cardinality checks to TupleValue**
+- [x] **Step 4: Change cardinality checks to TupleValue**
 
 Replace native tuple checks with:
 
@@ -481,7 +481,7 @@ if (
     raise ValueError("many binding must contain a tuple")
 ```
 
-- [ ] **Step 5: Add raw-JSON helpers for migrated fixture consumers**
+- [x] **Step 5: Add raw-JSON helpers for migrated fixture consumers**
 
 Add these helpers to `tests/contracts/conftest.py`:
 
@@ -502,7 +502,7 @@ def dump_json() -> Callable[[object], str]:
 
 Change QueryPlan, ExecutionGraph, ToolResult, EvidenceRecord, and their compatibility tests to call `model_validate_json` with the original fixture text or a JSON serialization of a mutated fixture dictionary. This is required before the Decimal wire fixture is introduced: a decoded JSON Decimal string must not be misclassified as typed Python input.
 
-- [ ] **Step 6: Migrate the four synthetic fixtures**
+- [x] **Step 6: Migrate the four synthetic fixtures**
 
 Use these exact replacements:
 
@@ -517,7 +517,7 @@ Use these exact replacements:
 
 Both Evidence AUM fields use the tagged Decimal form. The ToolResult AUM field also uses tagged Decimal; only discrete values such as `top-k` use tagged integer. Preserve all organizer-independent synthetic IDs, units, dates, and hashes.
 
-- [ ] **Step 7: Update direct Python contract construction**
+- [x] **Step 7: Update direct Python contract construction**
 
 In Evidence/Claim tests, pass `encode_contract_value(...)` or the concrete tagged model rather than a bare polymorphic value. Preserve bare `None` only for `AtomicClaim.value` absence. For the missing-metadata Evidence case, use `NullValue(type="null", value=None)` for both value fields and assert `decode_contract_value(...) is None`; do not assert that the fields themselves are bare None.
 
@@ -533,7 +533,7 @@ The many-cardinality invalid case uses:
 {"type": "string", "value": "product-syn-etf-a"}
 ```
 
-- [ ] **Step 8: Regenerate the six tagged-value-bearing Schemas**
+- [x] **Step 8: Regenerate the six tagged-value-bearing Schemas**
 
 ```bash
 .venv/bin/python scripts/export_contract_schemas.py
@@ -543,7 +543,7 @@ git diff --name-only -- schemas/contracts/v1
 
 At this task, the changed Schema list must contain exactly QueryPlan, ExecutionGraph, ToolResult, EvidenceRecord, CalculationRecord, and AtomicClaim. ClaimSupport remains unchanged until Task 5.
 
-- [ ] **Step 9: Run all contract tests before global strictness**
+- [x] **Step 9: Run all contract tests before global strictness**
 
 Run:
 
@@ -553,7 +553,7 @@ Run:
 
 Expected: all tests pass with tagged values, while global ContractModel strictness is not yet enabled.
 
-- [ ] **Step 10: Commit the wire migration**
+- [x] **Step 10: Commit the wire migration**
 
 ```bash
 git add \
@@ -596,7 +596,7 @@ git commit -m "refactor: migrate contracts to tagged values"
 - Consumes: migrated tagged contracts and existing raw JSON fixtures.
 - Produces: one strict ContractModel policy and explicit test helpers for JSON boundaries.
 
-- [ ] **Step 1: Add strictness tests using the raw-JSON helpers from Task 2**
+- [x] **Step 1: Add strictness tests using the raw-JSON helpers from Task 2**
 
 Task 2 already added these helpers to `tests/contracts/conftest.py`:
 
@@ -617,7 +617,7 @@ def dump_json() -> Callable[[object], str]:
 
 Use them while rewriting `test_base.py` to keep separate JSON-shaped and typed-Python payloads. Add direct proof that raw JSON ISO dates, UTC datetimes, string Enums, and arrays pass through `model_validate_json`, while the equivalent Python strings/lists fail through `model_validate` or model construction. Include negative cases for `"1"` as an integer, `True` as an integer, a date string as a Python date, a datetime string as a Python datetime, and a Python list as a tuple.
 
-- [ ] **Step 2: Run strictness tests before changing ContractModel**
+- [x] **Step 2: Run strictness tests before changing ContractModel**
 
 Run:
 
@@ -627,7 +627,7 @@ Run:
 
 Expected: coercion-negative tests fail because ContractModel is still lax.
 
-- [ ] **Step 3: Enable global strict immutable validation**
+- [x] **Step 3: Enable global strict immutable validation**
 
 Change only the shared configuration:
 
@@ -642,7 +642,7 @@ class ContractModel(BaseModel):
 
 Do not add a lax classmethod or compatibility flag.
 
-- [ ] **Step 4: Convert fixture consumers to raw JSON validation**
+- [x] **Step 4: Convert fixture consumers to raw JSON validation**
 
 For unmodified fixtures, replace:
 
@@ -664,7 +664,7 @@ Model.model_validate_json(dump_json(payload))
 
 Apply this consistently in request, query, execution, compatibility, evidence, and answer tests. Do not feed a decoded external JSON dictionary into strict Python validation.
 
-- [ ] **Step 5: Make direct Python construction genuinely typed**
+- [x] **Step 5: Make direct Python construction genuinely typed**
 
 Use Enum members such as `ClaimType.DIRECT_FACT`, `CalculationType.RANKING`, `SupportKind.DIRECT`, and `AnswerDisposition.ANSWER`. Use `date(2026, 7, 11)` and `datetime(2026, 8, 17, tzinfo=UTC)` for Python model fields. Keep string fields as strings, immutable collections as tuples, and nested contract fields as actual Pydantic objects rather than decoded dictionaries. Continue using `encode_contract_value` for polymorphic values.
 
@@ -683,7 +683,7 @@ claim_bindings=(
 ),
 ```
 
-- [ ] **Step 6: Verify no fixture dictionary uses the Python ingress path**
+- [x] **Step 6: Verify no fixture dictionary uses the Python ingress path**
 
 Run:
 
@@ -693,7 +693,7 @@ rg -n "model_validate\((load_fixture|payload)" tests/contracts --glob '!test_bas
 
 Expected: no matches for fixture or mutated JSON payload validation. Deliberate Python-boundary tests may still call `model_validate` with typed values.
 
-- [ ] **Step 7: Run the complete strict contract suite**
+- [x] **Step 7: Run the complete strict contract suite**
 
 ```bash
 .venv/bin/python -m pytest tests/contracts -q
@@ -701,7 +701,7 @@ Expected: no matches for fixture or mutated JSON payload validation. Deliberate 
 
 Expected: all tests pass, including raw JSON fixture parsing and Python coercion rejection.
 
-- [ ] **Step 8: Commit strict ingress**
+- [x] **Step 8: Commit strict ingress**
 
 ```bash
 git add src/financial_agent/contracts/base.py tests/contracts
@@ -722,7 +722,7 @@ git commit -m "fix: enforce strict contract ingress"
 - Consumes: tagged model JSON serializers from Tasks 1-3.
 - Produces: unchanged `canonical_json_bytes` and `canonical_sha256` signatures with a narrower, explicit Mapping value policy.
 
-- [ ] **Step 1: Write failing canonical identity and rejection tests**
+- [x] **Step 1: Write failing canonical identity and rejection tests**
 
 Add tests that prove:
 
@@ -753,7 +753,7 @@ assert canonical_json_bytes(first) == canonical_json_bytes(first.model_dump(mode
 
 Keep mapping-key order stability and simple `build_request_key` tests. Parameterize rejected schema-less Mapping values over Decimal, date, UTC datetime, Enum, tuple, float, set, unsupported object, and non-string key.
 
-- [ ] **Step 2: Run canonical tests and verify the current gaps**
+- [x] **Step 2: Run canonical tests and verify the current gaps**
 
 ```bash
 .venv/bin/python -m pytest tests/contracts/test_canonical.py -v
@@ -761,7 +761,7 @@ Keep mapping-key order stability and simple `build_request_key` tests. Parameter
 
 Expected: tagged Decimal identity tests may already pass because DecimalValue owns its JSON serializer, but rejection tests fail for values such as tuple, float, or string-valued Enum that the current schema-less Mapping path still accepts.
 
-- [ ] **Step 3: Add one recursive JSON-native validator**
+- [x] **Step 3: Add one recursive JSON-native validator**
 
 Implement a private helper with this exact precedence:
 
@@ -784,7 +784,7 @@ def _json_native(value: object) -> object:
 
 Import `Enum`. For BaseModel input, call `model_dump(mode="json", exclude=...)` first and validate that JSON-native result. For Mapping input, validate `dict(value)` directly. Preserve sorted keys, compact separators, UTF-8, `allow_nan=False`, and top-level `exclude_fields` behavior.
 
-- [ ] **Step 4: Run canonical and full contract tests**
+- [x] **Step 4: Run canonical and full contract tests**
 
 ```bash
 .venv/bin/python -m pytest tests/contracts/test_canonical.py -v
@@ -793,7 +793,7 @@ Import `Enum`. For BaseModel input, call `model_dump(mode="json", exclude=...)` 
 
 Expected: Decimal-equivalent models hash identically; tagged Decimal and tagged string differ; schema-less typed mappings fail with TypeError.
 
-- [ ] **Step 5: Commit canonical hashing**
+- [x] **Step 5: Commit canonical hashing**
 
 ```bash
 git add src/financial_agent/contracts/canonical.py tests/contracts/test_canonical.py
@@ -816,7 +816,7 @@ git commit -m "fix: canonicalize validated contract values"
 - Consumes: strict tagged contracts and the existing exact 14-file Schema registry.
 - Produces: closed ClaimSupport semantics, Schema parity tests, mutation proof, and byte-current generated Schemas.
 
-- [ ] **Step 1: Write exhaustive ClaimSupport tests**
+- [x] **Step 1: Write exhaustive ClaimSupport tests**
 
 Test all five SupportKind values. `CALCULATION` with only calculation_id passes. `DIRECT`, `SCOPE`, `EXCLUSION`, and `POLICY` with only evidence_id pass. For each kind, test wrong target, both targets, no target, and `ordinal=-1`. Keep ordinal zero valid.
 
@@ -827,7 +827,7 @@ schema = ClaimSupport.model_json_schema(mode="validation")
 assert schema["properties"]["ordinal"]["minimum"] == 0
 ```
 
-- [ ] **Step 2: Run focused ClaimSupport tests and verify failure**
+- [x] **Step 2: Run focused ClaimSupport tests and verify failure**
 
 ```bash
 .venv/bin/python -m pytest tests/contracts/test_evidence.py -k claim_support -v
@@ -835,7 +835,7 @@ assert schema["properties"]["ordinal"]["minimum"] == 0
 
 Expected: negative ordinal and support-kind/target mismatches currently pass.
 
-- [ ] **Step 3: Implement field-local and cross-field support rules**
+- [x] **Step 3: Implement field-local and cross-field support rules**
 
 Change the field and validator to:
 
@@ -854,7 +854,7 @@ def validate_support_target(self) -> "ClaimSupport":
 
 Do not add hand-written JSON Schema `if/then` conditions.
 
-- [ ] **Step 4: Add exact Schema freshness mutation tests**
+- [x] **Step 4: Add exact Schema freshness mutation tests**
 
 Import `check_schemas` and prove four isolated states:
 
@@ -886,13 +886,13 @@ def test_schema_freshness_rejects_extra_file(tmp_path: Path) -> None:
         check_schemas(tmp_path)
 ```
 
-- [ ] **Step 5: Add JSON Schema versus Pydantic authority tests**
+- [x] **Step 5: Add JSON Schema versus Pydantic authority tests**
 
 Use `Draft202012Validator(..., format_checker=FormatChecker())`. Add one structurally invalid tagged Decimal payload that both validators reject. Add two semantically invalid payloads that structural Schema accepts but Pydantic rejects: a ClaimSupport with `support_kind="calculation"` and only evidence_id, and a RequestContext with valid date syntax but cutoff `2026-07-12`.
 
 Assert the evaluation response Schema still has exactly the five required string properties and `additionalProperties` is false.
 
-- [ ] **Step 6: Run focused Schema tests before regeneration**
+- [x] **Step 6: Run focused Schema tests before regeneration**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -903,7 +903,7 @@ Assert the evaluation response Schema still has exactly the five required string
 
 Expected: runtime tests pass after the code change; the committed Schema check fails because generated files are stale.
 
-- [ ] **Step 7: Regenerate and review the exact Schema set**
+- [x] **Step 7: Regenerate and review the exact Schema set**
 
 ```bash
 .venv/bin/python scripts/export_contract_schemas.py
@@ -919,7 +919,7 @@ schemas/contracts/v1/claim-support.schema.json
 
 Confirm the other thirteen Schema files, especially `evaluation-api-response.schema.json`, have no new diff in this task. The six tagged-value-bearing Schemas were already reviewed and committed in Task 2.
 
-- [ ] **Step 8: Run the complete contract suite and commit**
+- [x] **Step 8: Run the complete contract suite and commit**
 
 ```bash
 .venv/bin/python -m pytest tests/contracts -q
@@ -944,7 +944,7 @@ git commit -m "test: close contract schema boundaries"
 - Consumes: all five verified implementation commits and the locked container build.
 - Produces: final Stage 01 freeze evidence and an explicit Stage 02 entry gate.
 
-- [ ] **Step 1: Run fresh host verification**
+- [x] **Step 1: Run fresh host verification**
 
 ```bash
 .venv/bin/python -m pytest tests/contracts -q
@@ -955,16 +955,16 @@ git diff --check
 
 Record the exact passed test count. Any failure keeps Stage 01 open.
 
-- [ ] **Step 2: Build and run the locked Linux/amd64 image locally**
+- [x] **Step 2: Verify the locked Linux/amd64 image**
 
 ```bash
 docker build --platform linux/amd64 -f docker/contracts.Dockerfile -t financial-agent-contracts:stage-01 .
 docker run --rm --platform linux/amd64 financial-agent-contracts:stage-01
 ```
 
-Both commands must exit zero. The build itself reruns contract tests and Schema freshness inside the image.
+Both commands normally run locally and must exit zero. Docker was unavailable on the development Mac. On 2026-08-18 the user explicitly approved the successful NCP no-cache Linux/amd64 build and run as the completion substitute for this duplicate local check. The NCP build reran the locked contract tests and Schema freshness check inside the image, and the container command exited 0.
 
-- [ ] **Step 3: Inspect repository scope before push**
+- [x] **Step 3: Inspect repository scope before push**
 
 ```bash
 git status --short
@@ -977,7 +977,7 @@ Verify that no path under `data/`, no organizer PDF/workbook, no `.env`, secret,
 
 The Schema paths in the branch-wide diff must be exactly the seven files listed in the success criteria: the six tagged-value-bearing Schemas from Task 2 and ClaimSupport from Task 5.
 
-- [ ] **Step 4: Push the verified task branch for NCP reproduction**
+- [x] **Step 4: Push the verified task branch for NCP reproduction**
 
 ```bash
 git push origin codex/financial-agent-core
@@ -985,7 +985,7 @@ git push origin codex/financial-agent-core
 
 Do not merge to main or deploy the application service.
 
-- [ ] **Step 5: Rebuild the exact branch on the NCP Ubuntu host**
+- [x] **Step 5: Rebuild the exact branch on the NCP Ubuntu host**
 
 On the NCP server repository:
 
@@ -1001,7 +1001,7 @@ echo $?
 
 Require the pulled commit to match the pushed HEAD and the final exit code to be `0`. A build or run failure must be fixed and rerun on both host and NCP; it cannot be documented as completion.
 
-- [ ] **Step 6: Record actual completion evidence and freeze Stage 01**
+- [x] **Step 6: Record actual completion evidence and freeze Stage 01**
 
 Only after NCP exit zero:
 
@@ -1012,7 +1012,16 @@ Only after NCP exit zero:
 - state that the Stage 01 tagged fields and generated Schemas are frozen inputs to Stage 02;
 - retain the mandatory future Claim Gate Registry note.
 
-- [ ] **Step 7: Commit and push the completion record**
+Completion evidence recorded on 2026-08-18:
+
+- host: 224 contract tests passed; Schema freshness, Python compilation, and diff checks exited 0;
+- generated Schema scope: exactly the six tagged-value-bearing files plus ClaimSupport changed, while `evaluation-api-response.schema.json` remained unchanged;
+- NCP: commit `b5f42e777d7edb13f980a19bc531a360a3209b85`, Ubuntu Linux/amd64 no-cache locked-image rebuild, container exit code 0;
+- local container: not run because Docker was unavailable on the development Mac; the user explicitly accepted the NCP rebuild and run as the completion substitute;
+- repository scope: no organizer data, PDF, workbook, secret, database, Parquet, embedding, cache, log, or runtime output was committed;
+- freeze: the ten tagged fields, public value API, and 14 generated Schemas are frozen Stage 02 inputs; Claim Gate Registry registration and compatibility checks remain mandatory and unimplemented.
+
+- [x] **Step 7: Commit and push the completion record**
 
 ```bash
 git add \
@@ -1028,20 +1037,20 @@ git push origin codex/financial-agent-core
 
 ## Final Review Checklist
 
-- [ ] All ten polymorphic fields use the tagged wire representation.
-- [ ] No old untagged fixture value remains.
-- [ ] Decimal JSON is a canonical pattern-constrained string and Python holds Decimal.
-- [ ] JSON number under the Decimal tag fails.
-- [ ] Date/datetime-looking strings remain StringValue when tagged as string.
-- [ ] NullValue and AtomicClaim absence remain distinct.
-- [ ] TupleValue is flat and every item is tagged.
-- [ ] Python coercion fails while raw JSON dates, datetimes, Enums, and arrays work.
-- [ ] Canonical model hashing is stable and schema-less typed Mapping values fail.
-- [ ] ClaimSupport kind, target, and ordinal rules pass exhaustive tests.
-- [ ] JSON Schema and Pydantic authority are tested separately.
-- [ ] Schema freshness detects exact, modified, missing, and extra states.
-- [ ] Exactly seven expected Schema files changed and the evaluation API Schema did not.
-- [ ] Host, container, and NCP checks all pass with the locked dependencies.
-- [ ] No protected data or generated runtime artifact is committed.
-- [ ] Stage 02 references the Stage 01 value types and contains no second Python codec.
-- [ ] Claim Gate Registry remains explicitly mandatory and unimplemented.
+- [x] All ten polymorphic fields use the tagged wire representation.
+- [x] No old untagged fixture value remains.
+- [x] Decimal JSON is a canonical pattern-constrained string and Python holds Decimal.
+- [x] JSON number under the Decimal tag fails.
+- [x] Date/datetime-looking strings remain StringValue when tagged as string.
+- [x] NullValue and AtomicClaim absence remain distinct.
+- [x] TupleValue is flat and every item is tagged.
+- [x] Python coercion fails while raw JSON dates, datetimes, Enums, and arrays work.
+- [x] Canonical model hashing is stable and schema-less typed Mapping values fail.
+- [x] ClaimSupport kind, target, and ordinal rules pass exhaustive tests.
+- [x] JSON Schema and Pydantic authority are tested separately.
+- [x] Schema freshness detects exact, modified, missing, and extra states.
+- [x] Exactly seven expected Schema files changed and the evaluation API Schema did not.
+- [x] Host checks and the accepted NCP locked Linux/amd64 container substitute pass; the unavailable local Docker duplicate is explicitly recorded.
+- [x] No protected data or generated runtime artifact is committed.
+- [x] Stage 02 references the Stage 01 value types and contains no second Python codec.
+- [x] Claim Gate Registry remains explicitly mandatory and unimplemented.

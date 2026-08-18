@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-18
 
-**Status:** Approved amended design; implementation remains gated on the dedicated plan
+**Status:** Implemented and verified
 
 **Related:** [Planning Harness](../HARNESS.md), [Runtime Contracts](../architecture/RUNTIME_CONTRACTS.md), [ADR-0005](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md), [ADR-0007](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md), [ADR-0008](../decisions/ADR-0008-lossless-tagged-contract-values.md), [Stage 01 Runtime Contracts Plan](../tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md), [Stage 02 PostgreSQL Storage Plan](../tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
 
@@ -347,6 +347,14 @@ The amendment is complete only when fresh evidence confirms all of the following
 9. the same image is rebuilt and run on the NCP Ubuntu host with exit code 0.
 
 After this gate passes, Stage 01 public fields and schemas may be frozen for the Stage 02 handoff.
+
+### Completion evidence
+
+- Host verification passed 224 contract tests, byte-current Schema export, Python compilation, and diff checks on 2026-08-18.
+- The seven expected generated Schema files changed; the official five-string evaluation API Schema did not change.
+- NCP Ubuntu/Linux-amd64 rebuilt commit `b5f42e777d7edb13f980a19bc531a360a3209b85` with the locked dependency image and `docker run` exited 0.
+- Docker was unavailable on the development Mac. With explicit user approval on 2026-08-18, the NCP no-cache Linux/amd64 build and run serves as the accepted container completion evidence instead of a duplicate local Docker run.
+- Repository review found no organizer data, PDF, workbook, secret, database, Parquet, embedding, log, or runtime output in the implementation diff.
 
 ## 13. Non-Goals
 
