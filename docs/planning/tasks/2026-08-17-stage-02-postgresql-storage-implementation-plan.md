@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-17 (final review amended 2026-08-18)
 
-**Status:** Stage 02A implementation in progress; Tasks 1-5 implemented and verified
+**Status:** Stage 02A implementation in progress; Tasks 1-6 implemented and verified
 
 **Goal:** Implement the PostgreSQL 15 physical storage boundary for the seven approved logical schemas, preserve the Stage 01 contract IDs and immutable artifacts without renaming public interfaces, and prove that the migrations and persistence layer run in an NCP-compatible Linux/amd64 environment.
 
@@ -914,7 +914,11 @@ class EvidenceLedgerRepository:
     ) -> None: ...
 
     async def append_claim(
-        self, scope: RequestScope, claim: AtomicClaim
+        self,
+        scope: RequestScope,
+        claim: AtomicClaim,
+        *,
+        supports: tuple[ClaimSupport, ...],
     ) -> None: ...
 
     async def append_support(
@@ -936,7 +940,9 @@ class EvidenceLedgerRepository:
 
 `RequestScope` is a persistence-only frozen dataclass containing `request_key`, `run_id`, and `dataset_version`. It does not replace RuntimeArtifact metadata. Tagged value types and `encode_contract_value`/`decode_contract_value` are imported from Stage 01 contracts and are never redeclared under `db`.
 
-- [ ] **Step 1: Write failing tagged-value database parity tests**
+`append_claim()` requires at least one initial `ClaimSupport` and inserts the Claim, its ordered qualifiers, and those supports in one transaction. This atomic boundary is required because migration `0004` rejects a Claim with no support when deferred constraints are forced or the transaction commits, while a support cannot reference a Claim that has not yet been inserted. `append_support()` remains available only for adding subsequent supports to an already persisted Claim; the database invariant is not weakened to accommodate split writes.
+
+- [x] **Step 1: Write failing tagged-value database parity tests**
 
 Create one shared valid/invalid corpus consumed by the Stage 01 compatibility test and direct PostgreSQL CHECK test. Persist and reload the exact Stage 01 tagged JSON shapes for:
 
@@ -951,33 +957,33 @@ The corpus fixes the canonical outputs `Decimal("1.00") -> {"type":"decimal","va
 
 The Stage 01 contract tests already reject float input, naive datetime, non-UTC datetime, nested tuple, mapping, and unsupported native values. At the database boundary, insert an unknown type tag, nested tuple, extra tagged-object key, noncanonical Decimal, and every tag/value mismatch with direct SQL and require the named CHECK to fail.
 
-- [ ] **Step 2: Bind Stage 01 tagged contracts to JSONB without a second codec**
+- [x] **Step 2: Bind Stage 01 tagged contracts to JSONB without a second codec**
 
 Repository writes call the frozen Stage 01 model's `model_dump(mode="json")` and Stage 01 `encode_contract_value` directly. Repository reads call the owning Stage 01 model's `model_validate_json` and, when a native scalar is explicitly needed, Stage 01 `decode_contract_value`. No `db/codec.py`, forwarding codec abstraction, persistence-only TaggedValue, `mixed_tuple` shortcut, or context-based type inference is allowed.
 
-- [ ] **Step 3: Write failing repository round-trip tests**
+- [x] **Step 3: Write failing repository round-trip tests**
 
 Using only synthetic fixtures, append and reload:
 
 - a claim-eligible official source and direct Evidence;
 - an after-cutoff Evidence retained for rejection;
 - a ranking Calculation with ordered Evidence inputs, exclusions, population filters, and tie-break;
-- an AtomicClaim with ordered qualifiers;
-- direct and Calculation ClaimSupport rows.
+- an AtomicClaim with ordered qualifiers and at least one initial support in the same transaction;
+- an additional direct or Calculation ClaimSupport row appended after the Claim transaction.
 
 Compare reconstructed Pydantic objects for exact equality. Verify an attempted second insert with the same ID but different hash fails; identical retries may return the existing row only after byte-equivalent canonical comparison. For `SourceRecord` and `EvidenceRecord`, use two independent committed connections: same ID plus same canonical payload converges on one row and the same persisted identity, while same ID plus different payload produces one success and one stable conflict without a table-wide or global advisory lock.
 
-- [ ] **Step 4: Implement transactional append and load methods**
+- [x] **Step 4: Implement transactional append and load methods**
 
-Use SQLAlchemy Core statements and `AsyncConnection.begin()`. Repository methods have no update or delete operation. Insert all parent and association rows in one transaction, derive Claim entity/request subject scope from the closed Claim-type registry, and execute `SET CONSTRAINTS ALL IMMEDIATE` before commit so cutoff, DAG, type, and aggregate checks run inside the method. Catch unique conflicts only to implement deterministic identical-retry behavior; never silently accept a different payload under an existing ID.
+Use SQLAlchemy Core statements and `AsyncConnection.begin()`. Repository methods have no update or delete operation. Insert all parent and association rows in one transaction; specifically, `append_claim()` inserts the Claim, qualifiers, and a non-empty initial support tuple atomically, while `append_support()` adds only later supports to an existing Claim. Derive Claim entity/request subject scope from the closed Claim-type registry, and execute `SET CONSTRAINTS ALL IMMEDIATE` before commit so cutoff, DAG, type, and aggregate checks run inside the method. Catch unique conflicts only to implement deterministic identical-retry behavior; never silently accept a different payload under an existing ID.
 
-- [ ] **Step 5: Run codec and repository tests**
+- [x] **Step 5: Run codec and repository tests**
 
 ```bash
 python -m pytest tests/db/test_evidence_repository.py -v
 ```
 
-- [ ] **Step 6: Commit persistence adapters**
+- [x] **Step 6: Commit persistence adapters**
 
 ```bash
 git add src/financial_agent/db/repositories tests/db/test_evidence_repository.py tests/db/test_concurrent_idempotency.py tests/db/test_tagged_value_parity.py tests/fixtures/db/tagged_value_corpus.py
@@ -1416,7 +1422,7 @@ Minimum acceptance coverage:
 - Frozen Stage 01 Pydantic contracts, canonical JSON/hash helpers, tagged-value encoders/decoders, JSON Schema exporter, and 224 passing contract tests.
 - `requirements/contracts.lock`, `.dockerignore`, and `docker/contracts.Dockerfile` verified on NCP Ubuntu/Linux-amd64 at the frozen Stage 01 commit.
 - Approved seven-schema physical direction, three-store/five-layer architecture, 2026-07-11 cutoff, failure/disposition policy, and NCP PostgreSQL target sizing.
-- Stage 02 Tasks 1-5 have implemented the PostgreSQL harness and Alembic revisions `0001`-`0004`; Evidence repositories and request-artifact persistence remain Tasks 6-7. No migration has been applied to the actual NCP Cloud DB.
+- Stage 02 Tasks 1-6 have implemented the PostgreSQL harness, Alembic revisions `0001`-`0004`, and lossless Evidence repositories; request-artifact persistence remains Task 7. No migration has been applied to the actual NCP Cloud DB.
 
 ## 12. Explicitly Not in Scope
 
