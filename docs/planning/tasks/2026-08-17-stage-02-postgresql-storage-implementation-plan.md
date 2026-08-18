@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-17 (final review amended 2026-08-18)
 
-**Status:** Stage 02A implementation in progress; Tasks 1-4 implemented and verified
+**Status:** Stage 02A implementation in progress; Tasks 1-5 implemented and verified
 
 **Goal:** Implement the PostgreSQL 15 physical storage boundary for the seven approved logical schemas, preserve the Stage 01 contract IDs and immutable artifacts without renaming public interfaces, and prove that the migrations and persistence layer run in an NCP-compatible Linux/amd64 environment.
 
@@ -781,7 +781,7 @@ git commit -m "feat: add fact and search storage"
 - deferred trigger function `evidence.reject_calculation_cycle()`
 - immutable SQL function `evidence.is_valid_tagged_value(jsonb)`
 
-- [ ] **Step 1: Write failing source and Evidence tests**
+- [x] **Step 1: Write failing source and Evidence tests**
 
 Cover:
 
@@ -795,7 +795,7 @@ Cover:
 - an Evidence subject from another dataset or a nonexistent catalog entity is rejected, while the explicitly subjectless Evidence kinds remain valid;
 - all SourceLocator components round-trip without one opaque locator JSON object.
 
-- [ ] **Step 2: Define tagged scalar storage**
+- [x] **Step 2: Define tagged scalar storage**
 
 For Evidence raw/normalized values, calculation results/parameters, and Claim values/qualifiers, use one recursively tagged JSONB object. Allowed scalar tags are:
 
@@ -807,7 +807,7 @@ Scalar representation is `{"type": <tag>, "value": <json-scalar>}`. Tuple repres
 
 The Python representation is the frozen discriminated `ScalarValue`/`ContractValue` union owned by the amended Stage 01 `contracts/values.py`. Stage 02 must not define a persistence-only duplicate. PostgreSQL function `evidence.is_valid_tagged_value(jsonb)` recursively checks the exact Stage 01 keys, tag names, JSON types, integer form, canonical decimal syntax, ISO dates, UTC datetimes, and per-item tuple tags. Every tagged-value column has a named CHECK that invokes it, so direct SQL cannot store a decimal tag with an object or erase mixed-tuple type information.
 
-- [ ] **Step 3: Define Source, Evidence, and origin links**
+- [x] **Step 3: Define Source, Evidence, and origin links**
 
 `evidence_record` includes all Stage 01 fields, explicit SourceLocator columns, tagged raw/normalized values, and the composite Source FK created in migration `0003`. Nullable `(dataset_version, subject_id)` references `catalog.entity`; `observation`, `relation`, and `document_span` Evidence requires a subject, while `query_scope`, `exclusion`, and `policy` may be explicitly subjectless.
 
@@ -815,7 +815,7 @@ The Python representation is the frozen discriminated `ScalarValue`/`ContractVal
 
 Add separate origin tables for observation, relation, and document chunk. Each origin table has a composite FK on both sides and a primary key on the Evidence identity. Deferred database constraint triggers enforce exactly one matching origin row for `observation`, `relation`, and `document_span` Evidence, forbid the other two origin tables, and forbid every origin row for `query_scope`, `exclusion`, and `policy`. The repository performs the same check before forcing deferred constraints, but the commit-time database rule is authoritative.
 
-- [ ] **Step 4: Write failing Calculation and Claim tests**
+- [x] **Step 4: Write failing Calculation and Claim tests**
 
 Verify:
 
@@ -831,7 +831,7 @@ Verify:
 - ClaimSupport accepts exactly one target and enforces same-run/same-dataset scope;
 - update and delete attempts on Source, Evidence, Calculation, Claim, qualifier, and support rows fail.
 
-- [ ] **Step 5: Define normalized Calculation and Claim tables**
+- [x] **Step 5: Define normalized Calculation and Claim tables**
 
 Do not place arrays of input IDs, filter IDs, exclusions, qualifiers, or support IDs in `calculation_record` or `atomic_claim`. Store their order in the association tables listed in section 5.
 
@@ -841,7 +841,7 @@ Do not place arrays of input IDs, filter IDs, exclusions, qualifiers, or support
 
 Use deferred constraints where a complete aggregate invariant spans multiple rows. The repository inserts a Calculation or Claim and all child rows in one transaction, then explicitly validates aggregate invariants before commit. Database functions provide the same checks so a non-repository client cannot commit an incomplete ranking or unsupported Claim. Tests for every deferred rule must execute `SET CONSTRAINTS ALL IMMEDIATE` or commit an inner transaction before asserting failure; an outer pytest rollback alone is not evidence that the trigger ran.
 
-- [ ] **Step 6: Add indexes and the safe Evidence view**
+- [x] **Step 6: Add indexes and the safe Evidence view**
 
 At minimum add:
 
@@ -854,7 +854,7 @@ At minimum add:
 
 The safe view joins `source_record` and returns only `eligible_for_claim=true`, `cutoff_status='eligible'`, and rows whose four cutoff-bearing fields independently satisfy the dataset cutoff. The repeated date predicate is deliberate defense in depth against trigger or migration drift; it is not a substitute for the later deterministic Verifier.
 
-- [ ] **Step 7: Generate, inspect, and run migration `0004`**
+- [x] **Step 7: Generate, inspect, and run migration `0004`**
 
 ```bash
 python -m alembic revision --autogenerate --rev-id 0004 -m "evidence ledger"
@@ -863,7 +863,7 @@ python -m alembic check
 python -m pytest tests/db/test_evidence_schema.py -v
 ```
 
-- [ ] **Step 8: Commit the Evidence DDL**
+- [x] **Step 8: Commit the Evidence DDL**
 
 ```bash
 git add alembic/versions/0004_evidence_ledger.py src/financial_agent/db/schema/evidence.py tests/db/test_evidence_schema.py
@@ -1416,7 +1416,7 @@ Minimum acceptance coverage:
 - Frozen Stage 01 Pydantic contracts, canonical JSON/hash helpers, tagged-value encoders/decoders, JSON Schema exporter, and 224 passing contract tests.
 - `requirements/contracts.lock`, `.dockerignore`, and `docker/contracts.Dockerfile` verified on NCP Ubuntu/Linux-amd64 at the frozen Stage 01 commit.
 - Approved seven-schema physical direction, three-store/five-layer architecture, 2026-07-11 cutoff, failure/disposition policy, and NCP PostgreSQL target sizing.
-- No PostgreSQL application schema, Alembic revision, storage repository, Stage 02 lock, DB container, or NCP database migration has been implemented yet.
+- Stage 02 Tasks 1-5 have implemented the PostgreSQL harness and Alembic revisions `0001`-`0004`; Evidence repositories and request-artifact persistence remain Tasks 6-7. No migration has been applied to the actual NCP Cloud DB.
 
 ## 12. Explicitly Not in Scope
 
@@ -1444,7 +1444,7 @@ Stage 03 must use the repository and migrations from this plan. It must not bypa
 
 **Review date:** 2026-08-18
 
-**Result:** No unresolved design blocker remains. Implementation has not started and still requires the explicit Stage 02 scope/implementation approval gate in `HARNESS.md`.
+**Review-time result:** No unresolved design blocker remained, and implementation still required the explicit Stage 02 scope/implementation approval gate in `HARNESS.md`. That gate was subsequently approved; the current implementation state is recorded at the top of this plan and in `docs/planning/STATUS.md`.
 
 The final review approved nineteen choices: full scope split into Stage 02A/02B; observed NCP permission probing; persistence UUIDs distinct from contract IDs; exact Evidence-origin cardinality; Source creation before document FKs in migration `0003`; Stage 01 Pydantic validation authority; active-dataset capture at request start; a separate storage lock and exact container digest; no DB codec; two-tier DB test isolation; shared tagged-value parity corpus; real two-connection idempotency; four-read bounded concurrency; hardened `SECURITY DEFINER` routines; request/run retry separation; canonical text with DB-derived JSONB/hash; a persistence-only artifact model map; no cascading deletes; and processing completion separated from future release authorization.
 
