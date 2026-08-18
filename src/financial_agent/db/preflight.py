@@ -26,6 +26,10 @@ EXPECTED_ROLES = frozenset(
 PermissionLayout = Literal["group_roles", "direct_users"]
 
 
+def _search_path_entries(search_path: str) -> tuple[str, ...]:
+    return tuple(entry.strip() for entry in search_path.split(","))
+
+
 class PreflightFailure(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -67,7 +71,9 @@ def validate_pre_migration_snapshot(
             "DB_TIMEZONE_MISMATCH",
             "PostgreSQL session timezone must be UTC",
         )
-    if snapshot.search_path != EXPECTED_SEARCH_PATH:
+    if _search_path_entries(snapshot.search_path) != _search_path_entries(
+        EXPECTED_SEARCH_PATH
+    ):
         raise PreflightFailure(
             "DB_SEARCH_PATH_MISMATCH",
             "PostgreSQL session search path is incompatible",

@@ -64,6 +64,19 @@ def test_preflight_accepts_the_ncp_direct_user_layout(
     assert report.permission_layout == "direct_users"
 
 
+def test_preflight_accepts_equivalent_search_path_whitespace(
+    valid_snapshot: PreflightSnapshot,
+) -> None:
+    snapshot = replace(
+        valid_snapshot,
+        search_path='"$user",public,cdb_admin',
+    )
+
+    report = validate_pre_migration_snapshot(snapshot)
+
+    assert report.permission_layout == "group_roles"
+
+
 @pytest.mark.parametrize(
     ("field", "value", "code"),
     (
@@ -71,6 +84,11 @@ def test_preflight_accepts_the_ncp_direct_user_layout(
         ("server_encoding", "SQL_ASCII", "DB_ENCODING_MISMATCH"),
         ("timezone", "Asia/Seoul", "DB_TIMEZONE_MISMATCH"),
         ("search_path", '"$user", public', "DB_SEARCH_PATH_MISMATCH"),
+        (
+            "search_path",
+            '"$user", cdb_admin, public',
+            "DB_SEARCH_PATH_MISMATCH",
+        ),
     ),
 )
 def test_preflight_rejects_an_incompatible_database_session(
