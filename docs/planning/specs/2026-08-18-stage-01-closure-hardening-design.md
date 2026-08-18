@@ -2,9 +2,9 @@
 
 **Date:** 2026-08-18
 
-**Status:** Amended design; written specification awaiting user review before implementation planning
+**Status:** Approved amended design; implementation remains gated on the dedicated plan
 
-**Related:** [Planning Harness](../HARNESS.md), [Runtime Contracts](../architecture/RUNTIME_CONTRACTS.md), [ADR-0005](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md), [ADR-0007](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md), [Stage 01 Runtime Contracts Plan](../tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md), [Stage 02 PostgreSQL Storage Plan](../tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
+**Related:** [Planning Harness](../HARNESS.md), [Runtime Contracts](../architecture/RUNTIME_CONTRACTS.md), [ADR-0005](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md), [ADR-0007](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md), [ADR-0008](../decisions/ADR-0008-lossless-tagged-contract-values.md), [Stage 01 Runtime Contracts Plan](../tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md), [Stage 02 PostgreSQL Storage Plan](../tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
 
 ## 1. Purpose
 

@@ -1719,7 +1719,7 @@ The [Stage 02 PostgreSQL Storage implementation plan](2026-08-17-stage-02-postgr
 
 The final review also identified the following items. They are recorded so they cannot be lost, but they are not silently included in the approved execution-contract implementation scope. Each item requires a focused decision before Stage 01 can be declared complete.
 
-The decisions for these items are being consolidated in the [Stage 01 Closure Hardening Design](../specs/2026-08-18-stage-01-closure-hardening-design.md). A lossless tagged-value amendment is under review after strict JSON round-trip testing exposed Decimal/date/datetime type erasure. Implementation remains gated on approval of the amended written design and a new dedicated implementation plan.
+The decisions for these items are approved in the [Stage 01 Closure Hardening Design](../specs/2026-08-18-stage-01-closure-hardening-design.md) and [ADR-0008](../decisions/ADR-0008-lossless-tagged-contract-values.md). The review-ready [Stage 01 Closure Hardening Implementation Plan](2026-08-18-stage-01-closure-hardening-implementation-plan.md) replaces the discarded pre-amendment plan. Implementation remains gated on explicit approval of that new plan.
 
 1. Define strict Python-versus-JSON ingress behavior without breaking ISO date and datetime parsing.
 2. Document that exported JSON Schema proves structural validation while Pydantic custom validators remain semantic runtime checks, then add parity tests where feasible.

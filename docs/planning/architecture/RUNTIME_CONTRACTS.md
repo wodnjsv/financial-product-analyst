@@ -1,10 +1,10 @@
 # Financial Product Agent 실행 계약
 
-**Status:** Task 2 승인 설계; 2026-08-18 실행 계약 보강안 승인
+**Status:** Task 2 승인 설계; 2026-08-18 실행 계약·손실 없는 태그 값 보강안 승인
 
 **Date:** 2026-08-17 (2026-08-18 실행 계약 보강)
 
-**Decisions:** [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md), [ADR-0007: Use a Normalized Evidence Ledger and Structured Answer Plans](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md)
+**Decisions:** [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md), [ADR-0007: Use a Normalized Evidence Ledger and Structured Answer Plans](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md), [ADR-0008: Use Lossless Tagged Values](../decisions/ADR-0008-lossless-tagged-contract-values.md)
 
 **Related:** [Multi-Agent Architecture](MULTI_AGENT_ARCHITECTURE.md), [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [NCP Deployment Architecture](NCP_DEPLOYMENT_ARCHITECTURE.md), [Core Evaluation Set](../specs/core-evaluation-set.md)
 
@@ -99,6 +99,10 @@ flowchart LR
 - 계약은 생성 후 수정하지 않고 다음 단계에서 새 객체를 만든다.
 - 마이너 버전은 필드를 추가할 수 있지만 소비자가 지원하는 버전이어야 한다.
 - 필드 제거나 의미 변경은 메이저 버전을 올린다.
+
+Python 경계는 실제 타입이 부여된 값만 받고, JSON 경계는 원본 문자열·바이트를 `model_validate_json`으로 검증한다. 이미 JSON을 디코딩한 일반 Python 딕셔너리를 편의상 느슨한 Python 입력으로 재해석하지 않는다.
+
+`ScalarValue`와 `ContractValue`는 `null`, `string`, `integer`, `decimal`, `boolean`, `date`, `datetime`, `tuple`의 명시적 `type` 태그를 사용한다. `tuple`의 각 원소는 별도의 스칼라 태그를 갖고 중첩 튜플은 금지한다. Decimal은 지수 표기·선행 0·무의미한 후행 0·음수 0이 없는 정규 문자열로 JSON에 표현한다. 이 태그 형식과 인코딩·디코딩 규칙은 Stage 01이 소유하며, Stage 02는 같은 형태를 JSONB에 저장하고 별도의 Python 코덱을 만들지 않는다.
 
 ### 4.3 안전 불변식
 

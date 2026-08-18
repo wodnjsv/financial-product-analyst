@@ -23,6 +23,7 @@
 - [Bounded LLM and Capability Execution](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md)
 - [Failure and Disposition Policy](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md)
 - [Normalized Evidence Ledger](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md)
+- [Lossless Tagged Contract Values](../decisions/ADR-0008-lossless-tagged-contract-values.md)
 - [Stage 01 Runtime Contracts plan](2026-08-17-stage-01-runtime-contracts-implementation-plan.md)
 - [NCP Cloud DB for PostgreSQL Extension 관리](https://guide.ncloud-docs.com/docs/clouddbforpostgresql-postgresqlextension)
 - [Alembic autogenerate limits](https://alembic.sqlalchemy.org/en/latest/autogenerate.html)

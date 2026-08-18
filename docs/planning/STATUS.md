@@ -28,13 +28,14 @@
 - 실행 계약 보강은 `60de716`에 구현되었고, 호스트에서 116개 contract test와 Schema 최신성 검사를 통과했다.
 - NCP Ubuntu/Linux-amd64에서 최신 이미지 build, 이미지 내부 contract test·Schema 검사, `docker run` 종료 코드 0을 다시 확인했다.
 - 현재 남은 작업은 Stage 01 종료 리뷰의 기존 5개 항목과 검토 중 추가로 확인된 다형 값 타입 손실을 함께 보강하고, 전체 계약을 다시 검증한 뒤 필드 스키마를 동결하는 것이다.
-- [Stage 01 Closure Hardening Design](specs/2026-08-18-stage-01-closure-hardening-design.md)에 타입 태그 기반 계약을 반영했으며, 구현 계획 작성 전 보강 설계 검토가 필요하다.
+- [Stage 01 Closure Hardening Design](specs/2026-08-18-stage-01-closure-hardening-design.md)과 [ADR-0008](decisions/ADR-0008-lossless-tagged-contract-values.md)로 타입 태그 기반 계약을 확정했다. 새 [Stage 01 Closure Hardening Implementation Plan](tasks/2026-08-18-stage-01-closure-hardening-implementation-plan.md)은 구현 승인 전 검토 상태다.
 
 기준 계획:
 
 - [Stage 01 Runtime Contracts](tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md)
 - [Stage 01 Execution Contract Hardening](tasks/2026-08-18-stage-01-execution-contract-hardening-plan.md)
 - [Stage 01 Closure Hardening Design](specs/2026-08-18-stage-01-closure-hardening-design.md)
+- [Stage 01 Closure Hardening Implementation Plan](tasks/2026-08-18-stage-01-closure-hardening-implementation-plan.md)
 
 ### Stage 02 PostgreSQL 저장 계층
 
