@@ -29,6 +29,10 @@ from .canonical import (
     canonical_sha256,
     normalize_question,
 )
+from .compatibility import (
+    validate_execution_graph_compatibility,
+    validate_tool_result_compatibility,
+)
 from .execution import (
     BindingValue,
     Exclusion,
@@ -167,6 +171,8 @@ __all__ = [
     "canonical_json_bytes",
     "canonical_sha256",
     "normalize_question",
+    "validate_execution_graph_compatibility",
+    "validate_tool_result_compatibility",
     "BindingValue",
     "Exclusion",
     "ExecutionGraph",

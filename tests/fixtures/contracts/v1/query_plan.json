@@ -40,6 +40,18 @@
   ],
   "binding_specs": [
     {
+      "binding_name": "s1.company",
+      "value_type": "entity_ref",
+      "producer_subtask_id": "q1",
+      "cardinality": "one"
+    },
+    {
+      "binding_name": "s1.candidate_products",
+      "value_type": "product_ref_list",
+      "producer_subtask_id": "q1",
+      "cardinality": "many"
+    },
+    {
       "binding_name": "s1.top5_products",
       "value_type": "product_ref_list",
       "producer_subtask_id": "q1",
@@ -92,6 +104,6 @@
   ],
   "result_shape": "top_k",
   "ambiguity_decisions": [],
-  "requested_capabilities": ["rdb_lookup", "ranking"],
+  "requested_capabilities": ["keyword_search", "graph_traversal", "ranking"],
   "initial_answerability": "supported"
 }

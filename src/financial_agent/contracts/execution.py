@@ -15,10 +15,12 @@ class NamedValue(ContractModel):
 
 class ExecutionTask(ContractModel):
     task_id: Identifier
+    subtask_id: Identifier
     capability: Capability
     operation_id: Identifier
     literal_inputs: tuple[NamedValue, ...] = ()
     binding_inputs: tuple[Identifier, ...] = ()
+    produces_bindings: tuple[Identifier, ...] = ()
     depends_on: tuple[Identifier, ...] = ()
     expected_output_type: ResultType
     required_evidence_fields: tuple[Identifier, ...]
@@ -35,7 +37,11 @@ class ExecutionGraph(RuntimeArtifact):
     @model_validator(mode="after")
     def validate_graph(self) -> "ExecutionGraph":
         task_ids = tuple(task.task_id for task in self.tasks)
+        binding_names = tuple(
+            binding.binding_name for binding in self.binding_specs
+        )
         require_unique_ids(task_ids, label="tasks")
+        require_unique_ids(binding_names, label="bindings")
         require_acyclic_edges(
             task_ids,
             (
@@ -44,11 +50,89 @@ class ExecutionGraph(RuntimeArtifact):
                 for dependency_id in task.depends_on
             ),
         )
+        for task in self.tasks:
+            require_unique_ids(task.binding_inputs, label="task binding inputs")
+            require_unique_ids(
+                task.produces_bindings,
+                label="task binding outputs",
+            )
+            require_known_ids(
+                task.binding_inputs,
+                binding_names,
+                label="task binding inputs",
+            )
+            require_known_ids(
+                task.produces_bindings,
+                binding_names,
+                label="task binding outputs",
+            )
+            if set(task.binding_inputs) & set(task.produces_bindings):
+                raise ValueError("task cannot consume and produce the same binding")
+
+        produced_bindings = tuple(
+            binding_name
+            for task in self.tasks
+            for binding_name in task.produces_bindings
+        )
+        require_unique_ids(produced_bindings, label="binding producers")
+        missing_producers = sorted(set(binding_names) - set(produced_bindings))
+        if missing_producers:
+            raise ValueError(f"bindings have no producer: {missing_producers}")
+
+        tasks_by_id = {task.task_id: task for task in self.tasks}
+        binding_specs_by_name = {
+            binding.binding_name: binding for binding in self.binding_specs
+        }
+        producer_by_binding = {
+            binding_name: task
+            for task in self.tasks
+            for binding_name in task.produces_bindings
+        }
+        for binding_name, producer in producer_by_binding.items():
+            if (
+                producer.subtask_id
+                != binding_specs_by_name[binding_name].producer_subtask_id
+            ):
+                raise ValueError("binding producer must belong to its subtask")
+
+        def dependency_ancestors(task_id: str) -> set[str]:
+            ancestors: set[str] = set()
+            pending = list(tasks_by_id[task_id].depends_on)
+            while pending:
+                dependency_id = pending.pop()
+                if dependency_id in ancestors:
+                    continue
+                ancestors.add(dependency_id)
+                pending.extend(tasks_by_id[dependency_id].depends_on)
+            return ancestors
+
+        for task in self.tasks:
+            ancestors = dependency_ancestors(task.task_id)
+            for binding_name in task.binding_inputs:
+                producer = producer_by_binding[binding_name]
+                if producer.task_id not in ancestors:
+                    raise ValueError(
+                        "binding consumer must depend on its producer"
+                    )
+
+        require_unique_ids(self.critical_path, label="critical path")
         require_known_ids(
             self.critical_path,
             task_ids,
             label="critical path",
         )
+        for upstream_id, downstream_id in zip(
+            self.critical_path,
+            self.critical_path[1:],
+            strict=False,
+        ):
+            if upstream_id not in tasks_by_id[downstream_id].depends_on:
+                raise ValueError("critical path must follow direct dependencies")
+        critical_path_budget = sum(
+            tasks_by_id[task_id].budget_ms for task_id in self.critical_path
+        )
+        if critical_path_budget > self.total_budget_ms:
+            raise ValueError("critical path budget must not exceed total budget")
         if any(task.budget_ms > self.total_budget_ms for task in self.tasks):
             raise ValueError("task budget must not exceed total budget")
         return self
@@ -99,6 +183,10 @@ class ToolResult(RuntimeArtifact):
 
     @model_validator(mode="after")
     def validate_result(self) -> "ToolResult":
+        if self.status is not ToolStatus.SUCCESS and (
+            self.result_rows or self.binding_values
+        ):
+            raise ValueError("non-success result cannot carry successful payload")
         for row in self.result_rows:
             require_unique_ids(
                 (field.field_id for field in row.fields),

@@ -10,8 +10,9 @@
   "tasks": [
     {
       "task_id": "t1",
+      "subtask_id": "q1",
       "capability": "keyword_search",
-      "operation_id": "op-resolve-company",
+      "operation_id": "op-screen-top5",
       "literal_inputs": [
         {
           "name": "company-name",
@@ -19,6 +20,7 @@
         }
       ],
       "binding_inputs": [],
+      "produces_bindings": ["s1.company"],
       "depends_on": [],
       "expected_output_type": "entity_ref",
       "required_evidence_fields": ["field-company-name"],
@@ -26,33 +28,62 @@
     },
     {
       "task_id": "t2",
+      "subtask_id": "q1",
       "capability": "graph_traversal",
-      "operation_id": "op-find-etfs",
+      "operation_id": "op-screen-top5",
       "literal_inputs": [],
       "binding_inputs": ["s1.company"],
+      "produces_bindings": ["s1.candidate_products"],
       "depends_on": ["t1"],
       "expected_output_type": "row_set",
       "required_evidence_fields": ["field-constituent-company", "field-product-id"],
-      "budget_ms": 8000
+      "budget_ms": 4000
     },
     {
       "task_id": "t3",
+      "subtask_id": "q1",
       "capability": "ranking",
-      "operation_id": "op-rank-aum",
+      "operation_id": "op-screen-top5",
       "literal_inputs": [
         {
           "name": "top-k",
           "value": 5
         }
       ],
-      "binding_inputs": ["s1.top5_products"],
+      "binding_inputs": ["s1.candidate_products"],
+      "produces_bindings": ["s1.top5_products"],
       "depends_on": ["t2"],
       "expected_output_type": "row_set",
       "required_evidence_fields": ["field-aum", "field-product-id"],
-      "budget_ms": 12000
+      "budget_ms": 5000
+    },
+    {
+      "task_id": "t4",
+      "subtask_id": "q2",
+      "capability": "ranking",
+      "operation_id": "op-rank-return",
+      "literal_inputs": [],
+      "binding_inputs": ["s1.top5_products"],
+      "produces_bindings": [],
+      "depends_on": ["t3"],
+      "expected_output_type": "row_set",
+      "required_evidence_fields": ["field-return-1y", "field-product-id"],
+      "budget_ms": 7000
     }
   ],
   "binding_specs": [
+    {
+      "binding_name": "s1.company",
+      "value_type": "entity_ref",
+      "producer_subtask_id": "q1",
+      "cardinality": "one"
+    },
+    {
+      "binding_name": "s1.candidate_products",
+      "value_type": "product_ref_list",
+      "producer_subtask_id": "q1",
+      "cardinality": "many"
+    },
     {
       "binding_name": "s1.top5_products",
       "value_type": "product_ref_list",
@@ -60,6 +91,6 @@
       "cardinality": "many"
     }
   ],
-  "critical_path": ["t1", "t2", "t3"],
+  "critical_path": ["t1", "t2", "t3", "t4"],
   "total_budget_ms": 20000
 }

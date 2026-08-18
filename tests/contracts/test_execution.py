@@ -11,8 +11,45 @@ def test_execution_graph_preserves_dependencies_and_budget(load_fixture) -> None
     graph = ExecutionGraph.model_validate(load_fixture("execution_graph.json"))
 
     assert graph.total_budget_ms == 20_000
-    assert graph.tasks[-1].depends_on == ("t2",)
+    assert graph.tasks[-1].depends_on == ("t3",)
     assert isinstance(graph.tasks, tuple)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda payload: payload["tasks"][1].update(
+            binding_inputs=["missing.binding"]
+        ),
+        lambda payload: payload["tasks"][1].update(
+            produces_bindings=["missing.binding"]
+        ),
+        lambda payload: payload["tasks"][1].update(
+            binding_inputs=["s1.company"],
+            produces_bindings=["s1.company"],
+        ),
+        lambda payload: payload["tasks"][1].update(depends_on=[]),
+        lambda payload: payload["tasks"][2].update(
+            produces_bindings=["s1.company", "s1.top5_products"]
+        ),
+        lambda payload: payload["tasks"][0].update(produces_bindings=[]),
+        lambda payload: payload["binding_specs"].append(
+            deepcopy(payload["binding_specs"][0])
+        ),
+        lambda payload: payload["tasks"][0].update(subtask_id="q2"),
+        lambda payload: payload.update(critical_path=["t1", "t3"]),
+        lambda payload: payload.update(critical_path=["t1", "t2", "t2"]),
+        lambda payload: payload["tasks"][3].update(budget_ms=7_001),
+    ],
+)
+def test_execution_graph_rejects_binding_and_path_inconsistencies(
+    load_fixture, mutation
+) -> None:
+    payload = load_fixture("execution_graph.json")
+    mutation(payload)
+
+    with pytest.raises(ValidationError):
+        ExecutionGraph.model_validate(payload)
 
 
 def test_execution_graph_rejects_task_beyond_total_budget(load_fixture) -> None:
@@ -74,6 +111,27 @@ def test_tool_result_empty_is_a_valid_non_error_status(load_fixture) -> None:
     }
 
     assert ToolResult.model_validate(payload).status is ToolStatus.EMPTY
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "empty",
+        "unsupported",
+        "invalid_input",
+        "timeout",
+        "transient_error",
+        "permanent_error",
+    ],
+)
+def test_non_success_tool_result_rejects_success_payload(
+    load_fixture, status: str
+) -> None:
+    payload = load_fixture("tool_result.json")
+    payload["status"] = status
+
+    with pytest.raises(ValidationError):
+        ToolResult.model_validate(payload)
 
 
 @pytest.mark.parametrize(

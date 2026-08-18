@@ -32,7 +32,7 @@
     {
       "binding_name": "s1.top5_products",
       "value_type": "product_ref_list",
-      "value": "product-syn-etf-a"
+      "value": ["product-syn-etf-a"]
     }
   ],
   "evidence_refs": ["evidence-syn-etf-a"],

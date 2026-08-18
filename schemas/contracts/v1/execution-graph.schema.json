@@ -104,6 +104,16 @@
           "title": "Operation Id",
           "type": "string"
         },
+        "produces_bindings": {
+          "default": [],
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Produces Bindings",
+          "type": "array"
+        },
         "required_evidence_fields": {
           "items": {
             "minLength": 1,
@@ -112,6 +122,12 @@
           },
           "title": "Required Evidence Fields",
           "type": "array"
+        },
+        "subtask_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Subtask Id",
+          "type": "string"
         },
         "task_id": {
           "minLength": 1,
@@ -122,6 +138,7 @@
       },
       "required": [
         "task_id",
+        "subtask_id",
         "capability",
         "operation_id",
         "expected_output_type",
