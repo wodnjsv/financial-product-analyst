@@ -2,11 +2,13 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_CONSTRAINT=/app/requirements/contracts.lock
 
 WORKDIR /app
 
 COPY pyproject.toml ./
+COPY requirements/contracts.lock ./requirements/contracts.lock
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY schemas/ ./schemas/

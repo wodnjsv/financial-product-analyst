@@ -1,0 +1,56 @@
+# Version-control and local agent state
+.git/
+.worktrees/
+.superpowers/
+
+# Secrets and credentials
+.env
+.env.*
+**/.env
+**/.env.*
+*.key
+*.pem
+secrets/
+credentials/
+
+# Organizer-provided and local data
+data/
+**/*.pdf
+**/*.xls
+**/*.xlsx
+**/*.xlsm
+
+# Local databases, indexes, and generated data products
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.parquet
+indexes/
+vector_store/
+
+# Python environments and caches
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# JavaScript dependencies and build output
+node_modules/
+dist/
+build/
+
+# Logs and generated output
+*.log
+tmp/
+output/
+outputs/
+
+# Editor and operating-system state
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,17 @@
+# Stage 01 contract verification dependencies for CPython 3.12.
+# Refresh only with full schema, contract, and Linux/amd64 container verification.
+annotated-types==0.8.0
+attrs==26.1.0
+iniconfig==2.3.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+packaging==26.3
+pluggy==1.6.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+Pygments==2.21.0
+pytest==8.4.2
+referencing==0.37.0
+rpds-py==2026.6.3
+typing-extensions==4.16.0
+typing-inspection==0.4.4

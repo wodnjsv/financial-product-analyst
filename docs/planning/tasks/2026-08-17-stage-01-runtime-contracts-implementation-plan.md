@@ -12,6 +12,10 @@
 
 **Tech Stack:** Python 3.12, Pydantic 2.x, pytest 8.x, jsonschema 4.x, standard-library `hashlib`/`json`/`unicodedata`, Docker with a Python 3.12 slim Linux image.
 
+### Approved 2026-08-18 container-hardening amendment
+
+The Naver Cloud host runs Ubuntu, while the Stage 01 verification image keeps a portable Linux/amd64 Python slim userland. The host distribution does not require changing the container base image. Container verification must install the exact contract runtime and test dependency graph recorded in `requirements/contracts.lock`; any lock refresh is an explicit reviewed change. A repository-root `.dockerignore` must keep Git metadata, organizer data, secrets, local databases, virtual environments, caches, logs, and generated outputs out of the Docker build context. This amendment does not implement the final Agent API image or change any public runtime contract.
+
 **Authoritative design references:**
 
 - [Planning Harness](../HARNESS.md)
@@ -39,6 +43,8 @@
 - The package must install and run on Linux/amd64 Python 3.12, which is the baseline for the Naver Cloud Agent API container.
 - Do not hardcode `/Users/...`, local workspace paths, NCP account identifiers, endpoints, credentials, or secrets.
 - Generated JSON Schemas are tracked; caches, wheels, virtual environments, raw data, databases, and generated runtime outputs remain untracked.
+- The verification container installs with `requirements/contracts.lock` as a mandatory pip constraint. Do not widen or refresh a pin without reviewing the resulting schemas and full contract test output.
+- `.dockerignore` must enforce the repository data policy at the Docker build-context boundary; explicit `COPY` instructions are not a substitute because ignored local files can otherwise still be sent to the Docker daemon.
 - Every task follows test-first implementation and ends in an independently reviewable commit.
 
 ---
@@ -46,8 +52,11 @@
 ## Planned File Structure
 
 ```text
+.dockerignore
 .python-version
 pyproject.toml
+requirements/
+└─ contracts.lock
 docker/
 └─ contracts.Dockerfile
 schemas/
@@ -1452,8 +1461,11 @@ git commit -m "feat: add verification and answer contracts"
 - Create: `scripts/export_contract_schemas.py`
 - Create: `src/financial_agent/contracts/schema_export.py`
 - Create: `tests/contracts/test_schema_export.py`
+- Create: `tests/contracts/test_container_verification.py`
 - Create: `schemas/contracts/v1/*.schema.json`
 - Create: `docker/contracts.Dockerfile`
+- Create: `requirements/contracts.lock`
+- Create: `.dockerignore`
 
 **Interfaces:**
 
@@ -1596,11 +1608,13 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_CONSTRAINT=/app/requirements/contracts.lock
 
 WORKDIR /app
 
 COPY pyproject.toml ./
+COPY requirements/contracts.lock ./requirements/contracts.lock
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY schemas/ ./schemas/
@@ -1614,6 +1628,8 @@ CMD ["python", "scripts/export_contract_schemas.py", "--check"]
 ```
 
 This image is a Stage 01 verification image, not the final Agent API image. It uses no local volume, database, cloud credential, macOS package, or absolute host path.
+
+The lock file pins the complete contract runtime and test dependency graph used by this image. Before building, `tests/contracts/test_container_verification.py` must confirm that every declared application/test dependency has an exact lock entry, the Dockerfile makes that lock a mandatory constraint, and the Docker build-context policy covers representative secret, organizer-data, local-database, virtual-environment, cache, and generated-output paths.
 
 - [ ] **Step 6: Build and run the Linux/amd64 image**
 
@@ -1663,6 +1679,7 @@ Stage 01 is complete only when all of the following are evidenced by fresh comma
 - `python scripts/export_contract_schemas.py --check` exits 0.
 - `docker build --platform linux/amd64 -f docker/contracts.Dockerfile -t financial-agent-contracts:stage-01 .` succeeds.
 - `docker run --rm --platform linux/amd64 financial-agent-contracts:stage-01` exits 0.
+- The verification image installs through the reviewed exact dependency lock, and the build context excludes repository-policy-protected local artifacts.
 - Every public model rejects extra fields and top-level runtime artifacts enforce the fixed cutoff.
 - `QueryPlan` and `ExecutionGraph` reject unknown references and cyclic dependencies.
 - Evidence contracts preserve after-cutoff and unsupported records for rejection without releasing them.
