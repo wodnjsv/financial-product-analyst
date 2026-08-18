@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-17 (final review amended 2026-08-18)
 
-**Status:** Stage 02A implementation in progress; Tasks 1-3 implemented and verified
+**Status:** Stage 02A implementation in progress; Tasks 1-4 implemented and verified
 
 **Goal:** Implement the PostgreSQL 15 physical storage boundary for the seven approved logical schemas, preserve the Stage 01 contract IDs and immutable artifacts without renaming public interfaces, and prove that the migrations and persistence layer run in an NCP-compatible Linux/amd64 environment.
 
@@ -699,7 +699,7 @@ git commit -m "feat: add versioned product catalog"
 - `search.embedding_model`, `search.document_embedding`
 - `evidence.source_record`
 
-- [ ] **Step 1: Write failing relation and observation tests**
+- [x] **Step 1: Write failing relation and observation tests**
 
 Tests must reject:
 
@@ -715,7 +715,7 @@ Tests must reject:
 
 Tests must accept a true numeric zero with `value_status='zero'`; zero is not missing.
 
-- [ ] **Step 2: Define relation and observation storage**
+- [x] **Step 2: Define relation and observation storage**
 
 `relation_record` stores versioned relation ID, subject entity, predicate ID, object entity, validity dates, record hash, and creation time.
 
@@ -732,11 +732,11 @@ Do not infer a missing currency, date, period, or unit in the table layer.
 
 Use a deferred `observation.validate_metric_value_kind()` trigger to compare each row with the referenced metric-definition version. Apply `operations.reject_nonbuilding_dataset_mutation()` to relation and observation rows after creation, and an unconditional append-only trigger to the metric registry.
 
-- [ ] **Step 3: Write failing Source, document, and embedding tests**
+- [x] **Step 3: Write failing Source, document, and embedding tests**
 
 Verify Source rows are unique by `(dataset_version, source_id)`, require lowercase SHA-256 checksum/record hashes, and use same-version publisher FKs. Verify parent chunks stay within one document/version, document rows reference an existing same-version Source immediately in revision `0003`, sentence and page ranges are ordered, document checksum and chunk text hashes are valid SHA-256, embedding rows reference the exact chunk content hash, the stored vector dimension equals the registered model version, and registry updates/deletes are rejected.
 
-- [ ] **Step 4: Define document and search storage**
+- [x] **Step 4: Define document and search storage**
 
 Migration `0003` creates `evidence.source_record` before the document tables in the same `upgrade()` body. `source_record` includes all Stage 01 `SourceRecord` fields plus `dataset_version`; its publisher uses a composite FK to a same-version catalog institution/entity and a deferred institution-type check. `document_record` then creates its same-version composite Source FK immediately. Revision `0003` must never leave an indexed but unconstrained `source_id`, even transiently.
 
@@ -746,7 +746,7 @@ Migration `0003` creates `evidence.source_record` before the document tables in 
 
 Apply `operations.reject_nonbuilding_dataset_mutation()` to versioned document and embedding rows. Metric and embedding-model registries reject all updates/deletes; replacement means a new immutable composite version.
 
-- [ ] **Step 5: Generate, inspect, and run migration `0003`**
+- [x] **Step 5: Generate, inspect, and run migration `0003`**
 
 ```bash
 python -m alembic revision --autogenerate --rev-id 0003 -m "fact document search schemas"
@@ -755,7 +755,7 @@ python -m alembic check
 python -m pytest tests/db/test_fact_document_search_schema.py -v
 ```
 
-- [ ] **Step 6: Commit fact and search storage**
+- [x] **Step 6: Commit fact and search storage**
 
 ```bash
 git add alembic/versions/0003_fact_document_search_schemas.py src/financial_agent/db/schema tests/db/test_fact_document_search_schema.py
