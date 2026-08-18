@@ -14,6 +14,11 @@ from financial_agent.contracts.evidence import (
     EvidenceRecord,
     PopulationDefinition,
 )
+from financial_agent.contracts.values import (
+    NullValue,
+    decode_contract_value,
+    encode_contract_value,
+)
 
 
 def test_claim_support_requires_exactly_one_support_target() -> None:
@@ -44,19 +49,32 @@ def test_evidence_bundle_keeps_candidate_claims_unreleased(load_fixture) -> None
     assert "releaseable_claim_ids" not in EvidenceBundle.model_fields
 
 
-def test_after_cutoff_evidence_can_be_represented_for_rejection(load_fixture) -> None:
+def test_after_cutoff_evidence_can_be_represented_for_rejection(
+    load_fixture, dump_json
+) -> None:
     payload = load_fixture("evidence_record.json") | {
         "applicable_date": "2026-07-12",
         "cutoff_status": "after_cutoff",
     }
-    evidence = EvidenceRecord.model_validate(payload)
+    evidence = EvidenceRecord.model_validate_json(dump_json(payload))
     assert evidence.cutoff_status is CutoffStatus.AFTER_CUTOFF
+    assert evidence.value_or_object_id.type == "decimal"
 
 
-def test_evidence_record_does_not_infer_missing_metadata(load_fixture) -> None:
+def test_evidence_record_rejects_untagged_values(load_fixture, dump_json) -> None:
+    payload = load_fixture("evidence_record.json")
+    payload["value_or_object_id"] = 125000000
+
+    with pytest.raises(ValidationError):
+        EvidenceRecord.model_validate_json(dump_json(payload))
+
+
+def test_evidence_record_does_not_infer_missing_metadata(
+    load_fixture, dump_json
+) -> None:
     payload = load_fixture("evidence_record.json") | {
-        "value_or_object_id": None,
-        "normalized_value": None,
+        "value_or_object_id": {"type": "null", "value": None},
+        "normalized_value": {"type": "null", "value": None},
         "unit": None,
         "currency": None,
         "applicable_date": None,
@@ -67,10 +85,12 @@ def test_evidence_record_does_not_infer_missing_metadata(load_fixture) -> None:
         "vintage_date": None,
     }
 
-    evidence = EvidenceRecord.model_validate(payload)
+    evidence = EvidenceRecord.model_validate_json(dump_json(payload))
 
-    assert evidence.value_or_object_id is None
-    assert evidence.normalized_value is None
+    assert isinstance(evidence.value_or_object_id, NullValue)
+    assert isinstance(evidence.normalized_value, NullValue)
+    assert decode_contract_value(evidence.value_or_object_id) is None
+    assert decode_contract_value(evidence.normalized_value) is None
     assert evidence.unit is None
     assert evidence.currency is None
     assert evidence.applicable_date is None
@@ -89,22 +109,24 @@ def test_evidence_record_does_not_infer_missing_metadata(load_fixture) -> None:
     ],
 )
 def test_scope_completeness_is_only_allowed_for_query_scope(
-    load_fixture, payload_update: dict[str, object]
+    load_fixture, dump_json, payload_update: dict[str, object]
 ) -> None:
     payload = load_fixture("evidence_record.json") | payload_update
 
     with pytest.raises(ValidationError):
-        EvidenceRecord.model_validate(payload)
+        EvidenceRecord.model_validate_json(dump_json(payload))
 
 
-def test_evidence_record_rejects_reversed_validity_window(load_fixture) -> None:
+def test_evidence_record_rejects_reversed_validity_window(
+    load_fixture, dump_json
+) -> None:
     payload = load_fixture("evidence_record.json") | {
         "valid_from": "2026-07-11",
         "valid_to": "2026-07-10",
     }
 
     with pytest.raises(ValidationError):
-        EvidenceRecord.model_validate(payload)
+        EvidenceRecord.model_validate_json(dump_json(payload))
 
 
 def test_ranking_calculation_requires_population_definition() -> None:
@@ -120,7 +142,7 @@ def test_ranking_calculation_requires_population_definition() -> None:
             population_definition=None,
             exclusion_evidence_ids=(),
             tie_break_rule="product-id-asc",
-            result_value=1,
+            result_value=encode_contract_value(1),
             unit="rank",
             currency=None,
             rounding_rule=None,
@@ -136,7 +158,7 @@ def test_aggregation_calculation_requires_population_definition() -> None:
             formula_id="sum.v1",
             formula_version="v1",
             input_evidence_ids=("evidence-aum-1",),
-            result_value=Decimal("125000000"),
+            result_value=encode_contract_value(Decimal("125000000")),
             unit="unit-krw",
             currency="KRW",
             calculation_hash="d" * 64,
@@ -150,7 +172,7 @@ def test_calculation_requires_at_least_one_input() -> None:
             calculation_type="conversion",
             formula_id="conversion.v1",
             formula_version="v1",
-            result_value=Decimal("125000000"),
+            result_value=encode_contract_value(Decimal("125000000")),
             unit="unit-krw",
             currency="KRW",
             calculation_hash="d" * 64,
@@ -172,7 +194,7 @@ def test_ranking_calculation_requires_tie_break_rule() -> None:
                 member_count=1,
                 population_hash="3" * 64,
             ),
-            result_value=1,
+            result_value=encode_contract_value(1),
             unit="rank",
             calculation_hash="d" * 64,
         )
@@ -187,7 +209,7 @@ def test_atomic_claim_rejects_object_and_value_together() -> None:
             subject_id="product-syn-etf-a",
             predicate_id="managedBy",
             object_id="manager-syn-a",
-            value="duplicate-value",
+            value=encode_contract_value("duplicate-value"),
             unit=None,
             currency=None,
             qualifiers=(),
@@ -222,7 +244,10 @@ def test_limitation_claims_allow_structured_qualifier_only(
         predicate_id="availability",
         value=None,
         qualifiers=(
-            ClaimQualifier(qualifier_id="reason", value="missing-field"),
+            ClaimQualifier(
+                qualifier_id="reason",
+                value=encode_contract_value("missing-field"),
+            ),
         ),
         display_policy_id="limitation.v1",
         claim_hash="e" * 64,

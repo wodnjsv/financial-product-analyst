@@ -2,10 +2,8 @@ from .base import (
     CONTRACT_SCHEMA_VERSION,
     SNAPSHOT_CUTOFF,
     ContractModel,
-    ContractValue,
     Identifier,
     RuntimeArtifact,
-    ScalarValue,
     Sha256Hex,
     UtcDateTime,
 )
@@ -105,6 +103,22 @@ from .request import (
     RequestContext,
     Segment,
 )
+from .values import (
+    BooleanValue,
+    ContractPrimitive,
+    ContractValue,
+    DateTimeValue,
+    DateValue,
+    DecimalValue,
+    IntegerValue,
+    NullValue,
+    ScalarPrimitive,
+    ScalarValue,
+    StringValue,
+    TupleValue,
+    decode_contract_value,
+    encode_contract_value,
+)
 
 __all__ = [
     "CONTRACT_SCHEMA_VERSION",
@@ -196,4 +210,16 @@ __all__ = [
     "PopulationDefinition",
     "SourceLocator",
     "SourceRecord",
+    "BooleanValue",
+    "ContractPrimitive",
+    "DateTimeValue",
+    "DateValue",
+    "DecimalValue",
+    "IntegerValue",
+    "NullValue",
+    "ScalarPrimitive",
+    "StringValue",
+    "TupleValue",
+    "decode_contract_value",
+    "encode_contract_value",
 ]

@@ -2,10 +2,11 @@ from datetime import date
 
 from pydantic import Field, model_validator
 
-from .base import ContractModel, ContractValue, Identifier, RuntimeArtifact, Sha256Hex
+from .base import ContractModel, Identifier, RuntimeArtifact, Sha256Hex
 from .enums import Capability, ResultType, ToolStatus
 from .query import BindingSpec
 from .validation import require_acyclic_edges, require_known_ids, require_unique_ids
+from .values import ContractValue
 
 
 class NamedValue(ContractModel):

@@ -5,14 +5,33 @@ from pydantic import ValidationError
 
 from financial_agent.contracts.enums import ToolStatus
 from financial_agent.contracts.execution import ExecutionGraph, ToolResult
+from financial_agent.contracts.values import TupleValue
 
 
-def test_execution_graph_preserves_dependencies_and_budget(load_fixture) -> None:
-    graph = ExecutionGraph.model_validate(load_fixture("execution_graph.json"))
+def test_execution_graph_preserves_dependencies_and_budget(load_fixture_json) -> None:
+    graph = ExecutionGraph.model_validate_json(
+        load_fixture_json("execution_graph.json")
+    )
 
     assert graph.total_budget_ms == 20_000
     assert graph.tasks[-1].depends_on == ("t3",)
     assert isinstance(graph.tasks, tuple)
+    assert graph.tasks[0].literal_inputs[0].value.type == "string"
+    assert graph.tasks[2].literal_inputs[0].value.type == "integer"
+
+
+@pytest.mark.parametrize(
+    ("task_index", "old_value"),
+    [(0, "합성전자"), (2, 5)],
+)
+def test_execution_graph_rejects_untagged_literal_inputs(
+    load_fixture, dump_json, task_index: int, old_value: object
+) -> None:
+    payload = load_fixture("execution_graph.json")
+    payload["tasks"][task_index]["literal_inputs"][0]["value"] = old_value
+
+    with pytest.raises(ValidationError):
+        ExecutionGraph.model_validate_json(dump_json(payload))
 
 
 @pytest.mark.parametrize(
@@ -43,21 +62,23 @@ def test_execution_graph_preserves_dependencies_and_budget(load_fixture) -> None
     ],
 )
 def test_execution_graph_rejects_binding_and_path_inconsistencies(
-    load_fixture, mutation
+    load_fixture, dump_json, mutation
 ) -> None:
     payload = load_fixture("execution_graph.json")
     mutation(payload)
 
     with pytest.raises(ValidationError):
-        ExecutionGraph.model_validate(payload)
+        ExecutionGraph.model_validate_json(dump_json(payload))
 
 
-def test_execution_graph_rejects_task_beyond_total_budget(load_fixture) -> None:
+def test_execution_graph_rejects_task_beyond_total_budget(
+    load_fixture, dump_json
+) -> None:
     payload = load_fixture("execution_graph.json")
     payload["tasks"][0]["budget_ms"] = 20_001
 
     with pytest.raises(ValidationError):
-        ExecutionGraph.model_validate(payload)
+        ExecutionGraph.model_validate_json(dump_json(payload))
 
 
 @pytest.mark.parametrize(
@@ -94,23 +115,56 @@ def test_execution_graph_rejects_task_beyond_total_budget(load_fixture) -> None:
     ],
 )
 def test_execution_graph_rejects_invalid_structure(
-    load_fixture, mutation, description: str
+    load_fixture, dump_json, mutation, description: str
 ) -> None:
     payload = load_fixture("execution_graph.json")
     mutation(payload)
 
     with pytest.raises(ValidationError):
-        ExecutionGraph.model_validate(payload)
+        ExecutionGraph.model_validate_json(dump_json(payload))
 
 
-def test_tool_result_empty_is_a_valid_non_error_status(load_fixture) -> None:
+def test_tool_result_empty_is_a_valid_non_error_status(
+    load_fixture, dump_json
+) -> None:
     payload = load_fixture("tool_result.json") | {
         "status": "empty",
         "result_rows": [],
         "binding_values": [],
     }
 
-    assert ToolResult.model_validate(payload).status is ToolStatus.EMPTY
+    result = ToolResult.model_validate_json(dump_json(payload))
+    assert result.status is ToolStatus.EMPTY
+
+
+def test_tool_result_preserves_tagged_field_and_binding_values(
+    load_fixture_json,
+) -> None:
+    result = ToolResult.model_validate_json(load_fixture_json("tool_result.json"))
+
+    assert result.result_rows[0].fields[1].value.type == "decimal"
+    assert isinstance(result.binding_values[0].value, TupleValue)
+
+
+@pytest.mark.parametrize(
+    ("path", "old_value"),
+    [
+        (("result_rows", 0, "fields", 0, "value"), "product-syn-etf-a"),
+        (("result_rows", 0, "fields", 1, "value"), 125000000),
+        (("binding_values", 0, "value"), ["product-syn-etf-a"]),
+    ],
+)
+def test_tool_result_rejects_untagged_values(
+    load_fixture, dump_json, path: tuple[object, ...], old_value: object
+) -> None:
+    payload = load_fixture("tool_result.json")
+    target = payload
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = old_value
+
+    with pytest.raises(ValidationError):
+        ToolResult.model_validate_json(dump_json(payload))
 
 
 @pytest.mark.parametrize(
@@ -125,13 +179,13 @@ def test_tool_result_empty_is_a_valid_non_error_status(load_fixture) -> None:
     ],
 )
 def test_non_success_tool_result_rejects_success_payload(
-    load_fixture, status: str
+    load_fixture, dump_json, status: str
 ) -> None:
     payload = load_fixture("tool_result.json")
     payload["status"] = status
 
     with pytest.raises(ValidationError):
-        ToolResult.model_validate(payload)
+        ToolResult.model_validate_json(dump_json(payload))
 
 
 @pytest.mark.parametrize(
@@ -156,10 +210,10 @@ def test_non_success_tool_result_rejects_success_payload(
     ],
 )
 def test_tool_result_rejects_invalid_values(
-    load_fixture, mutation, description: str
+    load_fixture, dump_json, mutation, description: str
 ) -> None:
     payload = load_fixture("tool_result.json")
     mutation(payload)
 
     with pytest.raises(ValidationError):
-        ToolResult.model_validate(payload)
+        ToolResult.model_validate_json(dump_json(payload))

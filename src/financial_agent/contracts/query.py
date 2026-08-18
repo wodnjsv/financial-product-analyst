@@ -1,6 +1,6 @@
 from pydantic import model_validator
 
-from .base import ContractModel, ContractValue, Identifier, RuntimeArtifact
+from .base import ContractModel, Identifier, RuntimeArtifact
 from .enums import (
     Capability,
     Cardinality,
@@ -13,6 +13,7 @@ from .enums import (
     SubtaskImportance,
 )
 from .validation import require_acyclic_edges, require_known_ids, require_unique_ids
+from .values import ContractValue
 
 
 class Subtask(ContractModel):

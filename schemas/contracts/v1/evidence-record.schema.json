@@ -1,5 +1,25 @@
 {
   "$defs": {
+    "BooleanValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "boolean",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "BooleanValue",
+      "type": "object"
+    },
     "CutoffStatus": {
       "enum": [
         "eligible",
@@ -9,6 +29,69 @@
       ],
       "title": "CutoffStatus",
       "type": "string"
+    },
+    "DateTimeValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "datetime",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "format": "date-time",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "DateTimeValue",
+      "type": "object"
+    },
+    "DateValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "date",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "format": "date",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "DateValue",
+      "type": "object"
+    },
+    "DecimalValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "decimal",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "pattern": "^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\\.[0-9]*[1-9])$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "DecimalValue",
+      "type": "object"
     },
     "EvidenceKind": {
       "enum": [
@@ -21,6 +104,46 @@
       ],
       "title": "EvidenceKind",
       "type": "string"
+    },
+    "IntegerValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "integer",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "IntegerValue",
+      "type": "object"
+    },
+    "NullValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "null",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "null"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "NullValue",
+      "type": "object"
     },
     "SourceLocator": {
       "additionalProperties": false,
@@ -138,6 +261,26 @@
       ],
       "title": "SourceLocator",
       "type": "object"
+    },
+    "StringValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "string",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "StringValue",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -205,33 +348,39 @@
       "type": "string"
     },
     "normalized_value": {
-      "anyOf": [
+      "discriminator": {
+        "mapping": {
+          "boolean": "#/$defs/BooleanValue",
+          "date": "#/$defs/DateValue",
+          "datetime": "#/$defs/DateTimeValue",
+          "decimal": "#/$defs/DecimalValue",
+          "integer": "#/$defs/IntegerValue",
+          "null": "#/$defs/NullValue",
+          "string": "#/$defs/StringValue"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
         {
-          "type": "string"
+          "$ref": "#/$defs/NullValue"
         },
         {
-          "type": "integer"
+          "$ref": "#/$defs/StringValue"
         },
         {
-          "type": "number"
+          "$ref": "#/$defs/IntegerValue"
         },
         {
-          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-          "type": "string"
+          "$ref": "#/$defs/DecimalValue"
         },
         {
-          "type": "boolean"
+          "$ref": "#/$defs/BooleanValue"
         },
         {
-          "format": "date",
-          "type": "string"
+          "$ref": "#/$defs/DateValue"
         },
         {
-          "format": "date-time",
-          "type": "string"
-        },
-        {
-          "type": "null"
+          "$ref": "#/$defs/DateTimeValue"
         }
       ],
       "title": "Normalized Value"
@@ -366,33 +515,39 @@
       "title": "Valid To"
     },
     "value_or_object_id": {
-      "anyOf": [
+      "discriminator": {
+        "mapping": {
+          "boolean": "#/$defs/BooleanValue",
+          "date": "#/$defs/DateValue",
+          "datetime": "#/$defs/DateTimeValue",
+          "decimal": "#/$defs/DecimalValue",
+          "integer": "#/$defs/IntegerValue",
+          "null": "#/$defs/NullValue",
+          "string": "#/$defs/StringValue"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
         {
-          "type": "string"
+          "$ref": "#/$defs/NullValue"
         },
         {
-          "type": "integer"
+          "$ref": "#/$defs/StringValue"
         },
         {
-          "type": "number"
+          "$ref": "#/$defs/IntegerValue"
         },
         {
-          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-          "type": "string"
+          "$ref": "#/$defs/DecimalValue"
         },
         {
-          "type": "boolean"
+          "$ref": "#/$defs/BooleanValue"
         },
         {
-          "format": "date",
-          "type": "string"
+          "$ref": "#/$defs/DateValue"
         },
         {
-          "format": "date-time",
-          "type": "string"
-        },
-        {
-          "type": "null"
+          "$ref": "#/$defs/DateTimeValue"
         }
       ],
       "title": "Value Or Object Id"

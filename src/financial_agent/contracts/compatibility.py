@@ -1,6 +1,7 @@
 from .enums import Cardinality
 from .execution import ExecutionGraph, ToolResult
 from .query import QueryPlan
+from .values import TupleValue
 
 
 def validate_execution_graph_compatibility(
@@ -65,11 +66,11 @@ def validate_tool_result_compatibility(
             raise ValueError("tool result binding value type mismatch")
         if (
             binding_spec.cardinality is Cardinality.ONE
-            and isinstance(binding_value.value, tuple)
+            and isinstance(binding_value.value, TupleValue)
         ):
             raise ValueError("single binding cannot contain a tuple")
         if (
             binding_spec.cardinality is Cardinality.MANY
-            and not isinstance(binding_value.value, tuple)
+            and not isinstance(binding_value.value, TupleValue)
         ):
             raise ValueError("many binding must contain a tuple")

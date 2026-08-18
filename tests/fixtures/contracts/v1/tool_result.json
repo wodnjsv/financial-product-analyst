@@ -16,11 +16,17 @@
       "fields": [
         {
           "field_id": "field-product-id",
-          "value": "product-syn-etf-a"
+          "value": {
+            "type": "string",
+            "value": "product-syn-etf-a"
+          }
         },
         {
           "field_id": "field-aum",
-          "value": 125000000,
+          "value": {
+            "type": "decimal",
+            "value": "125000000"
+          },
           "unit_id": "unit-krw",
           "currency": "KRW",
           "applicable_date": "2026-07-11"
@@ -32,7 +38,15 @@
     {
       "binding_name": "s1.top5_products",
       "value_type": "product_ref_list",
-      "value": ["product-syn-etf-a"]
+      "value": {
+        "type": "tuple",
+        "items": [
+          {
+            "type": "string",
+            "value": "product-syn-etf-a"
+          }
+        ]
+      }
     }
   ],
   "evidence_refs": ["evidence-syn-etf-a"],

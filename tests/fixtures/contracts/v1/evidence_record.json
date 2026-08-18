@@ -5,8 +5,14 @@
   "dataset_version": "2026-07-11-v1",
   "subject_id": "product-syn-etf-a",
   "predicate_id": "aum",
-  "value_or_object_id": 125000000,
-  "normalized_value": 125000000,
+  "value_or_object_id": {
+    "type": "decimal",
+    "value": "125000000"
+  },
+  "normalized_value": {
+    "type": "decimal",
+    "value": "125000000"
+  },
   "unit": "unit-krw",
   "currency": "KRW",
   "applicable_date": "2026-07-11",

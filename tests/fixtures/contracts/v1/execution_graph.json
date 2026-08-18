@@ -16,7 +16,10 @@
       "literal_inputs": [
         {
           "name": "company-name",
-          "value": "합성전자"
+          "value": {
+            "type": "string",
+            "value": "합성전자"
+          }
         }
       ],
       "binding_inputs": [],
@@ -47,7 +50,10 @@
       "literal_inputs": [
         {
           "name": "top-k",
-          "value": 5
+          "value": {
+            "type": "integer",
+            "value": 5
+          }
         }
       ],
       "binding_inputs": ["s1.candidate_products"],

@@ -69,7 +69,10 @@
       "subtask_id": "q1",
       "field_id": "field-constituent-company",
       "operator_id": "operator-contains",
-      "value": "security-syn-company"
+      "value": {
+        "type": "string",
+        "value": "security-syn-company"
+      }
     }
   ],
   "metrics": [

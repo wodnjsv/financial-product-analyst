@@ -1,6 +1,5 @@
 from datetime import date, datetime, timedelta
-from decimal import Decimal
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
@@ -21,8 +20,6 @@ def require_utc(value: datetime) -> datetime:
 
 
 UtcDateTime = Annotated[datetime, AfterValidator(require_utc)]
-ScalarValue: TypeAlias = str | int | Decimal | bool | date | UtcDateTime | None
-ContractValue: TypeAlias = ScalarValue | tuple[ScalarValue, ...]
 
 
 class ContractModel(BaseModel):

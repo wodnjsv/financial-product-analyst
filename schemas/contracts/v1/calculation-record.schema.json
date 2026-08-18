@@ -1,5 +1,25 @@
 {
   "$defs": {
+    "BooleanValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "boolean",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "BooleanValue",
+      "type": "object"
+    },
     "CalculationParameter": {
       "additionalProperties": false,
       "properties": {
@@ -10,67 +30,43 @@
           "type": "string"
         },
         "value": {
-          "anyOf": [
+          "discriminator": {
+            "mapping": {
+              "boolean": "#/$defs/BooleanValue",
+              "date": "#/$defs/DateValue",
+              "datetime": "#/$defs/DateTimeValue",
+              "decimal": "#/$defs/DecimalValue",
+              "integer": "#/$defs/IntegerValue",
+              "null": "#/$defs/NullValue",
+              "string": "#/$defs/StringValue",
+              "tuple": "#/$defs/TupleValue"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
             {
-              "type": "string"
+              "$ref": "#/$defs/NullValue"
             },
             {
-              "type": "integer"
+              "$ref": "#/$defs/StringValue"
             },
             {
-              "type": "number"
+              "$ref": "#/$defs/IntegerValue"
             },
             {
-              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-              "type": "string"
+              "$ref": "#/$defs/DecimalValue"
             },
             {
-              "type": "boolean"
+              "$ref": "#/$defs/BooleanValue"
             },
             {
-              "format": "date",
-              "type": "string"
+              "$ref": "#/$defs/DateValue"
             },
             {
-              "format": "date-time",
-              "type": "string"
+              "$ref": "#/$defs/DateTimeValue"
             },
             {
-              "items": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-                    "type": "string"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "format": "date",
-                    "type": "string"
-                  },
-                  {
-                    "format": "date-time",
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "type": "array"
-            },
-            {
-              "type": "null"
+              "$ref": "#/$defs/TupleValue"
             }
           ],
           "title": "Value"
@@ -94,6 +90,109 @@
       ],
       "title": "CalculationType",
       "type": "string"
+    },
+    "DateTimeValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "datetime",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "format": "date-time",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "DateTimeValue",
+      "type": "object"
+    },
+    "DateValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "date",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "format": "date",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "DateValue",
+      "type": "object"
+    },
+    "DecimalValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "decimal",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "pattern": "^(?:0|-?[1-9][0-9]*|-?(?:0|[1-9][0-9]*)\\.[0-9]*[1-9])$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "DecimalValue",
+      "type": "object"
+    },
+    "IntegerValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "integer",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "IntegerValue",
+      "type": "object"
+    },
+    "NullValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "null",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "null"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "NullValue",
+      "type": "object"
     },
     "PopulationDefinition": {
       "additionalProperties": false,
@@ -138,6 +237,83 @@
         "population_hash"
       ],
       "title": "PopulationDefinition",
+      "type": "object"
+    },
+    "StringValue": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "string",
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "StringValue",
+      "type": "object"
+    },
+    "TupleValue": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "boolean": "#/$defs/BooleanValue",
+                "date": "#/$defs/DateValue",
+                "datetime": "#/$defs/DateTimeValue",
+                "decimal": "#/$defs/DecimalValue",
+                "integer": "#/$defs/IntegerValue",
+                "null": "#/$defs/NullValue",
+                "string": "#/$defs/StringValue"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/NullValue"
+              },
+              {
+                "$ref": "#/$defs/StringValue"
+              },
+              {
+                "$ref": "#/$defs/IntegerValue"
+              },
+              {
+                "$ref": "#/$defs/DecimalValue"
+              },
+              {
+                "$ref": "#/$defs/BooleanValue"
+              },
+              {
+                "$ref": "#/$defs/DateValue"
+              },
+              {
+                "$ref": "#/$defs/DateTimeValue"
+              }
+            ]
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "type": {
+          "const": "tuple",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ],
+      "title": "TupleValue",
       "type": "object"
     }
   },
@@ -231,33 +407,39 @@
       "default": null
     },
     "result_value": {
-      "anyOf": [
+      "discriminator": {
+        "mapping": {
+          "boolean": "#/$defs/BooleanValue",
+          "date": "#/$defs/DateValue",
+          "datetime": "#/$defs/DateTimeValue",
+          "decimal": "#/$defs/DecimalValue",
+          "integer": "#/$defs/IntegerValue",
+          "null": "#/$defs/NullValue",
+          "string": "#/$defs/StringValue"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
         {
-          "type": "string"
+          "$ref": "#/$defs/NullValue"
         },
         {
-          "type": "integer"
+          "$ref": "#/$defs/StringValue"
         },
         {
-          "type": "number"
+          "$ref": "#/$defs/IntegerValue"
         },
         {
-          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
-          "type": "string"
+          "$ref": "#/$defs/DecimalValue"
         },
         {
-          "type": "boolean"
+          "$ref": "#/$defs/BooleanValue"
         },
         {
-          "format": "date",
-          "type": "string"
+          "$ref": "#/$defs/DateValue"
         },
         {
-          "format": "date-time",
-          "type": "string"
-        },
-        {
-          "type": "null"
+          "$ref": "#/$defs/DateTimeValue"
         }
       ],
       "title": "Result Value"

@@ -5,10 +5,8 @@ from pydantic import Field, model_validator
 
 from .base import (
     ContractModel,
-    ContractValue,
     Identifier,
     RuntimeArtifact,
-    ScalarValue,
     Sha256Hex,
     UtcDateTime,
 )
@@ -23,6 +21,7 @@ from .enums import (
     SupportKind,
 )
 from .validation import require_unique_ids
+from .values import ContractValue, ScalarValue
 
 
 class SourceLocator(ContractModel):
@@ -153,7 +152,7 @@ class AtomicClaim(ContractModel):
     subject_id: Identifier
     predicate_id: Identifier
     object_id: Identifier | None = None
-    value: ScalarValue
+    value: ScalarValue | None
     unit: Identifier | None = None
     currency: str | None = None
     qualifiers: tuple[ClaimQualifier, ...] = ()
