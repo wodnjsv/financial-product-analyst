@@ -1,5 +1,5 @@
 """SQLAlchemy Core table definitions for PostgreSQL storage."""
 
-from . import operations
+from . import catalog, operations
 
-__all__ = ["operations"]
+__all__ = ["catalog", "operations"]
