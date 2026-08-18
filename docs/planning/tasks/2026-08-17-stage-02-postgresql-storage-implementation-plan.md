@@ -16,6 +16,7 @@
 
 - [Planning Harness](../HARNESS.md)
 - [Runtime Contracts](../architecture/RUNTIME_CONTRACTS.md)
+- [Stage 01 Closure Hardening Design](../specs/2026-08-18-stage-01-closure-hardening-design.md)
 - [Evidence, Verification, and Rendering](../architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md)
 - [NCP Deployment Architecture](../architecture/NCP_DEPLOYMENT_ARCHITECTURE.md)
 - [Repository Data Policy](../decisions/ADR-0002-repository-data-policy.md)
@@ -72,6 +73,7 @@ Every blocking review item must have both a database-enforced rule and a failing
 | Verified-answer cache | a same-run final passing VerificationReport, matching disposition, releaseable Claim set, and non-5xx terminal run are mandatory | Task 7 |
 | Cutoff/status consistency | each of the four temporal fields conflicts with `eligible` after `2026-07-11`, including direct SQL | Tasks 5, 6 |
 | Mixed-tuple losslessness | every tuple item has its own tag and malformed tag/value JSON fails a database CHECK | Tasks 5, 6 |
+| Tagged-value ownership | Stage 02 stores and validates the frozen Stage 01 tagged shape without a second Python codec | Tasks 5, 6 |
 | Calculation DAG | two-node and three-node cycles fail when deferred constraints are forced or committed | Tasks 5, 6 |
 | Entity/version integrity | Evidence and entity-bound Claim subjects/objects use composite dataset foreign keys; request-scoped exceptions are closed | Tasks 2, 3, 5 |
 | Auditable activation | four manifest-backed readiness rows reference successful validation runs; permissions and concurrent activation are tested | Tasks 2, 8 |
@@ -750,7 +752,7 @@ null, string, integer, decimal, boolean, date, datetime, tuple
 
 Scalar representation is `{"type": <tag>, "value": <json-scalar>}`. Tuple representation is `{"type": "tuple", "items": [<tagged-scalar>, ...]}`; every tuple element keeps its own tag. Nested tuples, mappings, floats, extra keys, and untagged values are rejected. Decimal values serialize as canonical strings and are validated before returning to contracts.
 
-The persistence-only Python representation is a frozen `TaggedValue` discriminated union in `db/codec.py`. PostgreSQL function `evidence.is_valid_tagged_value(jsonb)` recursively checks allowed keys, tag names, JSON types, integer form, decimal syntax, ISO dates, UTC datetimes, and per-item tuple tags. Every tagged-value column has a named CHECK that invokes it, so direct SQL cannot store a decimal tag with an object or erase mixed-tuple type information.
+The Python representation is the frozen discriminated `ScalarValue`/`ContractValue` union owned by the amended Stage 01 `contracts/values.py`. Stage 02 must not define a persistence-only duplicate. PostgreSQL function `evidence.is_valid_tagged_value(jsonb)` recursively checks the exact Stage 01 keys, tag names, JSON types, integer form, canonical decimal syntax, ISO dates, UTC datetimes, and per-item tuple tags. Every tagged-value column has a named CHECK that invokes it, so direct SQL cannot store a decimal tag with an object or erase mixed-tuple type information.
 
 - [ ] **Step 3: Define Source, Evidence, and origin links**
 
@@ -823,7 +825,6 @@ git commit -m "feat: add normalized evidence ledger"
 
 **Files:**
 
-- Create: `src/financial_agent/db/codec.py`
 - Create: `src/financial_agent/db/repositories/__init__.py`
 - Create: `src/financial_agent/db/repositories/evidence.py`
 - Create: `tests/db/test_evidence_repository.py`
@@ -845,22 +846,6 @@ class OriginReference:
     record_id: str
 
 
-@dataclass(frozen=True, slots=True)
-class TaggedScalar:
-    type: Literal["null", "string", "integer", "decimal", "boolean", "date", "datetime"]
-    value: str | int | bool | None
-
-
-@dataclass(frozen=True, slots=True)
-class TaggedTuple:
-    type: Literal["tuple"]
-    items: tuple[TaggedScalar, ...]
-
-
-TaggedValue: TypeAlias = TaggedScalar | TaggedTuple
-```
-
-```python
 class EvidenceLedgerRepository:
     async def append_source(
         self, dataset_version: str, source: SourceRecord
@@ -895,24 +880,24 @@ class EvidenceLedgerRepository:
     ) -> AtomicClaim: ...
 ```
 
-`RequestScope` is a persistence-only frozen dataclass containing `request_key`, `run_id`, and `dataset_version`. It does not replace RuntimeArtifact metadata.
+`RequestScope` is a persistence-only frozen dataclass containing `request_key`, `run_id`, and `dataset_version`. It does not replace RuntimeArtifact metadata. Tagged value types and `encode_contract_value`/`decode_contract_value` are imported from Stage 01 contracts and are never redeclared under `db`.
 
-- [ ] **Step 1: Write failing tagged-value codec tests**
+- [ ] **Step 1: Write failing tagged-value database parity tests**
 
-Round-trip all Stage 01 scalar types, including:
+Persist and reload the exact Stage 01 tagged JSON shapes for:
 
 - `Decimal("0")`, `Decimal("0.000100000000")`, and a large AUM value;
 - `date(2026, 7, 11)` and a UTC datetime;
 - strings that look like dates or decimals but must remain strings;
 - booleans without converting them to integers;
-- `None` and homogeneous/mixed tuples;
+- tagged null and homogeneous/mixed TupleValue;
 - `(date(2026, 7, 11), "2026-07-11", Decimal("1.0"), "1.0")`, whose four encoded items must have `date`, `string`, `decimal`, and `string` tags respectively.
 
-Reject float input, naive datetime, non-UTC datetime, an unknown type tag, nested tuple, mapping, extra tagged-object key, and every tag/value mismatch. Insert the same invalid shapes with direct SQL and require the named database CHECK to fail.
+The Stage 01 contract tests already reject float input, naive datetime, non-UTC datetime, nested tuple, mapping, and unsupported native values. At the database boundary, insert an unknown type tag, nested tuple, extra tagged-object key, noncanonical Decimal, and every tag/value mismatch with direct SQL and require the named CHECK to fail.
 
-- [ ] **Step 2: Implement the minimal codec**
+- [ ] **Step 2: Bind Stage 01 tagged contracts to JSONB without a second codec**
 
-Expose only `encode_contract_value(value) -> TaggedValue` and `decode_contract_value(tagged) -> ContractValue`. Reuse Stage 01 canonical JSON rules. Every tuple element is encoded independently; no `mixed_tuple` shortcut exists. Do not create a general-purpose serializer framework.
+Repository writes use the validated Stage 01 tagged model's JSON-mode dump. Repository reads rebuild the complete parent Stage 01 contract through its raw-JSON ingress before returning it. Native conversion, when a caller needs it, uses Stage 01 `decode_contract_value`; no `db/codec.py`, persistence-only TaggedValue, `mixed_tuple` shortcut, or context-based type inference is allowed.
 
 - [ ] **Step 3: Write failing repository round-trip tests**
 
@@ -939,7 +924,7 @@ python -m pytest tests/db/test_evidence_repository.py -v
 - [ ] **Step 6: Commit persistence adapters**
 
 ```bash
-git add src/financial_agent/db/codec.py src/financial_agent/db/repositories tests/db/test_evidence_repository.py
+git add src/financial_agent/db/repositories tests/db/test_evidence_repository.py
 git diff --cached --check
 git diff --cached
 git commit -m "feat: persist evidence contracts losslessly"
