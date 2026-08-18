@@ -17,9 +17,9 @@ EXPECTED_EXTENSIONS = {
 }
 EXPECTED_ROLES = frozenset(
     {
-        "financial_agent_migration",
-        "financial_agent_build",
-        "financial_agent_runtime",
+        "fa_migration",
+        "fa_build",
+        "fa_runtime",
     }
 )
 
@@ -157,9 +157,9 @@ def collect_preflight_snapshot(
             SELECT rolname, rolcanlogin
             FROM pg_catalog.pg_roles
             WHERE rolname IN (
-                'financial_agent_migration',
-                'financial_agent_build',
-                'financial_agent_runtime'
+                'fa_migration',
+                'fa_build',
+                'fa_runtime'
             )
             """
         )

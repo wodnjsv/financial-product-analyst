@@ -6,7 +6,7 @@
 
 **Scope:** Naver Cloud Platform의 저장소 배치, 서버 사양, 네트워크, 백업, 모니터링 기준
 
-**Related:** [공식 평가 API 규격](../../reference/official-evaluation-api.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0009](../decisions/ADR-0009-ncp-postgresql-storage-encryption-boundary.md), [Stage 01 Runtime Contracts 구현 계획](../tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md), [Stage 02 PostgreSQL Storage 구현 계획](../tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
+**Related:** [공식 평가 API 규격](../../reference/official-evaluation-api.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0009](../decisions/ADR-0009-ncp-postgresql-storage-encryption-boundary.md), [ADR-0010](../decisions/ADR-0010-use-ncp-direct-database-users.md), [Stage 01 Runtime Contracts 구현 계획](../tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md), [Stage 02 PostgreSQL Storage 구현 계획](../tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
 
 이 문서는 금융상품 Agent를 Naver Cloud Platform에 배포할 때 사용할 인프라 기준을 기록한다. 금융 데이터는 계속 **2026-07-11**을 컷오프로 사용한다. 인프라 제품과 소프트웨어 버전은 실제 배포 시점에 NCP가 지원하는 안정 버전을 사용하되, 금융 데이터 기준일을 바꾸지 않는다.
 
@@ -164,6 +164,8 @@ pgvector 최초 설치는 DB 서비스 재시작을 동반하므로 평가 운�
 따라서 PostgreSQL을 암호화됐다고 표시하지 않는다. 대신 Private Subnet, Public Domain 미사용, 서버 ACG 기반 5432 제한, 최소 권한 DB 계정, Git·DB Artifact의 Credential 금지, 자동 백업을 필수 통제로 사용한다. 이 통제는 암호화와 동일하다는 주장이 아니라 현재 관리형 서비스 제약 아래의 보상 통제다. 저장 데이터 분류가 바뀌어 암호화가 필수가 되면 ADR-0009에 따라 별도 저장 플랫폼을 승인한다.
 
 실행 순서는 **NCP 콘솔 설치 → migration/build/runtime 역할 준비 → preflight → Alembic → postflight**로 고정한다. 로컬 PostgreSQL도 `cdb_admin` 스키마에 두 콘솔 관리 확장을 설치해 같은 배치를 시험한다.
+
+2026-08-18 비운영 capability probe는 NCP bootstrap 사용자가 NOLOGIN 역할과 멤버십을 관리할 수 없음을 확인했다. 따라서 ADR-0010에 따라 콘솔 생성 로그인 사용자 `fa_migration`, `fa_build`, `fa_runtime`에 직접 최소 권한을 부여한다. Bootstrap 사용자는 준비와 검증 이후 정상 migration/build/runtime 경로에서 사용하지 않는다.
 
 ### 5.2 논리 스키마
 

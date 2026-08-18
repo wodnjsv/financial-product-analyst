@@ -7,23 +7,23 @@ DO $roles$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_roles
-        WHERE rolname = 'financial_agent_migration'
+        WHERE rolname = 'fa_migration'
     ) THEN
-        CREATE ROLE financial_agent_migration NOLOGIN;
+        CREATE ROLE fa_migration NOLOGIN;
     END IF;
 
     IF NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_roles
-        WHERE rolname = 'financial_agent_build'
+        WHERE rolname = 'fa_build'
     ) THEN
-        CREATE ROLE financial_agent_build NOLOGIN;
+        CREATE ROLE fa_build NOLOGIN;
     END IF;
 
     IF NOT EXISTS (
         SELECT 1 FROM pg_catalog.pg_roles
-        WHERE rolname = 'financial_agent_runtime'
+        WHERE rolname = 'fa_runtime'
     ) THEN
-        CREATE ROLE financial_agent_runtime NOLOGIN;
+        CREATE ROLE fa_runtime NOLOGIN;
     END IF;
 END
 $roles$;

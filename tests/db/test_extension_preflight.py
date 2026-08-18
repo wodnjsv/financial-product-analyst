@@ -6,6 +6,7 @@ import pytest
 
 from financial_agent.db.preflight import (
     EXPECTED_SEARCH_PATH,
+    EXPECTED_ROLES,
     PreflightFailure,
     PreflightSnapshot,
     normalize_psycopg_url,
@@ -26,9 +27,9 @@ def valid_snapshot() -> PreflightSnapshot:
             "pg_stat_statements": "cdb_admin",
         },
         role_login={
-            "financial_agent_migration": False,
-            "financial_agent_build": False,
-            "financial_agent_runtime": False,
+            "fa_migration": False,
+            "fa_build": False,
+            "fa_runtime": False,
         },
         vector_usable=True,
         pg_stat_statements_usable=True,
@@ -41,6 +42,13 @@ def test_preflight_accepts_the_local_group_role_layout(
     report = validate_pre_migration_snapshot(valid_snapshot)
 
     assert report.permission_layout == "group_roles"
+
+
+def test_logical_database_role_names_fit_the_ncp_user_id_limit() -> None:
+    assert EXPECTED_ROLES == frozenset(
+        {"fa_migration", "fa_build", "fa_runtime"}
+    )
+    assert all(len(name) <= 16 for name in EXPECTED_ROLES)
 
 
 def test_preflight_accepts_the_ncp_direct_user_layout(
@@ -125,7 +133,7 @@ def test_preflight_rejects_a_missing_logical_role(
     valid_snapshot: PreflightSnapshot,
 ) -> None:
     roles = dict(valid_snapshot.role_login)
-    roles.pop("financial_agent_runtime")
+    roles.pop("fa_runtime")
 
     with pytest.raises(PreflightFailure) as captured:
         validate_pre_migration_snapshot(replace(valid_snapshot, role_login=roles))
@@ -137,7 +145,7 @@ def test_preflight_rejects_a_mixed_role_layout(
     valid_snapshot: PreflightSnapshot,
 ) -> None:
     roles = dict(valid_snapshot.role_login)
-    roles["financial_agent_runtime"] = True
+    roles["fa_runtime"] = True
 
     with pytest.raises(PreflightFailure) as captured:
         validate_pre_migration_snapshot(replace(valid_snapshot, role_login=roles))

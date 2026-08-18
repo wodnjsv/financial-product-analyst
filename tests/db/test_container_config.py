@@ -44,8 +44,8 @@ def test_local_init_models_the_ncp_extension_and_role_layout() -> None:
         in init_sql
     )
     for role_name in (
-        "financial_agent_migration",
-        "financial_agent_build",
-        "financial_agent_runtime",
+        "fa_migration",
+        "fa_build",
+        "fa_runtime",
     ):
         assert f"CREATE ROLE {role_name} NOLOGIN" in init_sql
