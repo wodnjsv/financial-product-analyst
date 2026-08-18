@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.5-pg15-bookworm@sha256:cea4dd461a72371e7e98ebd7dfba976e14a7defec86aac13a1c555b4ce28509e
+    platform: linux/amd64
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - timezone=UTC
+    environment:
+      POSTGRES_DB: financial_agent_test
+      POSTGRES_USER: financial_agent_test
+      POSTGRES_PASSWORD: financial_agent_test
+      POSTGRES_INITDB_ARGS: --encoding=UTF8
+    ports:
+      - "127.0.0.1:${FINANCIAL_AGENT_TEST_DB_PORT:-55432}:5432"
+    volumes:
+      - financial_agent_postgres_data:/var/lib/postgresql/data
+      - ./initdb/001-ncp-extension-layout.sql:/docker-entrypoint-initdb.d/001-ncp-extension-layout.sql:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U financial_agent_test -d financial_agent_test
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+volumes:
+  financial_agent_postgres_data:

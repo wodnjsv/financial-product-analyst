@@ -41,11 +41,15 @@
 
 ### Stage 02 PostgreSQL 저장 계층
 
-**상태: Stage 01 인계 조건 충족; 최종 계획 재리뷰·승인 대기**
+**상태: Stage 01 인계 조건 충족; Stage 02A 구현 진행 중**
 
-- 상세 계획과 차단급 리뷰 보강은 작성되어 있다.
+- 상세 계획은 2026-08-18 최종 재리뷰에서 승인된 1A~18A 결정을 반영해 Stage 02A 핵심 저장과 Stage 02B NCP·이식성 증명으로 나뉘었다.
+- 사용자가 PostgreSQL DDL·Alembic·리포지터리·JSONB 구현 범위를 승인했으며, `codex/stage-02-storage` 격리 브랜치에서 Task 1 데이터베이스 도구와 검증 경계를 구현하고 있다.
+- 비운영 NCP PostgreSQL 15.17을 승인된 4 vCPU/16 GB·Private Subnet 구성으로 생성했고, 콘솔 관리 `pgvector`와 `pg_stat_statements`, 애플리케이션 서버 ACG 한정 5432 접근, 자동 백업 7일을 확인했다. Preflight와 권한 capability probe는 아직 완료하지 않았다.
+- Rocky Linux 8.10 기반 신규 Cloud DB가 선택형 스토리지 암호화를 지원하지 않는 실제 제약은 [ADR-0009](decisions/ADR-0009-ncp-postgresql-storage-encryption-boundary.md)에 기록했으며, 암호화 적용을 주장하지 않고 Private Subnet·ACG·최소 권한·Credential 비저장·백업을 보상 통제로 사용한다.
 - Stage 01 태그 값 API와 생성 Schema를 변경 없이 저장 계약의 입력으로 사용한다.
-- 작성된 Stage 02 계획을 동결 계약 기준으로 한 번 더 리뷰하고 명시적 구현 승인을 받는다.
+- 검증된 답변 캐시는 Claim Gate Registry 단계로 미뤘으며, Stage 02는 저장된 `ReleasedAnswer`에 공개 권한을 부여하지 않는다.
+- 다음 게이트는 실제 비운영 NCP Cloud DB 권한 capability probe와 PostgreSQL 15 컨테이너 검증이다. 관측된 권한 레이아웃이 없으면 Task 2 권한 DDL로 넘어가지 않는다.
 
 기준 계획: [Stage 02 PostgreSQL Storage](tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
 
@@ -71,8 +75,10 @@
 
 ## 5. 다음 순서
 
-1. Stage 02 계획을 Stage 01 동결 계약 기준으로 최종 재리뷰
-2. PostgreSQL DDL·Alembic·리포지터리·JSONB 경계의 구현 범위 승인
-3. 승인된 Stage 02 계획을 순차적으로 구현·검증
+1. ~~Stage 02 계획을 Stage 01 동결 계약 기준으로 최종 재리뷰~~ — 2026-08-18 완료
+2. ~~PostgreSQL DDL·Alembic·리포지터리·JSONB 경계의 구현 범위 승인~~ — 2026-08-18 완료
+3. Stage 02A Task 1의 실제 PostgreSQL·NCP capability 검증 완료
+4. 승인된 Stage 02A의 Task 2∼7을 순차 구현·검증
+5. Stage 02B NCP·이식성 증명 수행
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

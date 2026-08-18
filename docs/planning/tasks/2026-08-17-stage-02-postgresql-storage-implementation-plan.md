@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Date:** 2026-08-17
+**Date:** 2026-08-17 (final review amended 2026-08-18)
 
-**Status:** Revised after blocking review; waiting for the amended Stage 01 completion gate, a fresh plan review, and explicit user approval
+**Status:** Final review decisions approved; consolidated implementation scope approval pending
 
 **Goal:** Implement the PostgreSQL 15 physical storage boundary for the seven approved logical schemas, preserve the Stage 01 contract IDs and immutable artifacts without renaming public interfaces, and prove that the migrations and persistence layer run in an NCP-compatible Linux/amd64 environment.
 
-**Architecture:** PostgreSQL is the authoritative store for normalized catalog facts, observations, relation history, document metadata, search projections, evidence lineage, and request artifacts. SQLAlchemy Core defines the application-side table metadata, Alembic owns ordered DDL changes, and Psycopg 3 supplies asynchronous runtime connections. Financial source records and Claim lineage are normalized; JSONB is restricted to tagged contract scalar values and immutable request-artifact payloads. Graph and Vector consumers remain projections bound to PostgreSQL IDs and a single `dataset_version`.
+**Architecture:** PostgreSQL is the authoritative store for normalized catalog facts, observations, relation history, document metadata, search projections, evidence lineage, and request artifacts. SQLAlchemy Core defines the application-side table metadata, Alembic owns ordered DDL changes, and Psycopg 3 supplies asynchronous runtime connections. Financial source records and Claim lineage are normalized; tagged values use the frozen Stage 01 JSON shape, while runtime artifacts preserve canonical JSON text and have PostgreSQL derive JSONB plus SHA-256 before insert. Graph and Vector consumers remain projections bound to PostgreSQL IDs and a single `dataset_version`.
 
 **Tech Stack:** Python 3.12, PostgreSQL 15, SQLAlchemy 2.x Core, Alembic 1.x, Psycopg 3.x, pgvector, `pg_trgm`, `unaccent`, `pg_stat_statements`, `pgcrypto`, pytest 8.x, pytest-asyncio, Docker Compose, Linux/amd64.
 
@@ -30,7 +30,7 @@
 
 ## 1. Entry Gate
 
-Do not start Stage 02 implementation until Stage 01 has been implemented and all of these commands pass from a clean task branch based on the latest `main`:
+Stage 01 is frozen at `8f3152f0b6f55228bc013f387abc4f5b5099b615`. Before Stage 02 implementation, run these commands from a clean `codex/stage-02-storage` branch based on that commit or a later explicitly approved `main`:
 
 ```bash
 python -m pytest tests/contracts -q
@@ -40,7 +40,7 @@ docker run --rm --platform linux/amd64 financial-agent-contracts:stage-01
 git status --short
 ```
 
-After the approved 2026-08-18 execution-contract hardening is implemented and the amended Stage 01 completion gate passes, the freshly exported JSON Schemas and these public symbols become frozen inputs:
+The freshly exported JSON Schemas and these public symbols are frozen inputs:
 
 ```python
 from financial_agent.contracts import (
@@ -64,21 +64,29 @@ from financial_agent.contracts import (
 
 The expected final `ExecutionTask` contract includes `subtask_id` and `produces_bindings`; Stage 02 must preserve them in immutable request-artifact JSON and any indexed execution metadata it chooses to add. Stage 02 may add persistence-only scope columns and association tables. After the amended Stage 01 freeze, it must not rename a contract field, change a contract Enum, relax contract validation, or turn a contract model into an ORM model.
 
-### 1.1 Blocking review closure matrix
+### 1.1 Final review closure matrix
 
 Every blocking review item must have both a database-enforced rule and a failing-before/passing-after test. Narrative or repository-only validation does not close an item.
 
 | Review item | Required proof in this plan | Owning task |
 | --- | --- | --- |
-| NCP extension ownership | console-managed extensions exist and are usable in `cdb_admin` before Alembic; migration-owned extensions remain separate | Tasks 1, 2, 8 |
-| Verified-answer cache | a same-run final passing VerificationReport, matching disposition, releaseable Claim set, and non-5xx terminal run are mandatory | Task 7 |
+| NCP extension and role ownership | console-managed extensions exist and are usable in `cdb_admin`; a disposable NCP capability probe decides whether NOLOGIN group roles or separate console-managed login users implement least privilege | Tasks 1, 2, 8 |
+| Release boundary | runtime artifacts may be stored, but Stage 02 creates no Claim-Gate approval record, release cache, or cache API | Task 7 |
 | Cutoff/status consistency | each of the four temporal fields conflicts with `eligible` after `2026-07-11`, including direct SQL | Tasks 5, 6 |
 | Mixed-tuple losslessness | every tuple item has its own tag and malformed tag/value JSON fails a database CHECK | Tasks 5, 6 |
 | Tagged-value ownership | Stage 02 stores and validates the frozen Stage 01 tagged shape without a second Python codec | Tasks 5, 6 |
 | Calculation DAG | two-node and three-node cycles fail when deferred constraints are forced or committed | Tasks 5, 6 |
 | Entity/version integrity | Evidence and entity-bound Claim subjects/objects use composite dataset foreign keys; request-scoped exceptions are closed | Tasks 2, 3, 5 |
 | Auditable activation | four manifest-backed readiness rows reference successful validation runs; permissions and concurrent activation are tested | Tasks 2, 8 |
-| Additional correctness | numeric zero, append-only FailureEvents and registries, DB-object definition drift, and representative query plans are proven | Tasks 2, 4, 5, 7, 8 |
+| Artifact identity and hash | a persistence UUID is separate from nullable contract IDs; canonical text is the retry/restore authority and PostgreSQL derives JSONB plus SHA-256 | Task 7 |
+| Concurrent idempotency | two independent connections prove same-ID/same-payload convergence and same-ID/different-payload conflict without global write serialization | Tasks 6, 7 |
+| Additional correctness | numeric zero, append-only FailureEvents and registries, DB-object definition drift, no-cascade deletion policy, and representative query plans are proven | Tasks 2, 4, 5, 7, 8 |
+
+### 1.2 Approved delivery split
+
+- **Stage 02A — Core persistence:** Tasks 1–7 implement the dependency lock, local PostgreSQL harness, observed NCP permission-layout selection, migrations, normalized schemas, repositories, tagged-value parity, request-run lifecycle, and immutable runtime artifacts. Stage 02A may finish only after the authorized capability probe plus local PostgreSQL and contract gates pass.
+- **Stage 02B — NCP and portability proof:** Task 8 revalidates the selected permission layout and performs the migration cycle, object-manifest drift detection, bounded scale/concurrency tests, Linux/amd64 container verification, and NCP runbook proof.
+- Stage 02B hardens the exact Stage 02A schema. It does not add product logic, ingestion, Graph/Fuseki projection, an embedding model, Claim Gate Registry, Renderer, verified-answer cache, or the public API.
 
 ## 2. Assumptions and Intended Outcome
 
@@ -99,7 +107,7 @@ At the end of Stage 02, a developer can:
 2. migrate it from zero to the Alembic head and back to zero without manual SQL edits;
 3. create and activate a synthetic `2026-07-11-v1` dataset only after four manifest-backed readiness records bind validation runs to that exact dataset;
 4. persist and reload Stage 01 Source, Evidence, Calculation, Claim, support, and runtime artifacts without losing IDs, numeric precision, dates, or type information;
-5. prove database constraints for version isolation, cutoff/date consistency, recursively tagged values, Calculation DAGs, Claim support XOR, verified-only release caching, and immutable audit events;
+5. prove database constraints for version isolation, cutoff/date consistency, recursively tagged values, Calculation DAGs, Claim support XOR, canonical artifact hashing, and immutable audit events;
 6. run the same checks in a Linux/amd64 container and against an explicitly configured non-production NCP Cloud DB instance.
 
 ## 3. Non-Goals
@@ -111,9 +119,11 @@ At the end of Stage 02, a developer can:
 - Do not select an embedding model or create a dimension-specific ANN index. NCP console provisioning installs pgvector before migrations; this stage creates only the immutable model registry and storage table that consume it.
 - Do not implement product filtering, ranking, return normalization, exchange-rate conversion, similarity scoring, or other financial calculations.
 - Do not implement the HyperCLOVA X roles, Orchestrator, Verifier, Renderer, FastAPI, or public `GET /answer` endpoint.
+- Do not implement the Claim Gate Registry, release authorization record, verified-answer cache, `cache_verified_release()`, or `get_cached_release()`; these remain mandatory in the later Claim Gate/Renderer stage.
 - Do not provision NCP VPCs, accounts, passwords, endpoints, HA, backups, or public networking from repository code.
 - Do not introduce table partitioning, a message broker, Redis, OpenSearch, a second SQL database, or an ORM entity layer.
 - Do not commit organizer data, PDFs, local database volumes, `.env` files, NCP identifiers, credentials, generated embeddings, or runtime artifacts.
+- The observed NCP PostgreSQL 15.17/Rocky Linux 8.10 baseline does not offer selectable data-storage encryption. Follow ADR-0009: never claim the control is enabled, keep the database private, restrict ACG and identities, and do not store credentials or unrelated personal data in database artifacts.
 
 ## 4. Chosen Physical Design and Rejected Alternatives
 
@@ -134,7 +144,7 @@ Use these identity scopes:
 - dataset records: `(dataset_version, record_id)`;
 - request calculations and Claims: `(run_id, calculation_id)` and `(run_id, claim_id)`;
 - globally unique request execution: `run_id`;
-- released answer idempotency: `(request_key, dataset_version)`.
+- request grouping: non-unique `request_key`, with each execution attempt identified by globally unique `run_id`.
 
 This preserves Stage 01 IDs without assuming that a request-local `claim_id` is globally unique.
 
@@ -143,7 +153,7 @@ This preserves Stage 01 IDs without assuming that a request-local `claim_id` is 
 Normalize input Evidence, calculation dependencies, exclusions, population filters, qualifiers, and Claim supports into association tables. Use JSONB only for:
 
 - a scalar or tuple value accompanied by an explicit value-type tag; and
-- a complete immutable Stage 01 runtime artifact accompanied by its schema version and SHA-256 hash.
+- the database-generated query projection of a complete immutable Stage 01 runtime artifact whose canonical UTF-8 JSON text is stored separately and hashed by PostgreSQL.
 
 Do not store Evidence or calculation ID arrays only inside JSONB. The database must enforce their foreign keys.
 
@@ -163,6 +173,14 @@ Local PostgreSQL creates the same `cdb_admin` layout through an initialization s
 
 At the approved initial scale, composite B-tree, partial, GIN trigram, and foreign-key indexes are sufficient. PostgreSQL partitioning would complicate foreign keys and migrations before measurements justify it. pgvector is installed now, but its ANN index is deferred until the embedding model, vector dimensions, and measured recall/latency are approved.
 
+### 4.7 No cascading application-data deletion
+
+Application-data foreign keys use `RESTRICT` or `NO ACTION`; migrations must not add `ON DELETE CASCADE`. Dataset/audit/lineage/registry/request records are never directly deleted. Catalog, relation, observation, document, and search projection rows are mutable only while their dataset is `building`; an invalid build is marked `failed` and replaced by a new dataset version. Full downgrade is reserved for disposable local databases and an explicitly authorized non-production NCP database.
+
+### 4.8 Request attempts are distinct from request identity
+
+`request_key` groups equivalent organizer requests but is not unique. `run_id` identifies one execution attempt. `operations.start_request_run(...)` locks the active-dataset singleton, verifies the supplied version is the current active dataset, and inserts one immutable attempt. Repeating the same `run_id` with byte-equivalent request fields returns the existing run; reusing it with different fields raises a stable conflict. Different `run_id` values for one `request_key` remain independent, including overlapping evaluator retries.
+
 ## 5. Logical-to-Physical Storage Map
 
 | Schema | Physical table | Purpose and key constraints |
@@ -174,11 +192,10 @@ At the approved initial scale, composite B-tree, partial, GIN trigram, and forei
 | `operations` | `request_run` | One execution attempt, original question, deadline, outcome axes, and timing; PK `run_id` |
 | `operations` | `request_subtask` | Immutable QueryPlan subtask IDs scoped to one run for request-scoped Claims |
 | `operations` | `failure_event` | Append-only retry/failure event with stage, category, attempt, budget, latency, and dependency |
-| `operations` | `request_artifact` | Immutable Stage 01 contract JSON, artifact type, schema version, producer, model/prompt metadata, hash |
+| `operations` | `request_artifact` | Persistence UUID, nullable contract ID, canonical Stage 01 JSON text, database-derived JSONB/hash, artifact type, schema version, and producer/model metadata |
 | `operations` | `artifact_evidence_ref` | Artifact-to-Evidence references with stable ordinal and FK |
 | `operations` | `artifact_calculation_ref` | Artifact-to-Calculation references with stable ordinal and FK |
 | `operations` | `artifact_claim_ref` | Artifact-to-Claim references with stable ordinal and FK |
-| `operations` | `release_cache` | One immutable released response per `request_key + dataset_version` |
 | `catalog` | `entity` | Versioned product, security, company, institution, index, and theme identities |
 | `catalog` | `product` | Product family and common identity fields; one-to-one subtype of entity |
 | `catalog` | `security` | Security type and stable security identity fields; one-to-one subtype |
@@ -223,9 +240,11 @@ At the approved initial scale, composite B-tree, partial, GIN trigram, and forei
 11. Dataset rows may be edited only while `status='building'`. Lifecycle may move forward but cannot return an active or retired dataset to building.
 12. `active_dataset` can point only to a dataset whose four readiness rows reference successful validation runs, the parent dataset manifest, component manifests, and the `2026-07-11` cutoff.
 13. A request's deadline satisfies `created_at < deadline_at <= created_at + interval '55 seconds'`.
-14. Artifact indexed columns must equal the same metadata inside the validated JSON payload before insert.
-15. A released-answer cache row must bind one successful run, one passing final VerificationReport, and one ReleasedAnswer from the same request/run/dataset, with matching disposition and only releaseable Claim IDs.
-16. No raw model chain-of-thought, credential, or authentication header has a persistence field.
+14. Artifact indexed columns must equal the same metadata inside the validated JSON payload before insert; canonical text is the restore/retry authority, and a PostgreSQL trigger derives the JSONB projection and SHA-256.
+15. Stored `VerificationReport=pass`, `AnswerPlan`, or `ReleasedAnswer` artifacts do not constitute release authorization. Stage 02 has no release cache or Claim-Gate approval record.
+16. `request_key` is non-unique, `run_id` is the attempt identity, and a run captures the active dataset at request start for its full lifetime.
+17. Application-data foreign keys never cascade deletes; validated or terminal audit history cannot be removed through a parent delete.
+18. No raw model chain-of-thought, credential, or authentication header has a persistence field.
 
 ## 7. Planned File Structure
 
@@ -245,12 +264,15 @@ docker/
 ├─ initdb/
 │  └─ 001-ncp-extension-layout.sql
 └─ postgres.compose.yml
+requirements/
+└─ storage.lock
 docs/
 └─ runbooks/
    └─ ncp-postgresql-bootstrap.md
 scripts/
 ├─ db_preflight.py
 ├─ export_database_objects.py
+├─ probe_ncp_db_capabilities.py
 └─ verify_database_migrations.py
 schemas/
 └─ postgresql/
@@ -260,7 +282,6 @@ src/
 └─ financial_agent/
    └─ db/
       ├─ __init__.py
-      ├─ codec.py
       ├─ config.py
       ├─ engine.py
       ├─ metadata.py
@@ -286,18 +307,23 @@ tests/
 │  ├─ test_catalog_schema.py
 │  ├─ test_database_permissions.py
 │  ├─ test_database_config.py
+│  ├─ test_storage_lock.py
 │  ├─ test_evidence_repository.py
 │  ├─ test_evidence_schema.py
 │  ├─ test_extension_preflight.py
 │  ├─ test_fact_document_search_schema.py
 │  ├─ test_foundation_migration.py
 │  ├─ test_migration_cycle.py
+│  ├─ test_ncp_capability_probe.py
 │  ├─ test_ncp_preflight.py
 │  ├─ test_operations_repository.py
+│  ├─ test_concurrent_idempotency.py
+│  ├─ test_tagged_value_parity.py
 │  └─ test_query_plans.py
 └─ fixtures/
    └─ db/
-      └─ synthetic_dataset.py
+      ├─ synthetic_dataset.py
+      └─ tagged_value_corpus.py
 ```
 
 ---
@@ -307,15 +333,24 @@ tests/
 **Files:**
 
 - Modify: `pyproject.toml`
+- Create: `requirements/storage.lock`
 - Create: `src/financial_agent/db/__init__.py`
 - Create: `src/financial_agent/db/config.py`
+- Create: `src/financial_agent/db/capabilities.py`
 - Create: `src/financial_agent/db/engine.py`
 - Create: `src/financial_agent/db/metadata.py`
+- Create: `src/financial_agent/db/preflight.py`
 - Create: `tests/db/__init__.py`
 - Create: `tests/db/conftest.py`
+- Create: `tests/db/test_container_config.py`
 - Create: `tests/db/test_database_config.py`
+- Create: `tests/db/test_db_preflight_cli.py`
+- Create: `tests/db/test_engine_metadata.py`
+- Create: `tests/db/test_storage_lock.py`
 - Create: `tests/db/test_extension_preflight.py`
+- Create: `tests/db/test_ncp_capability_probe.py`
 - Create: `scripts/db_preflight.py`
+- Create: `scripts/probe_ncp_db_capabilities.py`
 - Create: `docker/initdb/001-ncp-extension-layout.sql`
 - Create: `docker/postgres.compose.yml`
 
@@ -325,11 +360,13 @@ tests/
 - `create_database_engine(config: DatabaseConfig) -> AsyncEngine`
 - `metadata: sqlalchemy.MetaData`
 - `python scripts/db_preflight.py --phase pre-migration --database-url-env <ENV_NAME>`
+- `python scripts/probe_ncp_db_capabilities.py --database-url-env <ENV_NAME>`
 - pytest marker `postgres` for tests that require a disposable PostgreSQL instance
+- pytest marker `ncp_integration` for explicitly authorized NCP-only verification
 
-- [ ] **Step 1: Write failing configuration tests**
+- [x] **Step 1: Write failing configuration tests**
 
-Test that the database URL is mandatory, only PostgreSQL URLs are accepted, the URL is never included in `repr(config)`, pool timeouts are positive, no NCP host/account/password default exists, and the session search path is exactly `"$user", public, cdb_admin`.
+Test that the database URL is mandatory, only PostgreSQL URLs are accepted, the URL is never included in `repr(config)`, pool timeouts are positive, no NCP host/account/password default exists, and the session search path is exactly `"$user", public, cdb_admin`. The initial runtime defaults are `db_read_concurrency_limit=4`, `pool_size=5`, and `max_overflow=0`; configuration rejects a pool smaller than `db_read_concurrency_limit + 1`.
 
 ```python
 def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -345,32 +382,28 @@ def test_database_config_hides_credentials() -> None:
     assert "secret" not in repr(config)
 ```
 
-- [ ] **Step 2: Add the minimum dependencies**
+- [x] **Step 2: Add the minimum dependencies**
 
 Add compatible bounded ranges rather than unbounded latest versions:
 
 ```toml
-dependencies = [
-  "pydantic>=2.10,<3",
+[project.optional-dependencies]
+storage = [
   "SQLAlchemy>=2.0,<3",
   "alembic>=1.13,<2",
   "psycopg[binary]>=3.2,<4",
   "pgvector>=0.3,<1",
-]
-
-[project.optional-dependencies]
-dev = [
-  "jsonschema>=4.23,<5",
-  "pytest>=8,<9",
   "pytest-asyncio>=0.24,<1",
 ]
 ```
 
-Preserve every Stage 01 dependency and tool setting.
+Preserve every Stage 01 base and `dev` dependency and every tool setting. Put Stage 02-only runtime and test dependencies in the `storage` optional group so the frozen Stage 01 contracts image continues to install `.[dev]` against `contracts.lock`. Generate `requirements/storage.lock` for CPython 3.12 with exact transitive pins for the base, `dev`, and `storage` dependencies. Leave `requirements/contracts.lock` byte-for-byte unchanged. All Stage 02 database verification installs use `PIP_CONSTRAINT=/app/requirements/storage.lock` and install `.[dev,storage]`; a lock refresh requires the full contract, database, migration-cycle, and Linux/amd64 container gates.
 
-- [ ] **Step 3: Implement connection configuration and naming metadata**
+`tests/db/test_storage_lock.py` parses the lock and asserts exact `==` pins, presence of SQLAlchemy/Alembic/Psycopg/pgvector/pytest-asyncio, absence of editable or URL dependencies, and unchanged Stage 01 contract lock bytes relative to the branch baseline.
 
-`DatabaseConfig` owns URL, pool size, max overflow, connect timeout, statement timeout, application name, and the fixed search path. The engine and Alembic environment must set UTC, an application name, and `search_path='"$user", public, cdb_admin'` on every connection. Use SQLAlchemy naming conventions for primary keys, foreign keys, unique constraints, checks, and indexes so Alembic names are deterministic.
+- [x] **Step 3: Implement connection configuration and naming metadata**
+
+`DatabaseConfig` owns URL, DB read concurrency limit, pool size, max overflow, connect timeout, statement timeout, application name, and the fixed search path. The engine and Alembic environment must set UTC, an application name, and `search_path='"$user", public, cdb_admin'` on every ordinary connection. Use SQLAlchemy naming conventions for primary keys, foreign keys, unique constraints, checks, and indexes so Alembic names are deterministic.
 
 Do not create a global engine at import time. Tests and the future API create and dispose engines explicitly.
 
@@ -378,7 +411,7 @@ Do not create a global engine at import time. Tests and the future API create an
 
 `docker/postgres.compose.yml` must:
 
-- use a pgvector image compatible with PostgreSQL 15;
+- use a reviewed PostgreSQL 15 pgvector image reference containing both an exact tag and a Linux/amd64 digest; tag-only references fail `test_storage_lock.py`;
 - run on `linux/amd64`;
 - enable `shared_preload_libraries=pg_stat_statements`;
 - mount `docker/initdb/001-ncp-extension-layout.sql` as a read-only initialization script;
@@ -393,14 +426,23 @@ The initialization script must create `cdb_admin`, install `vector` and `pg_stat
 
 - [ ] **Step 5: Implement the shared PostgreSQL fixture**
 
-`tests/db/conftest.py` must read `FINANCIAL_AGENT_TEST_DATABASE_URL`, skip only tests marked `ncp_integration` when their explicit URL is absent, and fail ordinary database tests with an actionable start command when local PostgreSQL is unavailable. Each test gets a transaction or freshly migrated database and leaves no row state behind.
+`tests/db/conftest.py` must read `FINANCIAL_AGENT_TEST_DATABASE_URL`, skip only tests marked `ncp_integration` when their explicit URL is absent, and fail ordinary database tests with an actionable start command when local PostgreSQL is unavailable. Ordinary constraint and repository tests run in one connection transaction that rolls back. Commit-time deferred-trigger, two-connection concurrency, permission, and migration-cycle tests receive a disposable per-test or per-module database and perform real commits. No NCP test may create, downgrade, or clean a shared or production database.
 
-`db_preflight.py --phase pre-migration` checks PostgreSQL 15, UTC, `vector` and `pg_stat_statements` in `cdb_admin`, the fixed search path, the three stable group roles, and a working `cdb_admin.vector(3)` cast. It must run successfully before any Alembic revision. Missing console-managed extensions return `MISSING_NCP_EXTENSION`; a wrong schema returns `NCP_EXTENSION_SCHEMA_MISMATCH`; a restart/incomplete activation returns `NCP_EXTENSION_UNUSABLE`; a missing role returns `MISSING_DB_ROLE`.
+`db_preflight.py --phase pre-migration` checks PostgreSQL 15, `server_encoding='UTF8'`, UTC, `vector` and `pg_stat_statements` in `cdb_admin`, the fixed search path, the three stable logical role names in the probe-selected group-role or direct-user layout, and a working `cdb_admin.vector(3)` cast. It must run successfully before any Alembic revision. Missing console-managed extensions return `MISSING_NCP_EXTENSION`; a wrong schema returns `NCP_EXTENSION_SCHEMA_MISMATCH`; a restart/incomplete activation returns `NCP_EXTENSION_UNUSABLE`; a missing role returns `MISSING_DB_ROLE`; a role shape inconsistent with the selected layout returns `DB_ROLE_LAYOUT_MISMATCH`.
 
-- [ ] **Step 6: Run the focused tests**
+- [ ] **Step 6: Probe the real NCP permission capability before permission DDL**
+
+With explicit user authorization, run only against a disposable or dedicated non-production NCP Cloud DB. The probe creates uniquely prefixed temporary objects, tests creation and deletion of a NOLOGIN role, schema ownership transfer, `SECURITY DEFINER`, `GRANT`/`REVOKE`, and role membership, then removes every temporary object in a `finally` path. It prints capability booleans and stable error codes but never the URL, username, server address, or database identifier.
+
+If all role capabilities pass, Task 2 uses the three NOLOGIN group roles. If NCP forbids NOLOGIN role creation or membership, create separate migration/build/runtime login users through the NCP console and apply direct least-privilege grants to those observed identities. Do not guess the permission layout and do not proceed to Task 2 until one branch has a saved, sanitized probe result in the local verification log.
+
+Observed provisioning state on 2026-08-18: a non-production PostgreSQL 15.17 Standalone service was created in a Private Subnet at the approved 4 vCPU/16 GB size, and the NCP console installed `pgvector` and `pg_stat_statements` for the test database. The database ACG permits port 5432 only from the application server ACG in addition to NCP-managed internal rules, and automatic backup retention is seven days. No endpoint, address, account name, resource ID, or credential is recorded. Preflight and the permission capability probe remain open gates.
+
+- [ ] **Step 7: Run the focused tests**
 
 ```bash
 python -m pytest tests/db/test_database_config.py -v
+python -m pytest tests/db/test_storage_lock.py -v
 docker compose -f docker/postgres.compose.yml config
 docker compose -f docker/postgres.compose.yml up -d --wait postgres
 FINANCIAL_AGENT_TEST_DATABASE_URL="postgresql+psycopg://financial_agent_test:financial_agent_test@localhost:55432/financial_agent_test" \
@@ -411,10 +453,10 @@ FINANCIAL_AGENT_TEST_DATABASE_URL="postgresql+psycopg://financial_agent_test:fin
 
 Expected: configuration tests pass, Compose resolves without a secret-bearing host path, and the local database exposes the same `cdb_admin` extension layout required on NCP.
 
-- [ ] **Step 7: Commit the database harness**
+- [ ] **Step 8: Commit the database harness**
 
 ```bash
-git add pyproject.toml docker/initdb/001-ncp-extension-layout.sql docker/postgres.compose.yml scripts/db_preflight.py src/financial_agent/db tests/db/__init__.py tests/db/conftest.py tests/db/test_database_config.py tests/db/test_extension_preflight.py
+git add pyproject.toml requirements/storage.lock docker/initdb/001-ncp-extension-layout.sql docker/postgres.compose.yml scripts/db_preflight.py scripts/probe_ncp_db_capabilities.py src/financial_agent/db tests/db/__init__.py tests/db/conftest.py tests/db/test_container_config.py tests/db/test_database_config.py tests/db/test_db_preflight_cli.py tests/db/test_engine_metadata.py tests/db/test_storage_lock.py tests/db/test_extension_preflight.py tests/db/test_ncp_capability_probe.py
 git diff --cached --check
 git diff --cached
 git commit -m "build: add postgres test harness"
@@ -446,6 +488,7 @@ git commit -m "build: add postgres test harness"
 - database function `operations.record_dataset_readiness(...)`
 - database function `operations.finish_dataset_validation(...)`
 - database function `operations.activate_dataset(text)`
+- database function `operations.start_request_run(...)`
 - database trigger function `operations.reject_nonbuilding_dataset_mutation()`
 
 - [ ] **Step 1: Write failing foundation tests**
@@ -485,6 +528,8 @@ MIGRATION_MANAGED_EXTENSIONS = {
 - an active or retired version cannot transition back to building.
 - a request deadline equal to 55 seconds after creation is accepted, while 56 seconds is rejected.
 - a request deadline before or equal to creation is rejected by the ordering constraint.
+- runtime direct INSERT into `request_run` is denied; `start_request_run` accepts only the current active dataset and captures it for the run lifetime.
+- two calls with the same `run_id` and identical request fields return the same row; the same `run_id` with any different field raises `REQUEST_RUN_CONFLICT`; the same `request_key` with distinct run IDs creates independent attempts.
 - execution outcome, verification status, and answer disposition remain separate nullable columns.
 - a failed execution cannot store an answer disposition, and no raw chain-of-thought column exists.
 - multiple `FailureEvent` rows preserve stage, category, retryability, attempt, remaining budget, duration, and dependency for one run.
@@ -515,7 +560,9 @@ Add a unique `(dataset_version, manifest_hash)` key. `dataset_validation_run` st
 
 Add a partial unique index on `dataset_version.status='active'` so direct SQL cannot create two active versions. Application and data-build code may activate a version only through `operations.activate_dataset(text)`.
 
-`operations.request_run` is also created in revision `0001` because request-scoped Calculations and Claims in revision `0004` must reference it. It stores `run_id`, `request_key`, `question_id`, the original `question`, `schema_version`, `dataset_version`, `cutoff_date`, `created_at`, `deadline_at`, `finished_at`, the three separate outcome axes, HTTP status, and stable failure code. A composite FK to a unique `(dataset_version, cutoff_date)` pair guarantees that the request cutoff matches the dataset. Its deadline CHECK is `created_at < deadline_at AND deadline_at <= created_at + interval '55 seconds'`. It has no field for raw Chain-of-Thought.
+`operations.request_run` is also created in revision `0001` because request-scoped Calculations and Claims in revision `0004` must reference it. It stores `run_id`, non-unique `request_key`, `question_id`, the original `question`, `schema_version`, `dataset_version`, `cutoff_date`, `created_at`, `deadline_at`, `finished_at`, the three separate outcome axes, HTTP status, and stable failure code. A composite FK to a unique `(dataset_version, cutoff_date)` pair guarantees that the request cutoff matches the dataset. Its deadline CHECK is `created_at < deadline_at AND deadline_at <= created_at + interval '55 seconds'`. It has no field for raw Chain-of-Thought.
+
+Only `operations.start_request_run(...)` may insert runtime requests. The `SECURITY DEFINER` function locks the active-dataset singleton, requires the supplied dataset to be both the pointer target and `status='active'`, compares the supplied cutoff, and inserts the attempt. A repeated identical `run_id` returns the existing row after exact field comparison; a conflicting reuse raises `REQUEST_RUN_CONFLICT`. Later active-dataset changes never alter an in-flight run's stored version.
 
 `operations.request_subtask` stores `(run_id, subtask_id)` and the subtask importance copied deterministically from the validated QueryPlan artifact. It is append-only. Request-scoped Claims can reference only one of these registered subtasks.
 
@@ -527,7 +574,11 @@ Dataset transitions are exactly `building -> validated|failed`, `validated -> ac
 
 Configure Alembic to import the shared metadata, compare server defaults and types, include only the seven named application schemas plus public `alembic_version`, and reject an empty or non-PostgreSQL URL. Its `include_name` filter explicitly excludes `cdb_admin`, so autogenerate cannot propose changes to NCP-managed objects. It first calls pre-migration preflight. Migration `0001` creates only `pg_trgm`, `unaccent`, and `pgcrypto`, then schemas, tables, constraints, immutable-event triggers, transition functions, and grants. It must never create, move, alter, or drop `vector`, `pg_stat_statements`, or `cdb_admin`.
 
-Use stable NOLOGIN database roles `financial_agent_migration`, `financial_agent_build`, and `financial_agent_runtime`, provisioned before migration and checked by preflight. Revoke default `PUBLIC` access. Migration owns DDL; build can write only building-version data and execute readiness/activation functions; runtime can read active data and append request-scoped records through approved tables/functions. Neither build nor runtime receives direct `UPDATE`/`DELETE` on readiness, active dataset, Evidence, Claim, audit, or artifact tables.
+Use the three stable names `financial_agent_migration`, `financial_agent_build`, and `financial_agent_runtime`, provisioned before migration and checked by preflight. When the Task 1 NCP probe permits it, they are NOLOGIN group roles mapped to separate login users; otherwise they are separate NCP console-created login users with direct least-privilege grants. Revoke default `PUBLIC` access. Migration owns DDL; build can write only building-version data and execute readiness/activation functions; runtime can read active data and append request-scoped records only through approved repositories/functions. Neither build nor runtime receives direct `INSERT` on `request_run`/`request_artifact`, or direct `UPDATE`/`DELETE` on readiness, active dataset, Evidence, Claim, audit, or artifact tables.
+
+Every `SECURITY DEFINER` routine is owned by `financial_agent_migration`, revokes `PUBLIC EXECUTE`, grants only the required build/runtime `EXECUTE`, schema-qualifies referenced objects, and sets a function-specific search path containing only `pg_catalog`, required migration-owned schemas, and `pg_temp` last. Dynamic SQL is forbidden unless the routine has an approved test proving identifiers and values are safely bound. Permission tests inspect `pg_proc.prosecdef`, `proconfig`, owner and ACLs, and prove build/runtime cannot replace a routine or create objects in any referenced schema.
+
+All application-data foreign keys in this and later migrations explicitly use `RESTRICT` or `NO ACTION`. No migration may add `ON DELETE CASCADE`.
 
 - [ ] **Step 4: Run the migration and focused tests**
 
@@ -635,6 +686,7 @@ git commit -m "feat: add versioned product catalog"
 - Create: `src/financial_agent/db/schema/observation.py`
 - Create: `src/financial_agent/db/schema/document.py`
 - Create: `src/financial_agent/db/schema/search.py`
+- Create: `src/financial_agent/db/schema/evidence.py`
 - Create: `tests/db/test_fact_document_search_schema.py`
 
 **Interfaces:**
@@ -643,6 +695,7 @@ git commit -m "feat: add versioned product catalog"
 - `observation.metric_definition`, `observation.observation_record`
 - `document.document_record`, `document.document_chunk`
 - `search.embedding_model`, `search.document_embedding`
+- `evidence.source_record`
 
 - [ ] **Step 1: Write failing relation and observation tests**
 
@@ -677,13 +730,13 @@ Do not infer a missing currency, date, period, or unit in the table layer.
 
 Use a deferred `observation.validate_metric_value_kind()` trigger to compare each row with the referenced metric-definition version. Apply `operations.reject_nonbuilding_dataset_mutation()` to relation and observation rows after creation, and an unconditional append-only trigger to the metric registry.
 
-- [ ] **Step 3: Write failing document and embedding tests**
+- [ ] **Step 3: Write failing Source, document, and embedding tests**
 
-Verify parent chunks stay within one document/version, sentence and page ranges are ordered, document checksum and chunk text hashes are valid SHA-256, embedding rows reference the exact chunk content hash, the stored vector dimension equals the registered model version, and registry updates/deletes are rejected.
+Verify Source rows are unique by `(dataset_version, source_id)`, require lowercase SHA-256 checksum/record hashes, and use same-version publisher FKs. Verify parent chunks stay within one document/version, document rows reference an existing same-version Source immediately in revision `0003`, sentence and page ranges are ordered, document checksum and chunk text hashes are valid SHA-256, embedding rows reference the exact chunk content hash, the stored vector dimension equals the registered model version, and registry updates/deletes are rejected.
 
 - [ ] **Step 4: Define document and search storage**
 
-`document_record` references a SourceRecord-compatible source ID only after migration `0004` adds that FK; migration `0003` initially stores the source ID and creates an index. This avoids a cyclic migration dependency without weakening the final head.
+Migration `0003` creates `evidence.source_record` before the document tables in the same `upgrade()` body. `source_record` includes all Stage 01 `SourceRecord` fields plus `dataset_version`; its publisher uses a composite FK to a same-version catalog institution/entity and a deferred institution-type check. `document_record` then creates its same-version composite Source FK immediately. Revision `0003` must never leave an indexed but unconstrained `source_id`, even transiently.
 
 `document_chunk` stores parent chunk, ordinal, page, section, sentence bounds, exact text, normalized search text, and hashes. Add a trigram GIN index to normalized search text; do not claim that PostgreSQL's built-in parser solves Korean full-text morphology.
 
@@ -714,8 +767,7 @@ git commit -m "feat: add fact and search storage"
 **Files:**
 
 - Create: `alembic/versions/0004_evidence_ledger.py`
-- Create: `src/financial_agent/db/schema/evidence.py`
-- Modify: `src/financial_agent/db/schema/document.py`
+- Modify: `src/financial_agent/db/schema/evidence.py`
 - Create: `tests/db/test_evidence_schema.py`
 
 **Interfaces:**
@@ -731,8 +783,6 @@ git commit -m "feat: add fact and search storage"
 
 Cover:
 
-- a SourceRecord is unique by dataset and source ID;
-- source checksums and record hashes require 64 lowercase hexadecimal characters;
 - an Evidence row cannot reference a Source from another dataset;
 - `valid_to >= valid_from` when both exist;
 - `query_scope` requires `scope_completeness`, and other Evidence kinds reject it;
@@ -757,13 +807,11 @@ The Python representation is the frozen discriminated `ScalarValue`/`ContractVal
 
 - [ ] **Step 3: Define Source, Evidence, and origin links**
 
-`source_record` includes all Stage 01 `SourceRecord` fields plus `dataset_version`. Its publisher uses a composite FK to a same-version catalog institution/entity, with a deferred type check that permits only `entity_type='institution'`. `evidence_record` includes all Stage 01 fields, explicit SourceLocator columns, tagged raw/normalized values, and the composite Source FK. Nullable `(dataset_version, subject_id)` references `catalog.entity`; `observation`, `relation`, and `document_span` Evidence requires a subject, while `query_scope`, `exclusion`, and `policy` may be explicitly subjectless.
+`evidence_record` includes all Stage 01 fields, explicit SourceLocator columns, tagged raw/normalized values, and the composite Source FK created in migration `0003`. Nullable `(dataset_version, subject_id)` references `catalog.entity`; `observation`, `relation`, and `document_span` Evidence requires a subject, while `query_scope`, `exclusion`, and `policy` may be explicitly subjectless.
 
 `evidence.validate_cutoff_status()` obtains the parent dataset cutoff and checks all four cutoff-bearing fields before the row becomes visible. If any is after the cutoff, status must be `after_cutoff`; if none is after, status cannot be `after_cutoff`. `unknown_vintage` and `inapplicable` remain explicit semantic states and cannot be converted to eligible merely because their nullable dates are absent.
 
-Add separate origin tables for observation, relation, and document chunk. Each origin table has a composite FK on both sides and a primary key on the Evidence identity. Repository validation allows at most one source-record origin for an Evidence row unless a later ADR permits combined origin kinds.
-
-Update `document.py` at this point so migration `0004` also adds the deferred document-to-source composite FK promised by migration `0003`.
+Add separate origin tables for observation, relation, and document chunk. Each origin table has a composite FK on both sides and a primary key on the Evidence identity. Deferred database constraint triggers enforce exactly one matching origin row for `observation`, `relation`, and `document_span` Evidence, forbid the other two origin tables, and forbid every origin row for `query_scope`, `exclusion`, and `policy`. The repository performs the same check before forcing deferred constraints, but the commit-time database rule is authoritative.
 
 - [ ] **Step 4: Write failing Calculation and Claim tests**
 
@@ -816,7 +864,7 @@ python -m pytest tests/db/test_evidence_schema.py -v
 - [ ] **Step 8: Commit the Evidence DDL**
 
 ```bash
-git add alembic/versions/0004_evidence_ledger.py src/financial_agent/db/schema/document.py src/financial_agent/db/schema/evidence.py tests/db/test_evidence_schema.py
+git add alembic/versions/0004_evidence_ledger.py src/financial_agent/db/schema/evidence.py tests/db/test_evidence_schema.py
 git diff --cached --check
 git diff --cached
 git commit -m "feat: add normalized evidence ledger"
@@ -829,6 +877,9 @@ git commit -m "feat: add normalized evidence ledger"
 - Create: `src/financial_agent/db/repositories/__init__.py`
 - Create: `src/financial_agent/db/repositories/evidence.py`
 - Create: `tests/db/test_evidence_repository.py`
+- Create: `tests/db/test_concurrent_idempotency.py`
+- Create: `tests/db/test_tagged_value_parity.py`
+- Create: `tests/fixtures/db/tagged_value_corpus.py`
 
 **Interfaces:**
 
@@ -885,7 +936,7 @@ class EvidenceLedgerRepository:
 
 - [ ] **Step 1: Write failing tagged-value database parity tests**
 
-Persist and reload the exact Stage 01 tagged JSON shapes for:
+Create one shared valid/invalid corpus consumed by the Stage 01 compatibility test and direct PostgreSQL CHECK test. Persist and reload the exact Stage 01 tagged JSON shapes for:
 
 - `Decimal("0")`, `Decimal("0.000100000000")`, and a large AUM value;
 - `date(2026, 7, 11)` and a UTC datetime;
@@ -894,11 +945,13 @@ Persist and reload the exact Stage 01 tagged JSON shapes for:
 - tagged null and homogeneous/mixed TupleValue;
 - `(date(2026, 7, 11), "2026-07-11", Decimal("1.0"), "1.0")`, whose four encoded items must have `date`, `string`, `decimal`, and `string` tags respectively.
 
+The corpus fixes the canonical outputs `Decimal("1.00") -> {"type":"decimal","value":"1"}`, exact UTC `2026-07-11T00:00:00Z`, and microsecond UTC `2026-07-11T00:00:00.123456Z`. It includes every scalar tag plus homogeneous, mixed, and empty tuples. Invalid cases include noncanonical/overflowing decimals, impossible and leap-date errors, naive/non-UTC/noncanonical datetimes, extra/missing keys, wrong tag/value JSON types, nested tuples, mappings, floats, and untagged values. Every valid Stage 01 JSON-mode output must pass the DB CHECK, and every invalid corpus member must fail it.
+
 The Stage 01 contract tests already reject float input, naive datetime, non-UTC datetime, nested tuple, mapping, and unsupported native values. At the database boundary, insert an unknown type tag, nested tuple, extra tagged-object key, noncanonical Decimal, and every tag/value mismatch with direct SQL and require the named CHECK to fail.
 
 - [ ] **Step 2: Bind Stage 01 tagged contracts to JSONB without a second codec**
 
-Repository writes use the validated Stage 01 tagged model's JSON-mode dump. Repository reads rebuild the complete parent Stage 01 contract through its raw-JSON ingress before returning it. Native conversion, when a caller needs it, uses Stage 01 `decode_contract_value`; no `db/codec.py`, persistence-only TaggedValue, `mixed_tuple` shortcut, or context-based type inference is allowed.
+Repository writes call the frozen Stage 01 model's `model_dump(mode="json")` and Stage 01 `encode_contract_value` directly. Repository reads call the owning Stage 01 model's `model_validate_json` and, when a native scalar is explicitly needed, Stage 01 `decode_contract_value`. No `db/codec.py`, forwarding codec abstraction, persistence-only TaggedValue, `mixed_tuple` shortcut, or context-based type inference is allowed.
 
 - [ ] **Step 3: Write failing repository round-trip tests**
 
@@ -910,7 +963,7 @@ Using only synthetic fixtures, append and reload:
 - an AtomicClaim with ordered qualifiers;
 - direct and Calculation ClaimSupport rows.
 
-Compare reconstructed Pydantic objects for exact equality. Verify an attempted second insert with the same ID but different hash fails; identical retries may return the existing row only after byte-equivalent canonical comparison.
+Compare reconstructed Pydantic objects for exact equality. Verify an attempted second insert with the same ID but different hash fails; identical retries may return the existing row only after byte-equivalent canonical comparison. For `SourceRecord` and `EvidenceRecord`, use two independent committed connections: same ID plus same canonical payload converges on one row and the same persisted identity, while same ID plus different payload produces one success and one stable conflict without a table-wide or global advisory lock.
 
 - [ ] **Step 4: Implement transactional append and load methods**
 
@@ -925,13 +978,13 @@ python -m pytest tests/db/test_evidence_repository.py -v
 - [ ] **Step 6: Commit persistence adapters**
 
 ```bash
-git add src/financial_agent/db/repositories tests/db/test_evidence_repository.py
+git add src/financial_agent/db/repositories tests/db/test_evidence_repository.py tests/db/test_concurrent_idempotency.py tests/db/test_tagged_value_parity.py tests/fixtures/db/tagged_value_corpus.py
 git diff --cached --check
 git diff --cached
 git commit -m "feat: persist evidence contracts losslessly"
 ```
 
-### Task 7: Persist immutable runtime artifacts and idempotent released answers
+### Task 7: Persist immutable runtime artifacts without granting release authority
 
 **Files:**
 
@@ -956,20 +1009,26 @@ ArtifactType = Literal[
     "released_answer",
 ]
 
+ARTIFACT_MODELS: Mapping[ArtifactType, type[RuntimeArtifact]] = {
+    "request_context": RequestContext,
+    "query_plan": QueryPlan,
+    "execution_graph": ExecutionGraph,
+    "tool_result": ToolResult,
+    "evidence_bundle": EvidenceBundle,
+    "verification_report": VerificationReport,
+    "answer_plan": AnswerPlan,
+    "released_answer": ReleasedAnswer,
+}
+
 
 class RequestArtifactRepository:
-    async def start_run(self, context: RequestContext) -> None: ...
-    async def append(self, artifact_type: ArtifactType, artifact: RuntimeArtifact) -> str: ...
-    async def get(self, run_id: str, artifact_id: str) -> RuntimeArtifact: ...
-    async def cache_released(
-        self,
-        run_id: str,
-        verification_report_id: str,
-        released: ReleasedAnswer,
-    ) -> None: ...
-    async def get_cached_release(
-        self, request_key: str, dataset_version: str
-    ) -> ReleasedAnswer | None: ...
+    async def start_run(self, context: RequestContext) -> str: ...
+    async def append(
+        self, artifact_type: ArtifactType, artifact: RuntimeArtifact
+    ) -> UUID: ...
+    async def get(
+        self, run_id: str, artifact_record_id: UUID
+    ) -> RuntimeArtifact: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -1009,50 +1068,54 @@ class RequestRunRepository:
 
 - [ ] **Step 1: Write failing request-run and artifact repository tests**
 
-The request-run table already exists from revision `0001`; these tests exercise it through the new repository boundary. Verify:
+The request-run table already exists from revision `0001`; these tests exercise it through `operations.start_request_run(...)` and the repository boundary. Verify:
 
 - deadline equality at 55 seconds is accepted;
 - `2026-08-17T00:00:56Z` for a `2026-08-17T00:00:00Z` start is rejected;
 - a deadline before or equal to creation is rejected for its own ordering rule;
 - dataset version and cutoff must match the referenced dataset;
+- supplied dataset must be the locked current active dataset at start, while a later active-version switch does not change the run;
+- identical concurrent starts with the same `run_id` return one row; a conflicting reuse raises `REQUEST_RUN_CONFLICT`; distinct run IDs for one request key are allowed;
 - `ExecutionOutcome`, `VerificationStatus`, and `AnswerDisposition` remain separate nullable columns;
 - a failed execution cannot store an answer disposition;
 - `finish_run` permits exactly one open-to-terminal transition and rejects a second conflicting terminal state;
-- a semantic result requires HTTP 200, `verification_status=pass`, a final VerificationReport artifact, and a non-null matching disposition;
+- a semantic processing result requires HTTP 200, `verification_status=pass`, a final VerificationReport artifact, and a non-null matching disposition, but does not authorize release;
 - a 5xx terminal run requires `execution_outcome=failed`, null verification/disposition/final report, and a stable terminal failure code;
 - multiple append-only FailureEvents retain every retry rather than overwriting one failure code;
 - no column exists for raw chain-of-thought.
 
 - [ ] **Step 2: Define runtime artifact tables**
 
-`request_artifact` stores indexed metadata plus the exact contract JSONB and canonical hash. `artifact_type` permits only the Stage 01 top-level artifacts. It also has nullable `model_id` and `prompt_version`; repository rules require them for model-produced QueryPlan and AnswerPlan artifacts and reject them for deterministic ToolResult/Verification artifacts.
+`request_artifact` has server-generated `artifact_record_id UUID PRIMARY KEY`, nullable `contract_object_id`, indexed metadata, `canonical_payload TEXT`, a database-derived JSONB projection, and a database-derived SHA-256. A `BEFORE INSERT` trigger ignores caller-supplied projection/hash values, parses `canonical_payload::jsonb`, and computes `encode(digest(canonical_payload, 'sha256'), 'hex')`; the UTF-8 preflight makes this the same byte encoding used by Stage 01. `artifact_type` permits exactly the eight `ARTIFACT_MODELS` keys. Unique constraints cover `(run_id, artifact_type, contract_object_id)` when the contract ID exists and `(run_id, artifact_type, payload_hash)` for canonical retry identity. All artifact/reference FKs target `artifact_record_id`, never an assumed contract ID.
 
-The three reference tables preserve explicit Evidence, Calculation, and Claim FKs with `reference_role` and stable ordinals. They are populated from the validated artifact's ID collections, not caller-supplied unrelated lists. Persisting a QueryPlan also populates immutable `request_subtask` rows before any Claim can be inserted. VerificationReport Claim references use `releaseable` or `rejected`; ReleasedAnswer ClaimBinding references use `bound`.
+The explicit contract-ID extraction map uses `graph_id`, `task_id`, `bundle_id`, and `verification_report_id` for their matching artifact types; types without an explicit top-level object ID store null rather than repurposing a content hash as a public contract ID. Nullable `model_id` and `prompt_version` are required for model-produced QueryPlan and AnswerPlan artifacts and rejected for deterministic ToolResult/Verification artifacts.
 
-Migration `0005` adds nullable `request_run.final_verification_artifact_id` with a same-run Artifact FK and creates `release_cache` with FKs to both the final VerificationReport artifact and ReleasedAnswer artifact. It also creates security-definer functions `operations.finish_request_run(...)` and `operations.cache_verified_release(...)` with fixed search paths; runtime receives EXECUTE but no direct update on terminal run state and no direct insert/update/delete on the cache.
+The repository validates with `ARTIFACT_MODELS[artifact_type].model_validate_json(...)` before opening the insert transaction, then calls the Stage 01 artifact's `model_dump(mode="json")` and `canonical_json_bytes()` directly. PostgreSQL derives JSONB and hash from the canonical text. Reads pass `canonical_payload` to the selected model's `model_validate_json`; they never reconstruct from JSONB text. Identical retries compare canonical text as well as hash, so a hash match alone is insufficient.
+
+The three reference tables preserve explicit Evidence, Calculation, and Claim FKs with `artifact_record_id`, `reference_role`, and stable ordinals. They are populated from the validated artifact's ID collections, not caller-supplied unrelated lists. Persisting a QueryPlan also populates immutable `request_subtask` rows before any Claim can be inserted. VerificationReport Claim references use `releaseable` or `rejected`; ReleasedAnswer ClaimBinding references use `bound`.
+
+Migration `0005` adds nullable `request_run.final_verification_artifact_id UUID` with a same-run Artifact FK and creates `operations.append_request_artifact(...)` plus `operations.finish_request_run(...)` as hardened `SECURITY DEFINER` functions. Runtime receives only `EXECUTE`; it has no direct INSERT/UPDATE/DELETE on artifact, reference, subtask, or terminal run state tables. This revision creates no release table, release status, release timestamp, cache function, or cache lookup API.
 
 - [ ] **Step 3: Write failing immutability and idempotency tests**
 
 Test that:
 
-- indexed `schema_version`, `request_key`, `run_id`, `dataset_version`, `cutoff_date`, `producer`, and `created_at` must equal payload metadata;
-- unknown artifact types and extra JSON fields are rejected through the Stage 01 schema registry;
+- indexed `schema_version`, `request_key`, `run_id`, `dataset_version`, `cutoff_date`, `producer`, and `created_at` must equal database-derived JSONB metadata;
+- all eight DB artifact types exactly equal the `ARTIFACT_MODELS` keys; unknown types, cross-type payloads, and extra JSON fields are rejected by the selected Stage 01 Pydantic model;
+- changing canonical text changes the database-generated hash, and retrieval returns the original canonical text rather than PostgreSQL JSONB serialization;
 - update/delete on an artifact or reference fails;
-- the same canonical artifact retry returns the existing artifact ID;
-- the same artifact ID with different bytes fails;
-- cache insertion fails for a missing, failed, non-final, different-run, different-request, or different-dataset VerificationReport;
-- cache insertion fails when run/report/released dispositions differ;
-- cache insertion fails when any ReleasedAnswer bound Claim is absent from `releaseable_claim_ids` or is marked rejected;
-- cache insertion fails before `finish_run`, for any 5xx run, and for a terminal run without `verification_status=pass`;
-- `release_cache` accepts the first fully verified ReleasedAnswer and never overwrites it;
-- repeated organizer retries read the same response hash for the same request key and dataset version;
-- a 5xx execution result cannot be stored as a released answer.
+- the same canonical artifact retry returns the existing `artifact_record_id`;
+- two independent connections inserting the same contract ID and canonical payload converge on one row and one UUID;
+- two independent connections inserting the same contract ID with different canonical payloads produce one success and one stable `ARTIFACT_CONFLICT`;
+- no `release_cache`, `cache_verified_release`, `get_cached_release`, release ACL, or release-authorization column exists;
+- storing `VerificationReport=pass`, AnswerPlan, or ReleasedAnswer never creates release authority;
+- a 5xx execution result cannot be represented as a successful semantic processing result.
 
 - [ ] **Step 4: Implement artifact schema and repository**
 
-The repository validates payloads through the Stage 01 model registry before opening the insert transaction. It derives canonical bytes and hash itself. `artifact_id` is the contract's own top-level ID when available and otherwise a deterministic type-prefixed hash ID.
+`ARTIFACT_MODELS` is a Stage 02 routing map only. It selects the frozen Stage 01 Pydantic class and contains no new validation logic, tagged-value codec, Claim predicate rules, template rules, or release policy. The future Claim Gate Registry remains a separate mandatory component.
 
-`finish_run` calls `operations.finish_request_run(...)`, which locks the run and final report artifact, validates the one-way state transition, and records the terminal axes. `cache_released` inserts the ReleasedAnswer artifact and calls `operations.cache_verified_release(...)` in one transaction. That function locks the run, final report, and existing cache key; checks artifact types and identical request/run/dataset metadata; requires report `pass`; compares dispositions; compares `bound` versus `releaseable`/`rejected` Claim-reference sets; rejects all 5xx runs; and inserts with `(request_key, dataset_version)` uniqueness.
+`finish_run` calls `operations.finish_request_run(...)`, which locks the run and final report artifact, validates the one-way processing-state transition, and records the three terminal axes. These fields describe execution and deterministic verification only. They do not mean the AnswerPlan passed the future Claim Gate and do not authorize external publication. A later migration must add an explicit Claim-Gate decision and verified cache; it may not retroactively trust existing artifacts.
 
 Do not log artifact payloads at error level. Redact the database URL and preserve only stable reason codes in raised persistence errors.
 
@@ -1074,7 +1137,21 @@ git diff --cached
 git commit -m "feat: persist immutable request artifacts"
 ```
 
-### Task 8: Prove migration reversibility and NCP Cloud DB compatibility
+## 8. Stage 02A Completion Gate
+
+Do not begin Stage 02B until fresh local output proves:
+
+- all Stage 01 contract tests and schema export pass unchanged;
+- the sanitized non-production NCP capability probe selects one permission layout before permission DDL;
+- `requirements/contracts.lock` is unchanged and all Stage 02 verification installs are constrained by exact `requirements/storage.lock` pins;
+- migrations `0001`–`0005` apply to an empty PostgreSQL 15 database;
+- all ordinary repository/constraint tests pass under rollback isolation and all deferred/concurrency tests pass with real commits in disposable databases;
+- Source, Evidence, and artifact two-connection idempotency tests pass without global write serialization;
+- the tagged-value corpus has full Stage 01/DB parity;
+- the active-dataset start function, no-cascade policy, protected routines, canonical artifact hash, and absence of release-cache objects are proven;
+- no organizer data, PDF, secret, database file, generated embedding, or runtime artifact is staged.
+
+### Task 8: Prove migration reversibility and NCP Cloud DB compatibility (Stage 02B)
 
 **Files:**
 
@@ -1109,6 +1186,8 @@ On a disposable empty database:
 6. verify all seven application schemas and owned objects are removed while `cdb_admin`, `vector`, `pg_stat_statements`, and bootstrap roles remain untouched;
 7. upgrade to head again and rerun the foundation tests.
 
+The cycle uses the commit-capable disposable-database fixture. It never runs downgrade against a shared or production database and never relies on transaction rollback to simulate schema cleanup.
+
 - [ ] **Step 2: Verify function, view, trigger, CHECK, and ACL definitions outside Alembic autogenerate**
 
 Alembic autogenerate does not fully compare function, view, trigger, or CHECK expression bodies. `export_database_objects.py` must query and normalize:
@@ -1119,7 +1198,7 @@ Alembic autogenerate does not fully compare function, view, trigger, or CHECK ex
 - named CHECK expressions from `pg_constraint`;
 - grants from `information_schema.role_table_grants`, routine grants, and schema ACLs.
 
-It writes deterministic sorted JSON to `schemas/postgresql/v1/database-objects.json`. Normalize whitespace and stable NOLOGIN group roles, exclude environment-specific login/owner names and all `cdb_admin` objects, and retain executable SQL meaning. `--check` exports to memory/a temporary file and exits nonzero on a missing, extra, or byte-different definition. Tests must prove that changing only a function body, view predicate, trigger timing, cutoff CHECK, or runtime grant is detected even when `alembic check` still passes.
+It writes deterministic sorted JSON to `schemas/postgresql/v1/database-objects.json`. Normalize whitespace and the three stable logical role names, exclude environment-specific member-login/owner identities and all `cdb_admin` objects, and retain executable SQL meaning. `--check` exports to memory/a temporary file and exits nonzero on a missing, extra, or byte-different definition. Tests must prove that changing only a function body, function `search_path`, owner/EXECUTE ACL, view predicate, trigger timing, cutoff CHECK, or runtime grant is detected even when `alembic check` still passes.
 
 After all migration-managed objects are defined, generate and immediately verify the reviewed baseline:
 
@@ -1156,13 +1235,13 @@ Generate synthetic rows only: at least 100,000 catalog aliases, 250,000 relation
 - ETF-to-constituent relation lookup;
 - latest metric by entity/metric/date;
 - Evidence-to-Claim lineage traversal;
-- `(request_key, dataset_version)` release-cache lookup.
+- `(run_id, artifact_type, contract_object_id)` artifact lookup and `(run_id, artifact_type, payload_hash)` identical-retry lookup.
 
-For selective predicates, tests fail on a sequential scan of the large relation, observation, alias, Evidence, or cache table and require the named planned index. Record rows examined, planning time, and execution time. Tests marked `performance` skip unless `RUN_DB_SCALE_TESTS=1`; the Stage 02 completion run sets it explicitly. The gated NCP run executes each core query 30 times after five warmups and requires p95 below the approved 500 ms core-SQL threshold. Local CI asserts plan shape rather than hardware-specific latency.
+For selective predicates, tests fail on a sequential scan of the large relation, observation, alias, Evidence, or artifact table and require the named planned index. Record rows examined, planning time, and execution time. Tests marked `performance` skip unless `RUN_DB_SCALE_TESTS=1`; the Stage 02 completion run sets it explicitly. The gated NCP run executes each core query 30 times after five warmups and requires p95 below the approved 500 ms core-SQL threshold. It also runs four representative reads concurrently for 30 rounds using `db_read_concurrency_limit=4`, `pool_size=5`, and `max_overflow=0`; no pool timeout is allowed, and individual query plus round latency is reported. Local CI asserts plan shape rather than hardware-specific latency. NCP measurements may change these three configuration defaults only through a reviewed benchmark record; they do not weaken the 55-second request hard deadline or evidence checks.
 
 - [ ] **Step 5: Implement the local Linux/amd64 database-check image**
 
-`database-check.Dockerfile` installs the package and database test dependencies, copies no source data, and runs migrations plus `tests/db`. Add a Compose `db-check` service that connects to the PostgreSQL service over the Compose network.
+`database-check.Dockerfile` installs the package and database test dependencies under `PIP_CONSTRAINT=/app/requirements/storage.lock`, copies no source data, and runs migrations plus `tests/db`. Add a Compose `db-check` service that connects to the PostgreSQL service over the Compose network. Both database image and check image build/run paths target Linux/amd64; the PostgreSQL service uses the reviewed exact tag plus digest from Task 1.
 
 ```bash
 docker compose -f docker/postgres.compose.yml build db-check
@@ -1179,10 +1258,12 @@ Expected: migrations and all non-NCP database tests pass on Linux/amd64.
 - Cloud DB PostgreSQL 15, private subnet, 4 vCPU/16 GB, SSD, final-evaluation HA and daily 7–14 day backups;
 - install pgvector and `pg_stat_statements` from the NCP console before migrations; pgvector's first installation restarts the DB service, so schedule it before evaluation;
 - both console-managed extensions live in `cdb_admin`, and every connection uses `"$user", public, cdb_admin` or an explicitly schema-qualified object;
-- provision the three stable group roles, then map separate migration, build, and runtime login credentials from NCP-managed secrets/environment variables;
+- record the sanitized Task 1 permission-capability result; use either the three stable NOLOGIN group roles with separate login members or three NCP console-created stable login users with direct grants, never a guessed hybrid;
 - Alembic creates only `pg_trgm`, `pgcrypto`, and `unaccent`; it never manages the two `cdb_admin` extensions;
 - run pre-migration preflight, Alembic, post-migration preflight, permission tests, and the database-object manifest check in that order;
+- verify every `SECURITY DEFINER` owner, fixed function search path, explicit EXECUTE ACL, and revoked PUBLIC access;
 - PostgreSQL port 5432 is allowed only from API and data-build servers;
+- total application connections obey `worker_processes * pool_size + migration_admin_reserve <= floor(max_connections * 0.8)`; with the initial pool size of five, the runbook must compute and record the permitted worker count without exposing an endpoint or account identifier;
 - the database is never made public for the organizer; only the `/answer` API is public;
 - how to take a logical backup plus manifest after final dataset activation;
 - no endpoint, account ID, password, or private address is committed.
@@ -1233,7 +1314,7 @@ git status --short
 git commit -m "test: verify postgres storage on ncp baseline"
 ```
 
-## 8. Stage 02 Completion Gate
+## 9. Stage 02 Completion Gate
 
 Stage 02 is complete only when fresh output proves all of the following:
 
@@ -1246,6 +1327,7 @@ Stage 02 is complete only when fresh output proves all of the following:
 - All seven logical schemas, required extensions, constraints, views, triggers, and indexes exist.
 - The active dataset cannot be switched until four readiness rows reference successful validation runs and matching dataset/component manifests; concurrent first activations leave one consistent winner.
 - Build/runtime roles cannot bypass readiness, activation, append-only, or registry restrictions with direct DML.
+- NCP's observed permission capabilities select one documented least-privilege layout; every protected function has a fixed safe search path, explicit owner/ACL, and no PUBLIC execution.
 - Catalog, relations, observations, documents, Sources, Evidence, and entity-bound Claims cannot cross dataset versions through a valid FK.
 - Zero requires numeric zero; missing, placeholder, unavailable, and inapplicable values carry no typed value and remain distinguishable.
 - Every future cutoff-bearing Evidence date conflicts with `eligible`; retained after-cutoff Evidence is absent from the claim-eligible view.
@@ -1253,16 +1335,97 @@ Stage 02 is complete only when fresh output proves all of the following:
 - Ranking and aggregation inputs, populations, filters, exclusions, dependencies, and tie-breaks are normalized and reproducible; two- and three-node Calculation cycles fail at constraint/commit time.
 - Claim support enforces exactly one Evidence or Calculation target.
 - Evidence and request artifacts round-trip to the exact Stage 01 Pydantic contracts, including Decimal/date/datetime types.
+- Runtime artifact rows use a persistence UUID distinct from nullable contract IDs; canonical text round-trips byte-equivalently while PostgreSQL derives matching JSONB and SHA-256.
 - Append-only data rejects updates and deletes; a conflicting duplicate ID never silently overwrites prior content.
+- Application FKs never cascade deletes, and deleting a parent cannot erase validated lineage or request audit history.
 - Metric and embedding registries preserve immutable composite versions referenced by historical rows.
 - FailureEvents retain every retry attempt and budget observation without raw Chain-of-Thought or stack/data payloads.
-- Released-answer caching is idempotent for `(request_key, dataset_version)` and succeeds only for the same run's final passing VerificationReport, matching disposition, and releaseable Claim bindings; it never caches 5xx failures.
-- Representative large-table queries use the planned indexes; the gated NCP run keeps core SQL p95 below 500 ms.
+- Request keys group attempts without uniqueness; same-run identical starts converge, conflicting starts fail, and distinct run IDs remain independent.
+- No Claim-Gate approval or release-cache object exists; stored pass/AnswerPlan/ReleasedAnswer artifacts have no release authority.
+- Representative large-table queries use the planned indexes; the gated NCP run keeps core SQL p95 below 500 ms and completes the approved four-read concurrency test without pool timeout.
 - The database suite passes in the NCP-compatible Linux/amd64 Compose environment.
 - The NCP preflight is runnable with an injected non-production URL and never exposes credentials.
 - No raw organizer/external data, PDFs, secrets, database files, embeddings, or generated runtime artifacts are staged.
 
-## 9. Stage 03 Handoff
+## 10. Verification Map
+
+```text
+Operator bootstrap
+  -> NCP capability probe
+       -> group-role layout OR direct-user layout
+  -> extension/UTF-8/UTC preflight
+  -> Alembic 0001..0005
+  -> object/ACL manifest
+  -> migration downgrade/upgrade (disposable DB only)
+
+Dataset build
+  -> building rows
+  -> validation run + four readiness manifests
+  -> atomic active pointer
+  -> start_request_run locks/captures active dataset
+       -> same run + same input: converge
+       -> same run + different input: REQUEST_RUN_CONFLICT
+       -> different run + same request: independent attempt
+
+Financial lineage
+  Source -> Observation/Relation/Document -> Evidence origin
+       -> origin kinds requiring exactly one matching row
+       -> policy/scope/exclusion kinds requiring zero origin rows
+  Evidence -> Calculation DAG -> AtomicClaim -> ClaimSupport
+       -> cutoff/type/version/XOR/deferred-cycle failures
+
+Runtime artifacts
+  Stage 01 Pydantic validation
+  -> canonical UTF-8 JSON text
+  -> protected DB append
+       -> derived JSONB + SHA-256
+       -> normalized Evidence/Calculation/Claim references
+       -> byte-equivalent retry convergence
+       -> conflicting contract ID rejection
+  -> processing finish
+       -> no Claim-Gate approval and no release cache in Stage 02
+
+Performance/portability
+  100k aliases + 250k relations + 250k observations
+  -> index-plan assertions locally
+  -> five warmups + 30 NCP measurements
+  -> four concurrent reads, pool_size=5, max_overflow=0
+  -> core SQL p95 <= 500 ms and zero pool timeouts
+  -> Linux/amd64 locked container gate
+```
+
+Minimum acceptance coverage:
+
+| Area | Minimum proof set | Isolation |
+| --- | ---: | --- |
+| Stage 01 regression | 224 existing contract tests + deterministic 14-schema export | host and Linux/amd64 image |
+| Tagged values | every scalar tag, empty/homogeneous/mixed tuple, and at least 12 invalid wire-shape families | rollback DB plus direct SQL |
+| Request start | inactive/stale dataset, cutoff/deadline, identical conflict pair, divergent conflict pair, and independent retry pair | two committed connections |
+| Dataset activation | incomplete readiness, bad manifests, one activation, replacement activation, and concurrent first activation | disposable committed DB |
+| Evidence origins | three required-origin kinds × matching/wrong/missing cases, plus three zero-origin kinds | deferred constraint forced and commit |
+| Calculation/Claim | empty inputs, 2-node/3-node cycles, rank/aggregate completeness, object/value XOR, support XOR, cross-version scope | rollback plus committed deferred tests |
+| Concurrent idempotency | Source, Evidence, and request artifact: same/same and same/different pairs | two committed connections per case |
+| Permissions | migration/build/runtime allow/deny matrix, protected-routine owner/search-path/ACL checks, no parent-delete bypass | role-switched disposable DB and authorized NCP DB |
+| Migration drift | base→head→base→head, Alembic metadata check, function/view/trigger/CHECK/ACL manifest mutations | disposable DB |
+| Performance | five representative lookup families plus four-read pool test | local plan shape and gated NCP latency |
+
+## 11. What Already Exists
+
+- Frozen Stage 01 Pydantic contracts, canonical JSON/hash helpers, tagged-value encoders/decoders, JSON Schema exporter, and 224 passing contract tests.
+- `requirements/contracts.lock`, `.dockerignore`, and `docker/contracts.Dockerfile` verified on NCP Ubuntu/Linux-amd64 at the frozen Stage 01 commit.
+- Approved seven-schema physical direction, three-store/five-layer architecture, 2026-07-11 cutoff, failure/disposition policy, and NCP PostgreSQL target sizing.
+- No PostgreSQL application schema, Alembic revision, storage repository, Stage 02 lock, DB container, or NCP database migration has been implemented yet.
+
+## 12. Explicitly Not in Scope
+
+- Organizer workbook or approved external-data ingestion, correction, or publication.
+- Fuseki RDF/SHACL projection, SPARQL execution, embedding-model selection, vector generation, or ANN indexes.
+- Financial filtering/ranking/normalization/similarity algorithms and expected-question evaluation.
+- Intent Resolver, Orchestrator, Capability Executors, Verifier implementation, Answer Composer, Claim Gate Registry, Renderer, verified response cache, FastAPI, and public NCP endpoint.
+- Production NCP provisioning, credentials, firewall changes, Load Balancer, monitoring, backup execution, or production downgrade.
+- Data-retention deletion jobs, partitioning, Redis, OpenSearch, or a second SQL database.
+
+## 13. Stage 03 Handoff
 
 Stage 03 may begin only after Stage 02 is implemented, verified, reviewed, and explicitly approved. It will:
 
@@ -1274,3 +1437,15 @@ Stage 03 may begin only after Stage 02 is implemented, verified, reviewed, and e
 6. activate the dataset only after PostgreSQL validation and the later Graph/Vector projections are ready.
 
 Stage 03 must use the repository and migrations from this plan. It must not bypass them with ad hoc tables, mutate an active dataset, or commit the organizer's raw files.
+
+## GSTACK REVIEW REPORT
+
+**Review date:** 2026-08-18
+
+**Result:** No unresolved design blocker remains. Implementation has not started and still requires the explicit Stage 02 scope/implementation approval gate in `HARNESS.md`.
+
+The final review approved nineteen choices: full scope split into Stage 02A/02B; observed NCP permission probing; persistence UUIDs distinct from contract IDs; exact Evidence-origin cardinality; Source creation before document FKs in migration `0003`; Stage 01 Pydantic validation authority; active-dataset capture at request start; a separate storage lock and exact container digest; no DB codec; two-tier DB test isolation; shared tagged-value parity corpus; real two-connection idempotency; four-read bounded concurrency; hardened `SECURITY DEFINER` routines; request/run retry separation; canonical text with DB-derived JSONB/hash; a persistence-only artifact model map; no cascading deletes; and processing completion separated from future release authorization.
+
+No project task-ledger file was found that requires migration into this plan. The only observed-state gates are deliberate: Task 1 must record the real non-production NCP role capability before Task 2 permission DDL, and must resolve the exact Linux/amd64 PostgreSQL image digest before committing Compose. Neither gate permits an implementation guess or a production mutation.
+
+A fresh-eyes self-review covered scope, type names, migration ordering, failure modes, and placeholder scans. A delegated outside-voice agent was not invoked because this session's active collaboration policy prohibits spawning agents without an explicit user request.

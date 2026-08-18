@@ -6,7 +6,7 @@
 
 **Scope:** Naver Cloud Platform의 저장소 배치, 서버 사양, 네트워크, 백업, 모니터링 기준
 
-**Related:** [공식 평가 API 규격](../../reference/official-evaluation-api.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [Stage 01 Runtime Contracts 구현 계획](../tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md), [Stage 02 PostgreSQL Storage 구현 계획](../tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
+**Related:** [공식 평가 API 규격](../../reference/official-evaluation-api.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0009](../decisions/ADR-0009-ncp-postgresql-storage-encryption-boundary.md), [Stage 01 Runtime Contracts 구현 계획](../tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md), [Stage 02 PostgreSQL Storage 구현 계획](../tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
 
 이 문서는 금융상품 Agent를 Naver Cloud Platform에 배포할 때 사용할 인프라 기준을 기록한다. 금융 데이터는 계속 **2026-07-11**을 컷오프로 사용한다. 인프라 제품과 소프트웨어 버전은 실제 배포 시점에 NCP가 지원하는 안정 버전을 사용하되, 금융 데이터 기준일을 바꾸지 않는다.
 
@@ -132,7 +132,8 @@ API 서버는 금융 원본과 영속 인덱스를 로컬 디스크에 저장하
 | 제품 | Cloud DB for PostgreSQL |
 | 버전 | PostgreSQL 15의 최신 NCP 지원 마이너 버전 |
 | CPU·메모리 | 4 vCPU, 16 GB RAM |
-| 데이터 스토리지 | SSD, 암호화 사용 |
+| 데이터 스토리지 | NCP 관리형 CB2, 최초 10 GB 후 자동 증가 |
+| 선택형 스토리지 암호화 | Rocky Linux 8.10 기반 신규 Cloud DB에서는 미지원; ADR-0009의 보상 통제 적용 |
 | 고가용성 | 개발은 선택, 최종 평가는 사용 |
 | 네트워크 | Private Subnet, 공인 접근 차단 |
 | 백업 | 매일, 7~14일 보존 |
@@ -155,6 +156,12 @@ API 서버는 금융 원본과 영속 인덱스를 로컬 디스크에 저장하
 | 애플리케이션 마이그레이션 관리 | `pg_trgm`, `unaccent`, `pgcrypto` | 사전 점검 통과 후 Alembic이 직접 설치 |
 
 pgvector 최초 설치는 DB 서비스 재시작을 동반하므로 평가 운영 전에 완료한다. Alembic은 `vector`, `pg_stat_statements`, `cdb_admin`을 생성·이동·삭제하지 않는다. 모든 마이그레이션·빌드·런타임 연결은 `search_path='"$user", public, cdb_admin'`을 사용하거나 `cdb_admin.vector`처럼 명시적으로 스키마를 적는다.
+
+#### NCP 저장소 암호화 제약
+
+2026-08-18 비운영 환경에서 확인한 PostgreSQL 15.17/Rocky Linux 8.10 Cloud DB는 데이터 스토리지 암호화 선택을 제공하지 않았다. [NCP DB Server 공식 문서](https://guide.ncloud-docs.com/docs/clouddbforpostgresql-postgresqlserver)도 2024-10-17 이후 Rocky Linux 8.10 기반 Cloud DB for PostgreSQL에서 해당 기능을 제공하지 않는다고 명시한다.
+
+따라서 PostgreSQL을 암호화됐다고 표시하지 않는다. 대신 Private Subnet, Public Domain 미사용, 서버 ACG 기반 5432 제한, 최소 권한 DB 계정, Git·DB Artifact의 Credential 금지, 자동 백업을 필수 통제로 사용한다. 이 통제는 암호화와 동일하다는 주장이 아니라 현재 관리형 서비스 제약 아래의 보상 통제다. 저장 데이터 분류가 바뀌어 암호화가 필수가 되면 ADR-0009에 따라 별도 저장 플랫폼을 승인한다.
 
 실행 순서는 **NCP 콘솔 설치 → migration/build/runtime 역할 준비 → preflight → Alembic → postflight**로 고정한다. 로컬 PostgreSQL도 `cdb_admin` 스키마에 두 콘솔 관리 확장을 설치해 같은 배치를 시험한다.
 
@@ -418,6 +425,7 @@ OpenSearch 도입은 자동 단계가 아니다. 같은 골드 질문으로 pgve
 - [ ] `pg_trgm`, `unaccent`, `pgcrypto`가 Alembic 관리 위치에 설치돼 있다.
 - [ ] migration/build/runtime 역할과 `search_path='"$user", public, cdb_admin'`이 사전·사후 점검을 통과한다.
 - [ ] PostgreSQL과 Fuseki는 Private Subnet에서만 접근된다.
+- [ ] PostgreSQL의 선택형 스토리지 암호화 미지원 상태와 ADR-0009 보상 통제가 배포 증거에 정확히 기록돼 있다.
 - [ ] Fuseki는 활성 데이터 버전을 읽기 전용으로 제공한다.
 - [ ] PostgreSQL·Fuseki·Vector의 `dataset_version`이 일치한다.
 - [ ] 활성 버전의 네 준비 레코드가 동일 manifest와 성공한 검증 실행을 참조한다.
