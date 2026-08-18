@@ -44,14 +44,15 @@
 **상태: Stage 01 인계 조건 충족; Stage 02A 구현 진행 중**
 
 - 상세 계획은 2026-08-18 최종 재리뷰에서 승인된 1A~18A 결정을 반영해 Stage 02A 핵심 저장과 Stage 02B NCP·이식성 증명으로 나뉘었다.
-- 사용자가 PostgreSQL DDL·Alembic·리포지터리·JSONB 구현 범위를 승인했으며, `codex/stage-02-storage` 격리 브랜치에서 Task 1 데이터베이스 하니스와 Task 2 `0001` foundation을 구현했다.
+- 사용자가 PostgreSQL DDL·Alembic·리포지터리·JSONB 구현 범위를 승인했으며, `codex/stage-02-storage` 격리 브랜치에서 Task 1 데이터베이스 하니스, Task 2 `0001` foundation, Task 3 `0002` 버전화 상품 카탈로그를 구현했다.
 - 비운영 NCP PostgreSQL 15.17을 승인된 4 vCPU/16 GB·Private Subnet 구성으로 생성했고, 콘솔 관리 `pgvector`와 `pg_stat_statements`, 애플리케이션 서버 ACG 한정 5432 접근, 자동 백업 7일을 확인했다.
 - 실제 capability probe는 `direct_users`를 선택했다. NCP USER_ID 제한에 맞춘 `fa_migration`, `fa_build`, `fa_runtime`과 직접 최소 권한 방식을 [ADR-0010](decisions/ADR-0010-use-ncp-direct-database-users.md)에 기록했다. 세 사용자 생성, `direct_users` preflight, 최소 DB `CREATE` 부여 후 migration-user capability probe까지 완료했다.
 - Rocky Linux 8.10 기반 신규 Cloud DB가 선택형 스토리지 암호화를 지원하지 않는 실제 제약은 [ADR-0009](decisions/ADR-0009-ncp-postgresql-storage-encryption-boundary.md)에 기록했으며, 암호화 적용을 주장하지 않고 Private Subnet·ACG·최소 권한·Credential 비저장·백업을 보상 통제로 사용한다.
 - Stage 01 태그 값 API와 생성 Schema를 변경 없이 저장 계약의 입력으로 사용한다.
 - 검증된 답변 캐시는 Claim Gate Registry 단계로 미뤘으며, Stage 02는 저장된 `ReleasedAnswer`에 공개 권한을 부여하지 않는다.
-- NCP 서버의 폐기 가능한 PostgreSQL 15.18 컨테이너를 SSH 터널로 연결해 `0001` 업·다운그레이드, 7개 스키마, 데이터셋 전이·동시 활성화·동시 요청 멱등성·FailureEvent 불변성·별도 로그인 역할 ACL을 검증했다. 전체 DB 테스트 85개, Stage 01 계약 포함 309개와 `alembic check`가 통과했다.
-- 다음 구현 게이트는 Task 3 버전화 상품 카탈로그 `0002`이며, 실제 NCP Cloud DB Alembic 적용은 Stage 02B 이식성 검증 전까지 보류한다.
+- NCP 서버의 폐기 가능한 PostgreSQL 15.18 컨테이너를 SSH 터널로 연결해 `0001` 업·다운그레이드, 7개 스키마, 데이터셋 전이·동시 활성화·동시 요청 멱등성·FailureEvent 불변성·별도 로그인 역할 ACL을 검증했다.
+- Task 3은 `catalog.entity`, `product`, `security`, `institution`, `identifier`, `alias`의 버전 결합 키·FK, 상품군과 엔티티 유형 제약, 지연 subtype 검증, 식별자·별칭 인덱스, building 상태 변경 제한과 역할별 ACL을 `0002`에 구현했다. 독립 검토에서 수정 사항 없이 승인됐고, 폐기 가능한 PostgreSQL 15에서 `0002 → 0001 → 0002`, `alembic check`, DB 테스트 93개와 Stage 01 계약 포함 317개가 통과했다.
+- 다음 구현 게이트는 Task 4 관계·관측값·문서·검색 저장 `0003`이며, 실제 NCP Cloud DB Alembic 적용은 Stage 02B 이식성 검증 전까지 보류한다.
 
 기준 계획: [Stage 02 PostgreSQL Storage](tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
 
@@ -81,7 +82,8 @@
 2. ~~PostgreSQL DDL·Alembic·리포지터리·JSONB 경계의 구현 범위 승인~~ — 2026-08-18 완료
 3. ~~Stage 02A Task 1의 실제 PostgreSQL·NCP capability 검증~~ — 2026-08-18 완료
 4. ~~Stage 02A Task 2 database foundation 구현·검증~~ — 2026-08-18 완료
-5. 승인된 Stage 02A의 Task 3∼7을 순차 구현·검증
-6. Stage 02B NCP·이식성 증명 수행
+5. ~~Stage 02A Task 3 버전화 상품 카탈로그 구현·검증~~ — 2026-08-18 완료
+6. 승인된 Stage 02A의 Task 4∼7을 순차 구현·검증
+7. Stage 02B NCP·이식성 증명 수행
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

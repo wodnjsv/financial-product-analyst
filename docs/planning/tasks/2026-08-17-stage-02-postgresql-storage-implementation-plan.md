@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-17 (final review amended 2026-08-18)
 
-**Status:** Final review decisions approved; consolidated implementation scope approval pending
+**Status:** Stage 02A implementation in progress; Tasks 1-3 implemented and verified
 
 **Goal:** Implement the PostgreSQL 15 physical storage boundary for the seven approved logical schemas, preserve the Stage 01 contract IDs and immutable artifacts without renaming public interfaces, and prove that the migrations and persistence layer run in an NCP-compatible Linux/amd64 environment.
 
@@ -619,7 +619,7 @@ git commit -m "feat: add postgres dataset foundation"
 - `catalog.entity`, `catalog.product`, `catalog.security`, `catalog.institution`
 - `catalog.identifier`, `catalog.alias`
 
-- [ ] **Step 1: Write failing catalog constraints**
+- [x] **Step 1: Write failing catalog constraints**
 
 Tests must prove:
 
@@ -632,7 +632,7 @@ Tests must prove:
 - aliases preserve original text and separately store normalized text;
 - modifying versioned catalog rows after dataset validation is rejected.
 
-- [ ] **Step 2: Define catalog columns and keys**
+- [x] **Step 2: Define catalog columns and keys**
 
 Use composite `(dataset_version, entity_id)` keys. `entity_type` permits `product`, `security`, `company`, `institution`, `index`, and `theme`. `entity` stores canonical name, normalized name, record hash, and creation time. Subtype tables store only stable identity fields required before ingestion mapping:
 
@@ -644,7 +644,7 @@ Do not copy all four organizer master columns into `catalog.product`. Stage 03 m
 
 Apply `operations.reject_nonbuilding_dataset_mutation()` to all versioned catalog tables. Rows remain editable while their dataset is building and become immutable as soon as it is validated.
 
-- [ ] **Step 3: Define identifier and alias indexes**
+- [x] **Step 3: Define identifier and alias indexes**
 
 Add:
 
@@ -654,7 +654,7 @@ Add:
 - B-tree lookup on normalized alias;
 - `GIN (... gin_trgm_ops)` on normalized canonical and alias names.
 
-- [ ] **Step 4: Generate and review migration `0002`**
+- [x] **Step 4: Generate and review migration `0002`**
 
 Use Alembic autogenerate with explicit revision ID, then inspect every schema, FK target, check, and index. Do not accept an unnamed constraint or an FK that omits `dataset_version`.
 
@@ -664,13 +664,13 @@ python -m alembic upgrade head
 python -m alembic check
 ```
 
-- [ ] **Step 5: Run catalog tests**
+- [x] **Step 5: Run catalog tests**
 
 ```bash
 python -m pytest tests/db/test_catalog_schema.py -v
 ```
 
-- [ ] **Step 6: Commit the catalog schema**
+- [x] **Step 6: Commit the catalog schema**
 
 ```bash
 git add alembic/versions/0002_catalog_schema.py src/financial_agent/db/schema/catalog.py tests/db/test_catalog_schema.py tests/fixtures/db/synthetic_dataset.py
