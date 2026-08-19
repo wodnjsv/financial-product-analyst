@@ -339,3 +339,101 @@ def test_group_roles_allow_external_login_members_only_in_stable_roles(
             connection.rollback()
 
     assert snapshot.database_permissions_match is True
+
+
+class NcpRuntimeSmokeFailure(RuntimeError):
+    pass
+
+
+def _assert_ncp_runtime_permissions(connection: psycopg.Connection) -> None:
+    current_user = str(
+        connection.execute("SELECT current_user").fetchone()[0]
+    )
+    assert current_user == "fa_runtime"
+    active_dataset = connection.execute(
+        """
+        SELECT singleton, dataset_version
+        FROM operations.active_dataset
+        WHERE singleton
+        """
+    ).fetchone()
+    assert active_dataset is not None and active_dataset[0] is True
+    try:
+        with connection.transaction():
+            connection.execute(
+                "INSERT INTO operations.request_artifact "
+                "(artifact_type, canonical_payload) "
+                "VALUES ('tool_result', '{}')"
+            )
+    except psycopg.errors.InsufficientPrivilege:
+        pass
+    else:
+        raise AssertionError("runtime direct protected DML was allowed")
+    assert connection.execute(
+        "SELECT count(*) FROM operations.request_artifact"
+    ).fetchone()[0] >= 0
+
+
+def _run_authorized_ncp_runtime_smoke(database_url: str) -> None:
+    try:
+        with psycopg.connect(
+            normalize_psycopg_url(database_url)
+        ) as connection:
+            _assert_ncp_runtime_permissions(connection)
+    except Exception:
+        raise NcpRuntimeSmokeFailure(
+            "NCP_RUNTIME_SMOKE_FAILED: authorized runtime check failed"
+        ) from None
+
+
+def test_ncp_runtime_smoke_suppresses_connection_credentials(
+    monkeypatch,
+) -> None:
+    database_url = (
+        "postgresql://secret_user:secret_password@db.example/secret_db"
+    )
+    connection_attempted = False
+
+    def fail_connect(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        nonlocal connection_attempted
+        connection_attempted = True
+        raise psycopg.OperationalError(database_url)
+
+    monkeypatch.setattr(psycopg, "connect", fail_connect)
+
+    with pytest.raises(NcpRuntimeSmokeFailure) as captured:
+        _run_authorized_ncp_runtime_smoke(database_url)
+
+    assert connection_attempted is True
+    rendered = "".join(
+        traceback.format_exception(
+            type(captured.value),
+            captured.value,
+            captured.value.__traceback__,
+        )
+    )
+    assert "secret_user" not in rendered
+    assert "secret_password" not in rendered
+    assert "secret_db" not in rendered
+
+
+@pytest.mark.postgres
+def test_runtime_smoke_reads_and_denies_direct_protected_dml_locally(
+    migrated_database_url: str,
+) -> None:
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        connection.execute("SET LOCAL ROLE fa_runtime")
+        _assert_ncp_runtime_permissions(connection)
+        connection.rollback()
+
+
+@pytest.mark.ncp_integration
+def test_authorized_ncp_runtime_can_read_but_not_write_protected_tables() -> None:
+    database_url = os.environ.get("FINANCIAL_AGENT_NCP_TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("the authorized NCP runtime identity is not configured")
+
+    _run_authorized_ncp_runtime_smoke(database_url)

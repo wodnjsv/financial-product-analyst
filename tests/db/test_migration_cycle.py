@@ -24,6 +24,7 @@ from scripts.export_database_objects import (
 )
 from scripts.verify_database_migrations import (
     MigrationVerificationFailure,
+    _verify_foundation_behavior,
     configured_alembic_target_only,
     disposable_migration_database,
     migration_alembic_config,
@@ -349,6 +350,116 @@ def test_disposable_database_runs_base_head_base_head_cycle(
     assert report.bootstrap_roles_preserved is True
     assert report.foundation_cutoff_enforced is True
     assert report.foundation_transition_enforced is True
+    assert report.foundation_readiness_activation_enforced is True
+    assert report.foundation_request_start_idempotent is True
+    assert report.foundation_append_only_enforced is True
+    assert report.foundation_concurrent_request_idempotent is True
+
+
+def _mutate_second_head_behavior(
+    connection: psycopg.Connection,
+    mutation: str,
+) -> None:
+    if mutation == "readiness_activation":
+        connection.execute(
+            """
+            CREATE OR REPLACE FUNCTION operations.activate_dataset(
+                p_dataset_version text
+            ) RETURNS text
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, operations, pg_temp
+            AS $function$
+            BEGIN
+                RETURN p_dataset_version;
+            END
+            $function$
+            """
+        )
+    elif mutation == "request_start":
+        connection.execute(
+            """
+            CREATE OR REPLACE FUNCTION operations.start_request_run(
+                p_run_id text, p_request_key text, p_question_id text,
+                p_question text, p_schema_version text,
+                p_dataset_version text, p_cutoff_date date,
+                p_created_at timestamp with time zone,
+                p_deadline_at timestamp with time zone
+            ) RETURNS operations.request_run
+            LANGUAGE plpgsql
+            SECURITY DEFINER
+            SET search_path = pg_catalog, operations, pg_temp
+            AS $function$
+            DECLARE
+                empty_run operations.request_run%ROWTYPE;
+            BEGIN
+                RETURN empty_run;
+            END
+            $function$
+            """
+        )
+    elif mutation == "append_only":
+        connection.execute(
+            "ALTER TABLE operations.request_artifact "
+            "DISABLE TRIGGER reject_request_artifact_mutation"
+        )
+    elif mutation == "concurrent_idempotency":
+        definition = str(
+            connection.execute(
+                "SELECT pg_catalog.pg_get_functiondef("
+                "'operations.start_request_run(text,text,text,text,text,text,date,"
+                "timestamp with time zone,timestamp with time zone)'::regprocedure)"
+            ).fetchone()[0]
+        )
+        lock_statement = (
+            "            PERFORM pg_catalog.pg_advisory_xact_lock(\n"
+            "                pg_catalog.hashtextextended(p_run_id, 0)\n"
+            "            );\n"
+        )
+        assert lock_statement in definition
+        without_lock = definition.replace(
+            lock_statement,
+            "",
+        )
+        mutated = without_lock.replace(
+            "            INSERT INTO operations.request_run (",
+            "            PERFORM pg_catalog.pg_sleep(0.2);\n"
+            "            INSERT INTO operations.request_run (",
+        )
+        assert "pg_advisory_xact_lock" not in mutated
+        assert "pg_sleep(0.2)" in mutated
+        connection.execute(mutated)
+    else:  # pragma: no cover - parametrization is exhaustive
+        raise AssertionError(f"unknown behavior mutation: {mutation}")
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "readiness_activation",
+        "request_start",
+        "append_only",
+        "concurrent_idempotency",
+    ),
+)
+def test_second_head_behavior_verifier_rejects_removed_invariants(
+    postgres_database_url: str,
+    mutation: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+        with psycopg.connect(
+            normalize_psycopg_url(database_url)
+        ) as connection:
+            _mutate_second_head_behavior(connection, mutation)
+
+        with pytest.raises(MigrationVerificationFailure) as captured:
+            _verify_foundation_behavior(database_url)
+
+    assert captured.value.code == "FOUNDATION_INVARIANT_FAILED"
 
 
 @pytest.mark.postgres

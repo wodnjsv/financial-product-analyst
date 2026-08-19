@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import sys
+from threading import Barrier
 
 import psycopg
 from alembic import command
@@ -47,6 +50,10 @@ class MigrationVerificationReport:
     bootstrap_roles_preserved: bool
     foundation_cutoff_enforced: bool
     foundation_transition_enforced: bool
+    foundation_readiness_activation_enforced: bool
+    foundation_request_start_idempotent: bool
+    foundation_append_only_enforced: bool
+    foundation_concurrent_request_idempotent: bool
 
 
 def _assert_safe_source_url(url: str) -> None:
@@ -290,10 +297,17 @@ def _verify_base_state(database_url: str) -> tuple[bool, bool]:
     return ncp_extensions_preserved, bootstrap_roles_preserved
 
 
-def _verify_foundation_behavior(database_url: str) -> tuple[bool, bool]:
+def _verify_foundation_behavior(
+    database_url: str,
+) -> tuple[bool, bool, bool, bool, bool, bool]:
     cutoff_enforced = False
     transition_enforced = False
-    with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+    readiness_activation_enforced = False
+    request_start_idempotent = False
+    append_only_enforced = False
+    concurrent_request_idempotent = False
+    normalized_url = normalize_psycopg_url(database_url)
+    with psycopg.connect(normalized_url) as connection:
         with connection.transaction(force_rollback=True):
             connection.execute(
                 """
@@ -339,12 +353,220 @@ def _verify_foundation_behavior(database_url: str) -> tuple[bool, bool]:
                     error.sqlstate == "55000"
                     and "INVALID_DATASET_TRANSITION" in str(error)
                 )
-    if not cutoff_enforced or not transition_enforced:
+
+        connection.execute(
+            """
+            INSERT INTO operations.dataset_version (
+                dataset_version, cutoff_date, status, manifest_hash, created_at
+            ) VALUES (
+                'task8-second-head-active', DATE '2026-07-11', 'building',
+                repeat('3', 64), TIMESTAMPTZ '2026-08-19 00:00:00+00'
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO operations.dataset_validation_run (
+                validation_run_id, dataset_version, dataset_manifest_hash,
+                validator_id, validator_version, started_at, finished_at,
+                status, report_hash
+            ) VALUES (
+                'task8-second-head-validation', 'task8-second-head-active',
+                repeat('3', 64), 'task8-verifier', '1',
+                TIMESTAMPTZ '2026-08-19 00:00:00+00',
+                TIMESTAMPTZ '2026-08-19 00:00:01+00', 'pass', repeat('4', 64)
+            )
+            """
+        )
+        connection.execute(
+            "SELECT operations.finish_dataset_validation(%s)",
+            ("task8-second-head-validation",),
+        )
+        for component in ("postgres", "graph", "vector", "evidence"):
+            connection.execute(
+                """
+                SELECT operations.record_dataset_readiness(
+                    %s, %s, %s, %s,
+                    TIMESTAMPTZ '2026-08-19 00:00:02+00', '1'
+                )
+                """,
+                (
+                    "task8-second-head-active",
+                    component,
+                    "task8-second-head-validation",
+                    "5" * 64,
+                ),
+            )
+        activated = connection.execute(
+            "SELECT operations.activate_dataset(%s)",
+            ("task8-second-head-active",),
+        ).fetchone()[0]
+        active_state = connection.execute(
+            """
+            SELECT dataset.status, active.dataset_version
+            FROM operations.dataset_version AS dataset
+            CROSS JOIN operations.active_dataset AS active
+            WHERE dataset.dataset_version = 'task8-second-head-active'
+              AND active.singleton
+            """
+        ).fetchone()
+        readiness_activation_enforced = (
+            activated == "task8-second-head-active"
+            and active_state
+            == ("active", "task8-second-head-active")
+        )
+        if not readiness_activation_enforced:
+            raise MigrationVerificationFailure(
+                "FOUNDATION_INVARIANT_FAILED",
+                "second-head readiness or activation behavior is incompatible",
+            )
+
+        request_statement = """
+            SELECT (operations.start_request_run(
+                %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )).run_id
+        """
+        request_parameters = (
+            "task8-second-head-run",
+            "6" * 64,
+            "Q-TASK8",
+            "second-head behavior probe",
+            "1.0.0",
+            "task8-second-head-active",
+            "2026-07-11",
+            "2026-08-19T00:00:03+00:00",
+            "2026-08-19T00:00:58+00:00",
+        )
+        first_run = connection.execute(
+            request_statement, request_parameters
+        ).fetchone()[0]
+        second_run = connection.execute(
+            request_statement, request_parameters
+        ).fetchone()[0]
+        request_count = connection.execute(
+            "SELECT count(*) FROM operations.request_run WHERE run_id = %s",
+            ("task8-second-head-run",),
+        ).fetchone()[0]
+        request_start_idempotent = (
+            first_run == second_run == "task8-second-head-run"
+            and request_count == 1
+        )
+        if not request_start_idempotent:
+            raise MigrationVerificationFailure(
+                "FOUNDATION_INVARIANT_FAILED",
+                "second-head request-start behavior is incompatible",
+            )
+
+        canonical_payload = json.dumps(
+            {
+                "schema_version": "1.0.0",
+                "request_key": "6" * 64,
+                "run_id": "task8-second-head-run",
+                "dataset_version": "task8-second-head-active",
+                "cutoff_date": "2026-07-11",
+                "producer": "task8-migration-verifier",
+                "created_at": "2026-08-19T00:00:03+00:00",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        first_artifact = connection.execute(
+            "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+            ("request_context", None, None, canonical_payload),
+        ).fetchone()[0]
+        second_artifact = connection.execute(
+            "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+            ("request_context", None, None, canonical_payload),
+        ).fetchone()[0]
+        artifact_count = connection.execute(
+            "SELECT count(*) FROM operations.request_artifact "
+            "WHERE run_id = %s AND artifact_type = 'request_context'",
+            ("task8-second-head-run",),
+        ).fetchone()[0]
+        immutable_update_rejected = False
+        try:
+            with connection.transaction():
+                connection.execute(
+                    "UPDATE operations.request_artifact SET producer = 'changed' "
+                    "WHERE artifact_record_id = %s",
+                    (first_artifact,),
+                )
+        except psycopg.errors.ObjectNotInPrerequisiteState:
+            immutable_update_rejected = True
+        append_only_enforced = (
+            first_artifact == second_artifact
+            and artifact_count == 1
+            and immutable_update_rejected
+        )
+        connection.commit()
+
+        concurrent_parameters = (
+            "task8-second-head-concurrent",
+            "7" * 64,
+            "Q-TASK8-CONCURRENT",
+            "second-head concurrent probe",
+            "1.0.0",
+            "task8-second-head-active",
+            "2026-07-11",
+            "2026-08-19T00:00:04+00:00",
+            "2026-08-19T00:00:59+00:00",
+        )
+        barrier = Barrier(2)
+
+        def start_concurrent_request() -> str:
+            with psycopg.connect(normalized_url) as concurrent_connection:
+                barrier.wait()
+                return str(
+                    concurrent_connection.execute(
+                        request_statement,
+                        concurrent_parameters,
+                    ).fetchone()[0]
+                )
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(
+                    executor.map(
+                        lambda _: start_concurrent_request(),
+                        range(2),
+                    )
+                )
+        except psycopg.Error:
+            results = []
+        concurrent_count = connection.execute(
+            "SELECT count(*) FROM operations.request_run WHERE run_id = %s",
+            ("task8-second-head-concurrent",),
+        ).fetchone()[0]
+        concurrent_request_idempotent = (
+            results
+            == [
+                "task8-second-head-concurrent",
+                "task8-second-head-concurrent",
+            ]
+            and concurrent_count == 1
+        )
+    if not all(
+        (
+            cutoff_enforced,
+            transition_enforced,
+            readiness_activation_enforced,
+            request_start_idempotent,
+            append_only_enforced,
+            concurrent_request_idempotent,
+        )
+    ):
         raise MigrationVerificationFailure(
             "FOUNDATION_INVARIANT_FAILED",
-            "foundation constraint or transition behavior is incompatible",
+            "second-head foundation behavior is incompatible",
         )
-    return cutoff_enforced, transition_enforced
+    return (
+        cutoff_enforced,
+        transition_enforced,
+        readiness_activation_enforced,
+        request_start_idempotent,
+        append_only_enforced,
+        concurrent_request_idempotent,
+    )
 
 
 def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
@@ -376,9 +598,14 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
             manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
         )
         second_inventory = _collect_inventory(disposable_url)
-        foundation_cutoff_enforced, foundation_transition_enforced = (
-            _verify_foundation_behavior(disposable_url)
-        )
+        (
+            foundation_cutoff_enforced,
+            foundation_transition_enforced,
+            foundation_readiness_activation_enforced,
+            foundation_request_start_idempotent,
+            foundation_append_only_enforced,
+            foundation_concurrent_request_idempotent,
+        ) = _verify_foundation_behavior(disposable_url)
         if first_inventory != second_inventory:
             raise MigrationVerificationFailure(
                 "MIGRATION_CYCLE_DRIFT",
@@ -397,6 +624,16 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
             bootstrap_roles_preserved=bootstrap_roles_preserved,
             foundation_cutoff_enforced=foundation_cutoff_enforced,
             foundation_transition_enforced=foundation_transition_enforced,
+            foundation_readiness_activation_enforced=(
+                foundation_readiness_activation_enforced
+            ),
+            foundation_request_start_idempotent=(
+                foundation_request_start_idempotent
+            ),
+            foundation_append_only_enforced=foundation_append_only_enforced,
+            foundation_concurrent_request_idempotent=(
+                foundation_concurrent_request_idempotent
+            ),
         )
 
 
