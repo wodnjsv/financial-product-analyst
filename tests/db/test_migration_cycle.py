@@ -1,0 +1,392 @@
+from __future__ import annotations
+
+from copy import deepcopy
+import json
+from pathlib import Path
+
+import psycopg
+import pytest
+from alembic import command
+from psycopg import sql
+
+from financial_agent.db.preflight import (
+    collect_database_objects,
+    compare_database_object_manifests,
+    normalize_psycopg_url,
+)
+from scripts.export_database_objects import (
+    DatabaseObjectManifestFailure,
+    main as export_database_objects_main,
+    write_or_check_manifest,
+)
+from scripts.verify_database_migrations import (
+    MigrationVerificationFailure,
+    disposable_migration_database,
+    migration_alembic_config,
+    verify_migration_cycle,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _object_manifest() -> dict[str, object]:
+    return {
+        "manifest_version": 1,
+        "functions": [
+            {
+                "schema": "operations",
+                "name": "finish_dataset_validation",
+                "identity_arguments": "text",
+                "definition": (
+                    "CREATE FUNCTION operations.finish_dataset_validation(text)"
+                ),
+                "configuration": ["search_path=pg_catalog, operations, pg_temp"],
+            }
+        ],
+        "views": [],
+        "triggers": [],
+        "checks": [],
+        "owners": [
+            {
+                "object_type": "function",
+                "schema": "operations",
+                "name": "finish_dataset_validation(text)",
+                "owner": "fa_migration",
+            }
+        ],
+        "table_grants": [],
+        "routine_grants": [],
+        "schema_grants": [],
+    }
+
+
+def test_manifest_comparison_classifies_executable_definition_drift() -> None:
+    expected = _object_manifest()
+    actual = deepcopy(expected)
+    actual["functions"][0]["definition"] += " changed"
+
+    comparison = compare_database_object_manifests(expected, actual)
+
+    assert comparison.object_drift is True
+    assert comparison.permission_drift is False
+    assert comparison.changed_sections == ("functions",)
+
+
+def test_manifest_comparison_classifies_owner_and_acl_drift_as_permissions() -> None:
+    expected = _object_manifest()
+    actual = deepcopy(expected)
+    actual["owners"][0]["owner"] = "__environment_owner__"
+    actual["routine_grants"].append(
+        {
+            "schema": "operations",
+            "name": "finish_dataset_validation",
+            "identity_arguments": "text",
+            "grantee": "PUBLIC",
+            "privilege": "EXECUTE",
+            "grantable": False,
+        }
+    )
+
+    comparison = compare_database_object_manifests(expected, actual)
+
+    assert comparison.object_drift is False
+    assert comparison.permission_drift is True
+    assert comparison.changed_sections == ("owners", "routine_grants")
+
+
+@pytest.mark.postgres
+def test_database_object_export_covers_non_table_ddl_and_permissions(
+    migrated_database_url: str,
+) -> None:
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        manifest = collect_database_objects(connection)
+
+    assert manifest["manifest_version"] == 1
+    assert {
+        "functions",
+        "views",
+        "triggers",
+        "checks",
+        "owners",
+        "table_grants",
+        "routine_grants",
+        "schema_grants",
+    } <= manifest.keys()
+    assert any(
+        function["name"] == "finish_dataset_validation"
+        and function["configuration"]
+        == ["search_path=pg_catalog, operations, pg_temp"]
+        for function in manifest["functions"]
+    )
+    assert any(
+        view["name"] == "claim_eligible_evidence"
+        for view in manifest["views"]
+    )
+    assert any(
+        trigger["name"] == "derive_request_artifact"
+        for trigger in manifest["triggers"]
+    )
+    assert any(
+        check["name"] == "ck_dataset_version_cutoff_date"
+        for check in manifest["checks"]
+    )
+    assert any(
+        owner["owner"] == "fa_migration"
+        for owner in manifest["owners"]
+    )
+    assert all(
+        item.get("schema") != "cdb_admin"
+        for section in manifest.values()
+        if isinstance(section, list)
+        for item in section
+    )
+    for section in manifest.values():
+        if isinstance(section, list):
+            assert section == sorted(
+                section,
+                key=lambda item: tuple(str(value) for value in item.values()),
+            )
+
+
+@pytest.mark.postgres
+def test_manifest_check_is_byte_deterministic_and_classifies_drift(
+    migrated_database_url: str,
+    tmp_path,
+) -> None:
+    manifest_path = tmp_path / "database-objects.json"
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        write_or_check_manifest(connection, manifest_path, check=False)
+        baseline_bytes = manifest_path.read_bytes()
+        write_or_check_manifest(connection, manifest_path, check=True)
+        write_or_check_manifest(connection, manifest_path, check=False)
+
+    assert manifest_path.read_bytes() == baseline_bytes
+
+    changed = json.loads(baseline_bytes)
+    changed["functions"][0]["definition"] += " -- drift"
+    manifest_path.write_text(
+        json.dumps(changed, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        with pytest.raises(DatabaseObjectManifestFailure) as captured:
+            write_or_check_manifest(connection, manifest_path, check=True)
+
+    assert captured.value.code == "OBJECT_DEFINITION_DRIFT"
+    assert "functions" in captured.value.changed_sections
+
+
+def _apply_manifest_mutation(
+    connection: psycopg.Connection,
+    mutation: str,
+) -> None:
+    if mutation == "function_body":
+        connection.execute(
+            """
+            CREATE OR REPLACE FUNCTION operations.validate_dataset_transition()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            SET search_path = pg_catalog, operations, pg_temp
+            AS $function$
+            BEGIN
+                RETURN NEW;
+            END
+            $function$
+            """
+        )
+    elif mutation == "function_search_path":
+        connection.execute(
+            "ALTER FUNCTION operations.validate_dataset_transition() "
+            "SET search_path = public"
+        )
+    elif mutation == "function_owner":
+        owner = connection.execute("SELECT current_user").fetchone()[0]
+        connection.execute(
+            sql.SQL(
+                "ALTER FUNCTION operations.validate_dataset_transition() OWNER TO {}"
+            ).format(sql.Identifier(str(owner)))
+        )
+    elif mutation == "function_execute_acl":
+        connection.execute(
+            "GRANT EXECUTE ON FUNCTION "
+            "operations.validate_dataset_transition() TO PUBLIC"
+        )
+    elif mutation == "view_predicate":
+        definition = str(
+            connection.execute(
+                "SELECT pg_catalog.pg_get_viewdef("
+                "'evidence.claim_eligible_evidence'::regclass, true)"
+            ).fetchone()[0]
+        ).rstrip().removesuffix(";")
+        connection.execute(
+            sql.SQL(
+                "CREATE OR REPLACE VIEW evidence.claim_eligible_evidence AS "
+            )
+            + sql.SQL(definition)
+            + sql.SQL(" AND false")
+        )
+    elif mutation == "trigger_timing":
+        connection.execute(
+            "DROP TRIGGER derive_request_artifact "
+            "ON operations.request_artifact"
+        )
+        connection.execute(
+            """
+            CREATE TRIGGER derive_request_artifact
+            AFTER INSERT ON operations.request_artifact
+            FOR EACH ROW
+            EXECUTE FUNCTION operations.derive_request_artifact()
+            """
+        )
+    elif mutation == "cutoff_check":
+        connection.execute(
+            "ALTER TABLE operations.dataset_version "
+            "DROP CONSTRAINT ck_dataset_version_cutoff_date"
+        )
+        connection.execute(
+            "ALTER TABLE operations.dataset_version "
+            "ADD CONSTRAINT ck_dataset_version_cutoff_date "
+            "CHECK (cutoff_date <= DATE '2026-07-11')"
+        )
+    elif mutation == "runtime_grant":
+        connection.execute(
+            "GRANT INSERT ON operations.request_run TO fa_runtime"
+        )
+    else:  # pragma: no cover - the parametrization is exhaustive
+        raise AssertionError(f"unknown manifest mutation: {mutation}")
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("mutation", "changed_section", "permission_drift"),
+    (
+        ("function_body", "functions", False),
+        ("function_search_path", "functions", False),
+        ("function_owner", "owners", True),
+        ("function_execute_acl", "routine_grants", True),
+        ("view_predicate", "views", False),
+        ("trigger_timing", "triggers", False),
+        ("cutoff_check", "checks", False),
+        ("runtime_grant", "table_grants", True),
+    ),
+)
+def test_manifest_detects_drift_alembic_autogenerate_does_not_cover(
+    migrated_database_url: str,
+    mutation: str,
+    changed_section: str,
+    permission_drift: bool,
+) -> None:
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        baseline = collect_database_objects(connection)
+        try:
+            _apply_manifest_mutation(connection, mutation)
+            changed = collect_database_objects(connection)
+        finally:
+            connection.rollback()
+
+    comparison = compare_database_object_manifests(baseline, changed)
+    assert changed_section in comparison.changed_sections
+    assert comparison.permission_drift is permission_drift
+    assert comparison.object_drift is (not permission_drift)
+
+
+def test_migration_verifier_refuses_a_nonlocal_or_nontest_source_url() -> None:
+    with pytest.raises(MigrationVerificationFailure) as captured:
+        verify_migration_cycle(
+            "postgresql+psycopg://user:secret@db.invalid/production"
+        )
+
+    assert captured.value.code == "UNSAFE_DATABASE_TARGET"
+    assert "secret" not in str(captured.value)
+
+
+@pytest.mark.postgres
+def test_disposable_database_runs_base_head_base_head_cycle(
+    postgres_database_url: str,
+) -> None:
+    report = verify_migration_cycle(postgres_database_url)
+
+    assert report.alembic_head == "0005"
+    assert report.application_schema_count == 7
+    assert report.object_counts["tables"] > 0
+    assert report.object_counts["checks"] > 0
+    assert report.object_counts["foreign_keys"] > 0
+    assert report.object_counts["indexes"] > 0
+    assert report.object_counts["functions"] > 0
+    assert report.object_counts["views"] > 0
+    assert report.object_counts["triggers"] > 0
+    assert report.ncp_extensions_preserved is True
+    assert report.bootstrap_roles_preserved is True
+
+
+@pytest.mark.postgres
+def test_alembic_check_misses_function_body_drift_that_manifest_detects(
+    postgres_database_url: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        command.upgrade(config, "head")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            baseline = collect_database_objects(connection)
+            _apply_manifest_mutation(connection, "function_body")
+        command.check(config)
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            changed = collect_database_objects(connection)
+
+    comparison = compare_database_object_manifests(baseline, changed)
+    assert comparison.object_drift is True
+    assert "functions" in comparison.changed_sections
+
+
+def test_database_check_container_is_linux_amd64_and_uses_only_test_url() -> None:
+    dockerfile = (
+        PROJECT_ROOT / "docker" / "database-check.Dockerfile"
+    ).read_text("utf-8")
+    compose = (PROJECT_ROOT / "docker" / "postgres.compose.yml").read_text(
+        "utf-8"
+    )
+
+    assert "PIP_CONSTRAINT=/app/requirements/storage.lock" in dockerfile
+    assert 'python -m pip install ".[dev,storage]"' in dockerfile
+    assert "scripts/verify_database_migrations.py" in dockerfile
+    assert "tests/db" in dockerfile
+    assert "COPY data/" not in dockerfile
+    assert "db-check:" in compose
+    assert "dockerfile: docker/database-check.Dockerfile" in compose
+    assert compose.count("platform: linux/amd64") == 2
+    assert "FINANCIAL_AGENT_TEST_DATABASE_URL:" in compose
+    assert "FINANCIAL_AGENT_COMPOSE_DATABASE_CHECK: \"1\"" in compose
+    assert "FINANCIAL_AGENT_DATABASE_URL:" not in compose
+    assert "condition: service_healthy" in compose
+
+
+def test_manifest_cli_uses_the_explicit_ncp_test_env_without_leaking_it(
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("FINANCIAL_AGENT_TEST_DATABASE_URL", raising=False)
+    monkeypatch.setenv(
+        "FINANCIAL_AGENT_NCP_TEST_DATABASE_URL",
+        "postgresql://secret_user:secret_password@127.0.0.1:1/secret_db",
+    )
+
+    exit_code = export_database_objects_main(["--check"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert captured.out == ""
+    assert captured.err == (
+        "DATABASE_QUERY_FAILED: database object export failed\n"
+    )
+    assert "secret_user" not in captured.err
+    assert "secret_password" not in captured.err
+    assert "secret_db" not in captured.err

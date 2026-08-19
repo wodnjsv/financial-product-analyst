@@ -27,5 +27,17 @@ services:
       retries: 30
       start_period: 5s
 
+  db-check:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: docker/database-check.Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FINANCIAL_AGENT_COMPOSE_DATABASE_CHECK: "1"
+      FINANCIAL_AGENT_TEST_DATABASE_URL: postgresql+psycopg://financial_agent_test:financial_agent_test@postgres:5432/financial_agent_test
+
 volumes:
   financial_agent_postgres_data:

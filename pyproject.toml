@@ -29,6 +29,7 @@ testpaths = ["tests"]
 markers = [
   "postgres: requires an explicitly configured PostgreSQL test database",
   "ncp_integration: requires an explicitly configured non-production NCP Cloud DB",
+  "performance: requires RUN_DB_SCALE_TESTS=1 and synthetic scale data",
 ]
 
 [tool.setuptools.packages.find]
