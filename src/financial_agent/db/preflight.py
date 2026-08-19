@@ -40,6 +40,7 @@ EXPECTED_ROLES = frozenset(
         "fa_runtime",
     }
 )
+EXPECTED_NCP_DIRECT_MEMBERSHIP_ROLE = "pg_read_all_stats"
 UNEXPECTED_PRINCIPAL = "__unexpected_principal__"
 
 PermissionLayout = Literal["group_roles", "direct_users"]
@@ -761,6 +762,10 @@ def _database_permissions_match(
             SELECT
                 granted_role.rolname,
                 granted_role.rolcanlogin,
+                granted_role.rolsuper,
+                granted_role.rolcreatedb,
+                granted_role.rolcreaterole,
+                granted_role.rolbypassrls,
                 member_role.rolname,
                 member_role.rolcanlogin,
                 membership.admin_option
@@ -807,9 +812,26 @@ def _database_permissions_match(
         )
         recursive_memberships_are_disjoint = bool(cursor.fetchone()[0])
         if permission_layout == "direct_users":
-            memberships_are_approved = not membership_rows
+            expected_managed_memberships = {
+                (
+                    EXPECTED_NCP_DIRECT_MEMBERSHIP_ROLE,
+                    False,
+                    False,
+                    False,
+                    False,
+                    False,
+                    role_name,
+                    True,
+                    False,
+                )
+                for role_name in EXPECTED_ROLES
+            }
+            memberships_are_approved = (
+                not membership_rows
+                or set(membership_rows) == expected_managed_memberships
+            ) and recursive_memberships_are_disjoint
         else:
-            external_members = [str(row[2]) for row in membership_rows]
+            external_members = [str(row[6]) for row in membership_rows]
             memberships_are_approved = all(
                 str(granted_role) in EXPECTED_ROLES
                 and not bool(granted_can_login)
@@ -819,6 +841,10 @@ def _database_permissions_match(
                 for (
                     granted_role,
                     granted_can_login,
+                    _granted_superuser,
+                    _granted_createdb,
+                    _granted_createrole,
+                    _granted_bypassrls,
                     member_role,
                     member_can_login,
                     admin_option,

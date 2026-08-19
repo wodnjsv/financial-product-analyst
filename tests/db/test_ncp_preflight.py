@@ -453,6 +453,96 @@ def test_group_roles_allow_external_login_members_only_in_stable_roles(
     assert snapshot.database_permissions_match is True
 
 
+def _configure_direct_user_roles(
+    connection: psycopg.Connection,
+) -> None:
+    for role_name in ("fa_migration", "fa_build", "fa_runtime"):
+        connection.execute(
+            sql.SQL("ALTER ROLE {} LOGIN").format(sql.Identifier(role_name))
+        )
+
+
+def _configure_ncp_direct_user_statistics_memberships(
+    connection: psycopg.Connection,
+) -> None:
+    _configure_direct_user_roles(connection)
+    connection.execute(
+        "GRANT pg_read_all_stats TO fa_migration, fa_build, fa_runtime"
+    )
+
+
+@pytest.mark.postgres
+def test_direct_users_without_managed_statistics_memberships_remain_approved(
+    migrated_database_url: str,
+) -> None:
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        try:
+            _configure_direct_user_roles(connection)
+            snapshot = collect_post_migration_snapshot(
+                connection,
+                manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
+                alembic_head="0005",
+            )
+        finally:
+            connection.rollback()
+
+    assert snapshot.database_permissions_match is True
+
+
+@pytest.mark.postgres
+def test_direct_users_allow_only_the_ncp_managed_statistics_memberships(
+    migrated_database_url: str,
+) -> None:
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        try:
+            _configure_ncp_direct_user_statistics_memberships(connection)
+            snapshot = collect_post_migration_snapshot(
+                connection,
+                manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
+                alembic_head="0005",
+            )
+        finally:
+            connection.rollback()
+
+    assert snapshot.database_permissions_match is True
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "unsafe_membership_mutation",
+    (
+        "GRANT pg_monitor TO fa_runtime",
+        "GRANT pg_read_all_data TO fa_runtime",
+        "GRANT pg_read_all_stats TO fa_runtime WITH ADMIN OPTION",
+        "GRANT fa_runtime TO pg_monitor",
+        "REVOKE pg_read_all_stats FROM fa_runtime",
+    ),
+)
+def test_direct_users_reject_statistics_membership_privilege_expansion(
+    migrated_database_url: str,
+    unsafe_membership_mutation: str,
+) -> None:
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        try:
+            _configure_ncp_direct_user_statistics_memberships(connection)
+            connection.execute(unsafe_membership_mutation)
+            snapshot = collect_post_migration_snapshot(
+                connection,
+                manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
+                alembic_head="0005",
+            )
+        finally:
+            connection.rollback()
+
+    assert snapshot.database_permissions_match is False
+
+
 @pytest.mark.postgres
 def test_preflight_collects_role_database_create_and_rejects_runtime_drift(
     migrated_database_url: str,
