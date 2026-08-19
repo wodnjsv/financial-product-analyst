@@ -350,10 +350,13 @@ def test_disposable_database_runs_base_head_base_head_cycle(
     assert report.bootstrap_roles_preserved is True
     assert report.foundation_cutoff_enforced is True
     assert report.foundation_transition_enforced is True
+    assert report.foundation_incomplete_readiness_rejected is True
     assert report.foundation_readiness_activation_enforced is True
     assert report.foundation_request_start_idempotent is True
+    assert report.foundation_request_conflict_rejected is True
     assert report.foundation_append_only_enforced is True
     assert report.foundation_concurrent_request_idempotent is True
+    assert report.foundation_concurrent_request_conflict_rejected is True
 
 
 def _mutate_second_head_behavior(
@@ -429,6 +432,60 @@ def _mutate_second_head_behavior(
         assert "pg_advisory_xact_lock" not in mutated
         assert "pg_sleep(0.2)" in mutated
         connection.execute(mutated)
+    elif mutation == "readiness_count_guard":
+        definition = str(
+            connection.execute(
+                "SELECT pg_catalog.pg_get_functiondef("
+                "'operations.activate_dataset(text)'::regprocedure)"
+            ).fetchone()[0]
+        )
+        readiness_guard = (
+            "            IF readiness_count <> 4 THEN\n"
+            "                RAISE EXCEPTION 'DATASET_READINESS_INCOMPLETE'\n"
+            "                    USING ERRCODE = '23514';\n"
+            "            END IF;\n"
+        )
+        assert definition.count(readiness_guard) == 1
+        mutated = definition.replace(readiness_guard, "")
+        assert "readiness_count <> 4" not in mutated
+        assert "target_status IS DISTINCT FROM 'validated'" in mutated
+        assert "DATASET_ACTIVATION_CONFLICT" in mutated
+        connection.execute(mutated)
+    elif mutation == "request_conflict_guard":
+        definition = str(
+            connection.execute(
+                "SELECT pg_catalog.pg_get_functiondef("
+                "'operations.start_request_run(text,text,text,text,text,text,date,"
+                "timestamp with time zone,timestamp with time zone)'::regprocedure)"
+            ).fetchone()[0]
+        )
+        conflict_guard = (
+            "            IF FOUND THEN\n"
+            "                IF existing_run.request_key = p_request_key AND\n"
+            "                   existing_run.question_id = p_question_id AND\n"
+            "                   existing_run.question = p_question AND\n"
+            "                   existing_run.schema_version = p_schema_version AND\n"
+            "                   existing_run.dataset_version = p_dataset_version AND\n"
+            "                   existing_run.cutoff_date = p_cutoff_date AND\n"
+            "                   existing_run.created_at = p_created_at AND\n"
+            "                   existing_run.deadline_at = p_deadline_at THEN\n"
+            "                    RETURN existing_run;\n"
+            "                END IF;\n"
+            "                RAISE EXCEPTION 'REQUEST_RUN_CONFLICT'\n"
+            "                    USING ERRCODE = 'P0001';\n"
+            "            END IF;\n"
+        )
+        assert definition.count(conflict_guard) == 1
+        mutated = definition.replace(
+            conflict_guard,
+            "            IF FOUND THEN\n"
+            "                RETURN existing_run;\n"
+            "            END IF;\n",
+        )
+        assert "REQUEST_RUN_CONFLICT" not in mutated
+        assert "pg_advisory_xact_lock" in mutated
+        assert "INSERT INTO operations.request_run" in mutated
+        connection.execute(mutated)
     else:  # pragma: no cover - parametrization is exhaustive
         raise AssertionError(f"unknown behavior mutation: {mutation}")
 
@@ -444,6 +501,30 @@ def _mutate_second_head_behavior(
     ),
 )
 def test_second_head_behavior_verifier_rejects_removed_invariants(
+    postgres_database_url: str,
+    mutation: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+        with psycopg.connect(
+            normalize_psycopg_url(database_url)
+        ) as connection:
+            _mutate_second_head_behavior(connection, mutation)
+
+        with pytest.raises(MigrationVerificationFailure) as captured:
+            _verify_foundation_behavior(database_url)
+
+    assert captured.value.code == "FOUNDATION_INVARIANT_FAILED"
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "mutation",
+    ("readiness_count_guard", "request_conflict_guard"),
+)
+def test_second_head_behavior_verifier_rejects_single_guard_removal(
     postgres_database_url: str,
     mutation: str,
 ) -> None:

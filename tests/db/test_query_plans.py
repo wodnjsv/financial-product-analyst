@@ -35,6 +35,14 @@ LARGE_TABLES = {
     "claim_support",
     "request_artifact",
 }
+BENCHMARK_ANALYZE_TABLES = (
+    "catalog.alias",
+    "relation.relation_record",
+    "observation.observation_record",
+    "evidence.evidence_record",
+    "evidence.claim_support",
+    "operations.request_artifact",
+)
 AMBIGUOUS_DATABASE_URL_QUERY_KEYS = frozenset(
     {
         "database",
@@ -238,6 +246,11 @@ def _load_ncp_build_scale_data(
     )
 
 
+def _analyze_ncp_scale_data(connection: psycopg.Connection) -> None:
+    for table in BENCHMARK_ANALYZE_TABLES:
+        connection.execute(f"ANALYZE {table}")
+
+
 def _load_synthetic_scale_data(connection: psycopg.Connection) -> None:
     _load_ncp_build_scale_data(
         connection,
@@ -394,15 +407,7 @@ def _load_synthetic_scale_data(connection: psycopg.Connection) -> None:
         """,
         (SCALE_DATASET_VERSION,),
     )
-    for table in (
-        "catalog.alias",
-        "relation.relation_record",
-        "observation.observation_record",
-        "evidence.evidence_record",
-        "evidence.claim_support",
-        "operations.request_artifact",
-    ):
-        connection.execute(f"ANALYZE {table}")
+    _analyze_ncp_scale_data(connection)
 
 
 def _load_ncp_migration_scale_scaffolding(
@@ -995,6 +1000,9 @@ def test_ncp_provisioning_commits_role_owned_phases_in_order(
         globals(), "_load_ncp_runtime_scale_data", record_load("runtime")
     )
     monkeypatch.setitem(
+        globals(), "_analyze_ncp_scale_data", record_load("analyze")
+    )
+    monkeypatch.setitem(
         globals(),
         "_load_synthetic_scale_data",
         record_load("legacy-migration"),
@@ -1018,7 +1026,28 @@ def test_ncp_provisioning_commits_role_owned_phases_in_order(
         "commit:migration",
         "load:runtime",
         "commit:runtime",
+        "load:analyze",
+        "commit:migration",
         "assert:runtime",
+    ]
+
+
+def test_ncp_analyze_phase_covers_all_benchmark_tables() -> None:
+    statements: list[str] = []
+
+    class RecordingConnection:
+        def execute(self, statement: str) -> None:
+            statements.append(statement)
+
+    _analyze_ncp_scale_data(RecordingConnection())  # type: ignore[arg-type]
+
+    assert statements == [
+        "ANALYZE catalog.alias",
+        "ANALYZE relation.relation_record",
+        "ANALYZE observation.observation_record",
+        "ANALYZE evidence.evidence_record",
+        "ANALYZE evidence.claim_support",
+        "ANALYZE operations.request_artifact",
     ]
 
 
@@ -1053,6 +1082,10 @@ def test_ncp_scale_loader_uses_only_existing_build_and_runtime_grants(
 
         connection.execute("SET LOCAL ROLE fa_runtime")
         _load_ncp_runtime_scale_data(connection)
+        connection.execute("RESET ROLE")
+
+        connection.execute("SET LOCAL ROLE fa_migration")
+        _analyze_ncp_scale_data(connection)
         connection.execute("RESET ROLE")
 
         assert connection.execute(
@@ -1199,6 +1232,8 @@ def _provision_authorized_ncp_scale_data(
         migration_connection.commit()
         _load_ncp_runtime_scale_data(runtime_connection)
         runtime_connection.commit()
+        _analyze_ncp_scale_data(migration_connection)
+        migration_connection.commit()
         _assert_synthetic_scale_dataset(runtime_connection)
 
 

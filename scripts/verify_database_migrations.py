@@ -50,10 +50,13 @@ class MigrationVerificationReport:
     bootstrap_roles_preserved: bool
     foundation_cutoff_enforced: bool
     foundation_transition_enforced: bool
+    foundation_incomplete_readiness_rejected: bool
     foundation_readiness_activation_enforced: bool
     foundation_request_start_idempotent: bool
+    foundation_request_conflict_rejected: bool
     foundation_append_only_enforced: bool
     foundation_concurrent_request_idempotent: bool
+    foundation_concurrent_request_conflict_rejected: bool
 
 
 def _assert_safe_source_url(url: str) -> None:
@@ -299,13 +302,16 @@ def _verify_base_state(database_url: str) -> tuple[bool, bool]:
 
 def _verify_foundation_behavior(
     database_url: str,
-) -> tuple[bool, bool, bool, bool, bool, bool]:
+) -> tuple[bool, bool, bool, bool, bool, bool, bool, bool, bool]:
     cutoff_enforced = False
     transition_enforced = False
+    incomplete_readiness_rejected = False
     readiness_activation_enforced = False
     request_start_idempotent = False
+    request_conflict_rejected = False
     append_only_enforced = False
     concurrent_request_idempotent = False
+    concurrent_request_conflict_rejected = False
     normalized_url = normalize_psycopg_url(database_url)
     with psycopg.connect(normalized_url) as connection:
         with connection.transaction(force_rollback=True):
@@ -382,7 +388,37 @@ def _verify_foundation_behavior(
             "SELECT operations.finish_dataset_validation(%s)",
             ("task8-second-head-validation",),
         )
-        for component in ("postgres", "graph", "vector", "evidence"):
+        connection.execute(
+            """
+            SELECT operations.record_dataset_readiness(
+                %s, %s, %s, %s,
+                TIMESTAMPTZ '2026-08-19 00:00:02+00', '1'
+            )
+            """,
+            (
+                "task8-second-head-active",
+                "postgres",
+                "task8-second-head-validation",
+                "5" * 64,
+            ),
+        )
+        try:
+            with connection.transaction():
+                connection.execute(
+                    "SELECT operations.activate_dataset(%s)",
+                    ("task8-second-head-active",),
+                )
+        except psycopg.errors.CheckViolation as error:
+            incomplete_readiness_rejected = (
+                error.diag.message_primary == "DATASET_READINESS_INCOMPLETE"
+            )
+        if not incomplete_readiness_rejected:
+            raise MigrationVerificationFailure(
+                "FOUNDATION_INVARIANT_FAILED",
+                "second-head incomplete readiness was not rejected",
+            )
+
+        for component in ("graph", "vector", "evidence"):
             connection.execute(
                 """
                 SELECT operations.record_dataset_readiness(
@@ -455,6 +491,23 @@ def _verify_foundation_behavior(
             raise MigrationVerificationFailure(
                 "FOUNDATION_INVARIANT_FAILED",
                 "second-head request-start behavior is incompatible",
+            )
+        conflicting_parameters = list(request_parameters)
+        conflicting_parameters[3] = "divergent second-head behavior probe"
+        try:
+            with connection.transaction():
+                connection.execute(
+                    request_statement,
+                    tuple(conflicting_parameters),
+                )
+        except psycopg.errors.RaiseException as error:
+            request_conflict_rejected = (
+                error.diag.message_primary == "REQUEST_RUN_CONFLICT"
+            )
+        if not request_conflict_rejected:
+            raise MigrationVerificationFailure(
+                "FOUNDATION_INVARIANT_FAILED",
+                "second-head conflicting request reuse was not rejected",
             )
 
         canonical_payload = json.dumps(
@@ -545,14 +598,82 @@ def _verify_foundation_behavior(
             ]
             and concurrent_count == 1
         )
+        if not concurrent_request_idempotent:
+            raise MigrationVerificationFailure(
+                "FOUNDATION_INVARIANT_FAILED",
+                "second-head concurrent request convergence is incompatible",
+            )
+
+        conflicting_run_id = "task8-second-head-concurrent-conflict"
+        conflicting_questions = (
+            "second-head concurrent conflict probe A",
+            "second-head concurrent conflict probe B",
+        )
+        conflict_barrier = Barrier(2)
+
+        def start_conflicting_request(question: str) -> str:
+            parameters = (
+                conflicting_run_id,
+                "8" * 64,
+                "Q-TASK8-CONCURRENT-CONFLICT",
+                question,
+                "1.0.0",
+                "task8-second-head-active",
+                "2026-07-11",
+                "2026-08-19T00:00:05+00:00",
+                "2026-08-19T00:01:00+00:00",
+            )
+            with psycopg.connect(normalized_url) as concurrent_connection:
+                conflict_barrier.wait()
+                try:
+                    with concurrent_connection.transaction():
+                        return str(
+                            concurrent_connection.execute(
+                                request_statement,
+                                parameters,
+                            ).fetchone()[0]
+                        )
+                except psycopg.errors.RaiseException as error:
+                    if error.diag.message_primary == "REQUEST_RUN_CONFLICT":
+                        return "REQUEST_RUN_CONFLICT"
+                    raise
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                conflict_results = list(
+                    executor.map(
+                        start_conflicting_request,
+                        conflicting_questions,
+                    )
+                )
+        except psycopg.Error:
+            conflict_results = []
+        conflict_row = connection.execute(
+            """
+            SELECT count(*), min(question)
+            FROM operations.request_run
+            WHERE run_id = %s
+            """,
+            (conflicting_run_id,),
+        ).fetchone()
+        concurrent_request_conflict_rejected = (
+            set(conflict_results)
+            == {conflicting_run_id, "REQUEST_RUN_CONFLICT"}
+            and conflict_row is not None
+            and conflict_row[0] == 1
+            and conflict_row[1] in conflicting_questions
+        )
     if not all(
         (
             cutoff_enforced,
             transition_enforced,
+            incomplete_readiness_rejected,
             readiness_activation_enforced,
             request_start_idempotent,
+            request_conflict_rejected,
             append_only_enforced,
             concurrent_request_idempotent,
+            concurrent_request_conflict_rejected,
         )
     ):
         raise MigrationVerificationFailure(
@@ -562,10 +683,13 @@ def _verify_foundation_behavior(
     return (
         cutoff_enforced,
         transition_enforced,
+        incomplete_readiness_rejected,
         readiness_activation_enforced,
         request_start_idempotent,
+        request_conflict_rejected,
         append_only_enforced,
         concurrent_request_idempotent,
+        concurrent_request_conflict_rejected,
     )
 
 
@@ -601,10 +725,13 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
         (
             foundation_cutoff_enforced,
             foundation_transition_enforced,
+            foundation_incomplete_readiness_rejected,
             foundation_readiness_activation_enforced,
             foundation_request_start_idempotent,
+            foundation_request_conflict_rejected,
             foundation_append_only_enforced,
             foundation_concurrent_request_idempotent,
+            foundation_concurrent_request_conflict_rejected,
         ) = _verify_foundation_behavior(disposable_url)
         if first_inventory != second_inventory:
             raise MigrationVerificationFailure(
@@ -624,15 +751,24 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
             bootstrap_roles_preserved=bootstrap_roles_preserved,
             foundation_cutoff_enforced=foundation_cutoff_enforced,
             foundation_transition_enforced=foundation_transition_enforced,
+            foundation_incomplete_readiness_rejected=(
+                foundation_incomplete_readiness_rejected
+            ),
             foundation_readiness_activation_enforced=(
                 foundation_readiness_activation_enforced
             ),
             foundation_request_start_idempotent=(
                 foundation_request_start_idempotent
             ),
+            foundation_request_conflict_rejected=(
+                foundation_request_conflict_rejected
+            ),
             foundation_append_only_enforced=foundation_append_only_enforced,
             foundation_concurrent_request_idempotent=(
                 foundation_concurrent_request_idempotent
+            ),
+            foundation_concurrent_request_conflict_rejected=(
+                foundation_concurrent_request_conflict_rejected
             ),
         )
 
