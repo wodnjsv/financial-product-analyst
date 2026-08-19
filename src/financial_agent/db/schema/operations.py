@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from financial_agent.db.metadata import metadata
 
@@ -206,6 +207,7 @@ request_run = sa.Table(
     sa.Column("answer_disposition", sa.Text),
     sa.Column("http_status", sa.SmallInteger),
     sa.Column("terminal_failure_code", sa.Text),
+    sa.Column("final_verification_artifact_id", postgresql.UUID(as_uuid=True)),
     sa.ForeignKeyConstraint(
         ["dataset_version", "cutoff_date"],
         [
@@ -251,10 +253,46 @@ request_run = sa.Table(
         "http_status IS NULL OR http_status BETWEEN 100 AND 599",
         name="http_status",
     ),
+    sa.CheckConstraint(
+        "(finished_at IS NULL AND execution_outcome IS NULL "
+        "AND verification_status IS NULL AND answer_disposition IS NULL "
+        "AND http_status IS NULL AND terminal_failure_code IS NULL "
+        "AND final_verification_artifact_id IS NULL) OR "
+        "(finished_at IS NOT NULL AND execution_outcome IN "
+        "('completed','completed_with_failures') "
+        "AND verification_status = 'pass' AND answer_disposition IS NOT NULL "
+        "AND http_status = 200 AND terminal_failure_code IS NULL "
+        "AND final_verification_artifact_id IS NOT NULL) OR "
+        "(finished_at IS NOT NULL AND execution_outcome = 'failed' "
+        "AND verification_status IS NULL AND answer_disposition IS NULL "
+        "AND http_status BETWEEN 500 AND 599 "
+        "AND terminal_failure_code IS NOT NULL "
+        "AND btrim(terminal_failure_code) <> '' "
+        "AND final_verification_artifact_id IS NULL)",
+        name="terminal_state",
+    ),
     sa.UniqueConstraint(
         "run_id",
         "dataset_version",
         name="uq_request_run_run_dataset",
+    ),
+    sa.UniqueConstraint(
+        "run_id",
+        "request_key",
+        "dataset_version",
+        "cutoff_date",
+        "schema_version",
+        name="uq_request_run_artifact_scope",
+    ),
+    sa.ForeignKeyConstraint(
+        ["run_id", "final_verification_artifact_id"],
+        [
+            "operations.request_artifact.run_id",
+            "operations.request_artifact.artifact_record_id",
+        ],
+        name="fk_request_run_final_verification_artifact",
+        ondelete="RESTRICT",
+        use_alter=True,
     ),
     schema="operations",
 )
@@ -320,4 +358,263 @@ failure_event = sa.Table(
     ),
     sa.CheckConstraint("duration_ms >= 0", name="duration_ms"),
     schema="operations",
+)
+
+
+ARTIFACT_TYPES = (
+    "request_context",
+    "query_plan",
+    "execution_graph",
+    "tool_result",
+    "evidence_bundle",
+    "verification_report",
+    "answer_plan",
+    "released_answer",
+)
+
+
+request_artifact = sa.Table(
+    "request_artifact",
+    metadata,
+    sa.Column(
+        "artifact_record_id",
+        postgresql.UUID(as_uuid=True),
+        primary_key=True,
+        server_default=sa.text("gen_random_uuid()"),
+    ),
+    sa.Column("contract_object_id", sa.Text),
+    sa.Column("artifact_type", sa.Text, nullable=False),
+    sa.Column("schema_version", sa.Text, nullable=False),
+    sa.Column("request_key", sa.CHAR(64), nullable=False),
+    sa.Column("run_id", sa.Text, nullable=False),
+    sa.Column("dataset_version", sa.Text, nullable=False),
+    sa.Column("cutoff_date", sa.Date, nullable=False),
+    sa.Column("producer", sa.Text, nullable=False),
+    sa.Column("model_id", sa.Text),
+    sa.Column("prompt_version", sa.Text),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False),
+    sa.Column("canonical_payload", sa.Text, nullable=False),
+    sa.Column("payload_jsonb", postgresql.JSONB, nullable=False),
+    sa.Column("payload_hash", sa.CHAR(64), nullable=False),
+    sa.ForeignKeyConstraint(
+        [
+            "run_id",
+            "request_key",
+            "dataset_version",
+            "cutoff_date",
+            "schema_version",
+        ],
+        [
+            "operations.request_run.run_id",
+            "operations.request_run.request_key",
+            "operations.request_run.dataset_version",
+            "operations.request_run.cutoff_date",
+            "operations.request_run.schema_version",
+        ],
+        name="fk_request_artifact_run_scope",
+        ondelete="RESTRICT",
+    ),
+    sa.UniqueConstraint(
+        "run_id",
+        "artifact_record_id",
+        name="uq_request_artifact_run_record",
+    ),
+    sa.UniqueConstraint(
+        "artifact_record_id",
+        "run_id",
+        "dataset_version",
+        name="uq_request_artifact_record_scope",
+    ),
+    sa.UniqueConstraint(
+        "run_id",
+        "artifact_type",
+        "payload_hash",
+        name="uq_request_artifact_retry",
+    ),
+    sa.CheckConstraint(
+        "artifact_type IN ("
+        + ",".join(f"'{artifact_type}'" for artifact_type in ARTIFACT_TYPES)
+        + ")",
+        name="artifact_type",
+    ),
+    sa.CheckConstraint(
+        f"request_key ~ '{SHA256_PATTERN}'",
+        name="request_key",
+    ),
+    sa.CheckConstraint(
+        f"payload_hash ~ '{SHA256_PATTERN}'",
+        name="payload_hash",
+    ),
+    sa.CheckConstraint(
+        "octet_length(canonical_payload) > 0",
+        name="canonical_payload",
+    ),
+    sa.CheckConstraint(
+        "(model_id IS NULL) = (prompt_version IS NULL) AND "
+        "(artifact_type = 'query_plan' AND model_id IS NOT NULL OR "
+        "artifact_type = 'answer_plan' OR "
+        "artifact_type NOT IN ('query_plan','answer_plan') "
+        "AND model_id IS NULL)",
+        name="model_metadata",
+    ),
+    schema="operations",
+)
+sa.Index(
+    "uq_request_artifact_contract_object",
+    request_artifact.c.run_id,
+    request_artifact.c.artifact_type,
+    request_artifact.c.contract_object_id,
+    unique=True,
+    postgresql_where=request_artifact.c.contract_object_id.is_not(None),
+)
+sa.Index(
+    "ix_request_artifact_request_created",
+    request_artifact.c.request_key,
+    request_artifact.c.run_id,
+    request_artifact.c.artifact_type,
+    request_artifact.c.created_at,
+)
+sa.Index(
+    "ix_request_artifact_dataset_cutoff",
+    request_artifact.c.dataset_version,
+    request_artifact.c.cutoff_date,
+)
+sa.Index(
+    "ix_request_artifact_producer_schema",
+    request_artifact.c.producer,
+    request_artifact.c.schema_version,
+)
+
+
+artifact_evidence_ref = sa.Table(
+    "artifact_evidence_ref",
+    metadata,
+    sa.Column("artifact_record_id", postgresql.UUID(as_uuid=True), nullable=False),
+    sa.Column("run_id", sa.Text, nullable=False),
+    sa.Column("dataset_version", sa.Text, nullable=False),
+    sa.Column("evidence_id", sa.Text, nullable=False),
+    sa.Column("reference_role", sa.Text, nullable=False),
+    sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["artifact_record_id", "run_id", "dataset_version"],
+        [
+            "operations.request_artifact.artifact_record_id",
+            "operations.request_artifact.run_id",
+            "operations.request_artifact.dataset_version",
+        ],
+        name="fk_artifact_evidence_ref_artifact",
+        ondelete="RESTRICT",
+    ),
+    sa.ForeignKeyConstraint(
+        ["dataset_version", "evidence_id"],
+        ["evidence.evidence_record.dataset_version", "evidence.evidence_record.evidence_id"],
+        name="fk_artifact_evidence_ref_evidence",
+        ondelete="RESTRICT",
+    ),
+    sa.PrimaryKeyConstraint(
+        "artifact_record_id",
+        "reference_role",
+        "ordinal",
+        name="pk_artifact_evidence_ref",
+    ),
+    sa.CheckConstraint("btrim(reference_role) <> ''", name="reference_role"),
+    sa.CheckConstraint("ordinal >= 0", name="ordinal"),
+    schema="operations",
+)
+sa.Index(
+    "ix_artifact_evidence_ref_target",
+    artifact_evidence_ref.c.dataset_version,
+    artifact_evidence_ref.c.evidence_id,
+)
+
+
+artifact_calculation_ref = sa.Table(
+    "artifact_calculation_ref",
+    metadata,
+    sa.Column("artifact_record_id", postgresql.UUID(as_uuid=True), nullable=False),
+    sa.Column("run_id", sa.Text, nullable=False),
+    sa.Column("dataset_version", sa.Text, nullable=False),
+    sa.Column("calculation_id", sa.Text, nullable=False),
+    sa.Column("reference_role", sa.Text, nullable=False),
+    sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["artifact_record_id", "run_id", "dataset_version"],
+        [
+            "operations.request_artifact.artifact_record_id",
+            "operations.request_artifact.run_id",
+            "operations.request_artifact.dataset_version",
+        ],
+        name="fk_artifact_calculation_ref_artifact",
+        ondelete="RESTRICT",
+    ),
+    sa.ForeignKeyConstraint(
+        ["run_id", "dataset_version", "calculation_id"],
+        [
+            "evidence.calculation_record.run_id",
+            "evidence.calculation_record.dataset_version",
+            "evidence.calculation_record.calculation_id",
+        ],
+        name="fk_artifact_calculation_ref_calculation",
+        ondelete="RESTRICT",
+    ),
+    sa.PrimaryKeyConstraint(
+        "artifact_record_id",
+        "reference_role",
+        "ordinal",
+        name="pk_artifact_calculation_ref",
+    ),
+    sa.CheckConstraint("btrim(reference_role) <> ''", name="reference_role"),
+    sa.CheckConstraint("ordinal >= 0", name="ordinal"),
+    schema="operations",
+)
+sa.Index(
+    "ix_artifact_calculation_ref_target",
+    artifact_calculation_ref.c.run_id,
+    artifact_calculation_ref.c.calculation_id,
+)
+
+
+artifact_claim_ref = sa.Table(
+    "artifact_claim_ref",
+    metadata,
+    sa.Column("artifact_record_id", postgresql.UUID(as_uuid=True), nullable=False),
+    sa.Column("run_id", sa.Text, nullable=False),
+    sa.Column("dataset_version", sa.Text, nullable=False),
+    sa.Column("claim_id", sa.Text, nullable=False),
+    sa.Column("reference_role", sa.Text, nullable=False),
+    sa.Column("ordinal", sa.Integer, nullable=False),
+    sa.ForeignKeyConstraint(
+        ["artifact_record_id", "run_id", "dataset_version"],
+        [
+            "operations.request_artifact.artifact_record_id",
+            "operations.request_artifact.run_id",
+            "operations.request_artifact.dataset_version",
+        ],
+        name="fk_artifact_claim_ref_artifact",
+        ondelete="RESTRICT",
+    ),
+    sa.ForeignKeyConstraint(
+        ["run_id", "dataset_version", "claim_id"],
+        [
+            "evidence.atomic_claim.run_id",
+            "evidence.atomic_claim.dataset_version",
+            "evidence.atomic_claim.claim_id",
+        ],
+        name="fk_artifact_claim_ref_claim",
+        ondelete="RESTRICT",
+    ),
+    sa.PrimaryKeyConstraint(
+        "artifact_record_id",
+        "reference_role",
+        "ordinal",
+        name="pk_artifact_claim_ref",
+    ),
+    sa.CheckConstraint("btrim(reference_role) <> ''", name="reference_role"),
+    sa.CheckConstraint("ordinal >= 0", name="ordinal"),
+    schema="operations",
+)
+sa.Index(
+    "ix_artifact_claim_ref_target",
+    artifact_claim_ref.c.run_id,
+    artifact_claim_ref.c.claim_id,
 )

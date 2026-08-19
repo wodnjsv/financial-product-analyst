@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
@@ -10,6 +11,7 @@ from alembic.config import Config
 from psycopg import sql
 from sqlalchemy.engine import make_url
 
+from financial_agent.contracts import QueryPlan, canonical_json_bytes
 from financial_agent.db.preflight import normalize_psycopg_url
 
 from .conftest import PROJECT_ROOT
@@ -26,6 +28,8 @@ PROTECTED_FUNCTION_GRANTS = {
     "record_dataset_readiness": {"fa_build"},
     "activate_dataset": {"fa_build"},
     "start_request_run": {"fa_runtime"},
+    "append_request_artifact": {"fa_runtime"},
+    "finish_request_run": {"fa_runtime"},
 }
 
 
@@ -284,6 +288,33 @@ def test_runtime_cannot_insert_request_runs_directly(
 
 
 @pytest.mark.postgres
+def test_runtime_cannot_insert_request_subtasks_directly(
+    connection: psycopg.Connection,
+) -> None:
+    for table_name in (
+        "operations.request_subtask",
+        "operations.request_artifact",
+        "operations.artifact_evidence_ref",
+        "operations.artifact_calculation_ref",
+        "operations.artifact_claim_ref",
+    ):
+        for privilege in ("INSERT", "UPDATE", "DELETE"):
+            assert connection.execute(
+                "SELECT pg_catalog.has_table_privilege(%s, %s, %s)",
+                ("fa_runtime", table_name, privilege),
+            ).fetchone()[0] is False
+    assert_statement_denied(
+        connection,
+        role="fa_runtime",
+        statement="""
+            INSERT INTO operations.request_subtask (
+                run_id, subtask_id, importance
+            ) VALUES ('forbidden', 'forbidden', 'critical')
+        """,
+    )
+
+
+@pytest.mark.postgres
 def test_build_and_runtime_can_use_only_their_approved_functions(
     connection: psycopg.Connection,
 ) -> None:
@@ -331,19 +362,58 @@ def test_build_and_runtime_can_use_only_their_approved_functions(
             "d" * 64,
             "Q-001",
             "question",
-            "1.0.0",
+            "1.0",
             "dataset-permission-path",
             created_at,
             created_at + timedelta(seconds=55),
         ),
     ).fetchone()[0] == "run-permission-path"
-    connection.execute(
-        """
-        INSERT INTO operations.request_subtask (
-            run_id, subtask_id, importance
-        ) VALUES ('run-permission-path', 'subtask-1', 'critical')
-        """
+    query_plan = QueryPlan.model_validate_json(
+        json.dumps({
+            "schema_version": "1.0",
+            "request_key": "d" * 64,
+            "run_id": "run-permission-path",
+            "dataset_version": "dataset-permission-path",
+            "cutoff_date": "2026-07-11",
+            "producer": "intent-resolver",
+            "created_at": created_at.isoformat().replace("+00:00", "Z"),
+            "intent_types": ["lookup"],
+            "product_families": ["domestic_etf"],
+            "subtasks": [
+                {
+                    "subtask_id": "subtask-1",
+                    "intent_type": "lookup",
+                    "importance": "critical",
+                    "operation_ids": ["operation-1"],
+                }
+            ],
+            "operations": [
+                {
+                    "subtask_id": "subtask-1",
+                    "operation_id": "operation-1",
+                    "parameter_ids": [],
+                }
+            ],
+            "result_shape": "single_value",
+            "requested_capabilities": ["rdb_lookup"],
+            "initial_answerability": "supported",
+        })
     )
+    connection.execute(
+        "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+        (
+            "query_plan",
+            "hcx-model",
+            "prompt-v1",
+            canonical_json_bytes(query_plan).decode("utf-8"),
+        ),
+    )
+    assert connection.execute(
+        """
+        SELECT subtask_id, importance FROM operations.request_subtask
+        WHERE run_id = 'run-permission-path'
+        """
+    ).fetchone() == ("subtask-1", "critical")
     connection.execute(
         """
         INSERT INTO operations.failure_event (
