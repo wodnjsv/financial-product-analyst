@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 import traceback
 
 import psycopg
@@ -25,6 +28,54 @@ from financial_agent.db.preflight import (
     validate_post_migration_snapshot,
 )
 from scripts.export_database_objects import write_or_check_manifest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_installed_preflight_uses_explicit_project_root(tmp_path: Path) -> None:
+    installed_root = tmp_path / "site-packages"
+    shutil.copytree(
+        PROJECT_ROOT / "src" / "financial_agent",
+        installed_root / "financial_agent",
+    )
+    working_directory = tmp_path / "working-directory"
+    working_directory.mkdir()
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(installed_root)
+    environment["FINANCIAL_AGENT_PROJECT_ROOT"] = str(PROJECT_ROOT)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "\n".join(
+                (
+                    "from pathlib import Path",
+                    "from financial_agent.db.preflight import (",
+                    "    DEFAULT_DATABASE_OBJECT_MANIFEST,",
+                    "    _expected_alembic_head,",
+                    ")",
+                    "project_root = Path("
+                    "__import__('os').environ['FINANCIAL_AGENT_PROJECT_ROOT']"
+                    ")",
+                    "assert DEFAULT_DATABASE_OBJECT_MANIFEST == (",
+                    "    project_root / 'schemas/postgresql/v1/database-objects.json'",
+                    ")",
+                    "assert DEFAULT_DATABASE_OBJECT_MANIFEST.is_file()",
+                    "print(_expected_alembic_head())",
+                )
+            ),
+        ],
+        cwd=working_directory,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout == "0005\n"
 
 
 def _pre_migration_snapshot() -> PreflightSnapshot:

@@ -43,7 +43,10 @@ EXPECTED_ROLES = frozenset(
 UNEXPECTED_PRINCIPAL = "__unexpected_principal__"
 
 PermissionLayout = Literal["group_roles", "direct_users"]
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT_ENV = "FINANCIAL_AGENT_PROJECT_ROOT"
+PROJECT_ROOT = Path(
+    os.environ.get(PROJECT_ROOT_ENV, Path(__file__).resolve().parents[3])
+).resolve()
 DEFAULT_DATABASE_OBJECT_MANIFEST = (
     PROJECT_ROOT / "schemas" / "postgresql" / "v1" / "database-objects.json"
 )

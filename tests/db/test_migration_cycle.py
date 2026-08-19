@@ -784,6 +784,7 @@ def test_database_check_container_is_linux_amd64_and_uses_only_test_url() -> Non
     )
 
     assert "PIP_CONSTRAINT=/app/requirements/storage.lock" in dockerfile
+    assert "FINANCIAL_AGENT_PROJECT_ROOT=/app" in dockerfile
     assert 'python -m pip install ".[dev,storage]"' in dockerfile
     assert "scripts/verify_database_migrations.py" in dockerfile
     assert "tests/db" in dockerfile
