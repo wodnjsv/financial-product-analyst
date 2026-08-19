@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-17 (final review amended 2026-08-18)
 
-**Status:** Stage 02A implementation in progress; Tasks 1-6 implemented and verified
+**Status:** Stage 02A core persistence implemented and verified; Tasks 1-7 complete, Stage 02B pending
 
 **Goal:** Implement the PostgreSQL 15 physical storage boundary for the seven approved logical schemas, preserve the Stage 01 contract IDs and immutable artifacts without renaming public interfaces, and prove that the migrations and persistence layer run in an NCP-compatible Linux/amd64 environment.
 
@@ -1032,7 +1032,12 @@ ARTIFACT_MODELS: Mapping[ArtifactType, type[RuntimeArtifact]] = {
 class RequestArtifactRepository:
     async def start_run(self, context: RequestContext) -> str: ...
     async def append(
-        self, artifact_type: ArtifactType, artifact: RuntimeArtifact
+        self,
+        artifact_type: ArtifactType,
+        artifact: RuntimeArtifact,
+        *,
+        model_id: str | None = None,
+        prompt_version: str | None = None,
     ) -> UUID: ...
     async def get(
         self, run_id: str, artifact_record_id: UUID
@@ -1074,7 +1079,7 @@ class RequestRunRepository:
     ) -> None: ...
 ```
 
-- [ ] **Step 1: Write failing request-run and artifact repository tests**
+- [x] **Step 1: Write failing request-run and artifact repository tests**
 
 The request-run table already exists from revision `0001`; these tests exercise it through `operations.start_request_run(...)` and the repository boundary. Verify:
 
@@ -1092,11 +1097,11 @@ The request-run table already exists from revision `0001`; these tests exercise 
 - multiple append-only FailureEvents retain every retry rather than overwriting one failure code;
 - no column exists for raw chain-of-thought.
 
-- [ ] **Step 2: Define runtime artifact tables**
+- [x] **Step 2: Define runtime artifact tables**
 
 `request_artifact` has server-generated `artifact_record_id UUID PRIMARY KEY`, nullable `contract_object_id`, indexed metadata, `canonical_payload TEXT`, a database-derived JSONB projection, and a database-derived SHA-256. A `BEFORE INSERT` trigger ignores caller-supplied projection/hash values, parses `canonical_payload::jsonb`, and computes `encode(digest(canonical_payload, 'sha256'), 'hex')`; the UTF-8 preflight makes this the same byte encoding used by Stage 01. `artifact_type` permits exactly the eight `ARTIFACT_MODELS` keys. Unique constraints cover `(run_id, artifact_type, contract_object_id)` when the contract ID exists and `(run_id, artifact_type, payload_hash)` for canonical retry identity. All artifact/reference FKs target `artifact_record_id`, never an assumed contract ID.
 
-The explicit contract-ID extraction map uses `graph_id`, `task_id`, `bundle_id`, and `verification_report_id` for their matching artifact types; types without an explicit top-level object ID store null rather than repurposing a content hash as a public contract ID. Nullable `model_id` and `prompt_version` are required for model-produced QueryPlan and AnswerPlan artifacts and rejected for deterministic ToolResult/Verification artifacts.
+The explicit contract-ID extraction map uses `graph_id`, `task_id`, `bundle_id`, and `verification_report_id` for their matching artifact types; types without an explicit top-level object ID store null rather than repurposing a content hash as a public contract ID. `model_id` and `prompt_version` are keyword-only persistence metadata and must be supplied together. QueryPlan requires both; AnswerPlan accepts both for model production or neither for the deterministic fallback; deterministic artifact types reject them.
 
 The repository validates with `ARTIFACT_MODELS[artifact_type].model_validate_json(...)` before opening the insert transaction, then calls the Stage 01 artifact's `model_dump(mode="json")` and `canonical_json_bytes()` directly. PostgreSQL derives JSONB and hash from the canonical text. Reads pass `canonical_payload` to the selected model's `model_validate_json`; they never reconstruct from JSONB text. Identical retries compare canonical text as well as hash, so a hash match alone is insufficient.
 
@@ -1104,7 +1109,7 @@ The three reference tables preserve explicit Evidence, Calculation, and Claim FK
 
 Migration `0005` adds nullable `request_run.final_verification_artifact_id UUID` with a same-run Artifact FK and creates `operations.append_request_artifact(...)` plus `operations.finish_request_run(...)` as hardened `SECURITY DEFINER` functions. Runtime receives only `EXECUTE`; it has no direct INSERT/UPDATE/DELETE on artifact, reference, subtask, or terminal run state tables. This revision creates no release table, release status, release timestamp, cache function, or cache lookup API.
 
-- [ ] **Step 3: Write failing immutability and idempotency tests**
+- [x] **Step 3: Write failing immutability and idempotency tests**
 
 Test that:
 
@@ -1119,7 +1124,7 @@ Test that:
 - storing `VerificationReport=pass`, AnswerPlan, or ReleasedAnswer never creates release authority;
 - a 5xx execution result cannot be represented as a successful semantic processing result.
 
-- [ ] **Step 4: Implement artifact schema and repository**
+- [x] **Step 4: Implement artifact schema and repository**
 
 `ARTIFACT_MODELS` is a Stage 02 routing map only. It selects the frozen Stage 01 Pydantic class and contains no new validation logic, tagged-value codec, Claim predicate rules, template rules, or release policy. The future Claim Gate Registry remains a separate mandatory component.
 
@@ -1127,7 +1132,7 @@ Test that:
 
 Do not log artifact payloads at error level. Redact the database URL and preserve only stable reason codes in raised persistence errors.
 
-- [ ] **Step 5: Generate and run migration `0005`**
+- [x] **Step 5: Generate and run migration `0005`**
 
 ```bash
 python -m alembic revision --autogenerate --rev-id 0005 -m "request artifacts"
@@ -1136,7 +1141,7 @@ python -m alembic check
 python -m pytest tests/db/test_artifact_repository.py tests/db/test_operations_repository.py -v
 ```
 
-- [ ] **Step 6: Commit artifact persistence**
+- [x] **Step 6: Commit artifact persistence**
 
 ```bash
 git add alembic/versions/0005_request_artifacts.py src/financial_agent/db/schema/operations.py src/financial_agent/db/repositories/artifacts.py src/financial_agent/db/repositories/operations.py tests/db/test_artifact_repository.py tests/db/test_operations_repository.py
@@ -1422,7 +1427,7 @@ Minimum acceptance coverage:
 - Frozen Stage 01 Pydantic contracts, canonical JSON/hash helpers, tagged-value encoders/decoders, JSON Schema exporter, and 224 passing contract tests.
 - `requirements/contracts.lock`, `.dockerignore`, and `docker/contracts.Dockerfile` verified on NCP Ubuntu/Linux-amd64 at the frozen Stage 01 commit.
 - Approved seven-schema physical direction, three-store/five-layer architecture, 2026-07-11 cutoff, failure/disposition policy, and NCP PostgreSQL target sizing.
-- Stage 02 Tasks 1-6 have implemented the PostgreSQL harness, Alembic revisions `0001`-`0004`, and lossless Evidence repositories; request-artifact persistence remains Task 7. No migration has been applied to the actual NCP Cloud DB.
+- Stage 02 Tasks 1-7 have implemented the PostgreSQL harness, Alembic revisions `0001`-`0005`, lossless Evidence repositories, request-run lifecycle, and immutable runtime-artifact persistence. No migration has been applied to the actual NCP Cloud DB.
 
 ## 12. Explicitly Not in Scope
 
