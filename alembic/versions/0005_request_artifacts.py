@@ -458,7 +458,8 @@ def upgrade() -> None:
                           inserted_artifact.payload_jsonb -> 'calculation_checks',
                           '[]'::jsonb
                       )
-                  ) WITH ORDINALITY AS check_record(value, ordinality);
+                  ) WITH ORDINALITY AS check_record(value, ordinality)
+                 WHERE check_record.value ->> 'target_type' = 'calculation';
                 INSERT INTO operations.artifact_claim_ref (
                     artifact_record_id, run_id, dataset_version, claim_id,
                     reference_role, ordinal

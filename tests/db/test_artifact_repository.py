@@ -19,10 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from financial_agent.contracts import (
     AnswerPlan,
     ClaimBinding,
+    CheckResult,
+    CheckStatus,
+    CheckTargetType,
     EvidenceBundle,
     ExecutionGraph,
     QueryPlan,
     ReleasedAnswer,
+    Repairability,
     RequestContext,
     RuntimeArtifact,
     ToolResult,
@@ -306,6 +310,61 @@ def _seed_references(connection: psycopg.Connection, context: ArtifactContext) -
         ) VALUES (%s, %s, 'claim-rank-1', 'direct', 'evidence-aum-1', 'value', 0)
         """,
         (context.run_id, context.dataset_version),
+    )
+    connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+
+def _seed_colliding_calculations(
+    connection: psycopg.Connection, context: ArtifactContext
+) -> None:
+    tagged_value = Jsonb({"type": "string", "value": "synthetic"})
+    connection.execute("SET CONSTRAINTS ALL DEFERRED")
+    connection.execute(
+        """
+        INSERT INTO evidence.calculation_record (
+            run_id, dataset_version, calculation_id, calculation_type,
+            formula_id, formula_version, result_value, calculation_hash,
+            created_at
+        ) VALUES
+            (%s, %s, 'evidence-syn-etf-a', 'comparison',
+             'collision-evidence', '1', %s, repeat('4', 64), %s),
+            (%s, %s, 'claim-rank-1', 'comparison',
+             'collision-claim', '1', %s, repeat('5', 64), %s),
+            (%s, %s, 'q2', 'comparison',
+             'collision-subtask', '1', %s, repeat('6', 64), %s)
+        """,
+        (
+            context.run_id,
+            context.dataset_version,
+            tagged_value,
+            CREATED_AT,
+            context.run_id,
+            context.dataset_version,
+            tagged_value,
+            CREATED_AT,
+            context.run_id,
+            context.dataset_version,
+            tagged_value,
+            CREATED_AT,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO evidence.calculation_evidence_input (
+            run_id, dataset_version, calculation_id, evidence_id, ordinal
+        ) VALUES
+            (%s, %s, 'evidence-syn-etf-a', 'evidence-aum-1', 0),
+            (%s, %s, 'claim-rank-1', 'evidence-aum-1', 0),
+            (%s, %s, 'q2', 'evidence-aum-1', 0)
+        """,
+        (
+            context.run_id,
+            context.dataset_version,
+            context.run_id,
+            context.dataset_version,
+            context.run_id,
+            context.dataset_version,
+        ),
     )
     connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
@@ -753,3 +812,115 @@ async def test_repository_populates_subtasks_and_normalized_references(
     assert {"result", "included", "claim_check", "calculation_check", "bound"} <= evidence_roles
     assert {"included", "checked"} <= calculation_roles
     assert {"candidate", "releaseable", "selected", "bound"} <= claim_roles
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "with_colliding_calculations",
+    (False, True),
+    ids=("no-collision", "same-id-collision"),
+)
+async def test_verification_report_normalizes_only_calculation_typed_targets(
+    migrated_database_url: str,
+    artifact_engine: AsyncEngine,
+    with_colliding_calculations: bool,
+) -> None:
+    from financial_agent.db.repositories.artifacts import RequestArtifactRepository
+
+    context = _artifact_context(migrated_database_url)
+    repository = RequestArtifactRepository(artifact_engine)
+    await repository.append(
+        "query_plan",
+        _artifact("query_plan", context, empty_references=False),
+        model_id="hcx-model",
+        prompt_version="prompt-v1",
+    )
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        _seed_references(connection, context)
+        if with_colliding_calculations:
+            _seed_colliding_calculations(connection, context)
+
+    checks = (
+        CheckResult(
+            check_id="check-calculation-target",
+            target_type=CheckTargetType.CALCULATION,
+            target_id="calculation-rank-1",
+            rule_id="rule-target-type",
+            rule_version="v1",
+            status=CheckStatus.PASS,
+            reason_code="calculation-checked",
+            related_evidence_ids=("evidence-aum-1",),
+            repairability=Repairability.NONE,
+        ),
+        CheckResult(
+            check_id="check-evidence-target",
+            target_type=CheckTargetType.EVIDENCE,
+            target_id="evidence-syn-etf-a",
+            rule_id="rule-target-type",
+            rule_version="v1",
+            status=CheckStatus.PASS,
+            reason_code="evidence-checked",
+            repairability=Repairability.NONE,
+        ),
+        CheckResult(
+            check_id="check-claim-target",
+            target_type=CheckTargetType.CLAIM,
+            target_id="claim-rank-1",
+            rule_id="rule-target-type",
+            rule_version="v1",
+            status=CheckStatus.PASS,
+            reason_code="claim-checked",
+            repairability=Repairability.NONE,
+        ),
+        CheckResult(
+            check_id="check-subtask-target",
+            target_type=CheckTargetType.SUBTASK,
+            target_id="q2",
+            rule_id="rule-target-type",
+            rule_version="v1",
+            status=CheckStatus.PASS,
+            reason_code="subtask-checked",
+            repairability=Repairability.NONE,
+        ),
+    )
+    report = _artifact(
+        "verification_report", context, empty_references=False
+    ).model_copy(update={"calculation_checks": checks})
+    artifact_record_id = await repository.append("verification_report", report)
+
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        calculation_rows = connection.execute(
+            """
+            SELECT calculation_id, reference_role, ordinal
+            FROM operations.artifact_calculation_ref
+            WHERE artifact_record_id = %s
+            ORDER BY ordinal
+            """,
+            (artifact_record_id,),
+        ).fetchall()
+        evidence_rows = connection.execute(
+            """
+            SELECT evidence_id, reference_role, ordinal
+            FROM operations.artifact_evidence_ref
+            WHERE artifact_record_id = %s
+            ORDER BY reference_role, ordinal
+            """,
+            (artifact_record_id,),
+        ).fetchall()
+        claim_rows = connection.execute(
+            """
+            SELECT claim_id, reference_role, ordinal
+            FROM operations.artifact_claim_ref
+            WHERE artifact_record_id = %s
+            ORDER BY reference_role, ordinal
+            """,
+            (artifact_record_id,),
+        ).fetchall()
+
+    assert calculation_rows == [("calculation-rank-1", "checked", 0)]
+    assert evidence_rows == [
+        ("evidence-aum-1", "calculation_check", 0),
+        ("evidence-aum-1", "claim_check", 0),
+    ]
+    assert claim_rows == [("claim-rank-1", "releaseable", 0)]
