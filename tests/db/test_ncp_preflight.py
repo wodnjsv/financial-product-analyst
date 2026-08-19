@@ -350,6 +350,13 @@ def test_public_table_inventory_is_independent_of_current_user_visibility(
             "GRANT fa_build TO task8_overlapping_member; "
             "GRANT fa_runtime TO task8_overlapping_member"
         ),
+        (
+            "CREATE ROLE task8_membership_bridge LOGIN; "
+            "CREATE ROLE task8_shared_member LOGIN; "
+            "GRANT fa_runtime TO task8_membership_bridge; "
+            "GRANT task8_membership_bridge TO task8_shared_member; "
+            "GRANT fa_build TO task8_shared_member"
+        ),
     ),
 )
 def test_permission_layout_rejects_unapproved_external_membership_shape(

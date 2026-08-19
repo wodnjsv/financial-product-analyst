@@ -4701,6 +4701,48 @@
       "grantable": false
     }
   ],
+  "column_grants": [
+    {
+      "schema": "operations",
+      "name": "dataset_version",
+      "column": "created_at",
+      "grantee": "fa_build",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "dataset_version",
+      "column": "cutoff_date",
+      "grantee": "fa_build",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "dataset_version",
+      "column": "dataset_version",
+      "grantee": "fa_build",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "dataset_version",
+      "column": "manifest_hash",
+      "grantee": "fa_build",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "dataset_version",
+      "column": "previous_dataset_version",
+      "grantee": "fa_build",
+      "privilege": "INSERT",
+      "grantable": false
+    }
+  ],
   "routine_grants": [
     {
       "schema": "catalog",

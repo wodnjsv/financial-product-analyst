@@ -107,7 +107,13 @@ class DatabaseObjectComparison:
 
 
 _PERMISSION_MANIFEST_SECTIONS = frozenset(
-    {"owners", "table_grants", "routine_grants", "schema_grants"}
+    {
+        "owners",
+        "table_grants",
+        "column_grants",
+        "routine_grants",
+        "schema_grants",
+    }
 )
 
 
@@ -347,6 +353,44 @@ def collect_database_objects(
             """
             SELECT
                 namespace.nspname,
+                relation.relname,
+                attribute.attname,
+                COALESCE(grantee.rolname, 'PUBLIC'),
+                acl.privilege_type,
+                acl.is_grantable
+            FROM pg_catalog.pg_attribute AS attribute
+            JOIN pg_catalog.pg_class AS relation
+              ON relation.oid = attribute.attrelid
+            JOIN pg_catalog.pg_namespace AS namespace
+              ON namespace.oid = relation.relnamespace
+            CROSS JOIN LATERAL pg_catalog.aclexplode(
+                attribute.attacl
+            ) AS acl
+            LEFT JOIN pg_catalog.pg_roles AS grantee
+              ON grantee.oid = acl.grantee
+            WHERE attribute.attnum > 0
+              AND NOT attribute.attisdropped
+              AND (
+                    namespace.nspname = ANY(%s)
+                    OR (
+                        namespace.nspname = 'public'
+                        AND relation.relname = 'alembic_version'
+                    )
+                  )
+              AND relation.relkind IN ('r', 'p')
+            ORDER BY namespace.nspname, relation.relname,
+                     attribute.attname,
+                     COALESCE(grantee.rolname, 'PUBLIC'),
+                     acl.privilege_type
+            """,
+            (schemas,),
+        )
+        column_grant_rows = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT
+                namespace.nspname,
                 procedure.proname,
                 pg_catalog.pg_get_function_identity_arguments(procedure.oid),
                 COALESCE(grantee.rolname, 'PUBLIC'),
@@ -471,6 +515,18 @@ def collect_database_objects(
         }
         for schema, name, grantee, privilege, grantable in table_grant_rows
     ]
+    column_grants = [
+        {
+            "schema": str(schema),
+            "name": str(name),
+            "column": str(column),
+            "grantee": _normalize_grantee(str(grantee)),
+            "privilege": str(privilege),
+            "grantable": bool(grantable),
+        }
+        for schema, name, column, grantee, privilege, grantable
+        in column_grant_rows
+    ]
     routine_grants = [
         {
             "schema": str(schema),
@@ -500,6 +556,7 @@ def collect_database_objects(
         "checks": _sorted_manifest_entries(checks),
         "owners": _sorted_manifest_entries(owners),
         "table_grants": _sorted_manifest_entries(table_grants),
+        "column_grants": _sorted_manifest_entries(column_grants),
         "routine_grants": _sorted_manifest_entries(routine_grants),
         "schema_grants": _sorted_manifest_entries(schema_grants),
     }
@@ -715,6 +772,37 @@ def _database_permissions_match(
             (sorted(EXPECTED_ROLES), sorted(EXPECTED_ROLES)),
         )
         membership_rows = cursor.fetchall()
+        cursor.execute(
+            """
+            WITH RECURSIVE membership_path(login_oid, role_oid) AS (
+                SELECT login_role.oid, membership.roleid
+                FROM pg_catalog.pg_roles AS login_role
+                JOIN pg_catalog.pg_auth_members AS membership
+                  ON membership.member = login_role.oid
+                WHERE login_role.rolcanlogin
+                UNION
+                SELECT path.login_oid, membership.roleid
+                FROM membership_path AS path
+                JOIN pg_catalog.pg_auth_members AS membership
+                  ON membership.member = path.role_oid
+            ),
+            stable_reach AS (
+                SELECT path.login_oid, stable_role.oid AS stable_role_oid
+                FROM membership_path AS path
+                JOIN pg_catalog.pg_roles AS stable_role
+                  ON stable_role.oid = path.role_oid
+                WHERE stable_role.rolname = ANY(%s)
+            )
+            SELECT NOT EXISTS (
+                SELECT login_oid
+                FROM stable_reach
+                GROUP BY login_oid
+                HAVING count(DISTINCT stable_role_oid) > 1
+            )
+            """,
+            (sorted(EXPECTED_ROLES),),
+        )
+        recursive_memberships_are_disjoint = bool(cursor.fetchone()[0])
         if permission_layout == "direct_users":
             memberships_are_approved = not membership_rows
         else:
@@ -733,6 +821,10 @@ def _database_permissions_match(
                     admin_option,
                 ) in membership_rows
             ) and len(external_members) == len(set(external_members))
+            memberships_are_approved = (
+                memberships_are_approved
+                and recursive_memberships_are_disjoint
+            )
     return (
         schemas_are_protected
         and database_create_is_approved

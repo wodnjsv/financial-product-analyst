@@ -63,6 +63,7 @@ def _object_manifest() -> dict[str, object]:
             }
         ],
         "table_grants": [],
+        "column_grants": [],
         "routine_grants": [],
         "schema_grants": [],
     }
@@ -102,6 +103,27 @@ def test_manifest_comparison_classifies_owner_and_acl_drift_as_permissions() -> 
     assert comparison.changed_sections == ("owners", "routine_grants")
 
 
+def test_manifest_comparison_classifies_column_acl_drift_as_permissions() -> None:
+    expected = _object_manifest()
+    actual = deepcopy(expected)
+    actual["column_grants"].append(
+        {
+            "schema": "operations",
+            "name": "request_subtask",
+            "column": "run_id",
+            "grantee": "fa_runtime",
+            "privilege": "INSERT",
+            "grantable": False,
+        }
+    )
+
+    comparison = compare_database_object_manifests(expected, actual)
+
+    assert comparison.object_drift is False
+    assert comparison.permission_drift is True
+    assert comparison.changed_sections == ("column_grants",)
+
+
 @pytest.mark.postgres
 def test_database_object_export_covers_non_table_ddl_and_permissions(
     migrated_database_url: str,
@@ -119,6 +141,7 @@ def test_database_object_export_covers_non_table_ddl_and_permissions(
         "checks",
         "owners",
         "table_grants",
+        "column_grants",
         "routine_grants",
         "schema_grants",
     } <= manifest.keys()
@@ -183,6 +206,23 @@ def test_database_object_export_covers_non_table_ddl_and_permissions(
         "TRUNCATE",
         "UPDATE",
     }
+    assert manifest["column_grants"] == [
+        {
+            "schema": "operations",
+            "name": "dataset_version",
+            "column": column,
+            "grantee": "fa_build",
+            "privilege": "INSERT",
+            "grantable": False,
+        }
+        for column in (
+            "created_at",
+            "cutoff_date",
+            "dataset_version",
+            "manifest_hash",
+            "previous_dataset_version",
+        )
+    ]
     assert all(
         item.get("schema") != "cdb_admin"
         for section in manifest.values()
@@ -421,6 +461,67 @@ def test_manifest_and_postflight_reject_redacted_unexpected_principals(
     assert comparison.object_drift is False
     assert comparison.permission_drift is True
     assert export_error.value.code == "DATABASE_PERMISSION_DRIFT"
+    assert preflight_error.value.code == "DATABASE_PERMISSION_DRIFT"
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("role_setup", "grantee", "expected_manifest_grantee"),
+    (
+        (
+            "CREATE ROLE task8_column_rogue LOGIN",
+            "task8_column_rogue",
+            "__unexpected_principal__",
+        ),
+        (None, "fa_runtime", "fa_runtime"),
+    ),
+)
+def test_manifest_and_postflight_reject_column_acl_drift(
+    migrated_database_url: str,
+    tmp_path: Path,
+    role_setup: str | None,
+    grantee: str,
+    expected_manifest_grantee: str,
+) -> None:
+    manifest_path = tmp_path / "database-objects.json"
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url),
+        autocommit=True,
+        options='-c timezone=UTC -c search_path="$user",public,cdb_admin',
+    ) as connection:
+        write_or_check_manifest(connection, manifest_path, check=False)
+        baseline = collect_database_objects(connection)
+        with connection.transaction(force_rollback=True):
+            if role_setup is not None:
+                connection.execute(role_setup)
+            connection.execute(
+                sql.SQL(
+                    "GRANT INSERT (run_id, subtask_id, importance) "
+                    "ON operations.request_subtask TO {}"
+                ).format(sql.Identifier(grantee))
+            )
+            changed = collect_database_objects(connection)
+            comparison = compare_database_object_manifests(baseline, changed)
+            snapshot = collect_post_migration_snapshot(
+                connection,
+                manifest_path=manifest_path,
+                alembic_head="0005",
+            )
+            with pytest.raises(PreflightFailure) as preflight_error:
+                validate_post_migration_snapshot(snapshot)
+
+    serialized = json.dumps(changed, sort_keys=True)
+    if expected_manifest_grantee == "__unexpected_principal__":
+        assert grantee not in serialized
+    assert {
+        grant["grantee"]
+        for grant in changed["column_grants"]
+        if grant["schema"] == "operations"
+        and grant["name"] == "request_subtask"
+    } == {expected_manifest_grantee}
+    assert comparison.changed_sections == ("column_grants",)
+    assert comparison.object_drift is False
+    assert comparison.permission_drift is True
     assert preflight_error.value.code == "DATABASE_PERMISSION_DRIFT"
 
 
