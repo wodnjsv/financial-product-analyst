@@ -12,6 +12,9 @@ COPY pyproject.toml ./
 COPY alembic.ini ./
 COPY requirements/ ./requirements/
 COPY alembic/ ./alembic/
+COPY docker/database-check.Dockerfile ./docker/database-check.Dockerfile
+COPY docker/postgres.compose.yml ./docker/postgres.compose.yml
+COPY docker/initdb/001-ncp-extension-layout.sql ./docker/initdb/001-ncp-extension-layout.sql
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY schemas/ ./schemas/

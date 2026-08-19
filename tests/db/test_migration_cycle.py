@@ -786,6 +786,17 @@ def test_database_check_container_is_linux_amd64_and_uses_only_test_url() -> Non
     assert "PIP_CONSTRAINT=/app/requirements/storage.lock" in dockerfile
     assert "FINANCIAL_AGENT_PROJECT_ROOT=/app" in dockerfile
     assert 'python -m pip install ".[dev,storage]"' in dockerfile
+    assert (
+        "COPY docker/database-check.Dockerfile "
+        "./docker/database-check.Dockerfile"
+    ) in dockerfile
+    assert (
+        "COPY docker/postgres.compose.yml ./docker/postgres.compose.yml"
+    ) in dockerfile
+    assert (
+        "COPY docker/initdb/001-ncp-extension-layout.sql "
+        "./docker/initdb/001-ncp-extension-layout.sql"
+    ) in dockerfile
     assert "scripts/verify_database_migrations.py" in dockerfile
     assert "tests/db" in dockerfile
     assert (
