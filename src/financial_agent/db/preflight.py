@@ -13,9 +13,14 @@ import psycopg
 
 
 EXPECTED_SEARCH_PATH = '"$user", public, cdb_admin'
-EXPECTED_EXTENSIONS = {
+EXPECTED_NCP_MANAGED_EXTENSIONS = {
     "vector": "cdb_admin",
     "pg_stat_statements": "cdb_admin",
+}
+EXPECTED_MIGRATION_MANAGED_EXTENSIONS = {
+    "pg_trgm": "public",
+    "unaccent": "public",
+    "pgcrypto": "public",
 }
 EXPECTED_APPLICATION_SCHEMAS = frozenset(
     {
@@ -35,6 +40,7 @@ EXPECTED_ROLES = frozenset(
         "fa_runtime",
     }
 )
+UNEXPECTED_PRINCIPAL = "__unexpected_principal__"
 
 PermissionLayout = Literal["group_roles", "direct_users"]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -64,6 +70,7 @@ class PreflightSnapshot:
     role_login: Mapping[str, bool]
     role_public_usage: Mapping[str, bool]
     role_public_create: Mapping[str, bool]
+    role_database_create: Mapping[str, bool]
     role_cdb_admin_usage: Mapping[str, bool]
     role_pg_stat_statements_select: Mapping[str, bool]
     vector_usable: bool
@@ -79,6 +86,7 @@ class PreflightReport:
 class PostMigrationSnapshot:
     pre_migration: PreflightSnapshot
     extension_versions: Mapping[str, str]
+    extension_schemas: Mapping[str, str]
     application_schemas: frozenset[str]
     alembic_revision: str | None
     alembic_head: str
@@ -138,14 +146,24 @@ def _normalize_sql(definition: str) -> str:
 def _normalize_owner(owner: str) -> str:
     if owner in EXPECTED_ROLES:
         return owner
-    return "__environment_owner__"
+    return UNEXPECTED_PRINCIPAL
+
+
+def _normalize_grantee(grantee: str) -> str:
+    if grantee == "PUBLIC" or grantee in EXPECTED_ROLES:
+        return grantee
+    return UNEXPECTED_PRINCIPAL
 
 
 def _sorted_manifest_entries(
     entries: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    unique_entries = {
+        json.dumps(entry, sort_keys=True, separators=(",", ":")): entry
+        for entry in entries
+    }
     return sorted(
-        entries,
+        unique_entries.values(),
         key=lambda item: tuple(str(value) for value in item.values()),
     )
 
@@ -257,13 +275,32 @@ def collect_database_objects(
               ON namespace.oid = relation.relnamespace
             JOIN pg_catalog.pg_roles AS owner
               ON owner.oid = relation.relowner
-            WHERE namespace.nspname = ANY(%s)
+            WHERE (
+                    namespace.nspname = ANY(%s)
+                    OR (
+                        namespace.nspname = 'public'
+                        AND relation.relname = 'alembic_version'
+                    )
+                  )
               AND relation.relkind IN ('r', 'p', 'v', 'm', 'S')
             ORDER BY namespace.nspname, relation.relname
             """,
             (schemas,),
         )
         relation_owner_rows = cursor.fetchall()
+
+        cursor.execute(
+            """
+            SELECT namespace.nspname, owner.rolname
+            FROM pg_catalog.pg_namespace AS namespace
+            JOIN pg_catalog.pg_roles AS owner
+              ON owner.oid = namespace.nspowner
+            WHERE namespace.nspname = ANY(%s)
+            ORDER BY namespace.nspname
+            """,
+            (schemas,),
+        )
+        schema_owner_rows = cursor.fetchall()
 
         cursor.execute(
             """
@@ -290,17 +327,19 @@ def collect_database_objects(
             ) AS acl
             LEFT JOIN pg_catalog.pg_roles AS grantee
               ON grantee.oid = acl.grantee
-            WHERE namespace.nspname = ANY(%s)
+            WHERE (
+                    namespace.nspname = ANY(%s)
+                    OR (
+                        namespace.nspname = 'public'
+                        AND relation.relname = 'alembic_version'
+                    )
+                  )
               AND relation.relkind IN ('r', 'p', 'v', 'm', 'S')
-              AND (
-                  acl.grantee = 0
-                  OR grantee.rolname = ANY(%s)
-              )
             ORDER BY namespace.nspname, relation.relname,
                      COALESCE(grantee.rolname, 'PUBLIC'),
                      acl.privilege_type
             """,
-            (schemas, sorted(EXPECTED_ROLES)),
+            (schemas,),
         )
         table_grant_rows = cursor.fetchall()
 
@@ -325,16 +364,12 @@ def collect_database_objects(
             LEFT JOIN pg_catalog.pg_roles AS grantee
               ON grantee.oid = acl.grantee
             WHERE namespace.nspname = ANY(%s)
-              AND (
-                  acl.grantee = 0
-                  OR grantee.rolname = ANY(%s)
-              )
             ORDER BY namespace.nspname, procedure.proname,
                      pg_catalog.pg_get_function_identity_arguments(procedure.oid),
                      COALESCE(grantee.rolname, 'PUBLIC'),
                      acl.privilege_type
             """,
-            (schemas, sorted(EXPECTED_ROLES)),
+            (schemas,),
         )
         routine_grant_rows = cursor.fetchall()
 
@@ -355,15 +390,11 @@ def collect_database_objects(
             LEFT JOIN pg_catalog.pg_roles AS grantee
               ON grantee.oid = acl.grantee
             WHERE namespace.nspname = ANY(%s)
-              AND (
-                  acl.grantee = 0
-                  OR grantee.rolname = ANY(%s)
-              )
             ORDER BY namespace.nspname,
                      COALESCE(grantee.rolname, 'PUBLIC'),
                      acl.privilege_type
             """,
-            (schemas, sorted(EXPECTED_ROLES)),
+            (schemas,),
         )
         schema_grant_rows = cursor.fetchall()
 
@@ -421,12 +452,20 @@ def collect_database_objects(
             "owner": _normalize_owner(str(owner)),
         }
         for schema, name, object_type, owner in relation_owner_rows
+    ] + [
+        {
+            "object_type": "schema",
+            "schema": str(schema),
+            "name": str(schema),
+            "owner": _normalize_owner(str(owner)),
+        }
+        for schema, owner in schema_owner_rows
     ]
     table_grants = [
         {
             "schema": str(schema),
             "name": str(name),
-            "grantee": str(grantee),
+            "grantee": _normalize_grantee(str(grantee)),
             "privilege": str(privilege),
             "grantable": bool(grantable),
         }
@@ -437,7 +476,7 @@ def collect_database_objects(
             "schema": str(schema),
             "name": str(name),
             "identity_arguments": str(arguments),
-            "grantee": str(grantee),
+            "grantee": _normalize_grantee(str(grantee)),
             "privilege": str(privilege),
             "grantable": bool(grantable),
         }
@@ -447,7 +486,7 @@ def collect_database_objects(
     schema_grants = [
         {
             "schema": str(schema),
-            "grantee": str(grantee),
+            "grantee": _normalize_grantee(str(grantee)),
             "privilege": str(privilege),
             "grantable": bool(grantable),
         }
@@ -470,14 +509,25 @@ def validate_post_migration_snapshot(
     snapshot: PostMigrationSnapshot,
 ) -> PreflightReport:
     report = validate_pre_migration_snapshot(snapshot.pre_migration)
-    if EXPECTED_EXTENSIONS.keys() - snapshot.extension_versions.keys() or any(
+    if (
+        EXPECTED_NCP_MANAGED_EXTENSIONS.keys()
+        - snapshot.extension_versions.keys()
+    ) or any(
         not snapshot.extension_versions[name]
-        for name in EXPECTED_EXTENSIONS
+        for name in EXPECTED_NCP_MANAGED_EXTENSIONS
         if name in snapshot.extension_versions
     ):
         raise PreflightFailure(
             "MISSING_NCP_EXTENSION",
             "required NCP-managed extension version is unavailable",
+        )
+    if any(
+        snapshot.extension_schemas.get(name) != schema
+        for name, schema in EXPECTED_NCP_MANAGED_EXTENSIONS.items()
+    ):
+        raise PreflightFailure(
+            "NCP_EXTENSION_SCHEMA_MISMATCH",
+            "NCP-managed extension is installed in an incompatible schema",
         )
     if (
         snapshot.application_schemas != EXPECTED_APPLICATION_SCHEMAS
@@ -487,6 +537,26 @@ def validate_post_migration_snapshot(
         raise PreflightFailure(
             "MIGRATION_BEHIND",
             "database objects do not match the Alembic head",
+        )
+    if (
+        EXPECTED_MIGRATION_MANAGED_EXTENSIONS.keys()
+        - snapshot.extension_versions.keys()
+    ) or any(
+        not snapshot.extension_versions[name]
+        for name in EXPECTED_MIGRATION_MANAGED_EXTENSIONS
+        if name in snapshot.extension_versions
+    ):
+        raise PreflightFailure(
+            "MISSING_MIGRATION_EXTENSION",
+            "required migration-managed extension version is unavailable",
+        )
+    if any(
+        snapshot.extension_schemas.get(name) != schema
+        for name, schema in EXPECTED_MIGRATION_MANAGED_EXTENSIONS.items()
+    ):
+        raise PreflightFailure(
+            "MIGRATION_EXTENSION_SCHEMA_MISMATCH",
+            "migration-managed extension is installed in an incompatible schema",
         )
     if (
         not snapshot.cutoff_constraint_matches
@@ -591,6 +661,24 @@ def _database_permissions_match(
         schemas_are_protected = bool(cursor.fetchone()[0])
         cursor.execute(
             """
+            SELECT role_name, pg_catalog.has_database_privilege(
+                role_name, current_database(), 'CREATE'
+            )
+            FROM unnest(%s::text[]) AS role_name
+            ORDER BY role_name
+            """,
+            (sorted(EXPECTED_ROLES),),
+        )
+        database_create_is_approved = {
+            str(role_name): bool(can_create)
+            for role_name, can_create in cursor.fetchall()
+        } == {
+            "fa_migration": True,
+            "fa_build": False,
+            "fa_runtime": False,
+        }
+        cursor.execute(
+            """
             SELECT NOT EXISTS (
                 SELECT 1
                 FROM unnest(%s::text[]) AS role_name
@@ -630,6 +718,7 @@ def _database_permissions_match(
         if permission_layout == "direct_users":
             memberships_are_approved = not membership_rows
         else:
+            external_members = [str(row[2]) for row in membership_rows]
             memberships_are_approved = all(
                 str(granted_role) in EXPECTED_ROLES
                 and not bool(granted_can_login)
@@ -643,9 +732,10 @@ def _database_permissions_match(
                     member_can_login,
                     admin_option,
                 ) in membership_rows
-            )
+            ) and len(external_members) == len(set(external_members))
     return (
         schemas_are_protected
+        and database_create_is_approved
         and protected_dml_is_denied
         and memberships_are_approved
     )
@@ -668,14 +758,28 @@ def collect_post_migration_snapshot(
     with connection.cursor() as cursor:
         cursor.execute(
             """
-            SELECT extension.extname, extension.extversion
+            SELECT extension.extname, extension.extversion, namespace.nspname
             FROM pg_catalog.pg_extension AS extension
-            WHERE extension.extname IN ('vector', 'pg_stat_statements')
+            JOIN pg_catalog.pg_namespace AS namespace
+              ON namespace.oid = extension.extnamespace
+            WHERE extension.extname = ANY(%s)
             ORDER BY extension.extname
-            """
+            """,
+            (
+                sorted(
+                    EXPECTED_NCP_MANAGED_EXTENSIONS.keys()
+                    | EXPECTED_MIGRATION_MANAGED_EXTENSIONS.keys()
+                ),
+            ),
         )
+        extension_rows = cursor.fetchall()
         extension_versions = {
-            str(name): str(version) for name, version in cursor.fetchall()
+            str(name): str(version)
+            for name, version, _schema in extension_rows
+        }
+        extension_schemas = {
+            str(name): str(schema)
+            for name, _version, schema in extension_rows
         }
         cursor.execute(
             """
@@ -801,6 +905,7 @@ def collect_post_migration_snapshot(
     return PostMigrationSnapshot(
         pre_migration=pre_migration,
         extension_versions=extension_versions,
+        extension_schemas=extension_schemas,
         application_schemas=application_schemas,
         alembic_revision=alembic_revision,
         alembic_head=alembic_head,
@@ -881,7 +986,9 @@ def validate_pre_migration_snapshot(
             "PostgreSQL session search path is incompatible",
         )
 
-    missing_extensions = EXPECTED_EXTENSIONS.keys() - snapshot.extensions.keys()
+    missing_extensions = (
+        EXPECTED_NCP_MANAGED_EXTENSIONS.keys() - snapshot.extensions.keys()
+    )
     if missing_extensions:
         raise PreflightFailure(
             "MISSING_NCP_EXTENSION",
@@ -889,7 +996,7 @@ def validate_pre_migration_snapshot(
         )
     if any(
         snapshot.extensions[name] != schema
-        for name, schema in EXPECTED_EXTENSIONS.items()
+        for name, schema in EXPECTED_NCP_MANAGED_EXTENSIONS.items()
     ):
         raise PreflightFailure(
             "NCP_EXTENSION_SCHEMA_MISMATCH",
@@ -938,6 +1045,16 @@ def validate_pre_migration_snapshot(
         raise PreflightFailure(
             "PUBLIC_SCHEMA_PERMISSION_MISMATCH",
             "public schema privileges are incompatible",
+        )
+    expected_database_create = {
+        "fa_migration": True,
+        "fa_build": False,
+        "fa_runtime": False,
+    }
+    if snapshot.role_database_create != expected_database_create:
+        raise PreflightFailure(
+            "DATABASE_PERMISSION_DRIFT",
+            "database role privileges are incompatible",
         )
     expected_extension_access = {name: True for name in EXPECTED_ROLES}
     if (
@@ -1016,6 +1133,9 @@ def collect_preflight_snapshot(
                 pg_catalog.has_schema_privilege(
                     role_name, 'public', 'CREATE'
                 ),
+                pg_catalog.has_database_privilege(
+                    role_name, current_database(), 'CREATE'
+                ),
                 CASE
                     WHEN pg_catalog.to_regnamespace('cdb_admin') IS NULL
                     THEN false
@@ -1050,11 +1170,14 @@ def collect_preflight_snapshot(
         role_public_create = {
             str(row[0]): bool(row[2]) for row in permission_rows
         }
-        role_cdb_admin_usage = {
+        role_database_create = {
             str(row[0]): bool(row[3]) for row in permission_rows
         }
-        role_pg_stat_statements_select = {
+        role_cdb_admin_usage = {
             str(row[0]): bool(row[4]) for row in permission_rows
+        }
+        role_pg_stat_statements_select = {
+            str(row[0]): bool(row[5]) for row in permission_rows
         }
 
     return PreflightSnapshot(
@@ -1067,6 +1190,7 @@ def collect_preflight_snapshot(
         role_login=role_login,
         role_public_usage=role_public_usage,
         role_public_create=role_public_create,
+        role_database_create=role_database_create,
         role_cdb_admin_usage=role_cdb_admin_usage,
         role_pg_stat_statements_select=role_pg_stat_statements_select,
         vector_usable=_extension_is_usable(

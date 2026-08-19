@@ -42,6 +42,11 @@ def valid_snapshot() -> PreflightSnapshot:
             "fa_build": False,
             "fa_runtime": False,
         },
+        role_database_create={
+            "fa_migration": True,
+            "fa_build": False,
+            "fa_runtime": False,
+        },
         role_cdb_admin_usage={
             "fa_migration": True,
             "fa_build": True,
@@ -227,6 +232,12 @@ def test_preflight_rejects_a_mixed_role_layout(
             "fa_build",
             True,
             "PUBLIC_SCHEMA_PERMISSION_MISMATCH",
+        ),
+        (
+            "role_database_create",
+            "fa_runtime",
+            True,
+            "DATABASE_PERMISSION_DRIFT",
         ),
         (
             "role_cdb_admin_usage",

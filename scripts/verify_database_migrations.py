@@ -20,7 +20,7 @@ from sqlalchemy.engine import make_url
 from financial_agent.db.preflight import (
     DEFAULT_DATABASE_OBJECT_MANIFEST,
     EXPECTED_APPLICATION_SCHEMAS,
-    EXPECTED_EXTENSIONS,
+    EXPECTED_NCP_MANAGED_EXTENSIONS,
     EXPECTED_ROLES,
     normalize_psycopg_url,
     run_post_migration_preflight,
@@ -274,7 +274,9 @@ def _verify_base_state(database_url: str) -> tuple[bool, bool]:
                 """
             ).fetchall()
         }
-        ncp_extensions_preserved = extensions == EXPECTED_EXTENSIONS
+        ncp_extensions_preserved = (
+            extensions == EXPECTED_NCP_MANAGED_EXTENSIONS
+        )
         roles = {
             str(row[0])
             for row in connection.execute(

@@ -13,9 +13,11 @@ from psycopg import sql
 from financial_agent.db.preflight import (
     PreflightFailure,
     collect_database_objects,
+    collect_post_migration_snapshot,
     compare_database_object_manifests,
     normalize_psycopg_url,
     run_post_migration_preflight,
+    validate_post_migration_snapshot,
 )
 from scripts.export_database_objects import (
     DatabaseObjectManifestFailure,
@@ -81,7 +83,7 @@ def test_manifest_comparison_classifies_executable_definition_drift() -> None:
 def test_manifest_comparison_classifies_owner_and_acl_drift_as_permissions() -> None:
     expected = _object_manifest()
     actual = deepcopy(expected)
-    actual["owners"][0]["owner"] = "__environment_owner__"
+    actual["owners"][0]["owner"] = "__unexpected_principal__"
     actual["routine_grants"].append(
         {
             "schema": "operations",
@@ -142,6 +144,45 @@ def test_database_object_export_covers_non_table_ddl_and_permissions(
         owner["owner"] == "fa_migration"
         for owner in manifest["owners"]
     )
+    assert {
+        owner["schema"]
+        for owner in manifest["owners"]
+        if owner["object_type"] == "schema"
+        and owner["owner"] == "fa_migration"
+    } == {
+        "catalog",
+        "document",
+        "evidence",
+        "observation",
+        "operations",
+        "relation",
+        "search",
+    }
+    assert any(
+        owner["object_type"] == "table"
+        and owner["schema"] == "public"
+        and owner["name"] == "alembic_version"
+        and owner["owner"] == "fa_migration"
+        for owner in manifest["owners"]
+    )
+    alembic_grants = [
+        grant
+        for grant in manifest["table_grants"]
+        if grant["schema"] == "public"
+        and grant["name"] == "alembic_version"
+    ]
+    assert {grant["grantee"] for grant in alembic_grants} == {
+        "fa_migration"
+    }
+    assert {grant["privilege"] for grant in alembic_grants} == {
+        "DELETE",
+        "INSERT",
+        "REFERENCES",
+        "SELECT",
+        "TRIGGER",
+        "TRUNCATE",
+        "UPDATE",
+    }
     assert all(
         item.get("schema") != "cdb_admin"
         for section in manifest.values()
@@ -308,6 +349,79 @@ def test_manifest_detects_drift_alembic_autogenerate_does_not_cover(
     assert changed_section in comparison.changed_sections
     assert comparison.permission_drift is permission_drift
     assert comparison.object_drift is (not permission_drift)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("permission_mutation", "changed_section"),
+    (
+        (
+            "GRANT INSERT ON operations.request_run "
+            "TO task8_rogue_principal",
+            "table_grants",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION operations.activate_dataset(text) "
+            "TO task8_rogue_principal",
+            "routine_grants",
+        ),
+        (
+            "GRANT CREATE ON SCHEMA catalog TO task8_rogue_principal",
+            "schema_grants",
+        ),
+        (
+            "ALTER SCHEMA catalog OWNER TO task8_rogue_principal",
+            "owners",
+        ),
+        (
+            "ALTER TABLE public.alembic_version "
+            "OWNER TO task8_rogue_principal",
+            "owners",
+        ),
+        (
+            "GRANT SELECT ON public.alembic_version "
+            "TO task8_rogue_principal",
+            "table_grants",
+        ),
+    ),
+)
+def test_manifest_and_postflight_reject_redacted_unexpected_principals(
+    migrated_database_url: str,
+    tmp_path: Path,
+    permission_mutation: str,
+    changed_section: str,
+) -> None:
+    manifest_path = tmp_path / "database-objects.json"
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url),
+        autocommit=True,
+        options='-c timezone=UTC -c search_path="$user",public,cdb_admin',
+    ) as connection:
+        write_or_check_manifest(connection, manifest_path, check=False)
+        baseline = collect_database_objects(connection)
+        with connection.transaction(force_rollback=True):
+            connection.execute("CREATE ROLE task8_rogue_principal NOLOGIN")
+            connection.execute(permission_mutation)
+            changed = collect_database_objects(connection)
+            comparison = compare_database_object_manifests(baseline, changed)
+            with pytest.raises(DatabaseObjectManifestFailure) as export_error:
+                write_or_check_manifest(connection, manifest_path, check=True)
+            snapshot = collect_post_migration_snapshot(
+                connection,
+                manifest_path=manifest_path,
+                alembic_head="0005",
+            )
+            with pytest.raises(PreflightFailure) as preflight_error:
+                validate_post_migration_snapshot(snapshot)
+
+    serialized = json.dumps(changed, sort_keys=True)
+    assert "task8_rogue_principal" not in serialized
+    assert "__unexpected_principal__" in serialized
+    assert changed_section in comparison.changed_sections
+    assert comparison.object_drift is False
+    assert comparison.permission_drift is True
+    assert export_error.value.code == "DATABASE_PERMISSION_DRIFT"
+    assert preflight_error.value.code == "DATABASE_PERMISSION_DRIFT"
 
 
 def test_migration_verifier_refuses_a_nonlocal_or_nontest_source_url() -> None:

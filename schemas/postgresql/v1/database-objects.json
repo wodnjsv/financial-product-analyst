@@ -1443,6 +1443,48 @@
       "owner": "fa_migration"
     },
     {
+      "object_type": "schema",
+      "schema": "catalog",
+      "name": "catalog",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "schema",
+      "schema": "document",
+      "name": "document",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "schema",
+      "schema": "evidence",
+      "name": "evidence",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "schema",
+      "schema": "observation",
+      "name": "observation",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "schema",
+      "schema": "operations",
+      "name": "operations",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "schema",
+      "schema": "relation",
+      "name": "relation",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "schema",
+      "schema": "search",
+      "name": "search",
+      "owner": "fa_migration"
+    },
+    {
       "object_type": "table",
       "schema": "catalog",
       "name": "alias",
@@ -1656,6 +1698,12 @@
       "object_type": "table",
       "schema": "operations",
       "name": "request_subtask",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "table",
+      "schema": "public",
+      "name": "alembic_version",
       "owner": "fa_migration"
     },
     {
@@ -4363,6 +4411,55 @@
       "name": "request_subtask",
       "grantee": "fa_runtime",
       "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "public",
+      "name": "alembic_version",
+      "grantee": "fa_migration",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "public",
+      "name": "alembic_version",
+      "grantee": "fa_migration",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "public",
+      "name": "alembic_version",
+      "grantee": "fa_migration",
+      "privilege": "REFERENCES",
+      "grantable": false
+    },
+    {
+      "schema": "public",
+      "name": "alembic_version",
+      "grantee": "fa_migration",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "public",
+      "name": "alembic_version",
+      "grantee": "fa_migration",
+      "privilege": "TRIGGER",
+      "grantable": false
+    },
+    {
+      "schema": "public",
+      "name": "alembic_version",
+      "grantee": "fa_migration",
+      "privilege": "TRUNCATE",
+      "grantable": false
+    },
+    {
+      "schema": "public",
+      "name": "alembic_version",
+      "grantee": "fa_migration",
+      "privilege": "UPDATE",
       "grantable": false
     },
     {

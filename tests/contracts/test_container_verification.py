@@ -79,6 +79,9 @@ def test_docker_context_policy_covers_protected_local_artifacts() -> None:
 
     assert {
         ".git/",
+        ".gstack/",
+        ".agents/",
+        ".codex/",
         ".env",
         ".env.*",
         "data/",

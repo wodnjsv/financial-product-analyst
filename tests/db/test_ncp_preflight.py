@@ -7,6 +7,7 @@ import traceback
 
 import psycopg
 import pytest
+from psycopg import sql
 
 from financial_agent.db.preflight import (
     DEFAULT_DATABASE_OBJECT_MANIFEST,
@@ -15,10 +16,12 @@ from financial_agent.db.preflight import (
     PostMigrationSnapshot,
     PreflightFailure,
     PreflightSnapshot,
+    collect_preflight_snapshot,
     collect_post_migration_snapshot,
     main,
     normalize_psycopg_url,
     run_post_migration_preflight,
+    validate_pre_migration_snapshot,
     validate_post_migration_snapshot,
 )
 from scripts.export_database_objects import write_or_check_manifest
@@ -44,6 +47,11 @@ def _pre_migration_snapshot() -> PreflightSnapshot:
             "fa_build": False,
             "fa_runtime": False,
         },
+        role_database_create={
+            "fa_migration": True,
+            "fa_build": False,
+            "fa_runtime": False,
+        },
         role_cdb_admin_usage=allowed,
         role_pg_stat_statements_select=allowed,
         vector_usable=True,
@@ -57,6 +65,16 @@ def _post_migration_snapshot() -> PostMigrationSnapshot:
         extension_versions={
             "vector": "0.8.5",
             "pg_stat_statements": "1.10",
+            "pg_trgm": "1.6",
+            "unaccent": "1.1",
+            "pgcrypto": "1.3",
+        },
+        extension_schemas={
+            "vector": "cdb_admin",
+            "pg_stat_statements": "cdb_admin",
+            "pg_trgm": "public",
+            "unaccent": "public",
+            "pgcrypto": "public",
         },
         application_schemas=EXPECTED_APPLICATION_SCHEMAS,
         alembic_revision="0005",
@@ -161,6 +179,37 @@ def test_post_migration_snapshot_requires_installed_extension_versions() -> None
         validate_post_migration_snapshot(snapshot)
 
     assert captured.value.code == "MISSING_NCP_EXTENSION"
+
+
+def test_post_migration_snapshot_requires_migration_managed_extensions() -> None:
+    snapshot = _post_migration_snapshot()
+    versions = dict(snapshot.extension_versions)
+    versions.pop("unaccent")
+
+    with pytest.raises(PreflightFailure) as captured:
+        validate_post_migration_snapshot(
+            replace(snapshot, extension_versions=versions)
+        )
+
+    assert captured.value.code == "MISSING_MIGRATION_EXTENSION"
+
+
+def test_direct_user_preflight_rejects_runtime_database_create() -> None:
+    snapshot = _pre_migration_snapshot()
+    database_create = dict(snapshot.role_database_create)
+    database_create["fa_runtime"] = True
+
+    with pytest.raises(PreflightFailure) as captured:
+        validate_pre_migration_snapshot(
+            replace(
+                snapshot,
+                current_user="fa_migration",
+                role_login={name: True for name in snapshot.role_login},
+                role_database_create=database_create,
+            )
+        )
+
+    assert captured.value.code == "DATABASE_PERMISSION_DRIFT"
 
 
 def test_post_migration_snapshot_classifies_a_missing_role_before_permissions() -> None:
@@ -296,6 +345,11 @@ def test_public_table_inventory_is_independent_of_current_user_visibility(
             "CREATE ROLE task8_external_member LOGIN; "
             "GRANT fa_build TO task8_external_member"
         ),
+        (
+            "CREATE ROLE task8_overlapping_member LOGIN; "
+            "GRANT fa_build TO task8_overlapping_member; "
+            "GRANT fa_runtime TO task8_overlapping_member"
+        ),
     ),
 )
 def test_permission_layout_rejects_unapproved_external_membership_shape(
@@ -339,6 +393,79 @@ def test_group_roles_allow_external_login_members_only_in_stable_roles(
             connection.rollback()
 
     assert snapshot.database_permissions_match is True
+
+
+@pytest.mark.postgres
+def test_preflight_collects_role_database_create_and_rejects_runtime_drift(
+    migrated_database_url: str,
+) -> None:
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url),
+        options='-c timezone=UTC -c search_path="$user",public,cdb_admin',
+    ) as connection:
+        with connection.transaction(force_rollback=True):
+            database_name = str(
+                connection.execute("SELECT current_database()").fetchone()[0]
+            )
+            connection.execute(
+                sql.SQL("GRANT CREATE ON DATABASE {} TO fa_runtime").format(
+                    sql.Identifier(database_name)
+                )
+            )
+            snapshot = collect_preflight_snapshot(connection)
+
+    assert snapshot.role_database_create == {
+        "fa_migration": True,
+        "fa_build": False,
+        "fa_runtime": True,
+    }
+    with pytest.raises(PreflightFailure) as captured:
+        validate_pre_migration_snapshot(snapshot)
+
+    assert captured.value.code == "DATABASE_PERMISSION_DRIFT"
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("extension_mutation", "expected_code"),
+    (
+        ("DROP EXTENSION unaccent", "MISSING_MIGRATION_EXTENSION"),
+        (
+            "CREATE SCHEMA task8_extension_drift; "
+            "ALTER EXTENSION unaccent SET SCHEMA task8_extension_drift",
+            "MIGRATION_EXTENSION_SCHEMA_MISMATCH",
+        ),
+    ),
+)
+def test_postflight_rejects_migration_extension_inventory_drift(
+    migrated_database_url: str,
+    tmp_path: Path,
+    extension_mutation: str,
+    expected_code: str,
+) -> None:
+    manifest_path = tmp_path / "database-objects.json"
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url),
+        autocommit=True,
+        options='-c timezone=UTC -c search_path="$user",public,cdb_admin',
+    ) as connection:
+        write_or_check_manifest(connection, manifest_path, check=False)
+        with connection.transaction(force_rollback=True):
+            connection.execute(extension_mutation)
+            snapshot = collect_post_migration_snapshot(
+                connection,
+                manifest_path=manifest_path,
+                alembic_head="0005",
+            )
+            with pytest.raises(PreflightFailure) as captured:
+                validate_post_migration_snapshot(snapshot)
+
+    assert captured.value.code == expected_code
+    report = run_post_migration_preflight(
+        migrated_database_url,
+        manifest_path=manifest_path,
+    )
+    assert report.permission_layout == "group_roles"
 
 
 class NcpRuntimeSmokeFailure(RuntimeError):

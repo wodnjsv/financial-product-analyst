@@ -28,6 +28,19 @@ BEGIN
 END
 $roles$;
 
+DO $database_privileges$
+BEGIN
+    EXECUTE pg_catalog.format(
+        'GRANT CREATE ON DATABASE %I TO fa_migration',
+        pg_catalog.current_database()
+    );
+    EXECUTE pg_catalog.format(
+        'REVOKE CREATE ON DATABASE %I FROM fa_build, fa_runtime',
+        pg_catalog.current_database()
+    );
+END
+$database_privileges$;
+
 GRANT USAGE ON SCHEMA cdb_admin TO fa_migration, fa_build, fa_runtime;
 GRANT SELECT ON cdb_admin.pg_stat_statements TO fa_migration, fa_build, fa_runtime;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC, fa_build, fa_runtime;
