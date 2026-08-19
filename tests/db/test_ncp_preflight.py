@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import os
 from pathlib import Path
+import traceback
 
 import psycopg
 import pytest
 
 from financial_agent.db.preflight import (
+    DEFAULT_DATABASE_OBJECT_MANIFEST,
     EXPECTED_APPLICATION_SCHEMAS,
     EXPECTED_SEARCH_PATH,
     PostMigrationSnapshot,
@@ -93,6 +96,26 @@ def test_post_migration_cli_reports_connection_failure_without_leaking_url(
     assert "secret_db" not in captured.err
 
 
+def test_post_migration_exception_traceback_does_not_leak_connection_url() -> None:
+    url = "postgresql://secret_user:secret_password@127.0.0.1:1/secret_db"
+
+    with pytest.raises(PreflightFailure) as captured:
+        run_post_migration_preflight(url)
+
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__ is True
+    rendered = "".join(
+        traceback.format_exception(
+            type(captured.value),
+            captured.value,
+            captured.value.__traceback__,
+        )
+    )
+    assert "secret_user" not in rendered
+    assert "secret_password" not in rendered
+    assert "secret_db" not in rendered
+
+
 def test_post_migration_snapshot_accepts_the_complete_storage_baseline() -> None:
     report = validate_post_migration_snapshot(_post_migration_snapshot())
 
@@ -140,6 +163,21 @@ def test_post_migration_snapshot_requires_installed_extension_versions() -> None
     assert captured.value.code == "MISSING_NCP_EXTENSION"
 
 
+def test_post_migration_snapshot_classifies_a_missing_role_before_permissions() -> None:
+    pre_migration = _pre_migration_snapshot()
+    role_login = dict(pre_migration.role_login)
+    role_login.pop("fa_runtime")
+    snapshot = replace(
+        _post_migration_snapshot(),
+        pre_migration=replace(pre_migration, role_login=role_login),
+    )
+
+    with pytest.raises(PreflightFailure) as captured:
+        validate_post_migration_snapshot(snapshot)
+
+    assert captured.value.code == "MISSING_DB_ROLE"
+
+
 @pytest.mark.postgres
 def test_post_migration_preflight_accepts_the_migrated_local_baseline(
     migrated_database_url: str,
@@ -161,11 +199,25 @@ def test_post_migration_preflight_accepts_the_migrated_local_baseline(
 
 @pytest.mark.ncp_integration
 def test_authorized_ncp_database_matches_the_post_migration_baseline(
-    ncp_database_url: str,
+    capsys,
 ) -> None:
-    report = run_post_migration_preflight(ncp_database_url)
+    if not os.environ.get("FINANCIAL_AGENT_DATABASE_URL"):
+        pytest.skip("the authorized NCP migration identity is not configured")
+    exit_code = main(
+        [
+            "--phase",
+            "post-migration",
+            "--database-url-env",
+            "FINANCIAL_AGENT_DATABASE_URL",
+        ]
+    )
 
-    assert report.permission_layout == "direct_users"
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out == (
+        "PREFLIGHT_OK phase=post-migration permission_layout=direct_users\n"
+    )
+    assert captured.err == ""
 
 
 @pytest.mark.postgres
@@ -197,3 +249,93 @@ def test_post_migration_preflight_detects_direct_dml_or_role_membership_drift(
             connection.rollback()
 
     assert snapshot.database_permissions_match is False
+
+
+@pytest.mark.postgres
+def test_public_table_inventory_is_independent_of_current_user_visibility(
+    migrated_database_url: str,
+) -> None:
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        try:
+            connection.execute(
+                "CREATE TABLE public.task8_hidden_table (id integer)"
+            )
+            connection.execute(
+                "ALTER TABLE public.task8_hidden_table OWNER TO fa_build"
+            )
+            connection.execute(
+                "GRANT SELECT ON public.alembic_version, "
+                "operations.dataset_readiness TO fa_runtime"
+            )
+            connection.execute("SET LOCAL ROLE fa_runtime")
+            snapshot = collect_post_migration_snapshot(
+                connection,
+                manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
+                alembic_head="0005",
+            )
+        finally:
+            connection.rollback()
+
+    assert "task8_hidden_table" in snapshot.public_tables
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "membership_mutation",
+    (
+        (
+            "CREATE ROLE task8_external_group LOGIN; "
+            "GRANT task8_external_group TO fa_runtime"
+        ),
+        (
+            "ALTER ROLE fa_migration LOGIN; "
+            "ALTER ROLE fa_build LOGIN; "
+            "ALTER ROLE fa_runtime LOGIN; "
+            "CREATE ROLE task8_external_member LOGIN; "
+            "GRANT fa_build TO task8_external_member"
+        ),
+    ),
+)
+def test_permission_layout_rejects_unapproved_external_membership_shape(
+    migrated_database_url: str,
+    membership_mutation: str,
+) -> None:
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        try:
+            connection.execute(membership_mutation)
+            snapshot = collect_post_migration_snapshot(
+                connection,
+                manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
+                alembic_head="0005",
+            )
+        finally:
+            connection.rollback()
+
+    assert snapshot.database_permissions_match is False
+
+
+@pytest.mark.postgres
+def test_group_roles_allow_external_login_members_only_in_stable_roles(
+    migrated_database_url: str,
+) -> None:
+    with psycopg.connect(
+        normalize_psycopg_url(migrated_database_url)
+    ) as connection:
+        try:
+            connection.execute("CREATE ROLE task8_approved_member LOGIN")
+            connection.execute(
+                "GRANT fa_build TO task8_approved_member"
+            )
+            snapshot = collect_post_migration_snapshot(
+                connection,
+                manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
+                alembic_head="0005",
+            )
+        finally:
+            connection.rollback()
+
+    assert snapshot.database_permissions_match is True

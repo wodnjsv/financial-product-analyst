@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 
 import psycopg
@@ -10,9 +11,11 @@ from alembic import command
 from psycopg import sql
 
 from financial_agent.db.preflight import (
+    PreflightFailure,
     collect_database_objects,
     compare_database_object_manifests,
     normalize_psycopg_url,
+    run_post_migration_preflight,
 )
 from scripts.export_database_objects import (
     DatabaseObjectManifestFailure,
@@ -21,6 +24,7 @@ from scripts.export_database_objects import (
 )
 from scripts.verify_database_migrations import (
     MigrationVerificationFailure,
+    configured_alembic_target_only,
     disposable_migration_database,
     migration_alembic_config,
     verify_migration_cycle,
@@ -278,20 +282,26 @@ def _apply_manifest_mutation(
     ),
 )
 def test_manifest_detects_drift_alembic_autogenerate_does_not_cover(
-    migrated_database_url: str,
+    postgres_database_url: str,
     mutation: str,
     changed_section: str,
     permission_drift: bool,
 ) -> None:
-    with psycopg.connect(
-        normalize_psycopg_url(migrated_database_url)
-    ) as connection:
-        baseline = collect_database_objects(connection)
-        try:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+        with psycopg.connect(
+            normalize_psycopg_url(database_url)
+        ) as connection:
+            baseline = collect_database_objects(connection)
             _apply_manifest_mutation(connection, mutation)
+        with configured_alembic_target_only():
+            command.check(config)
+        with psycopg.connect(
+            normalize_psycopg_url(database_url)
+        ) as connection:
             changed = collect_database_objects(connection)
-        finally:
-            connection.rollback()
 
     comparison = compare_database_object_manifests(baseline, changed)
     assert changed_section in comparison.changed_sections
@@ -307,6 +317,17 @@ def test_migration_verifier_refuses_a_nonlocal_or_nontest_source_url() -> None:
 
     assert captured.value.code == "UNSAFE_DATABASE_TARGET"
     assert "secret" not in str(captured.value)
+
+
+@pytest.mark.postgres
+def test_postflight_classifies_a_base_database_as_migration_behind(
+    postgres_database_url: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        with pytest.raises(PreflightFailure) as captured:
+            run_post_migration_preflight(database_url)
+
+    assert captured.value.code == "MIGRATION_BEHIND"
 
 
 @pytest.mark.postgres
@@ -326,25 +347,25 @@ def test_disposable_database_runs_base_head_base_head_cycle(
     assert report.object_counts["triggers"] > 0
     assert report.ncp_extensions_preserved is True
     assert report.bootstrap_roles_preserved is True
+    assert report.foundation_cutoff_enforced is True
+    assert report.foundation_transition_enforced is True
 
 
 @pytest.mark.postgres
-def test_alembic_check_misses_function_body_drift_that_manifest_detects(
+def test_migration_cycle_never_uses_an_ambient_database_url(
     postgres_database_url: str,
+    monkeypatch,
 ) -> None:
-    with disposable_migration_database(postgres_database_url) as database_url:
-        config = migration_alembic_config(database_url)
-        command.upgrade(config, "head")
-        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
-            baseline = collect_database_objects(connection)
-            _apply_manifest_mutation(connection, "function_body")
-        command.check(config)
-        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
-            changed = collect_database_objects(connection)
+    stale_url = (
+        "postgresql+psycopg://secret_user:secret_password@"
+        "127.0.0.1:1/secret_db"
+    )
+    monkeypatch.setenv("FINANCIAL_AGENT_DATABASE_URL", stale_url)
 
-    comparison = compare_database_object_manifests(baseline, changed)
-    assert comparison.object_drift is True
-    assert "functions" in comparison.changed_sections
+    report = verify_migration_cycle(postgres_database_url)
+
+    assert report.alembic_head == "0005"
+    assert os.environ["FINANCIAL_AGENT_DATABASE_URL"] == stale_url
 
 
 def test_database_check_container_is_linux_amd64_and_uses_only_test_url() -> None:
@@ -359,6 +380,10 @@ def test_database_check_container_is_linux_amd64_and_uses_only_test_url() -> Non
     assert 'python -m pip install ".[dev,storage]"' in dockerfile
     assert "scripts/verify_database_migrations.py" in dockerfile
     assert "tests/db" in dockerfile
+    assert (
+        "scripts/export_database_objects.py --check --database-url-env "
+        "FINANCIAL_AGENT_TEST_DATABASE_URL"
+    ) in dockerfile
     assert "COPY data/" not in dockerfile
     assert "db-check:" in compose
     assert "dockerfile: docker/database-check.Dockerfile" in compose
@@ -369,17 +394,26 @@ def test_database_check_container_is_linux_amd64_and_uses_only_test_url() -> Non
     assert "condition: service_healthy" in compose
 
 
-def test_manifest_cli_uses_the_explicit_ncp_test_env_without_leaking_it(
+def test_manifest_cli_requires_an_explicit_url_env_without_leaking_it(
     monkeypatch,
     capsys,
 ) -> None:
-    monkeypatch.delenv("FINANCIAL_AGENT_TEST_DATABASE_URL", raising=False)
+    monkeypatch.setenv(
+        "FINANCIAL_AGENT_TEST_DATABASE_URL",
+        "postgresql://wrong_user:wrong_password@127.0.0.1:1/wrong_db",
+    )
     monkeypatch.setenv(
         "FINANCIAL_AGENT_NCP_TEST_DATABASE_URL",
         "postgresql://secret_user:secret_password@127.0.0.1:1/secret_db",
     )
 
-    exit_code = export_database_objects_main(["--check"])
+    exit_code = export_database_objects_main(
+        [
+            "--check",
+            "--database-url-env",
+            "FINANCIAL_AGENT_NCP_TEST_DATABASE_URL",
+        ]
+    )
 
     captured = capsys.readouterr()
     assert exit_code == 2
@@ -390,3 +424,6 @@ def test_manifest_cli_uses_the_explicit_ncp_test_env_without_leaking_it(
     assert "secret_user" not in captured.err
     assert "secret_password" not in captured.err
     assert "secret_db" not in captured.err
+    assert "wrong_user" not in captured.err
+    assert "wrong_password" not in captured.err
+    assert "wrong_db" not in captured.err

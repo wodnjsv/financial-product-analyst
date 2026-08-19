@@ -27,13 +27,15 @@ Run these gates in order:
 
 1. As `fa_migration`, run `python scripts/db_preflight.py --phase pre-migration --database-url-env FINANCIAL_AGENT_DATABASE_URL`.
 2. As `fa_migration`, run `python -m alembic upgrade head`.
-3. With the separately injected NCP test URL, run `python scripts/db_preflight.py --phase post-migration --database-url-env FINANCIAL_AGENT_NCP_TEST_DATABASE_URL`.
-4. Run the marked permission/preflight tests against the authorized non-production database.
-5. Run `python scripts/export_database_objects.py --check` with `FINANCIAL_AGENT_NCP_TEST_DATABASE_URL` injected.
+3. Still as `fa_migration`, run `python scripts/db_preflight.py --phase post-migration --database-url-env FINANCIAL_AGENT_DATABASE_URL`. Postflight needs the migration identity to inspect Alembic bookkeeping, ownership, ACLs, and the complete object inventory; do not grant those administrative reads to runtime.
+4. Run the marked runtime read/permission tests with the separately injected `fa_runtime` URL in `FINANCIAL_AGENT_NCP_TEST_DATABASE_URL`.
+5. As `fa_migration`, run `python scripts/export_database_objects.py --check --database-url-env FINANCIAL_AGENT_DATABASE_URL`.
+6. Only on the explicitly authorized non-production target, provision the tracked synthetic benchmark dataset by setting `RUN_DB_SCALE_TESTS=1` and `RUN_NCP_SCALE_PROVISION=task8-scale-synthetic`, then selecting `test_authorized_ncp_synthetic_scale_provisioning`. The loader refuses loopback targets, requires the migration and runtime URLs to identify the same database, requires `current_user = 'fa_migration'`, refuses an existing dataset of the same name, and leaves triggers enabled.
+7. With only the `fa_runtime` URL, keep `RUN_DB_SCALE_TESTS=1` and select `test_authorized_ncp_scale_p95_and_four_read_concurrency`. This read-only gate verifies all six anchors, runs five warmups plus thirty samples per query, and runs four validated reads for thirty rounds with a five-connection/no-overflow pool.
 
 The post-migration gate verifies PostgreSQL 15, UTC, extension versions and schemas, all seven application schemas, the Alembic head, the fixed `2026-07-11` cutoff, active-dataset consistency, parameterized query/rollback capability, the public-schema boundary, the direct-user permissions, and the reviewed object manifest. A failure returns a stable code without printing the URL.
 
-Review every `SECURITY DEFINER` routine after migration. Its owner must be `fa_migration`; its `search_path` must begin with `pg_catalog` and include only the required application schema plus `pg_temp`; PUBLIC execution must be revoked; and only the approved build/runtime identity may have explicit `EXECUTE`.
+Review every `SECURITY DEFINER` routine after migration. Its owner must be `fa_migration`; its `search_path` must begin with `pg_catalog`, list the exact allowlist of every referenced application schema (including multiple schemas where required), include `cdb_admin` only for routines that call its extension objects, and end with `pg_temp`. Compare each allowlist with the tracked function configuration in the database-object manifest. PUBLIC execution must be revoked, and only the approved build/runtime identity may have explicit `EXECUTE`.
 
 Never downgrade a shared or NCP database. The base→head→base→head proof is restricted to the named disposable local test database created by `scripts/verify_database_migrations.py`.
 

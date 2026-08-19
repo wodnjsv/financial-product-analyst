@@ -94,11 +94,10 @@ def write_or_check_manifest(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--database-url-env", required=True)
     arguments = parser.parse_args(argv)
 
-    database_url = os.environ.get(
-        "FINANCIAL_AGENT_TEST_DATABASE_URL"
-    ) or os.environ.get("FINANCIAL_AGENT_NCP_TEST_DATABASE_URL")
+    database_url = os.environ.get(arguments.database_url_env)
     if not database_url:
         print(
             "MISSING_DATABASE_URL: no test database URL is configured",

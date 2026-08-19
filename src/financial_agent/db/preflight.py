@@ -547,6 +547,8 @@ def _parameterized_query_is_usable(
 
 def _database_permissions_match(
     connection: psycopg.Connection,
+    *,
+    permission_layout: PermissionLayout,
 ) -> bool:
     protected_tables = (
         "operations.dataset_readiness",
@@ -559,6 +561,17 @@ def _database_permissions_match(
         "operations.artifact_claim_ref",
     )
     with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT pg_catalog.bool_and(
+                pg_catalog.to_regclass(table_name) IS NOT NULL
+            )
+            FROM unnest(%s::text[]) AS table_name
+            """,
+            (list(protected_tables),),
+        )
+        if not bool(cursor.fetchone()[0]):
+            return False
         cursor.execute(
             """
             SELECT NOT EXISTS (
@@ -597,24 +610,44 @@ def _database_permissions_match(
         protected_dml_is_denied = bool(cursor.fetchone()[0])
         cursor.execute(
             """
-            SELECT NOT EXISTS (
-                SELECT 1
-                FROM pg_catalog.pg_auth_members AS membership
-                JOIN pg_catalog.pg_roles AS granted_role
-                  ON granted_role.oid = membership.roleid
-                JOIN pg_catalog.pg_roles AS member_role
-                  ON member_role.oid = membership.member
-                WHERE granted_role.rolname = ANY(%s)
-                  AND member_role.rolname = ANY(%s)
-            )
+            SELECT
+                granted_role.rolname,
+                granted_role.rolcanlogin,
+                member_role.rolname,
+                member_role.rolcanlogin,
+                membership.admin_option
+            FROM pg_catalog.pg_auth_members AS membership
+            JOIN pg_catalog.pg_roles AS granted_role
+              ON granted_role.oid = membership.roleid
+            JOIN pg_catalog.pg_roles AS member_role
+              ON member_role.oid = membership.member
+            WHERE granted_role.rolname = ANY(%s)
+               OR member_role.rolname = ANY(%s)
             """,
             (sorted(EXPECTED_ROLES), sorted(EXPECTED_ROLES)),
         )
-        logical_roles_are_independent = bool(cursor.fetchone()[0])
+        membership_rows = cursor.fetchall()
+        if permission_layout == "direct_users":
+            memberships_are_approved = not membership_rows
+        else:
+            memberships_are_approved = all(
+                str(granted_role) in EXPECTED_ROLES
+                and not bool(granted_can_login)
+                and str(member_role) not in EXPECTED_ROLES
+                and bool(member_can_login)
+                and not bool(admin_option)
+                for (
+                    granted_role,
+                    granted_can_login,
+                    member_role,
+                    member_can_login,
+                    admin_option,
+                ) in membership_rows
+            )
     return (
         schemas_are_protected
         and protected_dml_is_denied
-        and logical_roles_are_independent
+        and memberships_are_approved
     )
 
 
@@ -625,6 +658,13 @@ def collect_post_migration_snapshot(
     alembic_head: str,
 ) -> PostMigrationSnapshot:
     pre_migration = collect_preflight_snapshot(connection)
+    login_values = {
+        pre_migration.role_login.get(role_name)
+        for role_name in EXPECTED_ROLES
+    }
+    permission_layout: PermissionLayout = (
+        "direct_users" if login_values == {True} else "group_roles"
+    )
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -649,13 +689,16 @@ def collect_post_migration_snapshot(
         application_schemas = frozenset(
             str(row[0]) for row in cursor.fetchall()
         )
-        try:
+        cursor.execute(
+            "SELECT pg_catalog.to_regclass('public.alembic_version')"
+        )
+        if cursor.fetchone()[0] is not None:
             cursor.execute("SELECT version_num FROM public.alembic_version")
             revision_rows = cursor.fetchall()
             alembic_revision = (
                 str(revision_rows[0][0]) if len(revision_rows) == 1 else None
             )
-        except psycopg.Error:
+        else:
             alembic_revision = None
         cursor.execute(
             """
@@ -677,48 +720,70 @@ def collect_post_migration_snapshot(
         )
         cursor.execute(
             """
-            SELECT
-                NOT EXISTS (
-                    SELECT 1
-                    FROM operations.active_dataset AS active
-                    LEFT JOIN operations.dataset_version AS dataset
-                      ON dataset.dataset_version = active.dataset_version
-                    WHERE active.dataset_version IS NOT NULL
-                      AND (
-                          dataset.status IS DISTINCT FROM 'active'
-                          OR (
-                              SELECT count(DISTINCT readiness.component)
-                              FROM operations.dataset_readiness AS readiness
-                              WHERE readiness.dataset_version = active.dataset_version
-                                AND readiness.validation_status = 'pass'
-                                AND readiness.dataset_manifest_hash
-                                    = dataset.manifest_hash
-                                AND readiness.component IN (
-                                    'postgres', 'graph', 'vector', 'evidence'
-                                )
-                          ) <> 4
-                      )
-                )
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM operations.dataset_version AS dataset
-                    WHERE dataset.status = 'active'
-                      AND NOT EXISTS (
-                          SELECT 1
-                          FROM operations.active_dataset AS active
-                          WHERE active.dataset_version = dataset.dataset_version
-                      )
-                )
-            """
+            SELECT pg_catalog.bool_and(
+                pg_catalog.to_regclass(table_name) IS NOT NULL
+            )
+            FROM unnest(%s::text[]) AS table_name
+            """,
+            (
+                [
+                    "operations.active_dataset",
+                    "operations.dataset_version",
+                    "operations.dataset_readiness",
+                ],
+            ),
         )
-        active_dataset_consistent = bool(cursor.fetchone()[0])
+        if bool(cursor.fetchone()[0]):
+            cursor.execute(
+                """
+                SELECT
+                    NOT EXISTS (
+                        SELECT 1
+                        FROM operations.active_dataset AS active
+                        LEFT JOIN operations.dataset_version AS dataset
+                          ON dataset.dataset_version = active.dataset_version
+                        WHERE active.dataset_version IS NOT NULL
+                          AND (
+                              dataset.status IS DISTINCT FROM 'active'
+                              OR (
+                                  SELECT count(DISTINCT readiness.component)
+                                  FROM operations.dataset_readiness AS readiness
+                                  WHERE readiness.dataset_version
+                                      = active.dataset_version
+                                    AND readiness.validation_status = 'pass'
+                                    AND readiness.dataset_manifest_hash
+                                        = dataset.manifest_hash
+                                    AND readiness.component IN (
+                                        'postgres', 'graph', 'vector', 'evidence'
+                                    )
+                              ) <> 4
+                          )
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM operations.dataset_version AS dataset
+                        WHERE dataset.status = 'active'
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM operations.active_dataset AS active
+                              WHERE active.dataset_version
+                                  = dataset.dataset_version
+                          )
+                    )
+                """
+            )
+            active_dataset_consistent = bool(cursor.fetchone()[0])
+        else:
+            active_dataset_consistent = False
         cursor.execute(
             """
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-              AND table_type = 'BASE TABLE'
-            ORDER BY table_name
+            SELECT relation.relname
+            FROM pg_catalog.pg_class AS relation
+            JOIN pg_catalog.pg_namespace AS namespace
+              ON namespace.oid = relation.relnamespace
+            WHERE namespace.nspname = 'public'
+              AND relation.relkind IN ('r', 'p')
+            ORDER BY relation.relname
             """
         )
         public_tables = frozenset(str(row[0]) for row in cursor.fetchall())
@@ -732,6 +797,7 @@ def collect_post_migration_snapshot(
         expected_manifest,
         actual_manifest,
     )
+    required_roles_present = EXPECTED_ROLES <= pre_migration.role_login.keys()
     return PostMigrationSnapshot(
         pre_migration=pre_migration,
         extension_versions=extension_versions,
@@ -742,7 +808,13 @@ def collect_post_migration_snapshot(
         active_dataset_consistent=active_dataset_consistent,
         parameterized_query_usable=_parameterized_query_is_usable(connection),
         public_tables=public_tables,
-        database_permissions_match=_database_permissions_match(connection),
+        database_permissions_match=(
+            required_roles_present
+            and _database_permissions_match(
+                connection,
+                permission_layout=permission_layout,
+            )
+        ),
         object_manifest_matches=not comparison.object_drift,
         permission_manifest_matches=not comparison.permission_drift,
     )
@@ -770,16 +842,16 @@ def run_post_migration_preflight(
             )
     except PreflightFailure:
         raise
-    except psycopg.OperationalError as error:
+    except psycopg.OperationalError:
         raise PreflightFailure(
             "DATABASE_UNREACHABLE",
             "database connection failed",
-        ) from error
-    except psycopg.Error as error:
+        ) from None
+    except psycopg.Error:
         raise PreflightFailure(
             "DATABASE_QUERY_FAILED",
             "database post-migration preflight query failed",
-        ) from error
+        ) from None
     return validate_post_migration_snapshot(snapshot)
 
 
@@ -1023,16 +1095,16 @@ def run_pre_migration_preflight(
             autocommit=True,
         ) as connection:
             snapshot = collect_preflight_snapshot(connection)
-    except psycopg.OperationalError as error:
+    except psycopg.OperationalError:
         raise PreflightFailure(
             "DATABASE_UNREACHABLE",
             "database connection failed",
-        ) from error
-    except psycopg.Error as error:
+        ) from None
+    except psycopg.Error:
         raise PreflightFailure(
             "DATABASE_QUERY_FAILED",
             "database preflight query failed",
-        ) from error
+        ) from None
     return validate_pre_migration_snapshot(snapshot)
 
 

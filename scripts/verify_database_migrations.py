@@ -29,6 +29,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DATABASE_NAME = "financial_agent_test"
 DISPOSABLE_DATABASE_NAME = "financial_agent_migration_cycle_test"
 LOCAL_DATABASE_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+ALEMBIC_DATABASE_URL_ENV = "FINANCIAL_AGENT_DATABASE_URL"
 
 
 class MigrationVerificationFailure(RuntimeError):
@@ -44,6 +45,8 @@ class MigrationVerificationReport:
     object_counts: Mapping[str, int]
     ncp_extensions_preserved: bool
     bootstrap_roles_preserved: bool
+    foundation_cutoff_enforced: bool
+    foundation_transition_enforced: bool
 
 
 def _assert_safe_source_url(url: str) -> None:
@@ -73,6 +76,17 @@ def migration_alembic_config(database_url: str) -> Config:
     config = Config(PROJECT_ROOT / "alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     return config
+
+
+@contextmanager
+def configured_alembic_target_only() -> Iterator[None]:
+    ambient_url = os.environ.pop(ALEMBIC_DATABASE_URL_ENV, None)
+    try:
+        yield
+    finally:
+        os.environ.pop(ALEMBIC_DATABASE_URL_ENV, None)
+        if ambient_url is not None:
+            os.environ[ALEMBIC_DATABASE_URL_ENV] = ambient_url
 
 
 def _recreate_disposable_database(source_url: str) -> str:
@@ -276,30 +290,95 @@ def _verify_base_state(database_url: str) -> tuple[bool, bool]:
     return ncp_extensions_preserved, bootstrap_roles_preserved
 
 
+def _verify_foundation_behavior(database_url: str) -> tuple[bool, bool]:
+    cutoff_enforced = False
+    transition_enforced = False
+    with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+        with connection.transaction(force_rollback=True):
+            connection.execute(
+                """
+                INSERT INTO operations.dataset_version (
+                    dataset_version, cutoff_date, status, manifest_hash,
+                    created_at
+                ) VALUES (
+                    'task8-foundation-probe', DATE '2026-07-11', 'building',
+                    repeat('1', 64), TIMESTAMPTZ '2026-08-19 00:00:00+00'
+                )
+                """
+            )
+            try:
+                with connection.transaction():
+                    connection.execute(
+                        """
+                        INSERT INTO operations.dataset_version (
+                            dataset_version, cutoff_date, status,
+                            manifest_hash, created_at
+                        ) VALUES (
+                            'task8-invalid-cutoff', DATE '2026-07-12',
+                            'building', repeat('2', 64),
+                            TIMESTAMPTZ '2026-08-19 00:00:00+00'
+                        )
+                        """
+                    )
+            except psycopg.errors.CheckViolation as error:
+                cutoff_enforced = (
+                    error.diag.constraint_name
+                    == "ck_dataset_version_cutoff_date"
+                )
+            try:
+                with connection.transaction():
+                    connection.execute(
+                        """
+                        UPDATE operations.dataset_version
+                           SET status = 'active'
+                         WHERE dataset_version = 'task8-foundation-probe'
+                        """
+                    )
+            except psycopg.Error as error:
+                transition_enforced = (
+                    error.sqlstate == "55000"
+                    and "INVALID_DATASET_TRANSITION" in str(error)
+                )
+    if not cutoff_enforced or not transition_enforced:
+        raise MigrationVerificationFailure(
+            "FOUNDATION_INVARIANT_FAILED",
+            "foundation constraint or transition behavior is incompatible",
+        )
+    return cutoff_enforced, transition_enforced
+
+
 def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
     with disposable_migration_database(source_url) as disposable_url:
         config = migration_alembic_config(disposable_url)
         run_pre_migration_preflight(disposable_url)
-        command.upgrade(config, "head")
-        command.check(config)
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+        with configured_alembic_target_only():
+            command.check(config)
         first_report = run_post_migration_preflight(
             disposable_url,
             manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
         )
         first_inventory = _collect_inventory(disposable_url)
 
-        command.downgrade(config, "base")
+        with configured_alembic_target_only():
+            command.downgrade(config, "base")
         ncp_extensions_preserved, bootstrap_roles_preserved = (
             _verify_base_state(disposable_url)
         )
 
-        command.upgrade(config, "head")
-        command.check(config)
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+        with configured_alembic_target_only():
+            command.check(config)
         second_report = run_post_migration_preflight(
             disposable_url,
             manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
         )
         second_inventory = _collect_inventory(disposable_url)
+        foundation_cutoff_enforced, foundation_transition_enforced = (
+            _verify_foundation_behavior(disposable_url)
+        )
         if first_inventory != second_inventory:
             raise MigrationVerificationFailure(
                 "MIGRATION_CYCLE_DRIFT",
@@ -316,6 +395,8 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
             object_counts=second_inventory,
             ncp_extensions_preserved=ncp_extensions_preserved,
             bootstrap_roles_preserved=bootstrap_roles_preserved,
+            foundation_cutoff_enforced=foundation_cutoff_enforced,
+            foundation_transition_enforced=foundation_transition_enforced,
         )
 
 

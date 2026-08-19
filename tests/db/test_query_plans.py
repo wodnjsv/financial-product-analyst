@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from datetime import date
+from decimal import Decimal
 import json
 import math
 import os
 from time import perf_counter
+import traceback
 
 import psycopg
 import pytest
@@ -20,7 +24,6 @@ TARGET_ENTITY_ID = "entity-004242"
 TARGET_ALIAS = "rare synthetic alias 004242"
 TARGET_EVIDENCE_ID = "evidence-004242"
 TARGET_CONTRACT_ID = "task-004242"
-TARGET_PAYLOAD_HASH = "0" * 60 + "4242"
 LARGE_TABLES = {
     "alias",
     "relation_record",
@@ -46,7 +49,6 @@ def _require_local_scale_run() -> None:
 
 
 def _load_synthetic_scale_data(connection: psycopg.Connection) -> None:
-    connection.execute("SET LOCAL session_replication_role = replica")
     connection.execute(
         """
         INSERT INTO operations.dataset_version (
@@ -334,34 +336,26 @@ def _load_synthetic_scale_data(connection: psycopg.Connection) -> None:
     connection.execute(
         """
         INSERT INTO operations.request_artifact (
-            artifact_record_id, contract_object_id, artifact_type,
-            schema_version, request_key, run_id, dataset_version, cutoff_date,
-            producer, model_id, prompt_version, created_at, canonical_payload,
-            payload_jsonb, payload_hash
+            artifact_type, canonical_payload
         )
         SELECT
-            md5(('artifact-' || series)::text)::uuid,
-            'task-' || lpad(series::text, 6, '0'),
             'tool_result',
-            '1.0.0',
-            repeat('f', 64),
-            'run-scale',
-            %s,
-            DATE '2026-07-11',
-            'synthetic-scale',
-            NULL,
-            NULL,
-            TIMESTAMPTZ '2026-08-19 00:00:00+00',
-            '{}'::text,
-            '{}'::jsonb,
-            CASE
-                WHEN series = 4242 THEN %s
-                ELSE md5(('payload-' || series)::text)
-                    || md5(('payload-' || series)::text)
-            END
+            jsonb_build_object(
+                'schema_version', '1.0.0',
+                'request_key', repeat('f', 64),
+                'run_id', 'run-scale',
+                'dataset_version', %s::text,
+                'cutoff_date', '2026-07-11',
+                'producer', 'synthetic-scale',
+                'created_at', '2026-08-19T00:00:00+00:00',
+                'task_id', 'task-' || lpad(series::text, 6, '0'),
+                'evidence_refs', jsonb_build_array(
+                    'evidence-' || lpad(series::text, 6, '0')
+                )
+            )::text
         FROM generate_series(1, 20000) AS series
         """,
-        (SCALE_DATASET_VERSION, TARGET_PAYLOAD_HASH),
+        (SCALE_DATASET_VERSION,),
     )
     for table in (
         "catalog.alias",
@@ -387,6 +381,7 @@ def scale_connection(
     with psycopg.connect(
         normalize_psycopg_url(migrated_database_url)
     ) as connection:
+        connection.execute("SET LOCAL ROLE fa_migration")
         _load_synthetic_scale_data(connection)
         yield connection
         connection.rollback()
@@ -444,6 +439,141 @@ def _assert_plan_shape(
     )
 
 
+def _target_payload_hash(connection: psycopg.Connection) -> str:
+    row = connection.execute(
+        """
+        SELECT payload_hash
+        FROM operations.request_artifact
+        WHERE run_id = 'run-scale'
+          AND artifact_type = 'tool_result'
+          AND contract_object_id = %s
+        """,
+        (TARGET_CONTRACT_ID,),
+    ).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
+def _core_benchmark_queries(
+    target_payload_hash: str,
+) -> tuple[tuple[str, tuple[object, ...]], ...]:
+    return (
+        (
+            """
+            SELECT entity_id
+            FROM catalog.alias
+            WHERE dataset_version = %s
+              AND normalized_alias_text %% %s
+            ORDER BY similarity(normalized_alias_text, %s) DESC
+            LIMIT 10
+            """,
+            (SCALE_DATASET_VERSION, TARGET_ALIAS, TARGET_ALIAS),
+        ),
+        (
+            """
+            SELECT object_id
+            FROM relation.relation_record
+            WHERE dataset_version = %s
+              AND predicate_id = 'etf_constituent'
+              AND subject_id = %s
+            """,
+            (SCALE_DATASET_VERSION, TARGET_ENTITY_ID),
+        ),
+        (
+            """
+            SELECT numeric_value, applicable_date
+            FROM observation.observation_record
+            WHERE dataset_version = %s
+              AND entity_id = %s
+              AND metric_id = 'market_value'
+            ORDER BY applicable_date DESC
+            LIMIT 1
+            """,
+            (SCALE_DATASET_VERSION, TARGET_ENTITY_ID),
+        ),
+        (
+            """
+            SELECT claim.claim_id
+            FROM evidence.evidence_record AS evidence_row
+            JOIN evidence.claim_support AS support
+              ON support.dataset_version = evidence_row.dataset_version
+             AND support.evidence_id = evidence_row.evidence_id
+            JOIN evidence.atomic_claim AS claim
+              ON claim.run_id = support.run_id
+             AND claim.claim_id = support.claim_id
+            WHERE evidence_row.dataset_version = %s
+              AND evidence_row.evidence_id = %s
+            """,
+            (SCALE_DATASET_VERSION, TARGET_EVIDENCE_ID),
+        ),
+        (
+            """
+            SELECT artifact_record_id
+            FROM operations.request_artifact
+            WHERE run_id = 'run-scale'
+              AND artifact_type = 'tool_result'
+              AND contract_object_id = %s
+            """,
+            (TARGET_CONTRACT_ID,),
+        ),
+        (
+            """
+            SELECT artifact_record_id
+            FROM operations.request_artifact
+            WHERE run_id = 'run-scale'
+              AND artifact_type = 'tool_result'
+              AND payload_hash = %s
+            """,
+            (target_payload_hash,),
+        ),
+    )
+
+
+def _assert_synthetic_scale_dataset(
+    connection: psycopg.Connection,
+) -> str:
+    counts = connection.execute(
+        """
+        SELECT
+            (SELECT count(*) FROM catalog.alias
+              WHERE dataset_version = %s),
+            (SELECT count(*) FROM relation.relation_record
+              WHERE dataset_version = %s),
+            (SELECT count(*) FROM observation.observation_record
+              WHERE dataset_version = %s),
+            (SELECT count(*) FROM evidence.evidence_record
+              WHERE dataset_version = %s),
+            (SELECT count(*) FROM evidence.claim_support
+              WHERE dataset_version = %s),
+            (SELECT count(*) FROM operations.request_artifact
+              WHERE dataset_version = %s)
+        """,
+        (SCALE_DATASET_VERSION,) * 6,
+    ).fetchone()
+    assert counts is not None
+    assert counts[0] >= 100000
+    assert counts[1] >= 250000
+    assert counts[2] >= 250000
+    assert counts[3] >= 1
+    assert counts[4] >= 1
+    assert counts[5] >= 1
+
+    target_payload_hash = _target_payload_hash(connection)
+    results = [
+        connection.execute(statement, parameters).fetchall()
+        for statement, parameters in _core_benchmark_queries(
+            target_payload_hash
+        )
+    ]
+    assert results[0][0] == (TARGET_ENTITY_ID,)
+    assert results[1] == [("entity-004243",)] * 3
+    assert results[2] == [(Decimal("4242"), date(2025, 8, 16))]
+    assert results[3] == [("claim-004242",)]
+    assert len(results[4]) == 1
+    assert results[5] == results[4]
+    return target_payload_hash
+
+
 @pytest.mark.postgres
 @pytest.mark.performance
 @pytest.mark.skipif(
@@ -457,18 +587,13 @@ def _assert_plan_shape(
 def test_synthetic_scale_queries_use_the_reviewed_indexes(
     scale_connection: psycopg.Connection,
 ) -> None:
+    target_payload_hash = _assert_synthetic_scale_dataset(scale_connection)
+    core_queries = _core_benchmark_queries(target_payload_hash)
     plans = (
         (
             _explain(
                 scale_connection,
-                """
-                SELECT entity_id
-                FROM catalog.alias
-                WHERE normalized_alias_text %% %s
-                ORDER BY similarity(normalized_alias_text, %s) DESC
-                LIMIT 10
-                """,
-                (TARGET_ALIAS, TARGET_ALIAS),
+                *core_queries[0],
             ),
             {"ix_alias_normalized_alias_text_trgm"},
             {"alias"},
@@ -476,14 +601,7 @@ def test_synthetic_scale_queries_use_the_reviewed_indexes(
         (
             _explain(
                 scale_connection,
-                """
-                SELECT object_id
-                FROM relation.relation_record
-                WHERE dataset_version = %s
-                  AND predicate_id = 'etf_constituent'
-                  AND subject_id = %s
-                """,
-                (SCALE_DATASET_VERSION, TARGET_ENTITY_ID),
+                *core_queries[1],
             ),
             {"ix_relation_record_lookup"},
             {"relation_record"},
@@ -491,16 +609,7 @@ def test_synthetic_scale_queries_use_the_reviewed_indexes(
         (
             _explain(
                 scale_connection,
-                """
-                SELECT numeric_value, applicable_date
-                FROM observation.observation_record
-                WHERE dataset_version = %s
-                  AND entity_id = %s
-                  AND metric_id = 'market_value'
-                ORDER BY applicable_date DESC
-                LIMIT 1
-                """,
-                (SCALE_DATASET_VERSION, TARGET_ENTITY_ID),
+                *core_queries[2],
             ),
             {"ix_observation_record_entity_metric_date"},
             {"observation_record"},
@@ -508,19 +617,7 @@ def test_synthetic_scale_queries_use_the_reviewed_indexes(
         (
             _explain(
                 scale_connection,
-                """
-                SELECT claim.claim_id
-                FROM evidence.evidence_record AS evidence_row
-                JOIN evidence.claim_support AS support
-                  ON support.dataset_version = evidence_row.dataset_version
-                 AND support.evidence_id = evidence_row.evidence_id
-                JOIN evidence.atomic_claim AS claim
-                  ON claim.run_id = support.run_id
-                 AND claim.claim_id = support.claim_id
-                WHERE evidence_row.dataset_version = %s
-                  AND evidence_row.evidence_id = %s
-                """,
-                (SCALE_DATASET_VERSION, TARGET_EVIDENCE_ID),
+                *core_queries[3],
             ),
             {"pk_evidence_record", "ix_claim_support_evidence", "pk_atomic_claim"},
             {"evidence_record", "claim_support", "atomic_claim"},
@@ -528,14 +625,7 @@ def test_synthetic_scale_queries_use_the_reviewed_indexes(
         (
             _explain(
                 scale_connection,
-                """
-                SELECT artifact_record_id
-                FROM operations.request_artifact
-                WHERE run_id = 'run-scale'
-                  AND artifact_type = 'tool_result'
-                  AND contract_object_id = %s
-                """,
-                (TARGET_CONTRACT_ID,),
+                *core_queries[4],
             ),
             {"uq_request_artifact_contract_object"},
             {"request_artifact"},
@@ -543,14 +633,7 @@ def test_synthetic_scale_queries_use_the_reviewed_indexes(
         (
             _explain(
                 scale_connection,
-                """
-                SELECT artifact_record_id
-                FROM operations.request_artifact
-                WHERE run_id = 'run-scale'
-                  AND artifact_type = 'tool_result'
-                  AND payload_hash = %s
-                """,
-                (TARGET_PAYLOAD_HASH,),
+                *core_queries[5],
             ),
             {"uq_request_artifact_retry"},
             {"request_artifact"},
@@ -569,84 +652,111 @@ def _percentile_95(samples: list[float]) -> float:
     return ordered[math.ceil(len(ordered) * 0.95) - 1]
 
 
+class SanitizedNcpFailure(RuntimeError):
+    pass
+
+
+@contextmanager
+def sanitized_ncp_operation(code: str) -> Iterator[None]:
+    try:
+        yield
+    except Exception:
+        raise SanitizedNcpFailure(
+            f"{code}: authorized database operation failed"
+        ) from None
+
+
+def test_ncp_operation_wrapper_suppresses_sensitive_causes() -> None:
+    secret = "secret_user:secret_password@private-host/secret_db"
+
+    with pytest.raises(SanitizedNcpFailure) as captured:
+        with sanitized_ncp_operation("NCP_BENCHMARK_FAILED"):
+            raise psycopg.OperationalError(secret)
+
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__ is True
+    rendered = "".join(
+        traceback.format_exception(
+            type(captured.value),
+            captured.value,
+            captured.value.__traceback__,
+        )
+    )
+    assert "secret_user" not in rendered
+    assert "secret_password" not in rendered
+    assert "secret_db" not in rendered
+
+
+def _provision_authorized_ncp_scale_data(
+    migration_database_url: str,
+    runtime_database_url: str,
+) -> None:
+    migration_target = make_url(normalize_psycopg_url(migration_database_url))
+    runtime_target = make_url(normalize_psycopg_url(runtime_database_url))
+    migration_location = (
+        migration_target.host,
+        migration_target.port,
+        migration_target.database,
+    )
+    runtime_location = (
+        runtime_target.host,
+        runtime_target.port,
+        runtime_target.database,
+    )
+    assert migration_location == runtime_location
+    assert migration_target.host not in {"127.0.0.1", "localhost", "::1"}
+
+    with psycopg.connect(
+        normalize_psycopg_url(migration_database_url)
+    ) as connection:
+        current_user = str(
+            connection.execute("SELECT current_user").fetchone()[0]
+        )
+        assert current_user == "fa_migration"
+        dataset_exists = bool(
+            connection.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM operations.dataset_version
+                    WHERE dataset_version = %s
+                )
+                """,
+                (SCALE_DATASET_VERSION,),
+            ).fetchone()[0]
+        )
+        assert dataset_exists is False
+        _load_synthetic_scale_data(connection)
+        _assert_synthetic_scale_dataset(connection)
+
+
 @pytest.mark.performance
 @pytest.mark.ncp_integration
 @pytest.mark.skipif(
     os.environ.get("RUN_DB_SCALE_TESTS") != "1"
+    or os.environ.get("RUN_NCP_SCALE_PROVISION") != SCALE_DATASET_VERSION
+    or not os.environ.get("FINANCIAL_AGENT_DATABASE_URL")
     or not os.environ.get("FINANCIAL_AGENT_NCP_TEST_DATABASE_URL"),
-    reason="authorized NCP scale benchmark is not configured",
+    reason=(
+        "authorized non-production NCP synthetic provisioning is not "
+        "explicitly confirmed"
+    ),
 )
-def test_authorized_ncp_scale_p95_and_four_read_concurrency(
+def test_authorized_ncp_synthetic_scale_provisioning() -> None:
+    with sanitized_ncp_operation("NCP_SCALE_PROVISION_FAILED"):
+        _provision_authorized_ncp_scale_data(
+            os.environ["FINANCIAL_AGENT_DATABASE_URL"],
+            os.environ["FINANCIAL_AGENT_NCP_TEST_DATABASE_URL"],
+        )
+
+
+def _run_authorized_ncp_scale_benchmark(
     ncp_database_url: str,
 ) -> None:
     normalized_url = normalize_psycopg_url(ncp_database_url)
     with psycopg.connect(normalized_url) as connection:
-        counts = connection.execute(
-            """
-            SELECT
-                (SELECT count(*) FROM catalog.alias
-                  WHERE dataset_version = %s),
-                (SELECT count(*) FROM relation.relation_record
-                  WHERE dataset_version = %s),
-                (SELECT count(*) FROM observation.observation_record
-                  WHERE dataset_version = %s)
-            """,
-            (
-                SCALE_DATASET_VERSION,
-                SCALE_DATASET_VERSION,
-                SCALE_DATASET_VERSION,
-            ),
-        ).fetchone()
-        assert counts[0] >= 100000
-        assert counts[1] >= 250000
-        assert counts[2] >= 250000
-        benchmark_queries = (
-            (
-                """
-                SELECT entity_id FROM catalog.alias
-                WHERE normalized_alias_text %% %s
-                ORDER BY similarity(normalized_alias_text, %s) DESC
-                LIMIT 10
-                """,
-                (TARGET_ALIAS, TARGET_ALIAS),
-            ),
-            (
-                """
-                SELECT object_id FROM relation.relation_record
-                WHERE dataset_version = %s
-                  AND predicate_id = 'etf_constituent'
-                  AND subject_id = %s
-                """,
-                (SCALE_DATASET_VERSION, TARGET_ENTITY_ID),
-            ),
-            (
-                """
-                SELECT numeric_value FROM observation.observation_record
-                WHERE dataset_version = %s
-                  AND entity_id = %s
-                  AND metric_id = 'market_value'
-                ORDER BY applicable_date DESC
-                LIMIT 1
-                """,
-                (SCALE_DATASET_VERSION, TARGET_ENTITY_ID),
-            ),
-            (
-                """
-                SELECT claim_id FROM evidence.claim_support
-                WHERE dataset_version = %s AND evidence_id = %s
-                """,
-                (SCALE_DATASET_VERSION, TARGET_EVIDENCE_ID),
-            ),
-            (
-                """
-                SELECT artifact_record_id FROM operations.request_artifact
-                WHERE run_id = 'run-scale'
-                  AND artifact_type = 'tool_result'
-                  AND contract_object_id = %s
-                """,
-                (TARGET_CONTRACT_ID,),
-            ),
-        )
+        target_payload_hash = _assert_synthetic_scale_dataset(connection)
+        benchmark_queries = _core_benchmark_queries(target_payload_hash)
         latency_report: dict[str, float] = {}
         for query_number, (statement, parameters) in enumerate(
             benchmark_queries,
@@ -685,6 +795,7 @@ def test_authorized_ncp_scale_p95_and_four_read_concurrency(
                 "dataset_version": SCALE_DATASET_VERSION,
                 "alias_text": TARGET_ALIAS,
             },
+            [(TARGET_ENTITY_ID,)],
         ),
         (
             text(
@@ -697,6 +808,7 @@ def test_authorized_ncp_scale_p95_and_four_read_concurrency(
                 "dataset_version": SCALE_DATASET_VERSION,
                 "entity_id": TARGET_ENTITY_ID,
             },
+            [("entity-004243",)] * 3,
         ),
         (
             text(
@@ -710,6 +822,7 @@ def test_authorized_ncp_scale_p95_and_four_read_concurrency(
                 "dataset_version": SCALE_DATASET_VERSION,
                 "entity_id": TARGET_ENTITY_ID,
             },
+            [(Decimal("4242"),)],
         ),
         (
             text(
@@ -721,13 +834,18 @@ def test_authorized_ncp_scale_p95_and_four_read_concurrency(
                 "dataset_version": SCALE_DATASET_VERSION,
                 "evidence_id": TARGET_EVIDENCE_ID,
             },
+            [("claim-004242",)],
         ),
     )
 
-    def execute_read(statement, parameters) -> float:
+    def execute_read(statement, parameters, expected_rows) -> float:
         started = perf_counter()
         with engine.connect() as connection:
-            connection.execute(statement, parameters).all()
+            rows = [
+                tuple(row)
+                for row in connection.execute(statement, parameters).all()
+            ]
+        assert rows == expected_rows
         return (perf_counter() - started) * 1000
 
     round_samples = []
@@ -737,8 +855,14 @@ def test_authorized_ncp_scale_p95_and_four_read_concurrency(
             for _ in range(30):
                 round_started = perf_counter()
                 futures = [
-                    executor.submit(execute_read, statement, parameters)
-                    for statement, parameters in concurrent_statements
+                    executor.submit(
+                        execute_read,
+                        statement,
+                        parameters,
+                        expected_rows,
+                    )
+                    for statement, parameters, expected_rows
+                    in concurrent_statements
                 ]
                 individual_samples.extend(future.result() for future in futures)
                 round_samples.append((perf_counter() - round_started) * 1000)
@@ -747,3 +871,17 @@ def test_authorized_ncp_scale_p95_and_four_read_concurrency(
     latency_report["concurrent_read_p95_ms"] = _percentile_95(individual_samples)
     latency_report["concurrent_round_p95_ms"] = _percentile_95(round_samples)
     print(json.dumps(latency_report, sort_keys=True))
+
+
+@pytest.mark.performance
+@pytest.mark.ncp_integration
+@pytest.mark.skipif(
+    os.environ.get("RUN_DB_SCALE_TESTS") != "1"
+    or not os.environ.get("FINANCIAL_AGENT_NCP_TEST_DATABASE_URL"),
+    reason="authorized NCP scale benchmark is not configured",
+)
+def test_authorized_ncp_scale_p95_and_four_read_concurrency() -> None:
+    with sanitized_ncp_operation("NCP_BENCHMARK_FAILED"):
+        _run_authorized_ncp_scale_benchmark(
+            os.environ["FINANCIAL_AGENT_NCP_TEST_DATABASE_URL"]
+        )

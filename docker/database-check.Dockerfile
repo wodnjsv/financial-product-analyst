@@ -18,4 +18,4 @@ COPY tests/ ./tests/
 
 RUN python -m pip install ".[dev,storage]"
 
-CMD ["sh", "-c", "python scripts/verify_database_migrations.py && python -m pytest tests/db -m 'not performance and not ncp_integration' -q && python scripts/export_database_objects.py --check"]
+CMD ["sh", "-c", "python scripts/verify_database_migrations.py && python -m pytest tests/db -m 'not performance and not ncp_integration' -q && python scripts/export_database_objects.py --check --database-url-env FINANCIAL_AGENT_TEST_DATABASE_URL"]
