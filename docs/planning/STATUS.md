@@ -8,6 +8,7 @@
 
 | 구분 | 현재 상태 | 기준 문서 |
 | --- | --- | --- |
+| 전체 대회 Stage 로드맵 | Stage 01~09 확정; 종점은 제출과 공식 평가 운영 기간 종료 | [Competition Stage Roadmap](ROADMAP.md), [ADR-0012](decisions/ADR-0012-use-nine-stage-competition-delivery-roadmap.md) |
 | Task 1 요구사항·평가 질문·추가 데이터 | 완료; 52개 질문 유형과 공식 데이터 공백 기록 | [Core Evaluation Set](specs/core-evaluation-set.md), [Authoritative Data Requirements](specs/authoritative-data-requirements.md), [Official API Source Matrix](specs/official-api-source-matrix.md) |
 | Task 2 상위 아키텍처 | 확정; 2개 제한 LLM 역할 + 결정론적 Orchestrator·Capability·Verifier | [Planning Harness](HARNESS.md), [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) |
 | 실패·판정·시간 예산 | 확정 기본안; 55초 내부 마감은 NCP 벤치마크 후 단계별 재배분 가능 | [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md), [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) |
@@ -68,19 +69,21 @@
 
 [Multi-Agent Architecture](architecture/MULTI_AGENT_ARCHITECTURE.md)의 Specialist Agent·LLM Verifier 기본 호출 부분은 역사적 설명이다. 현재 런타임은 ADR-0005∼0007과 Runtime Contracts를 따른다.
 
-## 4. 기록되었지만 아직 새 구현 계획이 필요한 단계
+## 4. 확정된 후속 Stage
 
-아래 항목은 방향과 제약은 문서화되었지만, 현재 NCP·PostgreSQL·런타임 계약에 맞춘 실행 계획은 아직 없다.
+[Competition Stage Roadmap](ROADMAP.md)은 대회 제출과 평가 운영 기간 종료를 종점으로 하는 현재 권위 있는 전체 순서를 정의한다.
 
-1. 주최 측 4개 마스터 적재·표준화·품질 검증
-2. 공식 추가 데이터 원천 승인과 2026-07-11 스냅샷 수집
-3. TTL·SHACL 온톨로지와 PostgreSQL→Fuseki ABox 투영
-4. SQL·Graph·Keyword·Vector 통합 검색과 상품군별 계산·유사도
-5. Intent Resolver·Orchestrator·Capability Executor·Verifier 연결
-6. Claim Gate Registry, Renderer, 검증된 응답 캐시
-7. `GET /answer`, NCP API 이중화, Load Balancer, 모니터링·부하 테스트
+| Stage | 범위 | 상태 |
+| --- | --- | --- |
+| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 상세 구현 계획 작성 전 |
+| 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
+| 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
+| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
+| 07 | Verifier, Claim Gate Registry, Answer Composer, Renderer와 검증된 응답 캐시 | 대기 |
+| 08 | 공식 `GET /answer`, NCP 이중화·Load Balancer·모니터링·복구 | 대기 |
+| 09 | 52개 종합 평가, 제출 동결, 공식 평가 운영과 종료 기록 | 대기 |
 
-각 단계는 직전 Stage의 실측 결과와 동결된 계약을 입력으로 받아 별도 계획으로 작성한다.
+각 Stage는 직전 Stage의 실측 결과와 동결된 계약을 입력으로 받아 별도 구현 계획과 사용자 승인을 거친다. 병렬 준비가 허용된 작업도 로드맵의 완료 게이트를 건너뛸 수 없다.
 
 ## 5. 다음 순서
 
@@ -94,6 +97,7 @@
 8. ~~Stage 02A Task 6 손실 없는 Evidence 리포지터리 구현·검증~~ — 2026-08-18 완료
 9. ~~Stage 02A Task 7 불변 request artifact·request lifecycle 저장 구현·검증~~ — 2026-08-19 완료
 10. ~~Stage 02B NCP·이식성 증명 수행~~ — 2026-08-20 완료
-11. 주최측 4개 마스터와 공식 추가 데이터의 적재·표준화 구현계획 작성
+11. ~~대회 제출·평가 운영 종료까지 Stage 01~09 전체 로드맵 확정~~ — 2026-08-20 완료
+12. Stage 03 데이터 수집·표준화의 상세 구현 계획 작성과 승인
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.
