@@ -1,6 +1,6 @@
 # Financial Product Agent 계획·구현 현황
 
-**Updated:** 2026-08-19
+**Updated:** 2026-08-20
 
 이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.
 
@@ -12,7 +12,7 @@
 | Task 2 상위 아키텍처 | 확정; 2개 제한 LLM 역할 + 결정론적 Orchestrator·Capability·Verifier | [Planning Harness](HARNESS.md), [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) |
 | 실패·판정·시간 예산 | 확정 기본안; 55초 내부 마감은 NCP 벤치마크 후 단계별 재배분 가능 | [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md), [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) |
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
-| 3개 물리 저장소·5개 논리 계층·NCP 사양 | 확정 기본안; 실제 부하 테스트 후 사양 재검증 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
+| 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 최소 클래스와 13개 핵심 관계를 현재 기본안으로 기록; TTL·SHACL 필드 매핑은 후속 계획 필요 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 
@@ -41,7 +41,7 @@
 
 ### Stage 02 PostgreSQL 저장 계층
 
-**상태: Stage 02A 핵심 저장 구현·검증 완료; Stage 02B 이식성 증명 대기**
+**상태: Stage 02A 핵심 저장 및 Stage 02B NCP·이식성 증명 완료**
 
 - 상세 계획은 2026-08-18 최종 재리뷰에서 승인된 1A~18A 결정을 반영해 Stage 02A 핵심 저장과 Stage 02B NCP·이식성 증명으로 나뉘었다.
 - 사용자가 PostgreSQL DDL·Alembic·리포지터리·JSONB 구현 범위를 승인했으며, `codex/stage-02-storage` 격리 브랜치에서 Task 1 데이터베이스 하니스부터 Task 7 `0005` 불변 request artifact·request lifecycle 저장까지 Stage 02A 범위를 구현했다.
@@ -56,7 +56,9 @@
 - Task 5는 Source·Evidence·Calculation·AtomicClaim·ClaimSupport를 정규화한 불변 원장, Stage 01 태그 값·UTC 시각 형식, 컷오프, 단일 origin, Calculation DAG, Claim 지원, 버전 직접 FK와 최소 권한을 `0004`에 구현했다. 동시 의존성 쓰기 편향·비표준 datetime·전이적 dataset FK를 보강한 후 독립 재검토에서 세 지적 모두 해소를 확인했다. 폐기 가능한 PostgreSQL 15에서 `0004 → 0003 → 0004`, `alembic check`, Task 5 집중 테스트 98개와 Stage 01 계약 포함 전체 468개가 통과했다.
 - Task 6는 Stage 01 태그 값의 JSONB parity, Source·Evidence·Calculation·AtomicClaim·ClaimSupport의 완전한 왕복, 전체 payload 기반 멱등성, 두 독립 연결의 Source/Evidence 동시 재시도를 SQLAlchemy Core 비동기 리포지터리에 구현했다. Claim과 최초 Support는 `0004` 불변식을 지키기 위해 한 트랜잭션으로 저장하고 후속 Support만 별도 추가한다. Claim 재시도에서 저장된 Support 전체 목록을 비교하도록 보강한 뒤 독립 재검토에서 지적 해소를 확인했다. 폐기 가능한 PostgreSQL 15에서 Task 6 집중 테스트 91개, Stage 01 계약 포함 전체 559개, `alembic check`가 통과했다.
 - Task 7은 8개 Stage 01 런타임 산출물의 canonical JSON 원문·DB 파생 JSONB/SHA-256, 정규화된 Evidence·Calculation·Claim 참조, request subtask, FailureEvent, 단방향 실행 종료 상태와 최소권한 보호 함수를 `0005`에 구현했다. 저장된 VerificationReport·AnswerPlan·ReleasedAnswer에는 출시 권한이나 캐시 의미를 부여하지 않는다. 비계산 CheckResult target의 Calculation 오연결을 수정한 뒤 독립 재검토에서 지적 해소를 확인했다. 폐기 가능한 PostgreSQL 15에서 Task 7 집중 테스트 34개, Stage 01 계약 포함 전체 583개, `0005 → 0004 → 0005`, `alembic check`가 통과했다.
-- 다음 구현 게이트는 Stage 02B Task 8 마이그레이션 이식성·DB 객체 manifest·Linux/amd64·비운영 NCP 증명이며, 실제 NCP Cloud DB Alembic 적용은 그 명시적 승인 단계까지 보류한다.
+- Task 8은 Linux/amd64 검증 이미지, `0001 → 0005 → base → 0005` 폐기 가능 DB 순환, 함수·뷰·트리거·CHECK·ACL 객체 manifest, 권한·확장·역할 postflight, 합성 규모·인덱스·동시성 검증을 구현했다. 최종 로컬 회귀는 `663 passed, 5 deselected`였고 객체 manifest와 마이그레이션 검증이 통과했다.
+- 2026-08-20 승인된 비운영 NCP 실행에서 `0001`부터 `0005`까지 적용하고 `direct_users` postflight, `fa_runtime` 읽기/보호 DML 차단, 역할 분리 합성 적재와 `ANALYZE`, 여섯 코어 SQL의 p95 500ms 미만 gate, 30회의 4동시 읽기, 사후 postflight와 객체 manifest를 모두 통과했다. NCP 관리형 `pg_read_all_stats` 관계의 정확한 허용 경계는 [ADR-0011](decisions/ADR-0011-allow-ncp-managed-statistics-membership.md)에 기록했다. 개별 지연시간은 quiet 출력에 보존되지 않아 임의 수치로 기록하지 않는다.
+- Stage 02 이후 구현 게이트는 실제 주최측·공식 추가 데이터의 적재·표준화 계획이다. 최종 평가용 HA, 백업·복원, API 부하, 장애 복구와 공개 endpoint 운영 검증은 데이터·API 구현 이후의 배포 단계로 유지한다.
 
 기준 계획: [Stage 02 PostgreSQL Storage](tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
 
@@ -91,6 +93,7 @@
 7. ~~Stage 02A Task 5 정규화 Evidence 원장 구현·검증~~ — 2026-08-18 완료
 8. ~~Stage 02A Task 6 손실 없는 Evidence 리포지터리 구현·검증~~ — 2026-08-18 완료
 9. ~~Stage 02A Task 7 불변 request artifact·request lifecycle 저장 구현·검증~~ — 2026-08-19 완료
-10. Stage 02B NCP·이식성 증명 수행
+10. ~~Stage 02B NCP·이식성 증명 수행~~ — 2026-08-20 완료
+11. 주최측 4개 마스터와 공식 추가 데이터의 적재·표준화 구현계획 작성
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

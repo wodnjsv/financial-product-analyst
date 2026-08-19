@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Date:** 2026-08-17 (final review amended 2026-08-18)
+**Date:** 2026-08-17 (final review amended 2026-08-18; completed 2026-08-20)
 
-**Status:** Stage 02A core persistence implemented and verified; Tasks 1-7 complete, Stage 02B pending
+**Status:** Complete; Stage 02A persistence and Stage 02B NCP portability proof verified
 
 **Goal:** Implement the PostgreSQL 15 physical storage boundary for the seven approved logical schemas, preserve the Stage 01 contract IDs and immutable artifacts without renaming public interfaces, and prove that the migrations and persistence layer run in an NCP-compatible Linux/amd64 environment.
 
@@ -1189,7 +1189,7 @@ Do not begin Stage 02B until fresh local output proves:
 - pytest marker `ncp_integration`
 - pytest marker `performance`
 
-- [ ] **Step 1: Write failing migration-cycle tests**
+- [x] **Step 1: Write failing migration-cycle tests**
 
 On a disposable empty database:
 
@@ -1203,7 +1203,7 @@ On a disposable empty database:
 
 The cycle uses the commit-capable disposable-database fixture. It never runs downgrade against a shared or production database and never relies on transaction rollback to simulate schema cleanup.
 
-- [ ] **Step 2: Verify function, view, trigger, CHECK, and ACL definitions outside Alembic autogenerate**
+- [x] **Step 2: Verify function, view, trigger, CHECK, and ACL definitions outside Alembic autogenerate**
 
 Alembic autogenerate does not fully compare function, view, trigger, or CHECK expression bodies. `export_database_objects.py` must query and normalize:
 
@@ -1223,7 +1223,7 @@ git diff -- schemas/postgresql/v1/database-objects.json
 python scripts/export_database_objects.py --check
 ```
 
-- [ ] **Step 3: Write failing post-migration preflight tests**
+- [x] **Step 3: Write failing post-migration preflight tests**
 
 `--phase post-migration` repeats every pre-migration check and additionally checks, without printing credentials:
 
@@ -1242,7 +1242,7 @@ python scripts/export_database_objects.py --check
 
 It exits nonzero with stable codes such as `DB_VERSION_MISMATCH`, `MISSING_NCP_EXTENSION`, `NCP_EXTENSION_SCHEMA_MISMATCH`, `MIGRATION_BEHIND`, `OBJECT_DEFINITION_DRIFT`, `DATABASE_PERMISSION_DRIFT`, or `ACTIVE_DATASET_INCONSISTENT`.
 
-- [ ] **Step 4: Add index-plan and bounded scale tests**
+- [x] **Step 4: Add index-plan and bounded scale tests**
 
 Generate synthetic rows only: at least 100,000 catalog aliases, 250,000 relations, 250,000 observations, and the minimal linked Evidence/Claim rows needed for representative plans. Bulk load them into a disposable building dataset, run `ANALYZE`, then use `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` for:
 
@@ -1254,7 +1254,7 @@ Generate synthetic rows only: at least 100,000 catalog aliases, 250,000 relation
 
 For selective predicates, tests fail on a sequential scan of the large relation, observation, alias, Evidence, or artifact table and require the named planned index. Record rows examined, planning time, and execution time. Tests marked `performance` skip unless `RUN_DB_SCALE_TESTS=1`; the Stage 02 completion run sets it explicitly. The gated NCP run executes each core query 30 times after five warmups and requires p95 below the approved 500 ms core-SQL threshold. It also runs four representative reads concurrently for 30 rounds using `db_read_concurrency_limit=4`, `pool_size=5`, and `max_overflow=0`; no pool timeout is allowed, and individual query plus round latency is reported. Local CI asserts plan shape rather than hardware-specific latency. NCP measurements may change these three configuration defaults only through a reviewed benchmark record; they do not weaken the 55-second request hard deadline or evidence checks.
 
-- [ ] **Step 5: Implement the local Linux/amd64 database-check image**
+- [x] **Step 5: Implement the local Linux/amd64 database-check image**
 
 `database-check.Dockerfile` installs the package and database test dependencies under `PIP_CONSTRAINT=/app/requirements/storage.lock`, copies no source data, and runs migrations plus `tests/db`. Add a Compose `db-check` service that connects to the PostgreSQL service over the Compose network. Both database image and check image build/run paths target Linux/amd64; the PostgreSQL service uses the reviewed exact tag plus digest from Task 1.
 
@@ -1266,7 +1266,7 @@ docker compose -f docker/postgres.compose.yml run --rm db-check
 
 Expected: migrations and all non-NCP database tests pass on Linux/amd64.
 
-- [ ] **Step 6: Document the NCP bootstrap boundary**
+- [x] **Step 6: Document the NCP bootstrap boundary**
 
 `docs/runbooks/ncp-postgresql-bootstrap.md` must state:
 
@@ -1283,7 +1283,7 @@ Expected: migrations and all non-NCP database tests pass on Linux/amd64.
 - how to take a logical backup plus manifest after final dataset activation;
 - no endpoint, account ID, password, or private address is committed.
 
-- [ ] **Step 7: Run the gated non-production NCP integration test**
+- [x] **Step 7: Run the gated non-production NCP integration test**
 
 This step requires explicit user authorization and a disposable or non-production NCP database. It is skipped in ordinary local CI.
 
@@ -1294,17 +1294,23 @@ FINANCIAL_AGENT_DATABASE_URL="<injected-NCP-migration-url>" \
   python scripts/db_preflight.py --phase pre-migration --database-url-env FINANCIAL_AGENT_DATABASE_URL
 FINANCIAL_AGENT_DATABASE_URL="<injected-NCP-migration-url>" \
   python -m alembic upgrade head
+FINANCIAL_AGENT_DATABASE_URL="<injected-NCP-migration-url>" \
+  python scripts/db_preflight.py --phase post-migration --database-url-env FINANCIAL_AGENT_DATABASE_URL
 FINANCIAL_AGENT_NCP_TEST_DATABASE_URL="<injected-NCP-runtime-test-url>" \
-  python scripts/db_preflight.py --phase post-migration --database-url-env FINANCIAL_AGENT_NCP_TEST_DATABASE_URL
-FINANCIAL_AGENT_NCP_TEST_DATABASE_URL="<injected-NCP-runtime-test-url>" \
-  python -m pytest -m ncp_integration tests/db/test_ncp_preflight.py -v
-RUN_DB_SCALE_TESTS=1 FINANCIAL_AGENT_NCP_TEST_DATABASE_URL="<injected-NCP-runtime-test-url>" \
-  python -m pytest -m performance tests/db/test_query_plans.py -v
+  python -m pytest tests/db/test_ncp_preflight.py -m ncp_integration -k authorized_ncp_runtime_can_read_but_not_write_protected_tables -q
+RUN_DB_SCALE_TESTS=1 RUN_NCP_SCALE_PROVISION=task8-scale-synthetic \
+  FINANCIAL_AGENT_DATABASE_URL="<injected-NCP-migration-url>" \
+  FINANCIAL_AGENT_NCP_BUILD_DATABASE_URL="<injected-NCP-build-url>" \
+  FINANCIAL_AGENT_NCP_TEST_DATABASE_URL="<injected-NCP-runtime-test-url>" \
+  python -m pytest tests/db/test_query_plans.py -m "performance and ncp_integration" -k authorized_ncp_synthetic_scale_provisioning -q
+RUN_DB_SCALE_TESTS=1 \
+  FINANCIAL_AGENT_NCP_TEST_DATABASE_URL="<injected-NCP-runtime-test-url>" \
+  python -m pytest tests/db/test_query_plans.py -m "performance and ncp_integration" -k authorized_ncp_scale_p95_and_four_read_concurrency -q
 ```
 
 No command may print its URL. The migration may create only the three user-installable extensions, Alembic bookkeeping table, and objects under the seven application schemas in the approved test database. Do not run a downgrade against a shared or production NCP database.
 
-- [ ] **Step 8: Run the complete Stage 02 verification**
+- [x] **Step 8: Run the complete Stage 02 verification**
 
 ```bash
 python -m pytest tests/contracts tests/db -m "not performance and not ncp_integration" -q
@@ -1319,7 +1325,7 @@ git status --short --ignored
 
 Verify manually that no organizer workbook/PDF, file under `data/`, database volume, `.env`, credential, NCP identifier, local dump, Parquet file, embedding, cache, or runtime artifact is staged.
 
-- [ ] **Step 9: Commit the portability proof and runbook**
+- [x] **Step 9: Commit the portability proof and runbook**
 
 ```bash
 git add docker/database-check.Dockerfile docker/postgres.compose.yml docs/runbooks/ncp-postgresql-bootstrap.md schemas/postgresql/v1/database-objects.json scripts/db_preflight.py scripts/export_database_objects.py scripts/verify_database_migrations.py tests/db/test_migration_cycle.py tests/db/test_ncp_preflight.py tests/db/test_query_plans.py
@@ -1328,6 +1334,14 @@ git diff --cached
 git status --short
 git commit -m "test: verify postgres storage on ncp baseline"
 ```
+
+### Task 8 completion evidence
+
+The 2026-08-20 authorized non-production NCP run applied Alembic `0001` through `0005` once, then passed post-migration preflight with the reviewed `direct_users` layout and passed the deterministic database-object manifest check. The runtime smoke connected as `fa_runtime`, completed its representative read, and proved direct protected-table insertion remained denied.
+
+The role-separated scale loader committed at least 100,000 aliases, 250,000 relations, 250,000 observations, and the minimal linked Evidence, Claim, and artifact rows, then ran `ANALYZE` with the migration identity. The subsequent read-only NCP benchmark passed all six result checks and each core-query `p95 < 500 ms` assertion after five warmups and 30 measurements, and completed 30 four-read concurrency rounds with the fixed five-connection/no-overflow pool and no pool timeout. The quiet test output did not retain individual latency values, so no unobserved figure is recorded. Postflight and object-manifest checks passed again after the benchmark.
+
+The final local regression on the same implementation state was `663 passed, 5 deselected`; focused NCP permission cases were covered separately by the authorized external run. No endpoint, address, database identifier, account identifier, credential, or synthetic row content is recorded in Git. ADR-0011 records the exact NCP-managed `pg_read_all_stats` membership accepted by the verifier.
 
 ## 9. Stage 02 Completion Gate
 
