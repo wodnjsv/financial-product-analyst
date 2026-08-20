@@ -387,6 +387,11 @@ def _observation_and_evidence(
     observation_record = _with_record_hash(observation_payload)
 
     evidence_value = normalized if status in {"present", "zero"} else None
+    evidence_applicable_date = (
+        applicable_date
+        if applicable_date is None or applicable_date <= _CUTOFF_DATE
+        else None
+    )
     evidence_payload: dict[str, object] = {
         "evidence_id": evidence_id,
         "evidence_kind": "observation",
@@ -399,7 +404,7 @@ def _observation_and_evidence(
         "normalized_value": _tag(evidence_value),
         "unit": unit,
         "currency": currency,
-        "applicable_date": applicable_date,
+        "applicable_date": evidence_applicable_date,
         "valid_from": None,
         "valid_to": None,
         "published_at": None,

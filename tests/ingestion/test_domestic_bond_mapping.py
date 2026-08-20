@@ -307,8 +307,11 @@ def test_every_answerable_field_has_exact_evidence_and_one_origin() -> None:
         "type": "date",
         "value": "2030-01-15",
     }
-    assert maturity["applicable_date"] == date(2030, 1, 15)
+    assert maturity["applicable_date"] is None
     assert maturity["cutoff_status"] == "eligible"
+
+    issue_date = evidence(mapped, "ISU_DT")
+    assert issue_date["applicable_date"] == date(2025, 1, 15)
 
 
 def test_sentinels_remain_missing_placeholder_unknown_or_zero() -> None:
