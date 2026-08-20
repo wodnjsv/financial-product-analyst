@@ -281,7 +281,7 @@ def test_all_73_fields_are_handled_or_ignored_exactly_once() -> None:
     }
 
 
-def test_etf_creates_product_security_identifiers_index_and_manager() -> None:
+def test_etf_creates_product_identifiers_index_and_manager() -> None:
     mapped = map_row(7, synthetic_etp_row())
 
     assert mapped.disposition == "accepted"
@@ -301,14 +301,7 @@ def test_etf_creates_product_security_identifiers_index_and_manager() -> None:
             "primary_currency": "KRW",
         },
     )
-    assert records(mapped, "catalog.security") == (
-        {
-            "entity_id": product["entity_id"],
-            "security_kind": "etf",
-            "ticker_display": "SYN-ETF",
-            "isin_display": None,
-        },
-    )
+    assert not records(mapped, "catalog.security")
     assert records(mapped, "catalog.institution") == (
         {"entity_id": manager["entity_id"], "institution_kind": "asset_manager"},
     )
@@ -345,7 +338,7 @@ def test_etn_uses_issuer_relation_without_changing_product_family() -> None:
 
     assert mapped.disposition == "accepted"
     assert records(mapped, "catalog.product")[0]["product_family"] == "domestic_etf"
-    assert records(mapped, "catalog.security")[0]["security_kind"] == "etn"
+    assert not records(mapped, "catalog.security")
     assert records(mapped, "catalog.institution")[0]["institution_kind"] == "issuer"
     assert {item["predicate_id"] for item in records(
         mapped, "relation.relation_record"

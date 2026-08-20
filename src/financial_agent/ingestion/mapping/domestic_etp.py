@@ -782,15 +782,6 @@ def map_row(row_number: int, row: Mapping[str, object]) -> MappedRow:
                 "primary_currency": primary_currency,
             }
         )
-        records_by_table["catalog.security"].append(
-            {
-                "entity_id": product_id,
-                "security_kind": security_kind,
-                "ticker_display": ticker,
-                "isin_display": None,
-            }
-        )
-
         for scheme, value, primary in (
             ("PREF01_PD_ITM_NO", record_key, True),
             ("PREF01_PD_ITM_NO_MA", internal_key, False),

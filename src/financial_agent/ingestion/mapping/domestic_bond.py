@@ -552,14 +552,6 @@ def map_row(row_number: int, row: Mapping[str, object]) -> MappedRow:
                 "primary_currency": primary_currency,
             }
         )
-        records_by_table["catalog.security"].append(
-            {
-                "entity_id": product_id,
-                "security_kind": "bond",
-                "ticker_display": None,
-                "isin_display": None,
-            }
-        )
         identifier_id = stable_id(
             "identifier", _SOURCE_CODE, f"PRBD_PD_NO:{record_key}"
         )

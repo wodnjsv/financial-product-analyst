@@ -186,7 +186,7 @@ def test_all_40_fields_are_handled_or_ignored_exactly_once() -> None:
     }
 
 
-def test_valid_row_creates_product_security_identifier_and_local_issuer() -> None:
+def test_valid_row_creates_product_identifier_and_local_issuer() -> None:
     mapped = map_row(7, synthetic_bond_row())
 
     assert mapped.disposition == "accepted"
@@ -206,14 +206,7 @@ def test_valid_row_creates_product_security_identifier_and_local_issuer() -> Non
             "primary_currency": "KRW",
         },
     )
-    assert records(mapped, "catalog.security") == (
-        {
-            "entity_id": product_entity["entity_id"],
-            "security_kind": "bond",
-            "ticker_display": None,
-            "isin_display": None,
-        },
-    )
+    assert not records(mapped, "catalog.security")
     assert records(mapped, "catalog.institution") == (
         {"entity_id": issuer_entity["entity_id"], "institution_kind": "issuer"},
     )

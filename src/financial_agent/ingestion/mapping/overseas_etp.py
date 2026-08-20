@@ -761,12 +761,6 @@ def map_row(
             and value in duplicate_identifier_values.get(column, frozenset())
             for column, value in optional_ids.items()
         }
-        display_isin = (
-            optional_ids["pd_isin_cd"]
-            if not duplicate_flags["pd_isin_cd"]
-            else None
-        )
-
         records_by_table["catalog.entity"].append(
             _with_record_hash(
                 {
@@ -784,15 +778,6 @@ def map_row(
                 "primary_currency": product_currency,
             }
         )
-        records_by_table["catalog.security"].append(
-            {
-                "entity_id": product_id,
-                "security_kind": security_kind,
-                "ticker_display": ticker,
-                "isin_display": display_isin,
-            }
-        )
-
         _append_identifier(
             records_by_table,
             product_id=product_id,

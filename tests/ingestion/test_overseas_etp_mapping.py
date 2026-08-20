@@ -257,7 +257,7 @@ def test_prescan_keeps_duplicate_external_ids_as_observations_only() -> None:
         for item in records(mapped, "catalog.identifier")
     }
     assert schemes == {"PREF02_PD_ITM_NO", "PREF02_PD_ITM_NO_MA"}
-    assert records(mapped_first, "catalog.security")[0]["isin_display"] is None
+    assert not records(mapped_first, "catalog.security")
     assert observation(mapped_first, "pd_isin_cd")["text_value"] == (
         "SYN-ISIN-001"
     )
@@ -296,14 +296,7 @@ def test_unique_ids_and_etf_relationships_are_materialized() -> None:
             "primary_currency": "USD",
         },
     )
-    assert records(mapped, "catalog.security") == (
-        {
-            "entity_id": product["entity_id"],
-            "security_kind": "etf",
-            "ticker_display": "SYNX",
-            "isin_display": "SYN-ISIN-001",
-        },
-    )
+    assert not records(mapped, "catalog.security")
     assert records(mapped, "catalog.institution") == (
         {"entity_id": manager["entity_id"], "institution_kind": "asset_manager"},
     )
@@ -339,7 +332,7 @@ def test_etn_provider_stays_source_local_observation() -> None:
     assert records(mapped, "catalog.product")[0]["product_family"] == (
         "overseas_etf"
     )
-    assert records(mapped, "catalog.security")[0]["security_kind"] == "etn"
+    assert not records(mapped, "catalog.security")
     assert not records(mapped, "catalog.institution")
     assert {item["predicate_id"] for item in records(
         mapped, "relation.relation_record"
