@@ -1,0 +1,35 @@
+# Stage 03 organizer-ingestion verification dependencies for CPython 3.12.
+# Refresh only with full contract, database, ingestion, and Linux/amd64 checks.
+alembic==1.19.1
+annotated-types==0.8.0
+attrs==26.1.0
+boto3==1.43.75
+botocore==1.43.75
+et-xmlfile==2.0.0
+greenlet==3.5.5
+iniconfig==2.3.0
+jmespath==1.1.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+Mako==1.4.1
+MarkupSafe==3.0.3
+openpyxl==3.1.5
+packaging==26.3
+pgvector==0.5.0
+pluggy==1.6.0
+psycopg==3.3.4
+psycopg-binary==3.3.4
+pydantic==2.13.4
+pydantic_core==2.46.4
+Pygments==2.21.0
+pytest==8.4.2
+pytest-asyncio==0.26.0
+python-dateutil==2.9.0.post0
+referencing==0.37.0
+rpds-py==2026.6.3
+s3transfer==0.19.2
+six==1.17.0
+SQLAlchemy==2.0.52
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.7.0

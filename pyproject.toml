@@ -22,6 +22,10 @@ storage = [
   "pgvector>=0.3,<1",
   "pytest-asyncio>=0.24,<1",
 ]
+ingestion = [
+  "openpyxl>=3.1,<4",
+  "boto3>=1.35,<2",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
@@ -30,6 +34,8 @@ markers = [
   "postgres: requires an explicitly configured PostgreSQL test database",
   "ncp_integration: requires an explicitly configured non-production NCP Cloud DB",
   "performance: requires RUN_DB_SCALE_TESTS=1 and synthetic scale data",
+  "organizer_data: requires the ignored local organizer workbooks",
+  "object_storage: requires an explicitly configured private Object Storage target",
 ]
 
 [tool.setuptools.packages.find]
