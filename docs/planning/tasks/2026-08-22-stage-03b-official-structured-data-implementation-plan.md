@@ -834,15 +834,15 @@ python -m financial_agent.ingestion.cli load-stage03b
 python -m financial_agent.ingestion.cli verify-official-object-storage
 ```
 
-- [ ] **Step 1: Write combined-manifest RED tests**
+- [x] **Step 1: Write combined-manifest RED tests**
 
 Prove manifest order independence, organizer-only manifest hash backward compatibility, one combined manifest before `create_building_dataset`, duplicate snapshot ID rejection, missing official object rejection, changed parser/mapping version changing the manifest, and any preflight failure leaving the database empty.
 
-- [ ] **Step 2: Refactor Stage 03A only at the preflight/write seam**
+- [x] **Step 2: Refactor Stage 03A only at the preflight/write seam**
 
 Expose the organizer manifest mapping and a reusable function that writes already-preflighted organizer rows into an already-created `building` dataset. Keep `build_organizer_dataset(...)` behavior, hash, row counts, and tests unchanged. Do not change mapper output or writer semantics.
 
-- [ ] **Step 3: Implement the sequential combined build**
+- [x] **Step 3: Implement the sequential combined build**
 
 The order is fixed:
 
@@ -866,11 +866,11 @@ The order is fixed:
 
 Use batches of 1,000 `MappedRow` values and the existing writer. A structural failure in one snapshot fails the combined build report and leaves the dataset non-active; a mapped individual conflict remains quarantined with Evidence and aggregate issue counts.
 
-- [ ] **Step 4: Reuse BuildReport without a new report model**
+- [x] **Step 4: Reuse BuildReport without a new report model**
 
 Store `COVERED`, `PARTIALLY_COVERED`, `NOT_COVERED`, and `CONFLICT` aggregate counts under each official source's existing `BuildReport.source_counts` mapping. Do not change the `BuildReport` dataclass or Stage 03A serialization. Do not add raw IDs, names, values, object keys, or URLs to BuildReport.
 
-- [ ] **Step 5: Add sanitized environment boundaries**
+- [x] **Step 5: Add sanitized environment boundaries**
 
 Use only named environment variables:
 
@@ -890,7 +890,7 @@ FINANCIAL_AGENT_SEC_USER_AGENT
 
 The SEC user agent is required for live SEC capture but is not secret. Never print any value above. Stable failures include `OFFICIAL_SOURCE_CONFIGURATION_MISSING`, `OFFICIAL_SCHEMA_MISMATCH`, `OFFICIAL_CUTOFF_INELIGIBLE`, `OFFICIAL_IDENTITY_CONFLICT`, `OFFICIAL_COVERAGE_INCOMPLETE`, and existing build/database codes.
 
-- [ ] **Step 6: Run focused PostgreSQL GREEN**
+- [x] **Step 6: Run focused PostgreSQL GREEN**
 
 ```bash
 FINANCIAL_AGENT_TEST_DATABASE_URL="$TEST_URL" \
@@ -902,7 +902,7 @@ FINANCIAL_AGENT_TEST_DATABASE_URL="$TEST_URL" \
 
 Assert the resulting dataset is `building` and absent from `active_dataset`.
 
-- [ ] **Step 7: Run all non-live regression**
+- [x] **Step 7: Run all non-live regression**
 
 ```bash
 FINANCIAL_AGENT_TEST_DATABASE_URL="$TEST_URL" \
@@ -910,7 +910,7 @@ FINANCIAL_AGENT_TEST_DATABASE_URL="$TEST_URL" \
     -m "not performance and not ncp_integration and not organizer_data and not object_storage and not official_data" -q
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/financial_agent/ingestion/pipeline.py \
@@ -922,6 +922,22 @@ git add src/financial_agent/ingestion/pipeline.py \
 git diff --cached --check
 git commit -m "feat: build combined official data snapshot"
 ```
+
+#### Task 8 completion evidence
+
+Task 8 was committed as `bd627aa` and verified on the NCP Ubuntu host with
+Linux/amd64 Docker and a separately named disposable PostgreSQL 15 container.
+The Linux ingestion image completed with `266 passed, 13 deselected`; the
+combined-build invariant passed `1`; all PostgreSQL ingestion regressions
+passed `9` with `270 deselected`; and the final contract, database, and
+ingestion regression completed with `938 passed, 9 deselected`. The resulting
+combined dataset remained `building` and absent from `active_dataset`.
+
+No final NCP PostgreSQL dataset was loaded or activated. Live official-source
+capture, private Object Storage re-download, aggregate coverage freezing, and
+the twice-reproduced real combined build remain Task 9 gates. The generic
+`capture-official` command therefore continues to fail closed until each live
+source's approved capture configuration is supplied.
 
 ---
 
