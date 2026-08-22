@@ -94,6 +94,8 @@ Stage 03부터 Stage 09까지 다음 조건을 계속 적용한다.
 
 **목표:** 주최 측 4개 마스터와 승인된 공식 추가 데이터를 재현 가능한 하나의 평가 스냅샷 후보로 만든다.
 
+**상세 기준:** [Stage 03 경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-03-lean-data-ingestion-design.md), [ADR-0013](decisions/ADR-0013-use-lean-source-specific-ingestion.md)
+
 **주요 범위:**
 
 - 네 마스터의 전체 필드 프로파일링과 명시적 원천 매핑
