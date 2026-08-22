@@ -21,6 +21,10 @@ class ObjectDownloadClient(Protocol):
     def download_file(self, bucket: str, key: str, destination: str) -> None: ...
 
 
+class ObjectUploadClient(ObjectDownloadClient, Protocol):
+    def upload_file(self, source: str, bucket: str, key: str) -> None: ...
+
+
 def sha256_path(path: Path) -> str:
     digest = hashlib.sha256()
     try:
@@ -84,6 +88,47 @@ def download_verified_object(
             "OBJECT_DOWNLOAD_FAILED", "object download failed"
         ) from None
     return destination
+
+
+def upload_verified_object(
+    client: ObjectUploadClient,
+    *,
+    bucket: str,
+    key: str,
+    source: Path,
+    expected_sha256: str,
+) -> str:
+    if sha256_path(source) != expected_sha256:
+        raise SourceVerificationError(
+            "OBJECT_UPLOAD_SOURCE_CHECKSUM_MISMATCH",
+            "upload source checksum differs from expected",
+        ) from None
+
+    verification_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=".object-upload-verification-",
+            dir=source.parent,
+            delete=False,
+        ) as temporary:
+            verification_path = Path(temporary.name)
+        client.upload_file(str(source), bucket, key)
+        client.download_file(bucket, key, str(verification_path))
+        if sha256_path(verification_path) != expected_sha256:
+            raise SourceVerificationError(
+                "OBJECT_UPLOAD_VERIFICATION_FAILED",
+                "uploaded object checksum differs from expected",
+            )
+    except SourceVerificationError:
+        raise
+    except Exception:
+        raise SourceVerificationError(
+            "OBJECT_UPLOAD_FAILED", "object upload failed"
+        ) from None
+    finally:
+        if verification_path is not None:
+            verification_path.unlink(missing_ok=True)
+    return expected_sha256
 
 
 def verify_schema_header(path: Path, spec: SourceSpec) -> tuple[str, ...]:

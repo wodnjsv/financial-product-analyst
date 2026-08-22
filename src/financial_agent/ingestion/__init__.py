@@ -4,6 +4,7 @@ from .sources import (
     download_verified_object,
     iter_workbook_rows,
     sha256_path,
+    upload_verified_object,
     verify_local_source,
     verify_schema_header,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "iter_workbook_rows",
     "manifest_hash",
     "sha256_path",
+    "upload_verified_object",
     "verify_local_source",
     "verify_schema_header",
 ]

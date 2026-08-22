@@ -285,11 +285,11 @@ def write_canonical_manifest(
 ) -> str: ...
 ```
 
-- [ ] **Step 1: Write RED tests for the immutable boundary**
+- [x] **Step 1: Write RED tests for the immutable boundary**
 
 Cover canonical object ordering, stable manifest hash, duplicate object keys, wrong SHA-256, zero or oversized response, truncated response, wrong media type, after-cutoff dates, missing eligible availability metadata, and a URL/header containing a synthetic secret. Assert exceptions expose only stable codes and never retain the request or credential in `str`, `repr`, or `__cause__`.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 .venv/bin/python -m pytest tests/ingestion/test_official_snapshot.py -q
@@ -297,21 +297,23 @@ Cover canonical object ordering, stable manifest hash, duplicate object keys, wr
 
 Expected: missing official snapshot module.
 
-- [ ] **Step 3: Implement bounded streaming capture**
+Result: collection failed with `ModuleNotFoundError: financial_agent.ingestion.official`, proving the new boundary was absent before implementation.
+
+- [x] **Step 3: Implement bounded streaming capture**
 
 Use 1 MiB chunks and a temporary file in the destination directory. Hash as bytes stream, enforce `Content-Length` when present and the actual byte limit always, fsync, then atomically replace the destination. Do not place a credential-bearing URL or headers in an exception or manifest.
 
 Keep transport small: accept an opener in tests and use standard-library HTTPS in production. Do not add `requests`, an HTTP SDK wrapper, retries, concurrency, or provider plugins.
 
-- [ ] **Step 4: Add verified private Object Storage upload**
+- [x] **Step 4: Add verified private Object Storage upload**
 
 Add a small `ObjectUploadClient` protocol and `upload_verified_object(...)` beside the existing verified download. Verify local SHA-256, upload to the approved key, re-download to a temporary path, and compare bytes by SHA-256 before success. Never infer integrity from ETag.
 
-- [ ] **Step 5: Prove manifest publication is atomic**
+- [x] **Step 5: Prove manifest publication is atomic**
 
 Add tests showing checksum, schema, cutoff, upload, or re-download failure leaves no published `manifest.json`. Database no-write-before-preflight behavior is proved at the combined pipeline boundary in Task 8.
 
-- [ ] **Step 6: Run focused and Stage 03A regression**
+- [x] **Step 6: Run focused and Stage 03A regression**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -320,12 +322,17 @@ Add tests showing checksum, schema, cutoff, upload, or re-download failure leave
   tests/ingestion/test_pipeline.py -q
 ```
 
-- [ ] **Step 7: Commit**
+Result: official snapshot `23 passed`; focused non-PostgreSQL regression `57 passed, 1 deselected`; all non-live, non-PostgreSQL ingestion tests `154 passed, 12 deselected`. Compile, dependency, and diff checks passed.
+
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/financial_agent/ingestion/official \
   src/financial_agent/ingestion/sources.py \
-  tests/ingestion/test_official_snapshot.py
+  src/financial_agent/ingestion/__init__.py \
+  tests/ingestion/test_official_snapshot.py \
+  docs/planning/tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md \
+  docs/planning/STATUS.md
 git diff --cached --check
 git commit -m "feat: capture immutable official source snapshots"
 ```
