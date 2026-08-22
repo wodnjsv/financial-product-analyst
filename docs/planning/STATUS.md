@@ -65,14 +65,16 @@
 
 ### Stage 03A 주최 측 마스터 적재
 
-**상태: 로컬 구현·실데이터 검증 완료; Object Storage·Linux 런타임 게이트 대기**
+**상태: 완료 — 로컬 실데이터·private Object Storage·Linux/amd64 검증 통과**
 
 - 207개 원천 필드를 승인된 분류와 Stage 02 저장 경계에 매핑하고, 네 소스별 결정론적 매퍼와 하나의 FK 순서 보장 배치 writer를 구현했다.
 - Task 9는 8개 워크북 전체의 체크섬·헤더·행 수·중복 구조를 먼저 검증한 뒤에만 `building` 데이터셋을 만들며, 네 소스를 1,000행 배치로 순차 적재한다. 해외 ETP 중복 식별자는 자동 병합하지 않고, 공모펀드 반복행은 공통값 일치 검증 후 대표 원본 위치만 Evidence locator로 사용한다.
 - openpyxl 읽기 전용 모드가 실제 워크북 행 끝의 빈 셀을 생략하는 동작을 재현 테스트로 고정했다. 생략된 끝 셀은 `None`으로 복원하고 스키마보다 넓은 행은 안정 오류로 거부한다.
 - 2026-08-22 로컬 PostgreSQL 15 폐기 가능 클러스터에서 실제 `42,394 + 1,734 + 5,646 + 95,619 = 145,393`행을 검증된 임시 스냅샷으로 재적재했다. 실제 데이터 게이트는 `2 passed in 1511.29s`였고, 결과 데이터셋 상태는 `building`, `active_dataset`은 0개였다.
 - 빠른 source·pipeline·외부 게이트 경계 검증은 36개, 비NCP ingestion 회귀는 `136 passed, 2 skipped, 2 deselected`였다. 깨끗한 기준 DB의 계약·DB·ingestion 전체 회귀는 `799 passed, 2 skipped, 7 deselected`였으며 계약 Schema, DB 객체 manifest, Python 컴파일, 의존성, diff 검사가 통과했다.
-- Object Storage 자격증명과 로컬 Docker CLI가 없어 private Object Storage 8개 객체 checksum gate와 Linux/amd64 이미지 런타임은 의도적으로 실행하지 않았다. NCP Ubuntu에서 두 게이트를 통과하기 전까지 Stage 03A 외부 이식성 완료를 주장하지 않는다.
+- 2026-08-22 NCP Ubuntu에서 수정된 ingestion 검증 이미지를 Linux/amd64로 무캐시 빌드하고 실행해 모두 종료 코드 0을 확인했다. 이미지 내부 synthetic contract·ingestion 검증은 통과했고 organizer 원본은 이미지 계층에 포함하지 않았다.
+- VPC 접근 제어가 적용된 private Object Storage는 NCP 사설 S3 endpoint를 사용해 서버 원본 8개와 저장 객체 8개의 SHA-256 동일성을 검증했으며, 전용 gate는 `1 passed in 62.54s`였다. 공개 endpoint의 403은 권한 추가가 아니라 사설 endpoint 사용으로 해소했다.
+- NCP DB에는 03A 부분 데이터셋을 만들지 않았다. 로컬 폐기 가능 PostgreSQL에서 manifest·SourceRecord 계보를 이미 검증했으며, NCP DB의 결합 계보 검사는 03A·03B·03C 원천 manifest가 모두 동결된 뒤 03C 최종 `building` 재현에서 수행한다.
 - 이 단계의 데이터셋은 검증용 비활성 `building` 버전이다. 03B 공식 외부 정형 데이터와 03C 공식 문서·최종 품질 게이트가 끝난 뒤 NCP에서 최종 버전을 재현하므로 Stage 03 전체는 아직 진행 중이다.
 
 기준 계획: [Stage 03A Organizer Master Ingestion](tasks/2026-08-20-stage-03a-organizer-master-ingestion-plan.md)
@@ -89,7 +91,7 @@
 
 | Stage | 범위 | 상태 |
 | --- | --- | --- |
-| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 03A 로컬 구현·실데이터 검증 완료; 외부 게이트와 03B·03C 대기 |
+| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 03A 완료; 03B·03C 대기 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
 | 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
@@ -119,7 +121,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 14. ~~Stage 03A 주최 측 4개 마스터 구현계획 최종 검토와 승인~~ — 2026-08-20 완료
 15. ~~Stage 03A Task 1의 207개 필드 매핑 matrix 작성·검토·승인~~ — 2026-08-20 완료
 16. ~~Stage 03A Task 2~9 로컬 구현과 실제 145,393행 적재 검증~~ — 2026-08-22 완료
-17. Stage 03A private Object Storage checksum과 Linux/amd64 런타임 검증
+17. ~~Stage 03A private Object Storage checksum과 Linux/amd64 런타임 검증~~ — 2026-08-22 완료
 18. Stage 03B 공식 외부 정형 데이터 소스별 승인과 구현계획 작성
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

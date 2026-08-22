@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-20
 
-**Status:** In progress — Task 9 local implementation verified; private Object Storage and Linux/amd64 gates pending
+**Status:** Complete — local real-data, private Object Storage, and Linux/amd64 gates verified; final NCP dataset rebuild remains Stage 03C
 
 **Goal:** Normalize the four organizer workbooks into a reproducible, evidence-backed, non-active PostgreSQL `building` dataset while preserving every source row's disposition and the `2026-07-11` cutoff.
 
@@ -738,7 +738,7 @@ FINANCIAL_AGENT_TEST_DATABASE_URL="$TEST_URL" \
 
 Expected: pass and dataset status remains `building`.
 
-- [ ] **Step 6: Run the explicit private Object Storage checksum test**
+- [x] **Step 6: Run the explicit private Object Storage checksum test**
 
 The test skips when `RUN_NCP_OBJECT_STORAGE_TESTS` is not `1`. Once explicitly enabled, missing Object Storage or build-database configuration fails with `OBJECT_STORAGE_CONFIGURATION_MISSING` rather than silently skipping. Upload or verify only the eight approved workbook objects, then re-read and hash the four data workbooks used by Stage 03A. Assert local, object, manifest, and SourceRecord SHA-256 equality. Never print the bucket, endpoint query, credentials, or raw object content.
 
@@ -747,7 +747,9 @@ RUN_NCP_OBJECT_STORAGE_TESTS=1 \
   .venv/bin/python -m pytest tests/ingestion/test_ncp_object_storage.py -q
 ```
 
-- [ ] **Step 7: Verify Linux/amd64 without copying raw data into the image**
+On 2026-08-22 the NCP Ubuntu host used the VPC-private Object Storage endpoint and verified all eight approved objects against the local source bytes; the byte gate passed `1 passed in 62.54s`. The combined NCP DB-lineage subtest was read-only and confirmed that no partial 03A dataset exists in NCP. That absence is intentional under the Stage 03 design: manifest and SourceRecord equality already passed in the disposable local PostgreSQL build, and the NCP lineage rerun belongs to the final 03C `building` reconstruction after all source manifests are frozen.
+
+- [x] **Step 7: Verify Linux/amd64 without copying raw data into the image**
 
 `docker/ingestion-check.Dockerfile` must install from `requirements/ingestion.lock`, copy only tracked source/tests/configuration, and run the contract plus synthetic source/mapping tests that do not require PostgreSQL. PostgreSQL integration remains a separate run supplied with the disposable test URL. `.dockerignore` must exclude `data/`, BuildReports, local object downloads, `.env*`, `.gstack/`, `.agents/`, and `.codex/`.
 
@@ -761,6 +763,8 @@ docker run --rm --platform linux/amd64 financial-agent-ingestion:stage-03a
 ```
 
 Expected: exit code 0. Real organizer data is mounted only for the explicit acceptance command and is never part of an image layer.
+
+On 2026-08-22 the NCP Ubuntu host built the corrected image with `--no-cache --platform linux/amd64` and ran it with `--platform linux/amd64`; both commands exited 0. Organizer workbooks remained outside the build context and image layers.
 
 - [x] **Step 8: Run final verification**
 

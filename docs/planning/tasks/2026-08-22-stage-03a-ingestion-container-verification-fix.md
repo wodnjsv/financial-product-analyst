@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-22
 
-**Status:** Local verification complete — NCP Linux/amd64 proof pending
+**Status:** Complete — local and NCP Linux/amd64 verification passed
 
 ## Assumptions
 
@@ -58,5 +58,6 @@ on NCP Linux/amd64 without placing organizer data in an image layer.
 - Image-equivalent non-PostgreSQL suite: 355 passed, 12 deselected.
 - Broader non-PostgreSQL suite: 492 passed, 319 deselected.
 - Contract schema export, compile check, dependency check, and diff check passed.
-- Local Docker runtime was unavailable; the required NCP Linux/amd64 proof remains
-  pending.
+- Local Docker runtime was unavailable; the required NCP Ubuntu substitute used
+  the exact pushed commit and passed the no-cache Linux/amd64 build and run with
+  exit code 0.
