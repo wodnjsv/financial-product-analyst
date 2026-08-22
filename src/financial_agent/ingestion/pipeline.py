@@ -130,9 +130,17 @@ class OrganizerBuildError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class _PreflightResult:
+    manifest: Mapping[str, object]
     manifest_hash: str
     contexts: Mapping[str, object]
     data_hashes: Mapping[str, str]
+
+
+@dataclass(frozen=True, slots=True)
+class OrganizerWriteResult:
+    source_counts: Mapping[str, Mapping[str, int]]
+    issue_counts: Mapping[str, int]
+    passed: bool
 
 
 @contextmanager
@@ -305,6 +313,7 @@ def _preflight_sources(
         "sources": manifest_sources,
     }
     return _PreflightResult(
+        manifest=manifest,
         manifest_hash=canonical_sha256(manifest),
         contexts=contexts,
         data_hashes=verified_data_hashes,
@@ -426,28 +435,17 @@ async def _database_component_hashes(
     }
 
 
-async def _build_organizer_dataset_from_snapshot(
-    engine: AsyncEngine,
+async def write_preflighted_organizer_rows(
+    writer: DatasetBuildWriter,
     *,
     dataset_version: str,
     data_paths: Mapping[str, Path],
-    schema_paths: Mapping[str, Path],
-    data_sha256: Mapping[str, str],
-    schema_sha256: Mapping[str, str],
+    preflight: _PreflightResult,
     batch_size: int = 1000,
-) -> BuildReport:
-    preflight = _preflight_sources(
-        data_paths=data_paths,
-        schema_paths=schema_paths,
-        data_sha256=data_sha256,
-        schema_sha256=schema_sha256,
-    )
-    writer = DatasetBuildWriter(engine)
-    await writer.create_building_dataset(
-        dataset_version,
-        preflight.manifest_hash,
-        CUTOFF_DATE,
-    )
+) -> OrganizerWriteResult:
+    if batch_size < 1:
+        raise OrganizerBuildError("BUILD_BATCH_SIZE_INVALID")
+    _require_complete_source_inputs(data_paths)
     await writer.write_rows(dataset_version, _organizer_source_rows(preflight))
 
     source_counts: dict[str, dict[str, int]] = {}
@@ -505,17 +503,54 @@ async def _build_organizer_dataset_from_snapshot(
             raise OrganizerBuildError("MAPPING_DISPOSITION_COUNT_MISMATCH")
         source_counts[source_code] = counts
 
+    return OrganizerWriteResult(
+        source_counts=source_counts,
+        issue_counts=dict(issue_counts),
+        passed=passed,
+    )
+
+
+async def _build_organizer_dataset_from_snapshot(
+    engine: AsyncEngine,
+    *,
+    dataset_version: str,
+    data_paths: Mapping[str, Path],
+    schema_paths: Mapping[str, Path],
+    data_sha256: Mapping[str, str],
+    schema_sha256: Mapping[str, str],
+    batch_size: int = 1000,
+) -> BuildReport:
+    preflight = _preflight_sources(
+        data_paths=data_paths,
+        schema_paths=schema_paths,
+        data_sha256=data_sha256,
+        schema_sha256=schema_sha256,
+    )
+    writer = DatasetBuildWriter(engine)
+    await writer.create_building_dataset(
+        dataset_version,
+        preflight.manifest_hash,
+        CUTOFF_DATE,
+    )
+    write_result = await write_preflighted_organizer_rows(
+        writer,
+        dataset_version=dataset_version,
+        data_paths=data_paths,
+        preflight=preflight,
+        batch_size=batch_size,
+    )
+
     table_counts = await writer.table_counts(dataset_version)
     component_hashes = await _database_component_hashes(engine, dataset_version)
     return BuildReport(
         dataset_version=dataset_version,
         cutoff_date=CUTOFF_DATE,
         dataset_manifest_hash=preflight.manifest_hash,
-        source_counts=source_counts,
+        source_counts=write_result.source_counts,
         table_counts=table_counts,
-        issue_counts=dict(issue_counts),
+        issue_counts=write_result.issue_counts,
         component_hashes=component_hashes,
-        passed=passed,
+        passed=write_result.passed,
     )
 
 

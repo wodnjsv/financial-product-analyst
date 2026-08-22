@@ -5,6 +5,7 @@ import os
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -15,8 +16,10 @@ from financial_agent.ingestion.models import MappedRow, MappingIssue, SourceSpec
 from financial_agent.ingestion.pipeline import (
     CUTOFF_DATE,
     OrganizerSourceValidationError,
+    _preflight_sources,
     _database_component_hashes,
     build_organizer_dataset,
+    write_preflighted_organizer_rows,
 )
 from financial_agent.ingestion.sources import SourceVerificationError
 from financial_agent.ingestion.sources import sha256_path
@@ -170,6 +173,60 @@ def _inputs(order: Sequence[str] = SOURCE_CODES):
         code: code[::-1].encode().hex().ljust(64, "1")[:64] for code in order
     }
     return data_paths, schema_paths, data_hashes, schema_hashes
+
+
+def test_preflight_exposes_the_manifest_used_for_its_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from financial_agent.contracts import canonical_sha256
+
+    _configure_synthetic_pipeline(
+        monkeypatch,
+        row_counts={code: 1 for code in SOURCE_CODES},
+    )
+    inputs = _inputs()
+
+    preflight = _preflight_sources(
+        data_paths=inputs[0],
+        schema_paths=inputs[1],
+        data_sha256=inputs[2],
+        schema_sha256=inputs[3],
+    )
+
+    assert canonical_sha256(preflight.manifest) == preflight.manifest_hash
+
+
+@pytest.mark.asyncio
+async def test_preflighted_write_reuses_an_existing_building_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    RecordingWriter.instances.clear()
+    _configure_synthetic_pipeline(
+        monkeypatch,
+        row_counts={code: 2 for code in SOURCE_CODES},
+    )
+    inputs = _inputs()
+    preflight = _preflight_sources(
+        data_paths=inputs[0],
+        schema_paths=inputs[1],
+        data_sha256=inputs[2],
+        schema_sha256=inputs[3],
+    )
+    writer = RecordingWriter(object())
+
+    result = await write_preflighted_organizer_rows(
+        writer,
+        dataset_version="combined-building",
+        data_paths=inputs[0],
+        preflight=preflight,
+        batch_size=1,
+    )
+
+    assert writer.created == []
+    assert writer.batch_sizes[:4] == [4, 1, 1, 1]
+    assert result.passed is True
+    assert result.issue_counts == {}
+    assert all(counts["rows"] == 2 for counts in result.source_counts.values())
 
 
 @pytest.mark.asyncio
@@ -603,6 +660,89 @@ def test_cli_parser_has_no_database_or_credential_arguments() -> None:
     assert "--database-url" not in option_strings
     assert "--access-key" not in option_strings
     assert "--secret-key" not in option_strings
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "capture-official",
+        "validate-official",
+        "load-stage03b",
+        "verify-official-object-storage",
+    ),
+)
+def test_cli_exposes_stage03b_commands_without_inline_secrets(
+    command: str,
+) -> None:
+    from financial_agent.ingestion import cli
+
+    arguments = cli._parser().parse_args([command])
+
+    assert arguments.command == command
+
+
+def test_capture_official_fails_closed_without_source_specific_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from financial_agent.ingestion import cli
+
+    monkeypatch.setenv("FINANCIAL_AGENT_KRX_API_KEY", "PRIVATE-KRX-KEY")
+
+    assert cli.main(["capture-official"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "OFFICIAL_SOURCE_CONFIGURATION_MISSING"
+    assert "PRIVATE-KRX-KEY" not in captured.err
+
+
+@pytest.mark.asyncio
+async def test_load_stage03b_uses_named_environment_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from financial_agent.ingestion import cli
+
+    class FakeEngine:
+        async def dispose(self) -> None:
+            return None
+
+    observed: dict[str, object] = {}
+
+    monkeypatch.setenv(
+        "FINANCIAL_AGENT_BUILD_DATABASE_URL",
+        "postgresql://user:PRIVATE-PASSWORD@example.invalid/db",
+    )
+    monkeypatch.setenv("FINANCIAL_AGENT_DATASET_VERSION", "combined-test")
+    monkeypatch.setattr(cli, "_source_inputs", lambda: _inputs())
+    monkeypatch.setattr(
+        cli,
+        "_official_inputs",
+        lambda: ((), Path("/official-objects")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "create_async_engine",
+        lambda *args, **kwargs: FakeEngine(),
+    )
+
+    async def build(engine: object, **kwargs: object) -> object:
+        observed.update(kwargs)
+        return SimpleNamespace(
+            passed=True,
+            source_counts={
+                "PREF01N001": {"rows": 1},
+                "ECOS_731Y001": {"rows": 4},
+            },
+        )
+
+    monkeypatch.setattr(cli, "build_stage03b_dataset", build, raising=False)
+
+    assert await cli._load_stage03b_command() == 0
+    assert observed["dataset_version"] == "combined-test"
+    assert capsys.readouterr().out == (
+        "STAGE03B_BUILD_OK sources=2 rows=5 status=building\n"
+    )
 
 
 @pytest.mark.parametrize(

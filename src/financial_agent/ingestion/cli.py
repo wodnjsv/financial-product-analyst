@@ -22,6 +22,13 @@ from financial_agent.ingestion.pipeline import (
     _snapshot_source_inputs,
     build_organizer_dataset,
 )
+from financial_agent.ingestion.official_pipeline import (
+    OrganizerInputs,
+    OfficialPipelineError,
+    build_stage03b_dataset,
+    load_official_manifests,
+    validate_stage03b_inputs,
+)
 from financial_agent.ingestion.sources import (
     SourceVerificationError,
     download_verified_object,
@@ -57,6 +64,13 @@ class ObjectStorageEndpointError(RuntimeError):
         super().__init__(self.code)
 
 
+class OfficialSourceConfigurationError(RuntimeError):
+    code = "OFFICIAL_SOURCE_CONFIGURATION_MISSING"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)
+
+
 class _SanitizedArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise IngestionArgumentError() from None
@@ -68,6 +82,10 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("validate")
     commands.add_parser("load")
     commands.add_parser("verify-object-storage")
+    commands.add_parser("capture-official")
+    commands.add_parser("validate-official")
+    commands.add_parser("load-stage03b")
+    commands.add_parser("verify-official-object-storage")
     return parser
 
 
@@ -101,6 +119,26 @@ def _source_inputs() -> tuple[
     return data_paths, schema_paths, data_hashes, schema_hashes
 
 
+def _official_inputs():
+    manifest_root = Path(
+        _required_env("FINANCIAL_AGENT_OFFICIAL_MANIFEST_ROOT")
+    )
+    manifests = load_official_manifests(manifest_root)
+    if not manifests:
+        raise OfficialSourceConfigurationError() from None
+    return manifests, Path(_required_env("FINANCIAL_AGENT_SOURCE_ROOT"))
+
+
+def _organizer_inputs() -> OrganizerInputs:
+    data_paths, schema_paths, data_hashes, schema_hashes = _source_inputs()
+    return OrganizerInputs(
+        data_paths=data_paths,
+        schema_paths=schema_paths,
+        data_sha256=data_hashes,
+        schema_sha256=schema_hashes,
+    )
+
+
 def _async_database_url(value: str) -> str:
     normalized = normalize_psycopg_url(value)
     if normalized.startswith("postgresql://"):
@@ -127,6 +165,25 @@ def _validated_object_storage_endpoint(value: str) -> str:
     ):
         raise ObjectStorageEndpointError()
     return endpoint
+
+
+def _object_storage_client():
+    endpoint = _validated_object_storage_endpoint(
+        _required_env("FINANCIAL_AGENT_OBJECT_STORAGE_ENDPOINT")
+    )
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=_required_env(
+            "FINANCIAL_AGENT_OBJECT_STORAGE_ACCESS_KEY_ID"
+        ),
+        aws_secret_access_key=_required_env(
+            "FINANCIAL_AGENT_OBJECT_STORAGE_SECRET_ACCESS_KEY"
+        ),
+        region_name=os.getenv(
+            "FINANCIAL_AGENT_OBJECT_STORAGE_REGION", "kr-standard"
+        ),
+    )
 
 
 async def _validate_command() -> int:
@@ -179,25 +236,8 @@ async def _load_command() -> int:
 
 async def _object_storage_command() -> int:
     data_paths, schema_paths, data_hashes, schema_hashes = _source_inputs()
-    endpoint = _validated_object_storage_endpoint(
-        _required_env("FINANCIAL_AGENT_OBJECT_STORAGE_ENDPOINT")
-    )
     bucket = _required_env("FINANCIAL_AGENT_OBJECT_STORAGE_BUCKET")
-    access_key = _required_env(
-        "FINANCIAL_AGENT_OBJECT_STORAGE_ACCESS_KEY_ID"
-    )
-    secret_key = _required_env(
-        "FINANCIAL_AGENT_OBJECT_STORAGE_SECRET_ACCESS_KEY"
-    )
-    client = boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name=os.getenv(
-            "FINANCIAL_AGENT_OBJECT_STORAGE_REGION", "kr-standard"
-        ),
-    )
+    client = _object_storage_client()
 
     objects: list[tuple[str, Path, str]] = []
     for source_code in sorted(SOURCE_SPECS):
@@ -232,6 +272,92 @@ async def _object_storage_command() -> int:
     return 0
 
 
+async def _capture_official_command() -> int:
+    raise OfficialSourceConfigurationError() from None
+
+
+async def _validate_official_command() -> int:
+    organizer_inputs = _organizer_inputs()
+    manifests, object_root = _official_inputs()
+    validate_stage03b_inputs(
+        organizer_inputs=organizer_inputs,
+        official_manifests=manifests,
+        official_object_root=object_root,
+    )
+    object_count = sum(len(manifest.objects) for manifest in manifests)
+    print(
+        f"OFFICIAL_VALIDATION_OK snapshots={len(manifests)} "
+        f"objects={object_count}"
+    )
+    return 0
+
+
+async def _load_stage03b_command() -> int:
+    organizer_inputs = _organizer_inputs()
+    manifests, object_root = _official_inputs()
+    database_url = _required_env("FINANCIAL_AGENT_BUILD_DATABASE_URL")
+    dataset_version = os.getenv(
+        "FINANCIAL_AGENT_DATASET_VERSION",
+        "combined-2026-07-11-03b",
+    )
+    engine = create_async_engine(
+        _async_database_url(database_url),
+        pool_size=5,
+        max_overflow=0,
+        connect_args={"options": "-c timezone=UTC"},
+    )
+    try:
+        report = await build_stage03b_dataset(
+            engine,
+            dataset_version=dataset_version,
+            organizer_inputs=organizer_inputs,
+            official_manifests=manifests,
+            official_object_root=object_root,
+        )
+    finally:
+        await engine.dispose()
+    if not report.passed:
+        print("BUILD_VALIDATION_FAILED", file=sys.stderr)
+        return 2
+    rows = sum(counts["rows"] for counts in report.source_counts.values())
+    print(
+        f"STAGE03B_BUILD_OK sources={len(report.source_counts)} "
+        f"rows={rows} status=building"
+    )
+    return 0
+
+
+async def _official_object_storage_command() -> int:
+    manifests, _ = _official_inputs()
+    bucket = _required_env("FINANCIAL_AGENT_OBJECT_STORAGE_BUCKET")
+    client = _object_storage_client()
+    object_count = 0
+    with tempfile.TemporaryDirectory(
+        prefix="financial-agent-official-object-check-"
+    ) as root:
+        destination_root = Path(root)
+        for manifest in manifests:
+            for item in manifest.objects:
+                destination = destination_root / f"object-{object_count}"
+                download_verified_object(
+                    client,
+                    bucket=bucket,
+                    key=item.object_key,
+                    expected_sha256=item.sha256,
+                    destination=destination,
+                )
+                if destination.stat().st_size != item.size_bytes:
+                    raise OfficialPipelineError(
+                        "OFFICIAL_OBJECT_SIZE_MISMATCH"
+                    ) from None
+                object_count += 1
+    print(
+        f"OFFICIAL_OBJECT_STORAGE_OK snapshots={len(manifests)} "
+        f"objects={object_count}"
+    )
+    return 0
+
+
 def _stable_error_code(error: Exception) -> str:
     code = getattr(error, "code", None)
     return code if isinstance(code, str) else "INGESTION_FAILED"
@@ -244,13 +370,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = asyncio.run(_validate_command())
         elif arguments.command == "load":
             result = asyncio.run(_load_command())
-        else:
+        elif arguments.command == "verify-object-storage":
             result = asyncio.run(_object_storage_command())
+        elif arguments.command == "capture-official":
+            result = asyncio.run(_capture_official_command())
+        elif arguments.command == "validate-official":
+            result = asyncio.run(_validate_official_command())
+        elif arguments.command == "load-stage03b":
+            result = asyncio.run(_load_stage03b_command())
+        else:
+            result = asyncio.run(_official_object_storage_command())
         return 0 if result is None else result
     except (
         IngestionArgumentError,
         IngestionConfigurationError,
         ObjectStorageEndpointError,
+        OfficialSourceConfigurationError,
+        OfficialPipelineError,
         OrganizerBuildError,
         OrganizerSourceValidationError,
         SourceVerificationError,
