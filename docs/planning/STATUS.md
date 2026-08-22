@@ -1,6 +1,6 @@
 # Financial Product Agent 계획·구현 현황
 
-**Updated:** 2026-08-20
+**Updated:** 2026-08-22
 
 이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.
 
@@ -63,6 +63,20 @@
 
 기준 계획: [Stage 02 PostgreSQL Storage](tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
 
+### Stage 03A 주최 측 마스터 적재
+
+**상태: 로컬 구현·실데이터 검증 완료; Object Storage·Linux 런타임 게이트 대기**
+
+- 207개 원천 필드를 승인된 분류와 Stage 02 저장 경계에 매핑하고, 네 소스별 결정론적 매퍼와 하나의 FK 순서 보장 배치 writer를 구현했다.
+- Task 9는 8개 워크북 전체의 체크섬·헤더·행 수·중복 구조를 먼저 검증한 뒤에만 `building` 데이터셋을 만들며, 네 소스를 1,000행 배치로 순차 적재한다. 해외 ETP 중복 식별자는 자동 병합하지 않고, 공모펀드 반복행은 공통값 일치 검증 후 대표 원본 위치만 Evidence locator로 사용한다.
+- openpyxl 읽기 전용 모드가 실제 워크북 행 끝의 빈 셀을 생략하는 동작을 재현 테스트로 고정했다. 생략된 끝 셀은 `None`으로 복원하고 스키마보다 넓은 행은 안정 오류로 거부한다.
+- 2026-08-22 로컬 PostgreSQL 15 폐기 가능 클러스터에서 실제 `42,394 + 1,734 + 5,646 + 95,619 = 145,393`행을 검증된 임시 스냅샷으로 재적재했다. 실제 데이터 게이트는 `2 passed in 1511.29s`였고, 결과 데이터셋 상태는 `building`, `active_dataset`은 0개였다.
+- 빠른 source·pipeline·외부 게이트 경계 검증은 36개, 비NCP ingestion 회귀는 `136 passed, 2 skipped, 2 deselected`였다. 깨끗한 기준 DB의 계약·DB·ingestion 전체 회귀는 `799 passed, 2 skipped, 7 deselected`였으며 계약 Schema, DB 객체 manifest, Python 컴파일, 의존성, diff 검사가 통과했다.
+- Object Storage 자격증명과 로컬 Docker CLI가 없어 private Object Storage 8개 객체 checksum gate와 Linux/amd64 이미지 런타임은 의도적으로 실행하지 않았다. NCP Ubuntu에서 두 게이트를 통과하기 전까지 Stage 03A 외부 이식성 완료를 주장하지 않는다.
+- 이 단계의 데이터셋은 검증용 비활성 `building` 버전이다. 03B 공식 외부 정형 데이터와 03C 공식 문서·최종 품질 게이트가 끝난 뒤 NCP에서 최종 버전을 재현하므로 Stage 03 전체는 아직 진행 중이다.
+
+기준 계획: [Stage 03A Organizer Master Ingestion](tasks/2026-08-20-stage-03a-organizer-master-ingestion-plan.md)
+
 ## 3. 현재 실행하면 안 되는 계획
 
 [2026-08-10 Core Implementation Plan](tasks/2026-08-10-financial-agent-core-implementation-plan.md)은 질문·데이터·온톨로지 요구사항의 역사적 출처로만 유지한다. DuckDB, 로컬 인덱스, 옛 ADR 번호, 이전 에이전트 역할을 포함한 실행 순서는 현재 아키텍처와 맞지 않으므로 그대로 구현하지 않는다.
@@ -75,7 +89,7 @@
 
 | Stage | 범위 | 상태 |
 | --- | --- | --- |
-| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 상세 구현 계획 작성 전 |
+| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 03A 로컬 구현·실데이터 검증 완료; 외부 게이트와 03B·03C 대기 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
 | 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
@@ -84,6 +98,8 @@
 | 09 | 52개 종합 평가, 제출 동결, 공식 평가 운영과 종료 기록 | 대기 |
 
 각 Stage는 직전 Stage의 실측 결과와 동결된 계약을 입력으로 받아 별도 구현 계획과 사용자 승인을 거친다. 병렬 준비가 허용된 작업도 로드맵의 완료 게이트를 건너뛸 수 없다.
+
+Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-03-lean-data-ingestion-design.md)와 [ADR-0013](decisions/ADR-0013-use-lean-source-specific-ingestion.md)에 따라 03A 주최 측 마스터, 03B 승인된 공식 외부 정형 데이터, 03C 공식 문서·최종 품질 게이트로 나뉜다. 03A의 실행 순서는 [주최 측 마스터 적재 계획](tasks/2026-08-20-stage-03a-organizer-master-ingestion-plan.md)이 관리한다.
 
 ## 5. 다음 순서
 
@@ -98,6 +114,12 @@
 9. ~~Stage 02A Task 7 불변 request artifact·request lifecycle 저장 구현·검증~~ — 2026-08-19 완료
 10. ~~Stage 02B NCP·이식성 증명 수행~~ — 2026-08-20 완료
 11. ~~대회 제출·평가 운영 종료까지 Stage 01~09 전체 로드맵 확정~~ — 2026-08-20 완료
-12. Stage 03 데이터 수집·표준화의 상세 구현 계획 작성과 승인
+12. ~~Stage 03을 03A 주최 측 마스터·03B 공식 외부 정형 데이터·03C 공식 문서와 최종 품질 게이트로 분리~~ — 2026-08-20 완료
+13. ~~Stage 03의 과도한 범용 추상화를 제거하고 소스별 경량 파이프라인으로 확정~~ — 2026-08-20 완료
+14. ~~Stage 03A 주최 측 4개 마스터 구현계획 최종 검토와 승인~~ — 2026-08-20 완료
+15. ~~Stage 03A Task 1의 207개 필드 매핑 matrix 작성·검토·승인~~ — 2026-08-20 완료
+16. ~~Stage 03A Task 2~9 로컬 구현과 실제 145,393행 적재 검증~~ — 2026-08-22 완료
+17. Stage 03A private Object Storage checksum과 Linux/amd64 런타임 검증
+18. Stage 03B 공식 외부 정형 데이터 소스별 승인과 구현계획 작성
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

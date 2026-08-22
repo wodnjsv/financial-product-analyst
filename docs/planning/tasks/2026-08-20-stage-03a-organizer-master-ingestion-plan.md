@@ -786,7 +786,7 @@ git diff -- . ':!docs/planning/tasks/2026-08-20-stage-03a-organizer-master-inges
 
 Verify that no `data/` file, workbook, raw row, real BuildReport, database URL, Object Storage identifier, `.env`, dump, Parquet, embedding, cache, or runtime output is tracked or staged.
 
-- [ ] **Step 9: Update status and commit Stage 03A**
+- [x] **Step 9: Update status and commit Stage 03A**
 
 Record exact test counts, the safe aggregate real-data counts, the NCP Object Storage checksum result, the Linux/amd64 result, and any intentionally unrun gate in `STATUS.md`. Do not mark all of Stage 03 complete and do not mark the data version active.
 

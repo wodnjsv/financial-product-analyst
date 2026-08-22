@@ -170,6 +170,25 @@ def test_reader_preserves_zero_blank_and_string_null(tmp_path: Path) -> None:
     ]
 
 
+def test_reader_restores_trailing_blank_cells_omitted_by_read_only_xlsx(
+    tmp_path: Path,
+) -> None:
+    path = write_data_workbook(
+        tmp_path / "trailing-blanks.xlsx",
+        headers=EXPECTED_COLUMNS,
+        rows=(("SYN-BOND-001", 0),),
+    )
+
+    assert list(iter_workbook_rows(path, source_spec())) == [
+        {
+            "PD_NO": "SYN-BOND-001",
+            "ZERO_VALUE": 0,
+            "BLANK_VALUE": None,
+            "TEXT_NULL": None,
+        }
+    ]
+
+
 def test_local_checksum_must_match_expected(tmp_path: Path) -> None:
     path = tmp_path / "source.xlsx"
     path.write_bytes(b"synthetic workbook bytes")

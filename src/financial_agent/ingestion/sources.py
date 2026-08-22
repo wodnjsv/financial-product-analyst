@@ -141,7 +141,17 @@ def iter_workbook_rows(
         row_count = 0
         for values in rows:
             row_count += 1
-            yield dict(zip(spec.expected_columns, values, strict=True))
+            if len(values) > len(spec.expected_columns):
+                raise SourceVerificationError(
+                    "SOURCE_ROW_WIDTH_MISMATCH",
+                    "workbook row is wider than the approved schema",
+                )
+            padded_values = values + (None,) * (
+                len(spec.expected_columns) - len(values)
+            )
+            yield dict(
+                zip(spec.expected_columns, padded_values, strict=True)
+            )
         if row_count != spec.expected_row_count:
             raise SourceVerificationError(
                 "SOURCE_ROW_COUNT_MISMATCH",
