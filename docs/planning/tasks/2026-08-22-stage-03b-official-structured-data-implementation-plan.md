@@ -4,13 +4,13 @@
 
 **Date:** 2026-08-22
 
-**Status:** Proposed for implementation approval
+**Status:** Approved for staged implementation on 2026-08-22; Task 4 and Task 5 product mapping remain source-gated
 
 **Goal:** Preserve and normalize the minimum official identifiers, domestic and overseas ETF holdings, compatible KRX price/NAV observations, and ECOS exchange rates required by the approved evaluation questions, while enforcing the `2026-07-11` information cutoff and explicit coverage limits.
 
 **Architecture:** Capture exact official response bytes or files into NCP Private Object Storage before normalization, verify one immutable source-specific snapshot manifest, map each approved source through a small explicit module into the frozen Stage 02 catalog/relation/observation/Evidence tables, and reproduce a combined Stage 03A+03B dataset only in disposable PostgreSQL `building` versions. Do not build a generic connector framework, do not add Alembic `0006`, and do not mutate the final NCP PostgreSQL dataset before Stage 03C.
 
-**Tech Stack:** Python 3.12, standard-library `urllib`/`json`/`csv`/`zipfile`, boto3 S3-compatible client, SQLAlchemy 2.0 async, psycopg 3, PostgreSQL 15.17, pytest 8, KRX official data, ECOS `731Y001`, SEC Form N-PORT datasets, NCP Private Object Storage.
+**Tech Stack:** Python 3.12, standard-library `urllib`/`json`/`csv`/`zipfile`, boto3 S3-compatible client, SQLAlchemy 2.0 async, psycopg 3, PostgreSQL 15.17, pytest 8, KRX official data, ECOS `731Y001`, SEC Series/Class Report, SEC Form N-PORT datasets, NCP Private Object Storage.
 
 **Spec:** [Stage 03B Official Structured Data Design](../specs/2026-08-22-stage-03b-official-structured-data-design.md), [ADR-0014](../decisions/ADR-0014-use-bounded-official-source-snapshots.md)
 
@@ -47,7 +47,7 @@
 
 ### Intended outcome
 
-The same organizer bytes plus the same approved external object manifests, parser versions, and mapping versions produce the same immutable dataset manifest, stable catalog IDs, relations, observations, Evidence locators, coverage counts, and component hashes. Domestic ETF holdings can answer membership questions across the verified official population; overseas holdings answers disclose the bounded SEC or manager-covered population; KRX and ECOS observations retain their actual eligible dates.
+The same organizer bytes plus the same approved external object manifests, parser versions, and mapping versions produce the same immutable dataset manifest, stable catalog IDs, relations, observations, Evidence locators, coverage counts, and component hashes. Domestic ETF holdings can answer membership questions only after a reproducible official historical holdings export passes the separate Task 4 gate; overseas holdings answers disclose the bounded SEC or manager-covered population; eligible KRX and ECOS observations retain their actual dates.
 
 ### Non-goals
 
@@ -66,7 +66,7 @@ The same organizer bytes plus the same approved external object manifests, parse
 2. Every real official object has a sanitized manifest, SHA-256, byte count, official dates, parser/mapping version, and private object key.
 3. After-cutoff, schema-drift, checksum, pagination, and archive-safety mutations fail before any database write.
 4. Identity tests prove exact-key linking, ambiguous-key quarantine, duplicate-ID preservation, and no name-only merge.
-5. KRX holdings, KRX market, ECOS FX, and SEC N-PORT synthetic fixtures map deterministically into existing Stage 02 tables with exact Evidence.
+5. ECOS FX and SEC Series/Class plus N-PORT synthetic fixtures map deterministically into existing Stage 02 tables with exact Evidence; KRX holdings and KRX market product facts do so only after their explicit source and crosswalk gates pass.
 6. Coverage tests distinguish `COVERED`, `PARTIALLY_COVERED`, `NOT_COVERED`, and `CONFLICT`, and never convert missing coverage into absence.
 7. A disposable combined Stage 03A+03B rebuild creates one immutable manifest before the first database row, retries exactly, remains `building`, and is absent from `active_dataset`.
 8. Gated live-source tests verify official bytes and aggregate source invariants without printing secrets or raw facts.
@@ -85,6 +85,7 @@ The same organizer bytes plus the same approved external object manifests, parse
 | `src/financial_agent/ingestion/official/krx_holdings.py` | one approved KRX ETF PDF export format and holdings mapper |
 | `src/financial_agent/ingestion/official/krx_market.py` | KRX ETF daily close/NAV and approved security identifiers |
 | `src/financial_agent/ingestion/official/ecos_fx.py` | ECOS `731Y001` four-item response and FX observations |
+| `src/financial_agent/ingestion/official/sec_series_class.py` | SEC Series/Class Report and exact `(CIK, Class Ticker) -> Series ID` crosswalk |
 | `src/financial_agent/ingestion/official/sec_nport.py` | bounded 2026 Q2 archive extraction, TSV joins, eligible filing selection, holdings mapping |
 | `src/financial_agent/ingestion/official_pipeline.py` | combined immutable manifest and sequential Stage 03A+03B `building` rebuild |
 | `src/financial_agent/ingestion/pipeline.py` | minimally expose reusable Stage 03A preflight/write phases without changing Stage 03A output |
@@ -136,7 +137,7 @@ evidence_locator
 usage_note
 ```
 
-- [ ] **Step 1: Record exact fixed candidates without credentials**
+- [x] **Step 1: Record exact fixed candidates without credentials**
 
 Record the approved candidate boundaries:
 
@@ -158,11 +159,15 @@ SEC_NPORT_2026Q2
   required files: SUBMISSION.tsv, REGISTRANT.tsv,
                   FUND_REPORTED_INFO.tsv, FUND_REPORTED_HOLDING.tsv,
                   IDENTIFIERS.tsv
+
+SEC_SERIES_CLASS_20260601
+  required fields: CIK, Series ID, Series Name,
+                   Class ID, Class Name, Class Ticker
 ```
 
 Do not put an API key, authenticated URL, bucket, account, or live object key in the document.
 
-- [ ] **Step 2: Perform the KRX ETF PDF access probe and stop on ambiguity**
+- [x] **Step 2: Perform the KRX ETF PDF access probe and stop on ambiguity**
 
 Using the user's authorized KRX access, inspect only the official historical ETF PDF export for an eligible date. Record endpoint or console export name, authentication placement, pagination or file boundary, ordered header, weight unit, quantity/value definitions, cash/derivative representation, and whether the publisher defines the file as a complete portfolio.
 
@@ -170,45 +175,54 @@ Emit only header and aggregate metadata during the probe. Do not commit the resp
 
 If the exact historical export cannot be reproduced, mark `KRX_ETF_PDF` as `ACCESS_NOT_CONFIRMED` and block Task 4. Do not invent a private KRX endpoint. KRX market and ECOS/SEC tasks may proceed independently.
 
-- [ ] **Step 3: Freeze identifier linking rules**
+Result: `KRX_ETF_PDF=ACCESS_NOT_CONFIRMED`. Task 4 is blocked. The KRX market response may be captured, but product-level price/NAV mapping is separately blocked until the approved ETF basic export supplies a strong crosswalk.
+
+- [x] **Step 3: Freeze identifier linking rules**
 
 Approve only these initial product crosswalks:
 
 ```text
 domestic organizer ETF -> KRX ETF:
-  exact PREF01_PD_ITM_NO == approved KRX issue code
+  unique exact (normalized official name, official listing date)
+  using the still-required KRX ETF basic export
 
 overseas organizer ETF -> SEC fund series:
-  unique eligible ISIN, else unique (CIK, normalized ticker)
+  unique exact organizer (CIK, normalized ticker) -> SEC class
+  then exact SEC class -> SEC series
 
 SEC holding -> security:
-  unique ISIN, else unique CUSIP, else source-local HOLDING_ID
+  unique valid ISIN, else unique valid CUSIP,
+  else snapshot-local HOLDING_ID
 ```
 
-Ticker alone, product name, issuer name, and embedding similarity are forbidden. If the access probe shows the domestic key is not identical, replace the first rule with the exact official crosswalk and obtain approval before Task 3.
+Ticker alone, product name alone, issuer name, and embedding similarity are forbidden. The domestic compound key must be bijective in both directions; otherwise the product remains unresolved. The observed `PREF01_PD_ITM_NO` values matched KRX issue codes zero times and are not a KRX crosswalk.
 
-- [ ] **Step 4: Freeze dates and authority per field**
+- [x] **Step 4: Freeze dates and authority per field**
 
 For every field, record how `applicable_date`, `published_at`, and `available_at` are derived from official metadata. A field without a defensible publication or availability rule cannot be eligible for a historical Claim; map it as `unknown_vintage` or exclude it with an explicit reason.
 
-- [ ] **Step 5: Freeze coverage and conflict rules**
+- [x] **Step 5: Freeze coverage and conflict rules**
 
 The matrix must state whether each holdings source is publisher-complete or partial. It must also say which key identifies one portfolio snapshot, which rows may be aggregated, and which official conflicts become `source_value_conflict`.
 
-- [ ] **Step 6: Obtain explicit approval before mapper code**
+- [x] **Step 6: Obtain explicit approval before mapper code**
 
 Present the selected sources, exact field counts, excluded fields, identifier rules, cutoff rules, coverage definition, and any blocked source. Do not change `src/`, `tests/`, `docker/`, `requirements/`, or `pyproject.toml` before approval.
 
-- [ ] **Step 7: Commit the approved source boundary**
+Result: the user approved the constrained A boundary on 2026-08-22: proceed with snapshot capture, KRX security identity, ECOS, SEC Series/Class and bounded N-PORT; keep KRX ETF product facts and holdings gated.
+
+- [x] **Step 7: Commit the approved source boundary**
 
 ```bash
-git add docs/planning/specs/stage-03b-official-source-field-matrix.md
+git add docs/planning/specs/stage-03b-official-source-field-matrix.md \
+  docs/planning/tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md \
+  docs/planning/STATUS.md
 git diff --cached --check
 git diff --cached
 git commit -m "docs: freeze stage 03b official source mappings"
 ```
 
-Expected: exactly one documentation file, no raw response or account detail.
+Expected: exactly the field matrix, reconciled implementation plan, and status index, with no raw response or account detail.
 
 ---
 
@@ -324,8 +338,10 @@ git commit -m "feat: capture immutable official source snapshots"
 
 - Create: `src/financial_agent/ingestion/official/identity.py`
 - Create: `src/financial_agent/ingestion/official/krx_identity.py`
+- Create: `src/financial_agent/ingestion/official/sec_series_class.py`
 - Create: `tests/ingestion/test_official_identity.py`
 - Create: `tests/ingestion/test_krx_identity.py`
+- Create: `tests/ingestion/test_sec_series_class.py`
 - Create: `tests/fixtures/official_ingestion.py`
 
 **Interfaces:**
@@ -350,6 +366,10 @@ class OfficialIdentityIndex:
         self, candidates: Sequence[IdentityCandidate]
     ) -> IdentityResolution: ...
 
+    def resolve_compound_product(
+        self, scheme: str, values: tuple[str, ...]
+    ) -> IdentityResolution: ...
+
 def parse_krx_security_basic(
     payload: bytes, *, market: Literal["KOSPI", "KOSDAQ"]
 ) -> tuple[Mapping[str, object], ...]: ...
@@ -358,15 +378,11 @@ def map_krx_security_basic(
     manifest: OfficialSnapshotManifest,
     rows: Iterable[Mapping[str, object]],
 ) -> Iterator[MappedRow]: ...
-
-    def resolve_compound_product(
-        self, scheme: str, values: tuple[str, ...]
-    ) -> IdentityResolution: ...
 ```
 
 - [ ] **Step 1: Generate synthetic identity fixtures**
 
-Use obviously synthetic identifiers. Include one domestic exact issue code, one unique overseas ISIN, one duplicated ISIN, one unique `(CIK, ticker)`, one duplicated ticker across CIKs, and two different names sharing no identifier.
+Use obviously synthetic identifiers. Include one domestic exact issue code, one unique overseas ISIN, one duplicated ISIN, one unique `(CIK, ticker)` resolving through SEC class to series, one duplicated ticker across CIKs, and two different names sharing no identifier.
 
 - [ ] **Step 2: Write RED tests**
 
@@ -377,7 +393,7 @@ exact strong key -> one entity
 same strong key -> two entities -> conflict
 name-only candidate -> unresolved
 ticker alone -> unresolved
-unique CIK+ticker -> one product
+unique CIK+ticker -> one SEC class -> one series -> one product
 duplicated overseas ISIN from organizer pre-scan -> conflict
 source-local holding ID -> stable security within source snapshot only
 ```
@@ -392,9 +408,11 @@ The resolver returns a status and stable code. It never selects the first candid
 
 Create helpers that emit Stage 02 `catalog.entity`, subtype, `catalog.identifier`, and `catalog.alias` payloads with existing `stable_id` and `make_record_hash`. For every answerable identifier or alias, also emit the Task 1-approved companion text Observation, Evidence, and observation origin. Promote an identifier only after the source pre-scan proves its required uniqueness. Preserve ambiguous raw IDs in Evidence rather than `catalog.identifier`.
 
-- [ ] **Step 5: Map the approved KRX KOSPI/KOSDAQ basic information**
+- [ ] **Step 5: Map the approved KRX KOSPI/KOSDAQ basic information and SEC Series/Class Report**
 
 Parse only the exact Task 1-approved response envelopes and fields. Create Security entities and approved issue-code identifiers/aliases. Create a Company entity and `securityOfCompany` only when the response contains a separately approved strong company identifier; a company-like name alone is not enough.
+
+Parse the six approved SEC Series/Class fields separately. Build only the exact `(normalized CIK, source-specific normalized Class Ticker) -> Class ID -> Series ID` crosswalk. Do not promote Class Ticker to a global identifier and do not resolve a product from ticker alone.
 
 - [ ] **Step 6: Run GREEN and duplicate-ID regression**
 
@@ -402,6 +420,7 @@ Parse only the exact Task 1-approved response envelopes and fields. Create Secur
 .venv/bin/python -m pytest \
   tests/ingestion/test_official_identity.py \
   tests/ingestion/test_krx_identity.py \
+  tests/ingestion/test_sec_series_class.py \
   tests/ingestion/test_overseas_etp_mapping.py -q
 ```
 
@@ -410,9 +429,11 @@ Parse only the exact Task 1-approved response envelopes and fields. Create Secur
 ```bash
 git add src/financial_agent/ingestion/official/identity.py \
   src/financial_agent/ingestion/official/krx_identity.py \
+  src/financial_agent/ingestion/official/sec_series_class.py \
   tests/fixtures/official_ingestion.py \
   tests/ingestion/test_official_identity.py \
-  tests/ingestion/test_krx_identity.py
+  tests/ingestion/test_krx_identity.py \
+  tests/ingestion/test_sec_series_class.py
 git diff --cached --check
 git commit -m "feat: resolve official identities by exact keys"
 ```
@@ -497,6 +518,8 @@ git commit -m "feat: map official domestic etf holdings"
 
 ### Task 5: Map eligible KRX ETF close and NAV observations
 
+**Gate:** Snapshot parsing and date validation may proceed after Task 2. Product observations must not be emitted until the KRX ETF basic export provides the Task 1-approved bijective `(official name, listing date)` crosswalk. If the crosswalk remains unavailable, retain the verified raw snapshot and report `LINK_BLOCKED` without mapping product facts.
+
 **Files:**
 
 - Create: `src/financial_agent/ingestion/official/krx_market.py`
@@ -536,7 +559,7 @@ Both target the organizer ETF entity, use `KRW`, retain actual `applicable_date`
 
 - [ ] **Step 3: Map only exact domestic ETF identities**
 
-Resolve `ISU_CD` using the Task 1 crosswalk. ETNs, unknown products, ambiguous codes, and non-ETF rows do not produce ETF price/NAV facts. Preserve their aggregate disposition codes.
+Resolve `ISU_CD` using the separately approved Task 1 crosswalk. Until that crosswalk exists, every row remains `LINK_BLOCKED` and produces no product Observation. ETNs, unknown products, ambiguous codes, and non-ETF rows do not produce ETF price/NAV facts. Preserve their aggregate disposition codes.
 
 - [ ] **Step 4: Prove compatible same-date values**
 
@@ -631,6 +654,7 @@ git commit -m "feat: map approved ecos exchange rates"
 
 - Create: `src/financial_agent/ingestion/official/sec_nport.py`
 - Create: `tests/ingestion/test_sec_nport.py`
+- Read: `src/financial_agent/ingestion/official/sec_series_class.py`
 - Modify: `tests/fixtures/official_ingestion.py`
 
 **Interfaces:**
@@ -653,7 +677,7 @@ def iter_eligible_nport_funds(
 
 - [ ] **Step 1: Build a tiny synthetic N-PORT ZIP**
 
-Generate UTF-8 tab-separated files with exact official headers for `SUBMISSION`, `REGISTRANT`, `FUND_REPORTED_INFO`, `FUND_REPORTED_HOLDING`, and `IDENTIFIERS`. Include an original filing, an eligible amendment, an after-cutoff amendment, two fund series under one registrant, a duplicate holding lot, an unresolved holding identifier, and a second organizer product with no matched filing.
+Generate one synthetic Series/Class CSV and UTF-8 tab-separated files with exact official headers for `SUBMISSION`, `REGISTRANT`, `FUND_REPORTED_INFO`, `FUND_REPORTED_HOLDING`, and `IDENTIFIERS`. Include an original filing, an eligible amendment, an after-cutoff amendment, two fund series under one registrant, a duplicate holding lot, an unresolved holding identifier, and a second organizer product with no matched filing.
 
 - [ ] **Step 2: Write archive-safety RED tests**
 
@@ -671,7 +695,7 @@ Require both report date and `FILING_DATE` to be on or before `2026-07-11`. For 
 
 - [ ] **Step 5: Resolve fund series and holdings**
 
-Resolve organizer products by unique eligible ISIN, otherwise unique `(CIK, ticker)` from the approved organizer crosswalk. Create or enrich the asset-manager institution with official CIK/LEI. Resolve holdings by unique ISIN, then unique CUSIP, otherwise a snapshot-scoped `HOLDING_ID`; do not promote a duplicated identifier.
+Resolve organizer products through the approved Series/Class crosswalk: unique exact `(CIK, normalized Class Ticker)` to Class ID, then exact Class ID to Series ID, then Series ID to the eligible N-PORT filing. Create or enrich the asset-manager institution with official CIK/LEI. Resolve holdings by unique valid ISIN, then unique valid CUSIP, otherwise a snapshot-scoped `HOLDING_ID`; do not promote ticker, an untyped other identifier, or a duplicated identifier.
 
 N-PORT `PERCENTAGE` is stored as percentage units exactly as documented. Separate holdings or derivative legs remain separate unless the official schema and all identity/payoff fields prove they are aggregable.
 
