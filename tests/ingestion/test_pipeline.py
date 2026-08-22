@@ -657,6 +657,24 @@ def test_ingestion_container_is_linux_amd64_and_excludes_external_data() -> None
         assert protected in dockerignore
 
 
+@pytest.mark.parametrize(
+    "required_copy",
+    (
+        "COPY .dockerignore ./",
+        "COPY requirements/contracts.lock ./requirements/contracts.lock",
+        "COPY docker/contracts.Dockerfile ./docker/contracts.Dockerfile",
+    ),
+)
+def test_ingestion_container_copies_runtime_verification_inputs(
+    required_copy: str,
+) -> None:
+    dockerfile = (PROJECT_ROOT / "docker" / "ingestion-check.Dockerfile").read_text(
+        "utf-8"
+    )
+
+    assert required_copy in dockerfile
+
+
 @pytest.mark.postgres
 @pytest.mark.asyncio
 async def test_database_component_hashes_are_stable_and_change_with_catalog_data(

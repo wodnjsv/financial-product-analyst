@@ -8,8 +8,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+COPY .dockerignore ./
 COPY pyproject.toml ./
+COPY requirements/contracts.lock ./requirements/contracts.lock
 COPY requirements/ingestion.lock ./requirements/ingestion.lock
+COPY docker/contracts.Dockerfile ./docker/contracts.Dockerfile
 COPY docker/ingestion-check.Dockerfile ./docker/ingestion-check.Dockerfile
 COPY src/ ./src/
 COPY scripts/ ./scripts/
