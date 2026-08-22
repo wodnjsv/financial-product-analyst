@@ -16,7 +16,7 @@
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 최소 클래스와 13개 핵심 관계를 현재 기본안으로 기록; TTL·SHACL 필드 매핑은 후속 계획 필요 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
-| Stage 03B 공식 외부 정형 데이터 | Task 1~3·6 완료: source mapping, 불변 snapshot, KRX Security·SEC Series/Class exact identity, ECOS 4종 환율 구현; Task 4 KRX holdings와 Task 5 상품 매핑은 차단, 다음 실행은 Task 7 SEC N-PORT | [Stage 03B Official Structured Data Design](specs/2026-08-22-stage-03b-official-structured-data-design.md), [Stage 03B Field Matrix](specs/stage-03b-official-source-field-matrix.md), [Stage 03B Implementation Plan](tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md), [ADR-0014](decisions/ADR-0014-use-bounded-official-source-snapshots.md) |
+| Stage 03B 공식 외부 정형 데이터 | Task 1~3·6~7 완료: source mapping, 불변 snapshot, KRX Security·SEC Series/Class exact identity, ECOS 4종 환율, SEC N-PORT bounded holdings 구현; Task 4 KRX holdings와 Task 5 상품 매핑은 차단, 다음 실행은 Task 8 결합 파이프라인 | [Stage 03B Official Structured Data Design](specs/2026-08-22-stage-03b-official-structured-data-design.md), [Stage 03B Field Matrix](specs/stage-03b-official-source-field-matrix.md), [Stage 03B Implementation Plan](tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md), [ADR-0014](decisions/ADR-0014-use-bounded-official-source-snapshots.md) |
 
 ## 2. 구현 Stage
 
@@ -80,6 +80,14 @@
 
 기준 계획: [Stage 03A Organizer Master Ingestion](tasks/2026-08-20-stage-03a-organizer-master-ingestion-plan.md)
 
+### Stage 03B 공식 외부 정형 데이터
+
+**상태: 핵심 합성 mapper 구현 중 — Task 1~3·6~7 완료, 실원본·결합 적재 미실행**
+
+- SEC N-PORT Task 7은 공식 5개 TSV만 안전 추출하고, 컷오프 이하 최신 report·amendment를 선택하며, 주최 측 해외 ETF를 명시적 `product_entity_id + CIK + Class Ticker` binding으로 Series와 대조한다. Series ID를 주최 측 상품의 고유 식별자로 승격하지 않고 새 테이블·DDL·온톨로지 관계도 추가하지 않았다.
+- 보유종목은 고유하고 유효한 ISIN, 그다음 CUSIP만 승격한다. 중복·미해소 식별자는 snapshot-local Security로 보존하고 `PARTIALLY_COVERED/bounded_unknown`으로 제한하며, ticker는 별칭으로만 사용한다. 동일 원본 lot은 합산하지 않고 별도 `holdsSecurity` 관계로 유지한다.
+- 일반 테스트는 합성 N-PORT 파일만 사용한다. SEC 2026 Q2 실제 ZIP 다운로드·Object Storage 업로드·실제 coverage 집계·NCP PostgreSQL 결합 적재는 아직 실행하지 않았으며 Task 8~9 게이트에 남아 있다.
+
 ## 3. 현재 실행하면 안 되는 계획
 
 [2026-08-10 Core Implementation Plan](tasks/2026-08-10-financial-agent-core-implementation-plan.md)은 질문·데이터·온톨로지 요구사항의 역사적 출처로만 유지한다. DuckDB, 로컬 인덱스, 옛 ADR 번호, 이전 에이전트 역할을 포함한 실행 순서는 현재 아키텍처와 맞지 않으므로 그대로 구현하지 않는다.
@@ -92,7 +100,7 @@
 
 | Stage | 범위 | 상태 |
 | --- | --- | --- |
-| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 03A 완료; 03B Task 1~3·6 완료·Task 4~5 source-gated; 03C 대기 |
+| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 03A 완료; 03B Task 1~3·6~7 완료·Task 4~5 source-gated; 03C 대기 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
 | 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
@@ -128,6 +136,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 20. ~~Stage 03B Task 2 불변 공식 스냅샷 캡처·검증 구현~~ — 2026-08-22 완료
 21. ~~Stage 03B Task 3 공식 식별자 정확 해소 구현~~ — 2026-08-22 완료
 22. ~~Stage 03B Task 6 ECOS 승인 환율 4종 구현~~ — 2026-08-22 완료
-23. Stage 03B Task 4~5 차단을 유지하고 Task 7 SEC N-PORT로 진행
+23. ~~Stage 03B Task 4~5 차단을 유지하고 Task 7 SEC N-PORT bounded parser·mapper 구현~~ — 2026-08-22 완료
+24. Stage 03B Task 8의 Stage 03A+03B 결합 파이프라인 구현계획 재리뷰·승인
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

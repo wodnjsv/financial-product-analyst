@@ -20,12 +20,20 @@ from .sec_series_class import (
     parse_sec_series_class,
 )
 from .ecos_fx import ECOS_ITEMS, map_ecos_fx, parse_ecos_731y001
+from .sec_nport import (
+    NportArchiveLimits,
+    NportProductBinding,
+    iter_eligible_nport_funds,
+    verify_and_extract_nport,
+)
 
 __all__ = [
     "CoverageStatus",
     "ECOS_ITEMS",
     "IdentityCandidate",
     "IdentityResolution",
+    "NportArchiveLimits",
+    "NportProductBinding",
     "OfficialObjectManifest",
     "OfficialIdentityIndex",
     "OfficialSnapshotManifest",
@@ -34,9 +42,11 @@ __all__ = [
     "build_sec_series_class_index",
     "map_krx_security_basic",
     "map_ecos_fx",
+    "iter_eligible_nport_funds",
     "parse_ecos_731y001",
     "parse_krx_security_basic",
     "parse_sec_series_class",
     "validate_official_snapshot",
+    "verify_and_extract_nport",
     "write_canonical_manifest",
 ]

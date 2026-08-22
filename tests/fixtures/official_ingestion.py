@@ -4,7 +4,9 @@ import hashlib
 import csv
 import io
 import json
+import zipfile
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 from financial_agent.ingestion.official.models import (
     OfficialObjectManifest,
@@ -145,3 +147,170 @@ def ecos_731y001_payload(
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
+
+
+def _tsv_payload(
+    fieldnames: tuple[str, ...], rows: tuple[dict[str, str], ...]
+) -> bytes:
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(
+        output,
+        fieldnames=fieldnames,
+        delimiter="\t",
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    writer.writerows(rows)
+    return output.getvalue().encode("utf-8")
+
+
+def sec_nport_tsv_files() -> dict[str, bytes]:
+    accession = "0000000000-26-000001"
+    return {
+        "SUBMISSION.tsv": _tsv_payload(
+            (
+                "ACCESSION_NUMBER",
+                "FILING_DATE",
+                "FILE_NUM",
+                "SUB_TYPE",
+                "REPORT_ENDING_PERIOD",
+                "REPORT_DATE",
+                "IS_LAST_FILING",
+            ),
+            (
+                {
+                    "ACCESSION_NUMBER": accession,
+                    "FILING_DATE": "2026-06-20",
+                    "FILE_NUM": "811-SYNTHETIC",
+                    "SUB_TYPE": "NPORT-P/A",
+                    "REPORT_ENDING_PERIOD": "2026-12-31",
+                    "REPORT_DATE": "2026-03-31",
+                    "IS_LAST_FILING": "N",
+                },
+            ),
+        ),
+        "REGISTRANT.tsv": _tsv_payload(
+            (
+                "ACCESSION_NUMBER",
+                "CIK",
+                "REGISTRANT_NAME",
+                "FILE_NUM",
+                "LEI",
+                "ADDRESS1",
+                "ADDRESS2",
+                "CITY",
+                "STATE",
+                "COUNTRY",
+                "ZIP",
+                "PHONE",
+            ),
+            (
+                {
+                    "ACCESSION_NUMBER": accession,
+                    "CIK": "0000123456",
+                    "REGISTRANT_NAME": "Synthetic Registrant",
+                    "FILE_NUM": "811-SYNTHETIC",
+                    "LEI": "",
+                    "ADDRESS1": "",
+                    "ADDRESS2": "",
+                    "CITY": "",
+                    "STATE": "",
+                    "COUNTRY": "",
+                    "ZIP": "",
+                    "PHONE": "",
+                },
+            ),
+        ),
+        "FUND_REPORTED_INFO.tsv": _tsv_payload(
+            ("ACCESSION_NUMBER", "SERIES_NAME", "SERIES_ID", "SERIES_LEI"),
+            (
+                {
+                    "ACCESSION_NUMBER": accession,
+                    "SERIES_NAME": "Synthetic ETF Series",
+                    "SERIES_ID": "S000000001",
+                    "SERIES_LEI": "",
+                },
+            ),
+        ),
+        "FUND_REPORTED_HOLDING.tsv": _tsv_payload(
+            (
+                "ACCESSION_NUMBER",
+                "HOLDING_ID",
+                "ISSUER_NAME",
+                "ISSUER_LEI",
+                "ISSUER_TITLE",
+                "ISSUER_CUSIP",
+                "BALANCE",
+                "UNIT",
+                "OTHER_UNIT_DESC",
+                "CURRENCY_CODE",
+                "CURRENCY_VALUE",
+                "EXCHANGE_RATE",
+                "PERCENTAGE",
+                "PAYOFF_PROFILE",
+                "ASSET_CAT",
+                "OTHER_ASSET",
+                "ISSUER_TYPE",
+                "OTHER_ISSUER",
+                "INVESTMENT_COUNTRY",
+                "IS_RESTRICTED_SECURITY",
+                "FAIR_VALUE_LEVEL",
+                "DERIVATIVE_CAT",
+            ),
+            (
+                {
+                    "ACCESSION_NUMBER": accession,
+                    "HOLDING_ID": "1001",
+                    "ISSUER_NAME": "Synthetic Issuer",
+                    "ISSUER_LEI": "",
+                    "ISSUER_TITLE": "Synthetic Common Stock",
+                    "ISSUER_CUSIP": "000000000",
+                    "BALANCE": "100",
+                    "UNIT": "SH",
+                    "OTHER_UNIT_DESC": "",
+                    "CURRENCY_CODE": "USD",
+                    "CURRENCY_VALUE": "1000.25",
+                    "EXCHANGE_RATE": "1",
+                    "PERCENTAGE": "4.25",
+                    "PAYOFF_PROFILE": "Long",
+                    "ASSET_CAT": "EC",
+                    "OTHER_ASSET": "",
+                    "ISSUER_TYPE": "CORP",
+                    "OTHER_ISSUER": "",
+                    "INVESTMENT_COUNTRY": "US",
+                    "IS_RESTRICTED_SECURITY": "N",
+                    "FAIR_VALUE_LEVEL": "1",
+                    "DERIVATIVE_CAT": "",
+                },
+            ),
+        ),
+        "IDENTIFIERS.tsv": _tsv_payload(
+            (
+                "HOLDING_ID",
+                "IDENTIFIERS_ID",
+                "IDENTIFIER_ISIN",
+                "IDENTIFIER_TICKER",
+                "OTHER_IDENTIFIER",
+                "OTHER_IDENTIFIER_DESC",
+            ),
+            (
+                {
+                    "HOLDING_ID": "1001",
+                    "IDENTIFIERS_ID": "1",
+                    "IDENTIFIER_ISIN": "US0000000002",
+                    "IDENTIFIER_TICKER": "SYNH",
+                    "OTHER_IDENTIFIER": "",
+                    "OTHER_IDENTIFIER_DESC": "",
+                },
+            ),
+        ),
+    }
+
+
+def write_sec_nport_archive(
+    path: Path, files: dict[str, bytes] | None = None
+) -> Path:
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, payload in (files or sec_nport_tsv_files()).items():
+            archive.writestr(name, payload)
+    return path

@@ -683,50 +683,83 @@ class NportArchiveLimits:
     maximum_expanded_bytes: int = 8_589_934_592
     maximum_members: int = 64
 
+@dataclass(frozen=True, slots=True)
+class NportProductBinding:
+    product_entity_id: str
+    cik: str
+    class_ticker: str
+
 def verify_and_extract_nport(
     archive: Path, destination: Path, limits: NportArchiveLimits
 ) -> Mapping[str, Path]: ...
 
 def iter_eligible_nport_funds(
-    files: Mapping[str, Path], cutoff: date
+    files: Mapping[str, Path],
+    cutoff: date,
+    *,
+    manifest: OfficialSnapshotManifest,
+    series_class_index: OfficialIdentityIndex,
+    product_bindings: Iterable[NportProductBinding],
 ) -> Iterator[MappedRow]: ...
 ```
 
-- [ ] **Step 1: Build a tiny synthetic N-PORT ZIP**
+**Approved reconciliation (2026-08-22):** The organizer product entity ID is
+an explicit input binding because the SEC Series/Class index intentionally
+resolves to a Series identity, not to an organizer product entity. The mapper
+must verify exact `(CIK, normalized Class Ticker) -> Series ID`, compare that
+Series ID with the eligible N-PORT filing, and attach `holdsSecurity` to the
+bound organizer product. It must not promote one `SEC_SERIES_ID` onto every
+organizer product class, create a new SEC Series table, add an ontology
+predicate, or change the Stage 02 DDL. Series, Class, and accession identifiers
+remain Evidence provenance. An unresolved or conflicting binding emits bounded
+coverage without an inferred holding relation.
+
+- [x] **Step 1: Build a tiny synthetic N-PORT ZIP**
 
 Generate one synthetic Series/Class CSV and UTF-8 tab-separated files with exact official headers for `SUBMISSION`, `REGISTRANT`, `FUND_REPORTED_INFO`, `FUND_REPORTED_HOLDING`, and `IDENTIFIERS`. Include an original filing, an eligible amendment, an after-cutoff amendment, two fund series under one registrant, a duplicate holding lot, an unresolved holding identifier, and a second organizer product with no matched filing.
 
-- [ ] **Step 2: Write archive-safety RED tests**
+- [x] **Step 2: Write archive-safety RED tests**
 
 Cover path traversal, symlink-like entry, duplicate member, missing required file, unexpected case-variant file, excessive member count, excessive expanded size, suspicious compression expansion, invalid UTF-8, and wrong TSV header. Fail the whole snapshot before yielding one mapped row.
 
-- [ ] **Step 3: Implement disk-bounded extraction and streaming joins**
+- [x] **Step 3: Implement disk-bounded extraction and streaming joins**
 
 Never load the approximately 420 MB official archive or all expanded holdings into memory. Validate ZIP metadata first, extract only approved files into a newly created temporary directory, and parse TSV rows with `csv.DictReader(delimiter="\t")`.
 
 Use bounded on-disk or keyed intermediate files for the accession/holding joins if memory measurement shows the archive exceeds the approved ingestion budget. Do not add DuckDB, Pandas, or a general staging database without a separate plan amendment.
 
-- [ ] **Step 4: Select filings as known at cutoff**
+- [x] **Step 4: Select filings as known at cutoff**
 
 Require both report date and `FILING_DATE` to be on or before `2026-07-11`. For one `(CIK, SERIES_ID, REPORT_DATE)`, choose the latest eligible official amendment by filing date, then accession number as a deterministic tie-breaker. Preserve the selected accession and filing type in Evidence. Never use an after-cutoff amendment even if it corrects older holdings.
 
-- [ ] **Step 5: Resolve fund series and holdings**
+- [x] **Step 5: Resolve fund series and holdings**
 
 Resolve organizer products through the approved Series/Class crosswalk: unique exact `(CIK, normalized Class Ticker)` to Class ID, then exact Class ID to Series ID, then Series ID to the eligible N-PORT filing. Create or enrich the asset-manager institution with official CIK/LEI. Resolve holdings by unique valid ISIN, then unique valid CUSIP, otherwise a snapshot-scoped `HOLDING_ID`; do not promote ticker, an untyped other identifier, or a duplicated identifier.
 
 N-PORT `PERCENTAGE` is stored as percentage units exactly as documented. Separate holdings or derivative legs remain separate unless the official schema and all identity/payoff fields prove they are aggregable.
 
-- [ ] **Step 6: Emit bounded coverage**
+- [x] **Step 6: Emit bounded coverage**
 
 Use `COVERED` only if the selected public filing is complete, every required file and holding row is accounted for, and all rows needed for the requested population are resolved. Any unresolved security, partial manager supplement, or missing eligible filing yields `PARTIALLY_COVERED` or `NOT_COVERED` with `bounded_unknown`.
 
-- [ ] **Step 7: Run RED then GREEN**
+- [x] **Step 7: Run RED then GREEN**
 
 ```bash
 .venv/bin/python -m pytest tests/ingestion/test_sec_nport.py -q
 ```
 
-- [ ] **Step 8: Commit**
+Result: the missing mapping contract produced the expected import RED. The
+archive and mapper suite passed `28`; the focused official-source suite passed
+`86`; all non-live, non-PostgreSQL contract and ingestion tests passed `441`,
+with `12` deselected. Extraction writes only the five approved members, and
+the mapper streams all holding and identifier rows while retaining full row
+payloads only for accessions selected by the explicit organizer bindings.
+Primary-key accounting still keeps compact key sets in memory; the first live
+Task 9 capture must measure them and use the already-approved keyed spill path
+if the ingestion budget is exceeded. The Stage 02 writer payload check passed
+without a new origin type, DDL, Series table, or ontology predicate.
+
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/financial_agent/ingestion/official/sec_nport.py \
