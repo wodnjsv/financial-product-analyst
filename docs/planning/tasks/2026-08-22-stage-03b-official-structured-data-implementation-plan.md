@@ -621,11 +621,11 @@ def map_ecos_fx(
 ) -> tuple[MappedRow, ...]: ...
 ```
 
-- [ ] **Step 1: Write RED tests for direction and units**
+- [x] **Step 1: Write RED tests for direction and units**
 
 Prove all four item codes are required, `0000002` remains KRW per 100 JPY, an unknown item is rejected, comma-formatted or malformed numbers do not become floats, after-cutoff dates are rejected, and the latest eligible observation is chosen independently per item.
 
-- [ ] **Step 2: Add the Bank of Korea publisher entity and fixed metrics**
+- [x] **Step 2: Add the Bank of Korea publisher entity and fixed metrics**
 
 Create one official institution with an approved stable identifier and one metric per rate definition. Store base/quote/rate type in the metric description and Evidence normalized value; do not infer direction from the user question.
 
@@ -638,22 +638,27 @@ ecos_731y001_krw_per_eur
 ecos_731y001_krw_per_cny
 ```
 
-- [ ] **Step 3: Implement deterministic Decimal mapping**
+- [x] **Step 3: Implement deterministic Decimal mapping**
 
 Map one eligible Observation per item with unit `KRW`, actual `TIME` as `applicable_date`, and exact source item code in Evidence. Keep `published_at` and `available_at` from the approved snapshot metadata.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 ```bash
 .venv/bin/python -m pytest tests/ingestion/test_ecos_fx.py -q
 ```
 
-- [ ] **Step 5: Commit**
+Result: the missing ECOS production module produced the expected import RED. The final ECOS tests passed `13`; the focused official-source regression passed `50`; all non-live, non-PostgreSQL ingestion tests passed `189`, with `12` deselected. The Stage 02 writer payload check deduplicated the Bank of Korea entity and Source while preserving four Metric, Observation, Evidence, and origin records.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/financial_agent/ingestion/official/ecos_fx.py \
+  src/financial_agent/ingestion/official/__init__.py \
   tests/fixtures/official_ingestion.py \
-  tests/ingestion/test_ecos_fx.py
+  tests/ingestion/test_ecos_fx.py \
+  docs/planning/tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md \
+  docs/planning/STATUS.md
 git diff --cached --check
 git commit -m "feat: map approved ecos exchange rates"
 ```

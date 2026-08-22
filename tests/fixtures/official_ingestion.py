@@ -25,7 +25,13 @@ def official_manifest(
     return OfficialSnapshotManifest(
         source_code=source_code,
         snapshot_id=f"{source_code.lower()}-{applicable_date:%Y%m%d}",
-        publisher_code="KRX" if source_code.startswith("KRX_") else "SEC",
+        publisher_code=(
+            "KRX"
+            if source_code.startswith("KRX_")
+            else "BOK"
+            if source_code.startswith("ECOS_")
+            else "SEC"
+        ),
         cutoff_date=date(2026, 7, 11),
         applicable_date=applicable_date,
         published_at=published_at,
@@ -95,3 +101,47 @@ def sec_series_class_payload(
     writer.writeheader()
     writer.writerows(values)
     return output.getvalue().encode("utf-8")
+
+
+def ecos_731y001_payload(
+    rows: tuple[dict[str, str], ...] | None = None,
+) -> bytes:
+    values = rows if rows is not None else (
+        {
+            "STAT_CODE": "731Y001",
+            "ITEM_CODE1": "0000001",
+            "ITEM_NAME1": "원/미국달러(매매기준율)",
+            "UNIT_NAME": "원",
+            "TIME": "20260710",
+            "DATA_VALUE": "1301.25",
+        },
+        {
+            "STAT_CODE": "731Y001",
+            "ITEM_CODE1": "0000002",
+            "ITEM_NAME1": "원/일본엔(100엔)",
+            "UNIT_NAME": "원",
+            "TIME": "20260710",
+            "DATA_VALUE": "891.25",
+        },
+        {
+            "STAT_CODE": "731Y001",
+            "ITEM_CODE1": "0000003",
+            "ITEM_NAME1": "원/유로",
+            "UNIT_NAME": "원",
+            "TIME": "20260710",
+            "DATA_VALUE": "1502.75",
+        },
+        {
+            "STAT_CODE": "731Y001",
+            "ITEM_CODE1": "0000053",
+            "ITEM_NAME1": "원/위안(매매기준율)",
+            "UNIT_NAME": "원",
+            "TIME": "20260710",
+            "DATA_VALUE": "181.05",
+        },
+    )
+    return json.dumps(
+        {"StatisticSearch": {"row": values}},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
