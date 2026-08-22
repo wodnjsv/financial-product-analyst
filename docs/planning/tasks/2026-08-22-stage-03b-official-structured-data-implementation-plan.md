@@ -387,11 +387,11 @@ def map_krx_security_basic(
 ) -> Iterator[MappedRow]: ...
 ```
 
-- [ ] **Step 1: Generate synthetic identity fixtures**
+- [x] **Step 1: Generate synthetic identity fixtures**
 
 Use obviously synthetic identifiers. Include one domestic exact issue code, one unique overseas ISIN, one duplicated ISIN, one unique `(CIK, ticker)` resolving through SEC class to series, one duplicated ticker across CIKs, and two different names sharing no identifier.
 
-- [ ] **Step 2: Write RED tests**
+- [x] **Step 2: Write RED tests**
 
 Prove:
 
@@ -405,23 +405,23 @@ duplicated overseas ISIN from organizer pre-scan -> conflict
 source-local holding ID -> stable security within source snapshot only
 ```
 
-- [ ] **Step 3: Implement normalized exact maps only**
+- [x] **Step 3: Implement normalized exact maps only**
 
 Normalize schemes explicitly. ISIN uses uppercase ASCII and exact length/check format; CIK strips only documented leading zeros; ticker normalization is source-specific and never a global identifier. Reject empty and invalid identifiers instead of repairing them.
 
 The resolver returns a status and stable code. It never selects the first candidate and never creates a relation on conflict.
 
-- [ ] **Step 4: Add official entity record helpers**
+- [x] **Step 4: Add official entity record helpers**
 
 Create helpers that emit Stage 02 `catalog.entity`, subtype, `catalog.identifier`, and `catalog.alias` payloads with existing `stable_id` and `make_record_hash`. For every answerable identifier or alias, also emit the Task 1-approved companion text Observation, Evidence, and observation origin. Promote an identifier only after the source pre-scan proves its required uniqueness. Preserve ambiguous raw IDs in Evidence rather than `catalog.identifier`.
 
-- [ ] **Step 5: Map the approved KRX KOSPI/KOSDAQ basic information and SEC Series/Class Report**
+- [x] **Step 5: Map the approved KRX KOSPI/KOSDAQ basic information and SEC Series/Class Report**
 
 Parse only the exact Task 1-approved response envelopes and fields. Create Security entities and approved issue-code identifiers/aliases. Create a Company entity and `securityOfCompany` only when the response contains a separately approved strong company identifier; a company-like name alone is not enough.
 
 Parse the six approved SEC Series/Class fields separately. Build only the exact `(normalized CIK, source-specific normalized Class Ticker) -> Class ID -> Series ID` crosswalk. Do not promote Class Ticker to a global identifier and do not resolve a product from ticker alone.
 
-- [ ] **Step 6: Run GREEN and duplicate-ID regression**
+- [x] **Step 6: Run GREEN and duplicate-ID regression**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -431,7 +431,9 @@ Parse the six approved SEC Series/Class fields separately. Build only the exact 
   tests/ingestion/test_overseas_etp_mapping.py -q
 ```
 
-- [ ] **Step 7: Commit**
+Result: each missing production module produced the expected RED. The final identity, KRX basic, SEC Series/Class, and overseas duplicate-ID selection passed `36` tests. All non-live, non-PostgreSQL ingestion tests passed `176`, with `12` deselected. Empty official populations and non-unique `(CIK, Class Ticker)` mappings fail closed.
+
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/financial_agent/ingestion/official/identity.py \
@@ -440,7 +442,10 @@ git add src/financial_agent/ingestion/official/identity.py \
   tests/fixtures/official_ingestion.py \
   tests/ingestion/test_official_identity.py \
   tests/ingestion/test_krx_identity.py \
-  tests/ingestion/test_sec_series_class.py
+  tests/ingestion/test_sec_series_class.py \
+  src/financial_agent/ingestion/official/__init__.py \
+  docs/planning/tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md \
+  docs/planning/STATUS.md
 git diff --cached --check
 git commit -m "feat: resolve official identities by exact keys"
 ```

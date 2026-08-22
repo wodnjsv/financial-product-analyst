@@ -16,7 +16,7 @@
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 최소 클래스와 13개 핵심 관계를 현재 기본안으로 기록; TTL·SHACL 필드 매핑은 후속 계획 필요 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
-| Stage 03B 공식 외부 정형 데이터 | Task 1 소스 매핑과 Task 2 불변 snapshot 캡처·검증 완료; Task 3 공식 식별자 해소 대기, KRX ETF holdings와 상품 가격 연결은 source-gated | [Stage 03B Official Structured Data Design](specs/2026-08-22-stage-03b-official-structured-data-design.md), [Stage 03B Field Matrix](specs/stage-03b-official-source-field-matrix.md), [Stage 03B Implementation Plan](tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md), [ADR-0014](decisions/ADR-0014-use-bounded-official-source-snapshots.md) |
+| Stage 03B 공식 외부 정형 데이터 | Task 1~3 완료: source mapping, 불변 snapshot, KRX Security와 SEC Series/Class exact identity 구현; Task 4 KRX holdings는 차단, 다음 실행은 Task 5 parser 또는 Task 6 ECOS | [Stage 03B Official Structured Data Design](specs/2026-08-22-stage-03b-official-structured-data-design.md), [Stage 03B Field Matrix](specs/stage-03b-official-source-field-matrix.md), [Stage 03B Implementation Plan](tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md), [ADR-0014](decisions/ADR-0014-use-bounded-official-source-snapshots.md) |
 
 ## 2. 구현 Stage
 
@@ -92,7 +92,7 @@
 
 | Stage | 범위 | 상태 |
 | --- | --- | --- |
-| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 03A 완료; 03B Task 1·2 완료·Task 3 대기; 03C 대기 |
+| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 03A 완료; 03B Task 1~3 완료·Task 4 source-gated; 03C 대기 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
 | 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
@@ -126,6 +126,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 18. ~~Stage 03B 첫 공식 외부 정형 데이터 범위와 설계 승인~~ — 2026-08-22 완료
 19. ~~Stage 03B 설계를 단계별 실행 계획과 57개 공식 필드 매트릭스로 확정~~ — 2026-08-22 완료
 20. ~~Stage 03B Task 2 불변 공식 스냅샷 캡처·검증 구현~~ — 2026-08-22 완료
-21. Stage 03B Task 3 공식 식별자 정확 해소 구현
+21. ~~Stage 03B Task 3 공식 식별자 정확 해소 구현~~ — 2026-08-22 완료
+22. Stage 03B Task 4 차단을 유지하고 Task 5 KRX parser 또는 Task 6 ECOS로 진행
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.
