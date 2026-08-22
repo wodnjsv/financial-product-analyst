@@ -16,6 +16,7 @@
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 최소 클래스와 13개 핵심 관계를 현재 기본안으로 기록; TTL·SHACL 필드 매핑은 후속 계획 필요 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
+| Stage 03B 공식 외부 정형 데이터 | 커버리지·컷오프·출처 권위·원본 보존·기존 Stage 02 저장 재사용 경계 확정; 구현 계획 대기 | [Stage 03B Official Structured Data Design](specs/2026-08-22-stage-03b-official-structured-data-design.md), [ADR-0014](decisions/ADR-0014-use-bounded-official-source-snapshots.md) |
 
 ## 2. 구현 Stage
 
@@ -91,7 +92,7 @@
 
 | Stage | 범위 | 상태 |
 | --- | --- | --- |
-| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 03A 완료; 03B·03C 대기 |
+| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 03A 완료; 03B 설계 승인·구현 계획 대기; 03C 대기 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
 | 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
@@ -122,6 +123,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 15. ~~Stage 03A Task 1의 207개 필드 매핑 matrix 작성·검토·승인~~ — 2026-08-20 완료
 16. ~~Stage 03A Task 2~9 로컬 구현과 실제 145,393행 적재 검증~~ — 2026-08-22 완료
 17. ~~Stage 03A private Object Storage checksum과 Linux/amd64 런타임 검증~~ — 2026-08-22 완료
-18. Stage 03B 공식 외부 정형 데이터 소스별 승인과 구현계획 작성
+18. ~~Stage 03B 첫 공식 외부 정형 데이터 범위와 설계 승인~~ — 2026-08-22 완료
+19. Stage 03B 설계를 단계별 실행 계획으로 분해하고 구현 범위 승인
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

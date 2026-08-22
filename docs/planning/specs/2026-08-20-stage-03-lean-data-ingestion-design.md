@@ -6,7 +6,7 @@
 
 **Scope:** Stage 03 전체 경계와 Stage 03A 주최 측 4개 마스터 수집·표준화 구조
 
-**Related:** [Competition Stage Roadmap](../ROADMAP.md), [Stage 02 PostgreSQL Plan](../tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md), [ADR-0013](../decisions/ADR-0013-use-lean-source-specific-ingestion.md)
+**Related:** [Competition Stage Roadmap](../ROADMAP.md), [Stage 02 PostgreSQL Plan](../tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md), [ADR-0013](../decisions/ADR-0013-use-lean-source-specific-ingestion.md), [Stage 03B Official Structured Data Design](2026-08-22-stage-03b-official-structured-data-design.md)
 
 ## 1. 결정 요약
 
@@ -54,6 +54,8 @@ BuildReport
 - 질문 지원 범위가 입증된 나머지 P0 정형 데이터
 
 외부 소스는 소스별 승인 이후에만 추가한다. KRX·ECOS·FRED는 의무 연결 목록이 아니라 필요한 공백을 공식적으로 채우는 후보군이다.
+
+첫 승인 범위의 커버리지, 컷오프, 원본 보존, 출처 권위, 실패 격리와 Stage 03C 인계는 [Stage 03B 공식 외부 정형 데이터 설계](2026-08-22-stage-03b-official-structured-data-design.md)를 따른다.
 
 ### Stage 03C — 공식 문서·청크·최종 품질 게이트
 
