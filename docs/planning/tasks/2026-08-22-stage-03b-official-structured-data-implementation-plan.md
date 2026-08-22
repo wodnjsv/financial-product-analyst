@@ -568,11 +568,11 @@ def map_krx_etf_daily(
 ) -> tuple[MappedRow, ...]: ...
 ```
 
-- [ ] **Step 1: Write RED parser and date-selection tests**
+- [x] **Step 1: Write RED parser and date-selection tests**
 
 Use synthetic JSON with the exact approved response envelope and fields. Prove `2026-07-10` is selected when the cutoff is Saturday, `2026-07-13` is rejected, actual `BAS_DD` is preserved, duplicate pages fail, missing mandatory fields fail the snapshot, and numeric strings are parsed without float conversion.
 
-- [ ] **Step 2: Add fixed metric definitions**
+- [x] **Step 2: Add fixed metric definitions**
 
 Use reviewed IDs and version `1`:
 
@@ -583,21 +583,36 @@ krx_etf_nav_per_share_krw
 
 Both target the organizer ETF entity, use `KRW`, retain actual `applicable_date`, and have separate Evidence. Do not replace organizer AUM or returns.
 
-- [ ] **Step 3: Map only exact domestic ETF identities**
+- [x] **Step 3: Map only exact domestic ETF identities**
 
 Resolve `ISU_CD` using the separately approved Task 1 crosswalk. Until that crosswalk exists, every row remains `LINK_BLOCKED` and produces no product Observation. ETNs, unknown products, ambiguous codes, and non-ETF rows do not produce ETF price/NAV facts. Preserve their aggregate disposition codes.
 
-- [ ] **Step 4: Prove compatible same-date values**
+- [x] **Step 4: Prove compatible same-date values**
 
 Add a test showing close and NAV for a product are both emitted only from the same selected `BAS_DD`. A missing NAV remains missing; it is not copied from price.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```bash
 .venv/bin/python -m pytest tests/ingestion/test_krx_market.py -q
 ```
 
-- [ ] **Step 6: Commit**
+Result on 2026-08-23:
+
+- the missing `krx_market` module produced the intended collection RED;
+- mixed-date KRX objects and a missing public export each produced a separate
+  RED before the minimum fix;
+- the focused Task 5 suite passed `13` tests;
+- contracts plus non-live ingestion passed `468` tests with `12` deselected;
+- the live 2026-07-10 KRX response parsed all `1,141` rows without exposing
+  raw values and confirmed six-character `ISU_CD` keys;
+- the approved organizer-to-KRX binding reproduced `1,133` exact products,
+  `69` unresolved organizer ETFs, `8` KRX-only ETFs, one invalid organizer
+  ISIN, and one name-only audit drift;
+- close and NAV are separate Decimal observations with separate Evidence, and
+  missing NAV remains unknown rather than copying close.
+
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/financial_agent/ingestion/official/krx_market.py \

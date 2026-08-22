@@ -129,6 +129,25 @@ def krx_etf_pdf_payload(
     return output.getvalue().encode("cp949")
 
 
+def krx_etf_daily_payload(
+    rows: tuple[dict[str, str], ...] | None = None,
+) -> bytes:
+    values = rows if rows is not None else (
+        {
+            "BAS_DD": "20260710",
+            "ISU_CD": "305080",
+            "ISU_NM": "TIGER 미국채10년선물",
+            "TDD_CLSPRC": "12345.50",
+            "NAV": "12340.25",
+        },
+    )
+    return json.dumps(
+        {"OutBlock_1": values},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def sec_series_class_payload(
     rows: tuple[dict[str, str], ...] | None = None,
 ) -> bytes:
