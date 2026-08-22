@@ -16,7 +16,7 @@
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 최소 클래스와 13개 핵심 관계를 현재 기본안으로 기록; TTL·SHACL 필드 매핑은 후속 계획 필요 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
-| Stage 03B 공식 외부 정형 데이터 | Task 1~3·6~7 완료: source mapping, 불변 snapshot, KRX Security·SEC Series/Class exact identity, ECOS 4종 환율, SEC N-PORT bounded holdings 구현; Task 4 KRX holdings와 Task 5 상품 매핑은 차단, 다음 실행은 Task 8 결합 파이프라인 | [Stage 03B Official Structured Data Design](specs/2026-08-22-stage-03b-official-structured-data-design.md), [Stage 03B Field Matrix](specs/stage-03b-official-source-field-matrix.md), [Stage 03B Implementation Plan](tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md), [ADR-0014](decisions/ADR-0014-use-bounded-official-source-snapshots.md) |
+| Stage 03B 공식 외부 정형 데이터 | Task 1~4·6~7 mapper 완료; ADR-0015의 valid organizer ISIN에서 2026-07-10 KRX ETF 1,133개를 exact binding하고 KRX PDF를 bounded holdings로 보존한다. 전수 PDF capture inventory와 Task 5·8은 후속 | [Stage 03B Field Matrix](specs/stage-03b-official-source-field-matrix.md), [Stage 03B Implementation Plan](tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md), [ADR-0014](decisions/ADR-0014-use-bounded-official-source-snapshots.md), [ADR-0015](decisions/ADR-0015-use-isin-derived-krx-etf-bindings.md) |
 
 ## 2. 구현 Stage
 
@@ -137,6 +137,9 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 21. ~~Stage 03B Task 3 공식 식별자 정확 해소 구현~~ — 2026-08-22 완료
 22. ~~Stage 03B Task 6 ECOS 승인 환율 4종 구현~~ — 2026-08-22 완료
 23. ~~Stage 03B Task 4~5 차단을 유지하고 Task 7 SEC N-PORT bounded parser·mapper 구현~~ — 2026-08-22 완료
-24. Stage 03B Task 8의 Stage 03A+03B 결합 파이프라인 구현계획 재리뷰·승인
+24. ~~Stage 03B Task 4의 KRX ETF별 2026-07-10 PDF bounded holdings mapper 구현·대표 원본 검증~~ — 2026-08-22 완료
+25. Stage 03B Task 4의 1,133개 연결 ETF PDF full capture inventory 생성·검증
+26. Stage 03B Task 5 KRX ETF 종가·NAV 구현
+27. Stage 03B Task 8의 Stage 03A+03B 결합 파이프라인 구현계획 재리뷰·승인
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

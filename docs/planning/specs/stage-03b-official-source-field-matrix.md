@@ -30,22 +30,24 @@ KRX Open API와 ECOS 실호출에서는 응답 스키마·행 수·날짜·단�
 
 ### 2.1 국내 ETF 연결키
 
-기존 계획의 `PREF01_PD_ITM_NO == KRX issue code` 가정은 폐기한다.
+기존 계획은 `pd_itm_no`를 KRX 단축코드와 직접 비교해 식별자 유형을 잘못 해석했다. [ADR-0015](../decisions/ADR-0015-use-isin-derived-krx-etf-bindings.md)가 이를 대체한다.
 
-- 주최 측 국내 ETF·ETN `pd_itm_no` 1,734개와 KRX `ISU_CD`, `ISU_SRT_CD`, ETF 일별 `ISU_CD`의 직접 일치: **0건**
-- 주최 측 ETF `pd_abrv_nm`과 KRX ETF `ISU_NM`의 exact 후보 일치: **1,132건**
-- 위 1,132건은 이름 일치일 뿐이므로 entity 연결이나 identifier 승격에 사용하지 않는다.
+- 주최 측 국내 ETF 1,202개 중 checksum-valid ISIN: **1,201건**
+- 공식 KRX 기본정보의 `표준코드[3:9] == 단축코드`: **1,161/1,161건**
+- valid organizer ISIN에서 파생한 단축코드와 `2026-07-10` KRX ETF 코드의 unique exact 일치: **1,133건**
+- 위 1,133건 중 이름 audit 일치: **1,132건**, 이름 변경: **1건**
+- 미해소 organizer ETF: **69건**, organizer에 없는 KRX ETF: **8건**
 
-승인 가능한 새 crosswalk는 KRX 공식 ETF 기본정보 export에서 코드와 상장일을 함께 확보한 뒤 다음 조건을 모두 만족할 때만 만든다.
+승인된 crosswalk는 다음 조건을 모두 만족해야 한다.
 
 ```text
-normalized organizer pd_abrv_nm == KRX ETF official name
-organizer pd_lstg_dt == KRX official listing date
+organizer pd_itm_no is a checksum-valid ISIN
+derived KRX short code == unique KRX ETF code on 2026-07-10
 one organizer ETF == one KRX ETF code
 one KRX ETF code == one organizer ETF
 ```
 
-정확한 과거 ETF 기본정보 export가 확보되기 전에는 `KRX_ETF_DAILY` 접근이 성공했더라도 가격·NAV를 주최 측 상품에 연결하지 않는다.
+이름과 상장일은 audit에 사용하되 identity binding을 만들지 않는다. 현재 KRX 기본정보 export는 identifier 구조 검증에만 사용하고 답변 사실에는 사용하지 않는다.
 
 ### 2.2 해외 ETF와 N-PORT 연결키
 
@@ -198,7 +200,20 @@ KRX는 PDF를 ETF 설정·환매에 필요한 현물 바스켓으로 설명한�
 4. 현금·파생·해외자산·합성 ETF 표현을 포함하는가.
 5. KRX가 해당 파일을 complete portfolio로 정의하는가, creation basket으로만 정의하는가.
 
-5번이 입증되지 않으면 `COVERED/closed_world`를 사용하지 않고 `PARTIALLY_COVERED/bounded_unknown`으로 저장한다. 현재는 exact export와 header가 없으므로 Task 4를 시작하지 않는다.
+2026-07-10 과거 조회와 ETF별 CSV export가 재현되었고 exact header는 다음과 같다.
+
+```text
+종목코드
+구성종목명
+주식수(계약수)
+평가금액
+시가총액
+시가총액 구성비중
+```
+
+파일은 ETF 한 종목·조회일 한 날짜 단위다. 주식 외에 선물, 외화예금, 원화현금, 설정현금액이 함께 나타나며 `-`는 0이 아니라 미제공 값이다. 실제 원화현금에서 음수 시가총액과 음수 비중이 관찰되므로 signed Decimal을 보존한다. `CASH00000001/설정현금액`은 holding security가 아니라 설정용 요약값으로 분리한다.
+
+KRX는 PDF를 설정·환매용 바스켓으로 설명하므로 `COVERED/closed_world`를 사용하지 않는다. 성공한 ETF 파일도 `PARTIALLY_COVERED/bounded_unknown`으로 저장한다. Task 4는 이 제한된 의미로 진행할 수 있다.
 
 ## 10. 승인 시 구현 경계
 
@@ -206,11 +221,11 @@ KRX는 PDF를 ETF 설정·환매에 필요한 현물 바스켓으로 설명한�
 
 | 상태 | 구현 범위 |
 | --- | --- |
-| 진행 가능 | immutable snapshot capture, KRX KOSPI/KOSDAQ Security identity, ECOS 4개 환율, SEC Series/Class + N-PORT bounded parser |
-| 추가 source capture 후 가능 | KRX ETF daily price/NAV mapping |
-| 계속 차단 | KRX ETF PDF holdings mapper |
+| 진행 가능 | immutable snapshot capture, KRX KOSPI/KOSDAQ Security identity, ECOS 4개 환율, SEC Series/Class + N-PORT bounded parser, KRX ETF PDF bounded holdings mapper, KRX ETF daily price/NAV mapping |
+| 추가 source capture 후 가능 | KRX ETF별 PDF 전수 coverage 확정 |
+| 계속 차단 | KRX PDF를 complete economic portfolio 또는 `closed_world`로 해석하는 것 |
 
-Task 3과 Task 7의 해외 crosswalk는 `SEC_SERIES_CLASS_20260601`을 포함하도록 계획을 수정해야 한다. Task 5는 KRX ETF 기본정보 export로 강한 product crosswalk가 승인될 때까지 mapping 단계가 아니라 snapshot capture까지만 허용한다.
+Task 3과 Task 7의 해외 crosswalk는 `SEC_SERIES_CLASS_20260601`을 사용한다. Task 4와 Task 5는 ADR-0015의 exact domestic ETF binding만 사용한다.
 
 ## 11. 공식 문서
 

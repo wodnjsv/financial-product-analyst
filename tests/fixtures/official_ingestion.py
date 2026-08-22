@@ -74,6 +74,61 @@ def krx_security_basic_payload(
     ).encode("utf-8")
 
 
+def krx_etf_pdf_payload(
+    rows: tuple[dict[str, str], ...] | None = None,
+) -> bytes:
+    values = rows if rows is not None else (
+        {
+            "종목코드": "005930",
+            "구성종목명": "삼성전자",
+            "주식수(계약수)": "10.00",
+            "평가금액": "1000",
+            "시가총액": "1000",
+            "시가총액 구성비중": "25.00",
+        },
+        {
+            "종목코드": "TYU6",
+            "구성종목명": "US 10YR NOTE FUT (CBOT) SEPT 2026",
+            "주식수(계약수)": "2.00",
+            "평가금액": "500",
+            "시가총액": "-",
+            "시가총액 구성비중": "-",
+        },
+        {
+            "종목코드": "KRD010010001",
+            "구성종목명": "원화현금",
+            "주식수(계약수)": "-",
+            "평가금액": "-",
+            "시가총액": "-100",
+            "시가총액 구성비중": "-1.00",
+        },
+        {
+            "종목코드": "CASH00000001",
+            "구성종목명": "설정현금액",
+            "주식수(계약수)": "-",
+            "평가금액": "-",
+            "시가총액": "1400",
+            "시가총액 구성비중": "-",
+        },
+    )
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(
+        output,
+        fieldnames=(
+            "종목코드",
+            "구성종목명",
+            "주식수(계약수)",
+            "평가금액",
+            "시가총액",
+            "시가총액 구성비중",
+        ),
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    writer.writerows(values)
+    return output.getvalue().encode("cp949")
+
+
 def sec_series_class_payload(
     rows: tuple[dict[str, str], ...] | None = None,
 ) -> bytes:

@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-22
 
-**Status:** Approved for staged implementation on 2026-08-22; Task 4 and Task 5 product mapping remain source-gated
+**Status:** Approved for staged implementation on 2026-08-22; Task 4 bounded KRX PDF holdings is now prioritized before Task 5
 
 **Goal:** Preserve and normalize the minimum official identifiers, domestic and overseas ETF holdings, compatible KRX price/NAV observations, and ECOS exchange rates required by the approved evaluation questions, while enforcing the `2026-07-11` information cutoff and explicit coverage limits.
 
@@ -454,7 +454,7 @@ git commit -m "feat: resolve official identities by exact keys"
 
 ### Task 4: Map the approved domestic ETF holdings snapshot
 
-**Gate:** Start only if Task 1 approved a reproducible official historical holdings export and exact header. Otherwise record `KRX_ETF_PDF=ACCESS_NOT_CONFIRMED`, leave this Task unchecked, and do not substitute scraped or inferred data.
+**Gate:** Satisfied on 2026-08-22 for an ETF-by-date official CSV export with the exact six-column header recorded in the field matrix. Map it only as a setting/redemption basket with `PARTIALLY_COVERED/bounded_unknown`; never as a complete economic portfolio.
 
 **Files:**
 
@@ -465,22 +465,26 @@ git commit -m "feat: resolve official identities by exact keys"
 **Interfaces:**
 
 ```python
-def iter_krx_holding_rows(path: Path) -> Iterator[Mapping[str, object]]: ...
+def parse_krx_etf_pdf_csv(payload: bytes) -> tuple[Mapping[str, str], ...]: ...
+
+def build_krx_etf_product_bindings(...) -> KrxEtfBindingResult: ...
 
 def map_krx_holding_snapshot(
     manifest: OfficialSnapshotManifest,
-    rows: Iterable[Mapping[str, object]],
-    identities: OfficialIdentityIndex,
-) -> Iterator[MappedRow]: ...
+    rows: Iterable[Mapping[str, str]],
+    *,
+    binding: KrxEtfProductBinding,
+    security_index: OfficialIdentityIndex,
+) -> MappedRow: ...
 ```
 
-- [ ] **Step 1: Encode the exact approved schema as constants**
+- [x] **Step 1: Encode the exact approved schema as constants**
 
 Use only the header approved in Task 1. Record which columns identify ETF, holding security, weight, quantity, value, currency, and record key. No alias header matching and no guessing Korean/English variants.
 
-- [ ] **Step 2: Write RED mapping tests**
+- [x] **Step 2: Write RED mapping tests**
 
-Cover one ETF with equity, cash, and derivative rows; a zero weight; an invalid negative value under the approved definition; duplicate record keys; unresolved ETF; unresolved holding identifier; conflicting holding identifier; partial publisher file; and an after-cutoff manifest.
+Cover one ETF with equity, cash, derivative, and setting-cash summary rows; missing values; signed cash values; repeated source lots; exact, unresolved, and conflicting holding identifiers; an empty publisher file; wrong bound ETF object; and an after-cutoff manifest. Negative cash values are valid source facts and must not be rejected.
 
 Assert the intended Stage 02 shape:
 
@@ -488,21 +492,20 @@ Assert the intended Stage 02 shape:
 ETF --holdsSecurity--> Security
 relation observation: official holding weight and optional quantity/value
 relation Evidence: exact object key + source record key + official dates
-query_scope Evidence: closed_world only for a complete validated snapshot
+query_scope Evidence: always bounded_unknown for KRX PDF
 ```
 
-- [ ] **Step 3: Implement source-preserving mapping**
+- [x] **Step 3: Implement source-preserving mapping**
 
 Do not merge same-name holdings. Aggregate repeated lots only if Task 1 documents that the publisher defines them as parts of the same holding and the strong security identifier, currency, and payoff profile agree. Otherwise keep separate source-local securities or mark the product partial.
 
 Store percentage values as the official percentage unit, not as a guessed 0-to-1 fraction. Weight-sum diagnostics do not force 100% and do not reject valid cash, derivatives, shorts, or rounding.
 
-- [ ] **Step 4: Emit coverage Evidence**
+- [x] **Step 4: Emit coverage Evidence**
 
-For each organizer domestic ETF emit one `query_scope` Evidence row:
+For each requested organizer ETF snapshot emit one `query_scope` Evidence row. Task 8 combines the captured-object inventory with all organizer ETF bindings to emit `NOT_COVERED` for uncaptured ETFs:
 
 ```text
-COVERED             -> closed_world
 PARTIALLY_COVERED   -> bounded_unknown
 NOT_COVERED         -> bounded_unknown
 CONFLICT            -> bounded_unknown and source_value_conflict issue
@@ -510,13 +513,24 @@ CONFLICT            -> bounded_unknown and source_value_conflict issue
 
 The absence of a holdings row is never emitted as a negative `holdsSecurity` fact.
 
-- [ ] **Step 5: Run focused GREEN**
+- [x] **Step 5: Run focused GREEN**
 
 ```bash
 .venv/bin/python -m pytest tests/ingestion/test_krx_holdings.py -q
 ```
 
-- [ ] **Step 6: Commit**
+Result on 2026-08-22:
+
+- missing production module produced the intended collection RED;
+- focused Task 4 suite passed `14` tests;
+- contracts plus non-live ingestion suite passed `455` tests with `12` deselected;
+- real organizer and historical KRX files produced `1,133` exact bindings, `69` unresolved organizer ETFs, `8` KRX-only ETFs, `1` invalid ISIN, and `1` name drift;
+- one real 2026-07-10 KRX PDF file parsed `200` rows and emitted `200` bounded `holdsSecurity` relations plus `800` relation observations;
+- writer payload preparation accepted the resulting Stage 02 record shapes.
+
+The per-ETF full capture inventory remains a separate pending source-acquisition step; no uncaptured ETF is represented as a negative holding fact.
+
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/financial_agent/ingestion/official/krx_holdings.py \
@@ -530,7 +544,7 @@ git commit -m "feat: map official domestic etf holdings"
 
 ### Task 5: Map eligible KRX ETF close and NAV observations
 
-**Gate:** Snapshot parsing and date validation may proceed after Task 2. Product observations must not be emitted until the KRX ETF basic export provides the Task 1-approved bijective `(official name, listing date)` crosswalk. If the crosswalk remains unavailable, retain the verified raw snapshot and report `LINK_BLOCKED` without mapping product facts.
+**Gate:** Snapshot parsing and date validation may proceed after Task 2. Product observations use only the ADR-0015 checksum-valid organizer ISIN to unique historical KRX short-code binding.
 
 **Files:**
 
