@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from financial_agent.db.preflight import normalize_psycopg_url
+from financial_agent.ingestion.capacity_probe import CapacityProbeError
 from financial_agent.ingestion.pipeline import (
     SOURCE_SPECS,
     OrganizerBuildError,
@@ -25,6 +26,7 @@ from financial_agent.ingestion.pipeline import (
 from financial_agent.ingestion.official_pipeline import (
     OrganizerInputs,
     OfficialPipelineError,
+    build_stage03b_capacity_probe,
     build_stage03b_dataset,
     load_official_manifests,
     validate_stage03b_inputs,
@@ -90,6 +92,10 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("validate-official")
     commands.add_parser("load-stage03b")
     commands.add_parser("verify-official-object-storage")
+    capacity = commands.add_parser("measure-stage03b-capacity")
+    capacity.add_argument("--full-holdings", required=True, type=int)
+    capacity.add_argument("--sample-products", default=100, type=int)
+    capacity.add_argument("--current-storage-gib", default=20, type=int)
     return parser
 
 
@@ -338,6 +344,46 @@ async def _load_stage03b_command() -> int:
     return 0
 
 
+async def _capacity_probe_command(arguments: argparse.Namespace) -> int:
+    organizer_inputs = _organizer_inputs()
+    manifests, object_root = _official_inputs()
+    database_url = _required_env("FINANCIAL_AGENT_BUILD_DATABASE_URL")
+    dataset_version = _required_env("FINANCIAL_AGENT_DATASET_VERSION")
+    engine = create_async_engine(
+        _async_database_url(database_url),
+        pool_size=5,
+        max_overflow=0,
+        connect_args={"options": "-c timezone=UTC"},
+    )
+    try:
+        report = await build_stage03b_capacity_probe(
+            engine,
+            dataset_version=dataset_version,
+            organizer_inputs=organizer_inputs,
+            official_manifests=manifests,
+            official_object_root=object_root,
+            sample_product_count=arguments.sample_products,
+            full_holding_count=arguments.full_holdings,
+            current_storage_gib=arguments.current_storage_gib,
+        )
+    finally:
+        await engine.dispose()
+    print(
+        "CAPACITY_PROBE_OK "
+        f"sample_products={report.sample_product_count} "
+        f"sample_holdings={report.sample_holding_count} "
+        f"base_bytes={report.base_bytes} "
+        f"sample_nport_bytes={report.sampled_nport_bytes} "
+        f"projected_bytes={report.estimate.projected_total_bytes} "
+        f"safety_bytes={report.estimate.safety_adjusted_bytes} "
+        f"current_gib={arguments.current_storage_gib} "
+        f"recommended_gib={report.estimate.recommended_storage_gib} "
+        f"additional_gib={report.estimate.additional_storage_gib} "
+        f"status={report.dataset_status} active={int(report.active)}"
+    )
+    return 0
+
+
 async def _official_object_storage_command() -> int:
     manifests, _ = _official_inputs()
     bucket = _required_env("FINANCIAL_AGENT_OBJECT_STORAGE_BUCKET")
@@ -389,12 +435,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = asyncio.run(_validate_official_command())
         elif arguments.command == "load-stage03b":
             result = asyncio.run(_load_stage03b_command())
+        elif arguments.command == "measure-stage03b-capacity":
+            result = asyncio.run(_capacity_probe_command(arguments))
         else:
             result = asyncio.run(_official_object_storage_command())
         return 0 if result is None else result
     except (
         IngestionArgumentError,
         IngestionConfigurationError,
+        CapacityProbeError,
         ObjectStorageEndpointError,
         OfficialSourceConfigurationError,
         OfficialPipelineError,

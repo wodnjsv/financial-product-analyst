@@ -719,6 +719,91 @@ def test_cli_exposes_stage03b_commands_without_inline_secrets(
     assert arguments.command == command
 
 
+def test_cli_exposes_bounded_stage03b_capacity_probe_arguments() -> None:
+    from financial_agent.ingestion import cli
+
+    arguments = cli._parser().parse_args(
+        ("measure-stage03b-capacity", "--full-holdings", "1300568")
+    )
+
+    assert arguments.command == "measure-stage03b-capacity"
+    assert arguments.full_holdings == 1_300_568
+    assert arguments.sample_products == 100
+    assert arguments.current_storage_gib == 20
+
+
+@pytest.mark.asyncio
+async def test_capacity_probe_command_prints_only_aggregate_measurements(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from financial_agent.ingestion import cli
+
+    class FakeEngine:
+        async def dispose(self) -> None:
+            return None
+
+    observed: dict[str, object] = {}
+    monkeypatch.setenv(
+        "FINANCIAL_AGENT_BUILD_DATABASE_URL",
+        "postgresql://user:PRIVATE-PASSWORD@example.invalid/db",
+    )
+    monkeypatch.setenv(
+        "FINANCIAL_AGENT_DATASET_VERSION",
+        "PRIVATE-CAPACITY-DATASET",
+    )
+    monkeypatch.setattr(cli, "_source_inputs", lambda: _inputs())
+    monkeypatch.setattr(
+        cli,
+        "_official_inputs",
+        lambda: ((), Path("/official-objects")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "create_async_engine",
+        lambda *args, **kwargs: FakeEngine(),
+    )
+
+    async def build(engine: object, **kwargs: object) -> object:
+        del engine
+        observed.update(kwargs)
+        return SimpleNamespace(
+            sample_product_count=100,
+            sample_holding_count=120_000,
+            base_bytes=1_000,
+            sampled_nport_bytes=2_000,
+            dataset_status="building",
+            active=False,
+            estimate=SimpleNamespace(
+                projected_total_bytes=30_000,
+                safety_adjusted_bytes=39_000,
+                recommended_storage_gib=50,
+                additional_storage_gib=30,
+            ),
+        )
+
+    monkeypatch.setattr(
+        cli, "build_stage03b_capacity_probe", build, raising=False
+    )
+    arguments = cli._parser().parse_args(
+        ("measure-stage03b-capacity", "--full-holdings", "1300568")
+    )
+
+    assert await cli._capacity_probe_command(arguments) == 0
+    assert observed["dataset_version"] == "PRIVATE-CAPACITY-DATASET"
+    assert observed["sample_product_count"] == 100
+    assert observed["full_holding_count"] == 1_300_568
+    output = capsys.readouterr().out
+    assert output == (
+        "CAPACITY_PROBE_OK sample_products=100 sample_holdings=120000 "
+        "base_bytes=1000 sample_nport_bytes=2000 projected_bytes=30000 "
+        "safety_bytes=39000 current_gib=20 recommended_gib=50 "
+        "additional_gib=30 status=building active=0\n"
+    )
+    assert "PRIVATE-PASSWORD" not in output
+    assert "PRIVATE-CAPACITY-DATASET" not in output
+
+
 def test_capture_official_fails_closed_without_source_specific_configuration(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

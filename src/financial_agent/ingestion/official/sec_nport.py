@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import codecs
 import csv
+import hashlib
 import json
 import re
 import shutil
@@ -1540,6 +1541,7 @@ def iter_eligible_nport_funds(
     manifest: OfficialSnapshotManifest,
     series_class_index: OfficialIdentityIndex,
     product_bindings: Iterable[NportProductBinding],
+    matched_product_sample_size: int | None = None,
 ) -> Iterator[MappedRow]:
     manifest_hash = _validate_manifest(manifest, cutoff)
     filings, submission_accessions = _load_filings(files, cutoff)
@@ -1574,6 +1576,31 @@ def iter_eligible_nport_funds(
         binding_selections.append(
             (binding_number, binding, resolution, filing)
         )
+    if matched_product_sample_size is not None:
+        if matched_product_sample_size < 1:
+            raise _error(
+                "SEC_NPORT_SAMPLE_INVALID",
+                "SEC N-PORT sample size must be positive",
+            )
+        matched = [
+            selection
+            for selection in binding_selections
+            if selection[3] is not None
+        ]
+        if len(matched) < matched_product_sample_size:
+            raise _error(
+                "SEC_NPORT_SAMPLE_INSUFFICIENT",
+                "SEC N-PORT matched population is smaller than the sample",
+            )
+        matched.sort(
+            key=lambda selection: (
+                hashlib.sha256(
+                    selection[1].product_entity_id.encode("utf-8")
+                ).digest(),
+                selection[1].product_entity_id,
+            )
+        )
+        binding_selections = matched[:matched_product_sample_size]
     selected_accessions = frozenset(
         filing.accession
         for _, _, _, filing in binding_selections

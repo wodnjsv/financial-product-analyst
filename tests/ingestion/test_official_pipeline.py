@@ -19,7 +19,9 @@ from financial_agent.ingestion.official.models import (
 from financial_agent.ingestion.official_pipeline import (
     OrganizerInputs,
     OfficialPipelineError,
+    build_stage03b_capacity_probe,
     build_stage03b_dataset,
+    compose_stage03b_capacity_probe_manifest,
     compose_stage03b_manifest,
     load_official_manifests,
     verify_official_snapshot_objects,
@@ -110,6 +112,33 @@ def test_combined_manifest_is_order_independent_and_organizer_only_compatible(
     assert organizer_only == ORGANIZER_MANIFEST
     assert canonical_sha256(organizer_only) == canonical_sha256(ORGANIZER_MANIFEST)
     assert canonical_sha256(left) == canonical_sha256(right)
+
+
+def test_capacity_probe_manifest_records_the_bounded_sample_contract(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(
+        tmp_path,
+        source_code="SEC_NPORT_2026Q2",
+        snapshot_id="nport-2026q2",
+        payload=b"nport",
+    )
+
+    combined = compose_stage03b_capacity_probe_manifest(
+        ORGANIZER_MANIFEST,
+        (manifest,),
+        sample_product_count=100,
+        full_holding_count=1_300_568,
+    )
+
+    assert combined["capacity_probe"] == {
+        "full_holding_count": 1_300_568,
+        "sample_product_count": 100,
+        "sample_selection": "sha256_product_entity_id_v1",
+    }
+    assert canonical_sha256(combined) != canonical_sha256(
+        compose_stage03b_manifest(ORGANIZER_MANIFEST, (manifest,))
+    )
 
 
 def test_canonical_official_manifests_load_in_stable_order(
@@ -638,6 +667,101 @@ async def test_sec_crosswalk_precedes_bounded_nport_holdings(
     assert report.source_counts["SEC_SERIES_CLASS_20260601"]["snapshots"] == 1
     assert report.source_counts["SEC_NPORT_2026Q2"]["COVERED"] == 1
     assert report.source_counts["SEC_NPORT_2026Q2"]["accepted"] == 1
+
+
+@pytest.mark.asyncio
+async def test_capacity_probe_measures_base_then_sample_and_stays_inactive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from financial_agent.ingestion import official_pipeline
+
+    _configure_build_seams(monkeypatch)
+    monkeypatch.setattr(
+        official_pipeline,
+        "_organizer_rows_for_official",
+        lambda data_paths, source_codes: {
+            "PREF02N001": (
+                {
+                    "pd_itm_no": "OVERSEAS-ETF-1",
+                    "pd_us_cik": "0000123456",
+                    "pd_abrv_nm": "SYNX",
+                },
+            )
+        },
+    )
+    measurements = iter((100, 700, 1_700))
+
+    async def measure(engine: object) -> int:
+        del engine
+        return next(measurements)
+
+    async def count_holdings(engine: object, dataset: str) -> int:
+        del engine, dataset
+        return 1
+
+    async def state(engine: object, dataset: str) -> tuple[str, bool]:
+        del engine, dataset
+        return "building", False
+
+    async def absent(engine: object, dataset: str) -> None:
+        del engine, dataset
+
+    monkeypatch.setattr(
+        official_pipeline, "measure_application_storage_bytes", measure
+    )
+    monkeypatch.setattr(
+        official_pipeline, "count_nport_holding_relations", count_holdings
+    )
+    monkeypatch.setattr(
+        official_pipeline, "capacity_probe_dataset_state", state
+    )
+    monkeypatch.setattr(
+        official_pipeline, "require_capacity_probe_dataset_absent", absent
+    )
+    series_payload = sec_series_class_payload()
+    archive_path = write_sec_nport_archive(tmp_path / "nport.zip")
+    archive_payload = archive_path.read_bytes()
+    series_manifest = official_manifest(
+        source_code="SEC_SERIES_CLASS_20260601",
+        object_name="series-class.csv",
+        payload=series_payload,
+        applicable_date=date(2026, 6, 1),
+        published_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        available_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        media_type="text/csv",
+    )
+    nport_manifest = official_manifest(
+        source_code="SEC_NPORT_2026Q2",
+        object_name="nport-2026q2.zip",
+        payload=archive_payload,
+        applicable_date=date(2026, 3, 31),
+        published_at=datetime(2026, 6, 30, tzinfo=timezone.utc),
+        available_at=datetime(2026, 7, 9, tzinfo=timezone.utc),
+        media_type="application/zip",
+    )
+    _store_manifest_object(tmp_path, series_manifest, series_payload)
+    _store_manifest_object(tmp_path, nport_manifest, archive_payload)
+
+    report = await build_stage03b_capacity_probe(
+        object(),
+        dataset_version="capacity-probe-new",
+        organizer_inputs=_organizer_inputs(),
+        official_manifests=(nport_manifest, series_manifest),
+        official_object_root=tmp_path,
+        sample_product_count=1,
+        full_holding_count=10,
+        current_storage_gib=20,
+    )
+
+    assert report.sample_product_count == 1
+    assert report.sample_holding_count == 1
+    assert report.storage_before_bytes == 100
+    assert report.base_bytes == 600
+    assert report.sampled_nport_bytes == 1_000
+    assert report.dataset_status == "building"
+    assert report.active is False
+    assert report.estimate.projected_nport_bytes == 10_000
 
 
 @pytest.mark.postgres

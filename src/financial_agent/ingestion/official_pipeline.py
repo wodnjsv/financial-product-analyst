@@ -15,6 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from financial_agent.contracts import canonical_sha256
 from financial_agent.ingestion import pipeline as organizer_pipeline
+from financial_agent.ingestion.capacity_probe import (
+    CapacityProbeError,
+    CapacityProbeReport,
+    capacity_probe_dataset_state,
+    count_nport_holding_relations,
+    estimate_stage03b_capacity,
+    measure_application_storage_bytes,
+    require_capacity_probe_dataset_absent,
+)
 from financial_agent.ingestion.mapping.common import (
     make_record_hash,
     normalize_name,
@@ -266,6 +275,24 @@ def compose_stage03b_manifest(
     return combined
 
 
+def compose_stage03b_capacity_probe_manifest(
+    organizer_manifest: Mapping[str, object],
+    official_manifests: Sequence[OfficialSnapshotManifest],
+    *,
+    sample_product_count: int,
+    full_holding_count: int,
+) -> Mapping[str, object]:
+    combined = dict(
+        compose_stage03b_manifest(organizer_manifest, official_manifests)
+    )
+    combined["capacity_probe"] = {
+        "full_holding_count": full_holding_count,
+        "sample_product_count": sample_product_count,
+        "sample_selection": "sha256_product_entity_id_v1",
+    }
+    return combined
+
+
 def verify_official_snapshot_objects(
     official_manifests: Sequence[OfficialSnapshotManifest],
     object_root: Path,
@@ -361,6 +388,7 @@ def _prepare_official_sources(
     verified_paths: Mapping[tuple[str, str], Path],
     organizer_rows: Mapping[str, tuple[Mapping[str, object], ...]],
     scratch_root: Path,
+    nport_matched_product_sample_size: int | None = None,
 ) -> tuple[_PreparedOfficialSource, ...]:
     grouped: dict[str, list[OfficialSnapshotManifest]] = {}
     for manifest in _ordered_manifests(official_manifests):
@@ -537,6 +565,9 @@ def _prepare_official_sources(
                     manifest=manifest,
                     series_class_index=series_index,
                     product_bindings=bindings,
+                    matched_product_sample_size=(
+                        nport_matched_product_sample_size
+                    ),
                 )
             )
         )
@@ -852,3 +883,152 @@ async def build_stage03b_dataset(
             component_hashes=component_hashes,
             passed=organizer_result.passed and official_result.passed,
         )
+
+
+async def build_stage03b_capacity_probe(
+    engine: AsyncEngine,
+    *,
+    dataset_version: str,
+    organizer_inputs: OrganizerInputs,
+    official_manifests: Sequence[OfficialSnapshotManifest],
+    official_object_root: Path,
+    sample_product_count: int,
+    full_holding_count: int,
+    current_storage_gib: int,
+    batch_size: int = 1000,
+) -> CapacityProbeReport:
+    if (
+        batch_size < 1
+        or sample_product_count < 1
+        or full_holding_count < 1
+        or current_storage_gib < 1
+    ):
+        raise CapacityProbeError("CAPACITY_PROBE_INPUT_INVALID") from None
+    source_codes = {manifest.source_code for manifest in official_manifests}
+    if not {
+        "SEC_SERIES_CLASS_20260601",
+        "SEC_NPORT_2026Q2",
+    }.issubset(source_codes):
+        raise CapacityProbeError("CAPACITY_PROBE_SOURCE_MISSING") from None
+
+    await require_capacity_probe_dataset_absent(engine, dataset_version)
+    with _snapshot_source_inputs(
+        organizer_inputs.data_paths,
+        organizer_inputs.schema_paths,
+    ) as (data_paths, schema_paths):
+        preflight = _preflight_sources(
+            data_paths=data_paths,
+            schema_paths=schema_paths,
+            data_sha256=organizer_inputs.data_sha256,
+            schema_sha256=organizer_inputs.schema_sha256,
+        )
+        with _snapshot_official_inputs(
+            official_manifests,
+            official_object_root,
+        ) as verified_paths:
+            combined_manifest = compose_stage03b_capacity_probe_manifest(
+                preflight.manifest,
+                official_manifests,
+                sample_product_count=sample_product_count,
+                full_holding_count=full_holding_count,
+            )
+            manifest_hash = canonical_sha256(combined_manifest)
+            with tempfile.TemporaryDirectory(
+                prefix="financial-agent-capacity-probe-"
+            ) as temporary_root:
+                prepared_sources = _prepare_official_sources(
+                    official_manifests,
+                    verified_paths,
+                    _organizer_rows_for_official(
+                        data_paths,
+                        source_codes,
+                    ),
+                    Path(temporary_root),
+                    nport_matched_product_sample_size=sample_product_count,
+                )
+                nport_sources = tuple(
+                    source
+                    for source in prepared_sources
+                    if source.source_code == "SEC_NPORT_2026Q2"
+                )
+                base_sources = tuple(
+                    source
+                    for source in prepared_sources
+                    if source.source_code != "SEC_NPORT_2026Q2"
+                )
+                if len(nport_sources) != 1:
+                    raise CapacityProbeError(
+                        "CAPACITY_PROBE_SOURCE_MISSING"
+                    ) from None
+
+                storage_before = await measure_application_storage_bytes(engine)
+                writer = DatasetBuildWriter(engine)
+                await writer.create_building_dataset(
+                    dataset_version,
+                    manifest_hash,
+                    CUTOFF_DATE,
+                )
+                organizer_result = await write_preflighted_organizer_rows(
+                    writer,
+                    dataset_version=dataset_version,
+                    data_paths=data_paths,
+                    preflight=preflight,
+                    batch_size=batch_size,
+                )
+                base_result = await _write_official_sources(
+                    writer,
+                    dataset_version=dataset_version,
+                    sources=base_sources,
+                    batch_size=batch_size,
+                )
+                storage_after_base = await measure_application_storage_bytes(
+                    engine
+                )
+                nport_result = await _write_official_sources(
+                    writer,
+                    dataset_version=dataset_version,
+                    sources=nport_sources,
+                    batch_size=batch_size,
+                )
+                storage_after_sample = await measure_application_storage_bytes(
+                    engine
+                )
+
+    sampled_products = int(
+        nport_result.source_counts["SEC_NPORT_2026Q2"]["rows"]
+    )
+    sampled_holdings = await count_nport_holding_relations(
+        engine, dataset_version
+    )
+    status, active = await capacity_probe_dataset_state(engine, dataset_version)
+    base_bytes = storage_after_base - storage_before
+    sampled_nport_bytes = storage_after_sample - storage_after_base
+    if (
+        sampled_products != sample_product_count
+        or sampled_holdings < 1
+        or base_bytes < 1
+        or sampled_nport_bytes < 1
+        or not organizer_result.passed
+        or not base_result.passed
+        or not nport_result.passed
+        or status != "building"
+        or active
+    ):
+        raise CapacityProbeError("CAPACITY_PROBE_MEASUREMENT_INVALID") from None
+    estimate = estimate_stage03b_capacity(
+        base_bytes=base_bytes,
+        sampled_nport_bytes=sampled_nport_bytes,
+        sampled_holding_count=sampled_holdings,
+        full_holding_count=full_holding_count,
+        current_storage_gib=current_storage_gib,
+    )
+    return CapacityProbeReport(
+        sample_product_count=sampled_products,
+        sample_holding_count=sampled_holdings,
+        storage_before_bytes=storage_before,
+        base_bytes=base_bytes,
+        sampled_nport_bytes=sampled_nport_bytes,
+        dataset_status=status,
+        active=active,
+        estimate=estimate,
+    )

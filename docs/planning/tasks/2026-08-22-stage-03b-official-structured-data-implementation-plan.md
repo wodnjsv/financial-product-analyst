@@ -1125,6 +1125,40 @@ git commit -m "test: verify stage 03b official ingestion"
 
 Expected: one independently verifiable Stage 03B deliverable. Do not push, merge, rebuild final NCP PostgreSQL, or activate a dataset without separate user authorization.
 
+### Task 9 capacity-probe amendment (approved 2026-08-23)
+
+Before the full N-PORT load, measure its PostgreSQL footprint with one bounded,
+non-active sample. This is a capacity decision gate, not an accepted data build.
+
+- Select exactly 100 organizer overseas ETFs that resolve through the approved
+  SEC Series/Class chain to an eligible N-PORT filing. Order candidates by a
+  stable SHA-256 key so the same snapshot selects the same products.
+- Map the selected products through the unchanged N-PORT mapper. Keep all six
+  approved holding metrics, `holdsSecurity` relations, Evidence records, and
+  origin rows; do not create a reduced measurement schema.
+- Write organizer data and every non-N-PORT official source first, measure the
+  application-table footprint, then append the sampled N-PORT rows and measure
+  the second footprint. Use the same PostgreSQL 15 tables and indexes as the
+  full build.
+- Record the probe parameters in the immutable combined manifest. Require a
+  new explicit dataset version and reject an existing version so an idempotent
+  retry cannot produce a false zero-byte measurement.
+- Keep the probe dataset in `building` and prove it is absent from
+  `operations.active_dataset`. Do not delete it until the user reviews the
+  capacity result.
+- Extrapolate the measured N-PORT increment from the actual sampled holding
+  count to the verified full population of `1,300,568` holdings, add the
+  measured non-N-PORT base, apply a 30% safety margin, and round up to a 10 GiB
+  storage increment. Compare that value with the current 20 GiB allocation.
+- Print aggregate counts and byte/GiB estimates only. Never print product
+  identifiers, names, holdings, credentials, object keys, URLs, or database
+  identifiers.
+
+Capacity-probe success requires deterministic sample selection, literal
+projection tests, real PostgreSQL before/base/after measurements, exact
+`building` and inactive assertions, and the normal non-live regression. It
+does not authorize the full NCP load or activation.
+
 ## Task Checkpoints
 
 - Task 1 is a mandatory user approval gate before Tasks 3 through 7.

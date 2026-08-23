@@ -134,6 +134,7 @@ def _map_files(
     files: dict[str, bytes] | None = None,
     bindings: tuple[NportProductBinding, ...] | None = None,
     series_index: OfficialIdentityIndex | None = None,
+    matched_product_sample_size: int | None = None,
 ) -> tuple[MappedRow, ...]:
     values = files or sec_nport_tsv_files()
     return tuple(
@@ -143,6 +144,7 @@ def _map_files(
             manifest=_nport_manifest(values),
             series_class_index=series_index or _series_index(),
             product_bindings=bindings or (_binding(),),
+            matched_product_sample_size=matched_product_sample_size,
         )
     )
 
@@ -155,6 +157,52 @@ def _records(
         for row in rows
         for record in row.records_by_table[table]
     )
+
+
+def test_capacity_probe_selects_a_stable_sample_of_matched_products(
+    tmp_path: Path,
+) -> None:
+    mapped = _map_files(
+        tmp_path,
+        bindings=(
+            _binding(product_id="product-b"),
+            _binding(product_id="unmatched", ticker="MISS"),
+            _binding(product_id="product-a"),
+        ),
+        matched_product_sample_size=1,
+    )
+
+    assert len(mapped) == 1
+    relations = _records(mapped, "relation.relation_record")
+    assert {
+        row["subject_id"]
+        for row in relations
+        if row["predicate_id"] == "holdsSecurity"
+    } == {"product-a"}
+    assert {
+        row["metric_id"]
+        for row in _records(mapped, "observation.observation_record")
+    } == {
+        "official_holding_asset_category",
+        "official_holding_balance",
+        "official_holding_currency",
+        "official_holding_currency_value",
+        "official_holding_investment_country",
+        "official_holding_weight_pct",
+    }
+
+
+def test_capacity_probe_rejects_a_sample_larger_than_the_matched_population(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SourceVerificationError) as captured:
+        _map_files(
+            tmp_path,
+            bindings=(_binding(),),
+            matched_product_sample_size=2,
+        )
+
+    assert captured.value.code == "SEC_NPORT_SAMPLE_INSUFFICIENT"
 
 
 def test_nport_extractor_writes_only_the_five_approved_files(
