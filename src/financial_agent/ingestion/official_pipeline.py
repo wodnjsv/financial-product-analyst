@@ -387,6 +387,7 @@ def _prepare_official_sources(
     official_manifests: Sequence[OfficialSnapshotManifest],
     verified_paths: Mapping[tuple[str, str], Path],
     organizer_rows: Mapping[str, tuple[Mapping[str, object], ...]],
+    organizer_contexts: Mapping[str, object],
     scratch_root: Path,
     nport_matched_product_sample_size: int | None = None,
 ) -> tuple[_PreparedOfficialSource, ...]:
@@ -529,16 +530,33 @@ def _prepare_official_sources(
         if series_index is None:
             raise OfficialPipelineError("OFFICIAL_DEPENDENCY_MISSING") from None
         overseas_rows = organizer_rows.get("PREF02N001")
-        if overseas_rows is None:
+        organizer_context = organizer_contexts.get("PREF02N001")
+        if overseas_rows is None or organizer_context is None:
             raise OfficialPipelineError("OFFICIAL_DEPENDENCY_MISSING") from None
         bindings_by_product: dict[str, NportProductBinding] = {}
-        for row in overseas_rows:
+        for row_number, row in enumerate(overseas_rows, start=2):
             record_key = normalize_name(str(row.get("pd_itm_no", "")))
-            cik = normalize_name(str(row.get("pd_us_cik", "")))
-            ticker = normalize_name(str(row.get("pd_abrv_nm", "")))
-            if any(value in {"", "NULL"} for value in (record_key, cik, ticker)):
+            if record_key in {"", "NULL"}:
                 continue
             product_id = stable_id("product", "PREF02N001", record_key)
+            mapped = organizer_pipeline._map_source_row(
+                "PREF02N001",
+                row_number,
+                row,
+                organizer_context,
+            )
+            if not any(
+                entity.get("entity_id") == product_id
+                and entity.get("entity_type") == "product"
+                for entity in mapped.records_by_table.get(
+                    "catalog.entity", ()
+                )
+            ):
+                continue
+            cik = normalize_name(str(row.get("pd_us_cik", "")))
+            ticker = normalize_name(str(row.get("pd_abrv_nm", "")))
+            if any(value in {"", "NULL"} for value in (cik, ticker)):
+                continue
             binding = NportProductBinding(
                 product_entity_id=product_id,
                 cik=cik,
@@ -710,6 +728,7 @@ def validate_stage03b_inputs(
                             for manifest in official_manifests
                         },
                     ),
+                    preflight.contexts,
                     Path(temporary_root),
                 )
             return canonical_sha256(combined_manifest)
@@ -842,6 +861,7 @@ async def build_stage03b_dataset(
                             for manifest in official_manifests
                         },
                     ),
+                    preflight.contexts,
                     Path(temporary_root),
                 )
 
@@ -943,6 +963,7 @@ async def build_stage03b_capacity_probe(
                         data_paths,
                         source_codes,
                     ),
+                    preflight.contexts,
                     Path(temporary_root),
                     nport_matched_product_sample_size=sample_product_count,
                 )

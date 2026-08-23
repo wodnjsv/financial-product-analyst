@@ -1159,6 +1159,51 @@ projection tests, real PostgreSQL before/base/after measurements, exact
 `building` and inactive assertions, and the normal non-live regression. It
 does not authorize the full NCP load or activation.
 
+### Task 9 organizer-authority correction (approved 2026-08-24)
+
+The first full NCP capacity build committed the organizer and non-N-PORT
+sources, then failed when an SEC-derived relation referenced a product that
+the organizer mapper had not persisted. The raw overseas row contained the
+fields needed for an SEC binding, but it had been quarantined by the
+authoritative organizer mapping rules. Building SEC bindings directly from
+raw rows could therefore revive an organizer-rejected product and violate the
+`relation_record` subject foreign key.
+
+Apply the following invariant before any N-PORT mapping or database write:
+
+- run the canonical `PREF02N001` organizer mapper for each candidate row;
+- create an N-PORT product binding only when that mapping emits the exact
+  organizer-derived `product` entity ID;
+- never create an external-source product or relation for a row the organizer
+  mapper quarantines or excludes; and
+- keep the organizer value authoritative whenever an external source
+  conflicts with the same evaluation field.
+
+Implement this as a narrow pipeline-boundary correction. Do not change DDL,
+ontology, source bytes, domestic ETF behavior, dataset lifecycle, or the
+existing failed `building` capacity dataset. Add a regression that first
+reproduces the dangling binding from a raw row with valid SEC identifiers but
+no persisted organizer product, then proves the corrected binding set is a
+subset of organizer-emitted product entities. Run focused official-pipeline
+tests, the ordinary non-live ingestion regression, schema export, compile,
+dependency, diff, secret, and raw-data checks before committing. A fresh NCP
+capacity run remains a separate operational decision after the fix is
+verified.
+
+Correction verification evidence:
+
+- RED: the new quarantined-organizer regression failed with one N-PORT row
+  created from a raw organizer row that lacked its required internal key and
+  name;
+- GREEN: the same regression passed after the canonical organizer mapper was
+  applied before binding;
+- focused SEC/N-PORT regression: `55 passed, 1 deselected`; and
+- ordinary contract/ingestion regression: `520 passed, 18 deselected`.
+
+Contract schema export, source/test compilation, dependency compatibility,
+and diff checks also passed. These checks do not authorize a fresh NCP build,
+deletion of the partial probe, or dataset activation.
+
 ## Task Checkpoints
 
 - Task 1 is a mandatory user approval gate before Tasks 3 through 7.

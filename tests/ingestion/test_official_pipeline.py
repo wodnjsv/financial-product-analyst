@@ -317,6 +317,7 @@ def _configure_build_seams(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return SimpleNamespace(
             manifest=ORGANIZER_MANIFEST,
             manifest_hash=canonical_sha256(ORGANIZER_MANIFEST),
+            contexts={"PREF02N001": {}},
         )
 
     async def write_organizer(*args: object, **kwargs: object) -> OrganizerWriteResult:
@@ -622,6 +623,8 @@ async def test_sec_crosswalk_precedes_bounded_nport_holdings(
             "PREF02N001": (
                 {
                     "pd_itm_no": "OVERSEAS-ETF-1",
+                    "pd_itm_no_ma": "OVERSEAS-ETF-MASTER-1",
+                    "pd_nm": "Synthetic Overseas ETF",
                     "pd_us_cik": "0000123456",
                     "pd_abrv_nm": "SYNX",
                 },
@@ -670,6 +673,62 @@ async def test_sec_crosswalk_precedes_bounded_nport_holdings(
 
 
 @pytest.mark.asyncio
+async def test_nport_does_not_bind_an_organizer_quarantined_product(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from financial_agent.ingestion import official_pipeline
+
+    _configure_build_seams(monkeypatch)
+    monkeypatch.setattr(
+        official_pipeline,
+        "_organizer_rows_for_official",
+        lambda data_paths, source_codes: {
+            "PREF02N001": (
+                {
+                    "pd_itm_no": "OVERSEAS-ETF-1",
+                    "pd_us_cik": "0000123456",
+                    "pd_abrv_nm": "SYNX",
+                },
+            )
+        },
+    )
+    series_payload = sec_series_class_payload()
+    archive_path = write_sec_nport_archive(tmp_path / "nport.zip")
+    archive_payload = archive_path.read_bytes()
+    series_manifest = official_manifest(
+        source_code="SEC_SERIES_CLASS_20260601",
+        object_name="series-class.csv",
+        payload=series_payload,
+        applicable_date=date(2026, 6, 1),
+        published_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        available_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        media_type="text/csv",
+    )
+    nport_manifest = official_manifest(
+        source_code="SEC_NPORT_2026Q2",
+        object_name="nport-2026q2.zip",
+        payload=archive_payload,
+        applicable_date=date(2026, 3, 31),
+        published_at=datetime(2026, 6, 30, tzinfo=timezone.utc),
+        available_at=datetime(2026, 7, 9, tzinfo=timezone.utc),
+        media_type="application/zip",
+    )
+    _store_manifest_object(tmp_path, series_manifest, series_payload)
+    _store_manifest_object(tmp_path, nport_manifest, archive_payload)
+
+    report = await build_stage03b_dataset(
+        object(),
+        dataset_version="combined-sec-organizer-quarantined",
+        organizer_inputs=_organizer_inputs(),
+        official_manifests=(nport_manifest, series_manifest),
+        official_object_root=tmp_path,
+    )
+
+    assert report.source_counts["SEC_NPORT_2026Q2"]["rows"] == 0
+
+
+@pytest.mark.asyncio
 async def test_capacity_probe_measures_base_then_sample_and_stays_inactive(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -684,6 +743,8 @@ async def test_capacity_probe_measures_base_then_sample_and_stays_inactive(
             "PREF02N001": (
                 {
                     "pd_itm_no": "OVERSEAS-ETF-1",
+                    "pd_itm_no_ma": "OVERSEAS-ETF-MASTER-1",
+                    "pd_nm": "Synthetic Overseas ETF",
                     "pd_us_cik": "0000123456",
                     "pd_abrv_nm": "SYNX",
                 },
