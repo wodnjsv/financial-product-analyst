@@ -161,22 +161,50 @@ def sec_series_class_payload(
             "Class Ticker": "SYNX",
         },
     )
+    official_values = tuple(
+        {
+            "Reporting File Number": "811-SYNTHETIC",
+            "CIK Number": row["CIK"],
+            "Entity Name": "Synthetic Investment Company",
+            "Entity Org Type": "30",
+            "Series ID": row["Series ID"],
+            "Series Name": row["Series Name"],
+            "Class ID": row["Class ID"],
+            "Class Name": row["Class Name"],
+            "Class Ticker": row["Class Ticker"],
+            "Address_1": "",
+            "Address_2": "",
+            "City": "",
+            "State": "",
+            "Zip Code": "",
+        }
+        for row in values
+    )
     output = io.StringIO(newline="")
     writer = csv.DictWriter(
         output,
         fieldnames=(
-            "CIK",
+            "Reporting File Number",
+            "CIK Number",
+            "Entity Name",
+            "Entity Org Type",
             "Series ID",
             "Series Name",
             "Class ID",
             "Class Name",
             "Class Ticker",
+            "Address_1",
+            "Address_2",
+            "City",
+            "State",
+            "Zip Code",
         ),
         lineterminator="\n",
     )
     writer.writeheader()
-    writer.writerows(values)
-    return output.getvalue().encode("utf-8")
+    writer.writerows(official_values)
+    output.write("\nNo filters applied\n")
+    return output.getvalue().encode("utf-8-sig")
 
 
 def ecos_731y001_payload(
@@ -254,11 +282,11 @@ def sec_nport_tsv_files() -> dict[str, bytes]:
             (
                 {
                     "ACCESSION_NUMBER": accession,
-                    "FILING_DATE": "2026-06-20",
+                    "FILING_DATE": "20-JUN-2026",
                     "FILE_NUM": "811-SYNTHETIC",
                     "SUB_TYPE": "NPORT-P/A",
-                    "REPORT_ENDING_PERIOD": "2026-12-31",
-                    "REPORT_DATE": "2026-03-31",
+                    "REPORT_ENDING_PERIOD": "31-DEC-2026",
+                    "REPORT_DATE": "31-MAR-2026",
                     "IS_LAST_FILING": "N",
                 },
             ),

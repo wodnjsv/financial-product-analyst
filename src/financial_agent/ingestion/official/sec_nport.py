@@ -5,11 +5,12 @@ import csv
 import json
 import re
 import shutil
+import sqlite3
 import stat
 import tempfile
 import zipfile
-from collections import Counter
 from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -76,12 +77,16 @@ _REQUIRED_HEADERS = {
     },
 }
 _STREAM_CHUNK_BYTES = 1024 * 1024
+_HOLDING_OUTPUT_BATCH_SIZE = 250
 _MAXIMUM_COMPRESSION_RATIO = 200
 _SOURCE_CODE = "SEC_NPORT_2026Q2"
 _SERIES_SOURCE_CODE = "SEC_SERIES_CLASS_20260601"
 _APPROVED_PACKAGE_DATE = date(2026, 6, 30)
+_APPROVED_AVAILABLE_DATE = date(2026, 7, 9)
 _APPROVED_AT = datetime(2026, 8, 22, tzinfo=UTC)
-_DECIMAL_PATTERN = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?")
+_DECIMAL_PATTERN = re.compile(
+    r"-?(?:(?:0|[1-9][0-9]*)(?:\.[0-9]+)?|\.[0-9]+)"
+)
 _CIK_PATTERN = re.compile(r"[0-9]{1,10}")
 _SERIES_PATTERN = re.compile(r"S[0-9]{9}")
 _TABLES = (
@@ -418,10 +423,30 @@ def _unique_by(
     return indexed
 
 
-def _parse_iso_date(value: str) -> date:
-    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value) is None:
+def _parse_sec_date(value: str) -> date:
+    match = re.fullmatch(
+        r"(0[1-9]|[12][0-9]|3[01])-"
+        r"(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)-"
+        r"([0-9]{4})",
+        value,
+    )
+    if match is None:
         raise ValueError
-    return date.fromisoformat(value)
+    month = (
+        "JAN",
+        "FEB",
+        "MAR",
+        "APR",
+        "MAY",
+        "JUN",
+        "JUL",
+        "AUG",
+        "SEP",
+        "OCT",
+        "NOV",
+        "DEC",
+    ).index(match.group(2)) + 1
+    return date(int(match.group(3)), month, int(match.group(1)))
 
 
 def _normalize_cik(value: str) -> str:
@@ -505,7 +530,7 @@ def _validate_manifest(
         or manifest.published_at is None
         or manifest.available_at is None
         or manifest.published_at.date() != _APPROVED_PACKAGE_DATE
-        or manifest.available_at.date() != _APPROVED_PACKAGE_DATE
+        or manifest.available_at.date() != _APPROVED_AVAILABLE_DATE
     ):
         raise _error(
             "SEC_NPORT_SOURCE_MISMATCH",
@@ -539,13 +564,15 @@ def _load_filings(
     for key, submission in submission_by_key.items():
         accession = key[0]
         try:
-            filing_date = _parse_iso_date(submission.values["FILING_DATE"])
-            report_date = _parse_iso_date(submission.values["REPORT_DATE"])
+            filing_date = _parse_sec_date(submission.values["FILING_DATE"])
+            report_date = _parse_sec_date(submission.values["REPORT_DATE"])
             subtype = normalize_name(submission.values["SUB_TYPE"]).upper()
             registrant = registrant_by_key[(accession,)]
             fund = fund_by_key[(accession,)]
             cik = _normalize_cik(registrant.values["CIK"])
             series_id = normalize_name(fund.values["SERIES_ID"]).upper()
+            if not series_id:
+                continue
             if _SERIES_PATTERN.fullmatch(series_id) is None:
                 raise ValueError
         except (KeyError, ValueError):
@@ -599,68 +626,227 @@ def _load_filings(
     return tuple(latest_by_series.values()), frozenset(submission_accessions)
 
 
-def _load_selected_holdings(
+@dataclass(frozen=True, slots=True)
+class _SelectedHoldingStore:
+    connection: sqlite3.Connection
+
+    def duplicate_isins(self) -> frozenset[str]:
+        return frozenset(
+            str(row[0])
+            for row in self.connection.execute(
+                """
+                SELECT isin
+                FROM identifiers
+                WHERE isin <> ''
+                GROUP BY isin
+                HAVING COUNT(*) > 1
+                """
+            )
+        )
+
+    def duplicate_cusips(self) -> frozenset[str]:
+        return frozenset(
+            str(row[0])
+            for row in self.connection.execute(
+                """
+                SELECT cusip
+                FROM holdings
+                WHERE selected = 1 AND cusip <> ''
+                GROUP BY cusip
+                HAVING COUNT(*) > 1
+                """
+            )
+        )
+
+    def iter_holdings(
+        self, accession: str
+    ) -> Iterator[tuple[_TsvRow, tuple[_TsvRow, ...]]]:
+        current: _TsvRow | None = None
+        identifiers: list[_TsvRow] = []
+        for row in self.connection.execute(
+            """
+            SELECT
+                holding.row_number,
+                holding.payload,
+                identifier.row_number,
+                identifier.payload
+            FROM holdings AS holding
+            LEFT JOIN identifiers AS identifier
+              ON identifier.holding_id = holding.holding_id
+            WHERE holding.accession = ? AND holding.selected = 1
+            ORDER BY holding.row_number, identifier.row_number
+            """,
+            (accession,),
+        ):
+            holding_row_number = int(row[0])
+            if current is None or current.row_number != holding_row_number:
+                if current is not None:
+                    yield current, tuple(identifiers)
+                current = _TsvRow(
+                    row_number=holding_row_number,
+                    values=json.loads(str(row[1])),
+                )
+                identifiers = []
+            if row[2] is not None:
+                identifiers.append(
+                    _TsvRow(
+                        row_number=int(row[2]),
+                        values=json.loads(str(row[3])),
+                    )
+                )
+        if current is not None:
+            yield current, tuple(identifiers)
+
+
+@contextmanager
+def _selected_holding_store(
     files: Mapping[str, Path],
     *,
     submission_accessions: frozenset[str],
     selected_accessions: frozenset[str],
-) -> tuple[
-    dict[str, tuple[_TsvRow, ...]],
-    dict[str, tuple[_TsvRow, ...]],
-]:
-    holding_keys: set[tuple[str, str]] = set()
-    holding_ids: set[str] = set()
-    selected_holdings: dict[str, list[_TsvRow]] = {}
-    selected_holding_ids: set[str] = set()
-    for holding in _iter_tsv(files, "FUND_REPORTED_HOLDING.tsv"):
-        accession = holding.values["ACCESSION_NUMBER"]
-        holding_id = holding.values["HOLDING_ID"]
-        key = (accession, holding_id)
-        if (
-            not accession
-            or not holding_id
-            or accession not in submission_accessions
-            or key in holding_keys
-            or holding_id in holding_ids
-        ):
-            code = (
-                "SEC_NPORT_REFERENTIAL_INTEGRITY"
-                if accession not in submission_accessions
-                else "SEC_NPORT_DUPLICATE_KEY"
+) -> Iterator[_SelectedHoldingStore]:
+    parent = files["FUND_REPORTED_HOLDING.tsv"].parent
+    with tempfile.TemporaryDirectory(
+        prefix="financial-agent-nport-join-", dir=parent
+    ) as temporary_root:
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(
+                str(Path(temporary_root) / "selected-holdings.sqlite3")
             )
-            raise _error(
-                code,
-                "SEC N-PORT snapshot contains an invalid holding key",
-            ) from None
-        holding_keys.add(key)
-        holding_ids.add(holding_id)
-        if accession in selected_accessions:
-            selected_holdings.setdefault(accession, []).append(holding)
-            selected_holding_ids.add(holding_id)
+            connection.execute("PRAGMA journal_mode = OFF")
+            connection.execute("PRAGMA synchronous = OFF")
+            connection.executescript(
+                """
+                CREATE TABLE holdings (
+                    holding_id TEXT PRIMARY KEY,
+                    accession TEXT NOT NULL,
+                    row_number INTEGER NOT NULL,
+                    selected INTEGER NOT NULL,
+                    cusip TEXT NOT NULL,
+                    payload TEXT
+                );
+                CREATE INDEX holdings_accession_idx
+                    ON holdings (accession, row_number);
+                CREATE TABLE identifiers (
+                    holding_id TEXT NOT NULL,
+                    identifiers_id TEXT NOT NULL,
+                    row_number INTEGER NOT NULL,
+                    isin TEXT NOT NULL,
+                    payload TEXT,
+                    PRIMARY KEY (holding_id, identifiers_id)
+                );
+                CREATE INDEX identifiers_holding_idx
+                    ON identifiers (holding_id, row_number);
+                """
+            )
+            for holding in _iter_tsv(files, "FUND_REPORTED_HOLDING.tsv"):
+                accession = holding.values["ACCESSION_NUMBER"]
+                holding_id = holding.values["HOLDING_ID"]
+                if (
+                    not accession
+                    or not holding_id
+                    or accession not in submission_accessions
+                ):
+                    raise _error(
+                        "SEC_NPORT_REFERENTIAL_INTEGRITY",
+                        "SEC N-PORT snapshot contains an invalid holding key",
+                    ) from None
+                selected = accession in selected_accessions
+                payload = (
+                    json.dumps(
+                        dict(holding.values),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    if selected
+                    else None
+                )
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO holdings (
+                            holding_id, accession, row_number, selected,
+                            cusip, payload
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            holding_id,
+                            accession,
+                            holding.row_number,
+                            int(selected),
+                            normalize_name(
+                                holding.values["ISSUER_CUSIP"]
+                            ).upper(),
+                            payload,
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    raise _error(
+                        "SEC_NPORT_DUPLICATE_KEY",
+                        "SEC N-PORT snapshot contains an invalid holding key",
+                    ) from None
 
-    identifier_keys: set[tuple[str, str]] = set()
-    selected_identifiers: dict[str, list[_TsvRow]] = {}
-    for identifier in _iter_tsv(files, "IDENTIFIERS.tsv"):
-        holding_id = identifier.values["HOLDING_ID"]
-        identifiers_id = identifier.values["IDENTIFIERS_ID"]
-        key = (holding_id, identifiers_id)
-        if not holding_id or not identifiers_id or key in identifier_keys:
+            for identifier in _iter_tsv(files, "IDENTIFIERS.tsv"):
+                holding_id = identifier.values["HOLDING_ID"]
+                identifiers_id = identifier.values["IDENTIFIERS_ID"]
+                if not holding_id or not identifiers_id:
+                    raise _error(
+                        "SEC_NPORT_DUPLICATE_KEY",
+                        "SEC N-PORT snapshot contains an invalid identifier key",
+                    ) from None
+                payload = json.dumps(
+                    dict(identifier.values),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                try:
+                    inserted = connection.execute(
+                        """
+                        INSERT INTO identifiers (
+                            holding_id, identifiers_id, row_number, isin,
+                            payload
+                        )
+                        SELECT
+                            ?, ?, ?,
+                            CASE WHEN selected = 1 THEN ? ELSE '' END,
+                            CASE WHEN selected = 1 THEN ? ELSE NULL END
+                        FROM holdings
+                        WHERE holding_id = ?
+                        """,
+                        (
+                            holding_id,
+                            identifiers_id,
+                            identifier.row_number,
+                            normalize_name(
+                                identifier.values["IDENTIFIER_ISIN"]
+                            ).upper(),
+                            payload,
+                            holding_id,
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    raise _error(
+                        "SEC_NPORT_DUPLICATE_KEY",
+                        "SEC N-PORT snapshot contains an invalid identifier key",
+                    ) from None
+                if inserted.rowcount != 1:
+                    raise _error(
+                        "SEC_NPORT_REFERENTIAL_INTEGRITY",
+                        "SEC N-PORT snapshot contains an orphan structural key",
+                    ) from None
+            connection.commit()
+            yield _SelectedHoldingStore(connection)
+        except SourceVerificationError:
+            raise
+        except sqlite3.Error:
             raise _error(
-                "SEC_NPORT_DUPLICATE_KEY",
-                "SEC N-PORT snapshot contains an invalid identifier key",
+                "SEC_NPORT_JOIN_STORE_FAILED",
+                "SEC N-PORT temporary join store failed",
             ) from None
-        if holding_id not in holding_ids:
-            raise _error(
-                "SEC_NPORT_REFERENTIAL_INTEGRITY",
-                "SEC N-PORT snapshot contains an orphan structural key",
-            ) from None
-        identifier_keys.add(key)
-        if holding_id in selected_holding_ids:
-            selected_identifiers.setdefault(holding_id, []).append(identifier)
-    return (
-        {key: tuple(value) for key, value in selected_holdings.items()},
-        {key: tuple(value) for key, value in selected_identifiers.items()},
-    )
+        finally:
+            if connection is not None:
+                connection.close()
 
 
 def _publisher_and_source_records(
@@ -841,12 +1027,36 @@ def _identifier_values(
     }
 
 
+def _holding_values_are_valid(holding: _TsvRow) -> bool:
+    try:
+        for numeric_column in ("BALANCE", "CURRENCY_VALUE", "PERCENTAGE"):
+            raw = holding.values[numeric_column]
+            if raw:
+                _parse_decimal(raw)
+        currency = normalize_name(holding.values["CURRENCY_CODE"]).upper()
+        return (
+            not currency
+            or currency == "N/A"
+            or re.fullmatch(r"[A-Z]{3}", currency) is not None
+        )
+    except ValueError:
+        return False
+
+
+def _holding_values_are_complete(holding: _TsvRow) -> bool:
+    currency = normalize_name(holding.values["CURRENCY_CODE"]).upper()
+    return all(
+        holding.values[column]
+        for column in ("BALANCE", "CURRENCY_VALUE", "PERCENTAGE")
+    ) and re.fullmatch(r"[A-Z]{3}", currency) is not None
+
+
 def _security_resolution(
     manifest: OfficialSnapshotManifest,
     holding: _TsvRow,
     identifiers: tuple[_TsvRow, ...],
-    isin_counts: Counter[str],
-    cusip_counts: Counter[str],
+    duplicate_isins: frozenset[str],
+    duplicate_cusips: frozenset[str],
 ) -> tuple[str, str | None, str | None, bool]:
     isins = {
         value
@@ -856,14 +1066,14 @@ def _security_resolution(
     cusip = normalize_name(holding.values["ISSUER_CUSIP"]).upper()
     if len(isins) == 1:
         isin = next(iter(isins))
-        if isin_counts[isin] == 1:
+        if isin not in duplicate_isins:
             return (
                 stable_id("security", _SOURCE_CODE, f"ISIN:{isin}"),
                 "ISIN",
                 isin,
                 True,
             )
-    if cusip and _valid_cusip(cusip) and cusip_counts[cusip] == 1:
+    if cusip and _valid_cusip(cusip) and cusip not in duplicate_cusips:
         return (
             stable_id("security", _SOURCE_CODE, f"CUSIP:{cusip}"),
             "CUSIP",
@@ -1147,7 +1357,12 @@ def _add_holding_observations(
     holding: _TsvRow,
 ) -> None:
     key = f"{filing.accession}:{holding.values['HOLDING_ID']}"
-    currency = normalize_name(holding.values["CURRENCY_CODE"]).upper()
+    raw_currency = normalize_name(holding.values["CURRENCY_CODE"]).upper()
+    currency = (
+        raw_currency
+        if re.fullmatch(r"[A-Z]{3}", raw_currency) is not None
+        else None
+    )
     for column, (metric_id, value_kind, default_unit) in _METRICS.items():
         _add_metric_definition(records, column)
         raw = holding.values[column]
@@ -1156,14 +1371,22 @@ def _add_holding_observations(
         status = "present"
         reason_code = None
         if value_kind == "numeric":
-            numeric_value = _parse_decimal(raw)
-            if numeric_value == 0:
-                status = "zero"
+            if raw:
+                numeric_value = _parse_decimal(raw)
+                if numeric_value == 0:
+                    status = "zero"
+            else:
+                status = "unknown"
+                reason_code = "SOURCE_VALUE_MISSING"
         else:
             text_value = normalize_name(raw).upper()
             if not text_value:
                 status = "unknown"
                 reason_code = "SOURCE_VALUE_MISSING"
+                text_value = None
+            elif column == "CURRENCY_CODE" and text_value == "N/A":
+                status = "unknown"
+                reason_code = "SOURCE_VALUE_NOT_APPLICABLE"
                 text_value = None
         unit = default_unit
         if column == "BALANCE":
@@ -1185,7 +1408,11 @@ def _add_holding_observations(
                 "date_value": None,
                 "timestamp_value": None,
                 "unit": unit,
-                "currency": currency if column in {"CURRENCY_CODE", "CURRENCY_VALUE"} else None,
+                "currency": (
+                    currency
+                    if column in {"CURRENCY_CODE", "CURRENCY_VALUE"}
+                    else None
+                ),
                 "period_start": None,
                 "period_end": None,
                 "applicable_date": filing.report_date,
@@ -1209,7 +1436,11 @@ def _add_holding_observations(
                     "value_or_object_id": _tag(raw),
                     "normalized_value": _tag(normalized),
                     "unit": unit,
-                    "currency": currency if column in {"CURRENCY_CODE", "CURRENCY_VALUE"} else None,
+                    "currency": (
+                        currency
+                        if column in {"CURRENCY_CODE", "CURRENCY_VALUE"}
+                        else None
+                    ),
                     "applicable_date": filing.report_date,
                     "valid_from": None,
                     "valid_to": None,
@@ -1348,43 +1579,79 @@ def iter_eligible_nport_funds(
         for _, _, _, filing in binding_selections
         if filing is not None
     )
-    holdings_by_accession, identifiers_by_holding = _load_selected_holdings(
+    with _selected_holding_store(
         files,
         submission_accessions=submission_accessions,
         selected_accessions=selected_accessions,
-    )
+    ) as holding_store:
+        duplicate_isins = holding_store.duplicate_isins()
+        duplicate_cusips = holding_store.duplicate_cusips()
 
-    selected_holdings = tuple(
-        holding
-        for holdings in holdings_by_accession.values()
-        for holding in holdings
-    )
-    isin_counts: Counter[str] = Counter()
-    cusip_counts: Counter[str] = Counter()
-    for holding in selected_holdings:
-        identifier_rows = identifiers_by_holding.get(
-            holding.values["HOLDING_ID"], ()
-        )
-        for value in _identifier_values(identifier_rows, "IDENTIFIER_ISIN"):
-            if _valid_isin(value):
-                isin_counts[value] += 1
-        cusip = normalize_name(holding.values["ISSUER_CUSIP"]).upper()
-        if cusip and _valid_cusip(cusip):
-            cusip_counts[cusip] += 1
-
-    for binding_number, binding, resolution, filing in binding_selections:
-        records = _empty_records()
-        source_id = _add_base_records(records, manifest, manifest_hash)
-        issues: list[MappingIssue] = []
-        if filing is None:
-            issues.append(
-                MappingIssue(
+        for binding_number, binding, resolution, filing in binding_selections:
+            records = _empty_records()
+            source_id = _add_base_records(records, manifest, manifest_hash)
+            if filing is None:
+                issue = MappingIssue(
                     source_code=_SOURCE_CODE,
                     row_number=binding_number,
                     column=None,
-                    code=resolution.issue_code or "SEC_NPORT_NO_ELIGIBLE_FILING",
+                    code=(
+                        resolution.issue_code
+                        or "SEC_NPORT_NO_ELIGIBLE_FILING"
+                    ),
                     severity="limited",
                 )
+                _add_query_scope(
+                    records,
+                    manifest=manifest,
+                    source_id=source_id,
+                    product_id=binding.product_entity_id,
+                    row_number=binding_number,
+                    status="NOT_COVERED",
+                    filing=None,
+                )
+                yield MappedRow(
+                    row_number=binding_number,
+                    disposition="limited",
+                    records_by_table={
+                        table: tuple(values)
+                        for table, values in records.items()
+                    },
+                    issues=(issue,),
+                )
+                continue
+
+            _add_manager(
+                records,
+                manifest=manifest,
+                source_id=source_id,
+                product_id=binding.product_entity_id,
+                filing=filing,
+            )
+            all_strong = True
+            all_valid = True
+            for holding, identifier_rows in holding_store.iter_holdings(
+                filing.accession
+            ):
+                if not _holding_values_are_valid(holding):
+                    all_valid = False
+                    continue
+                all_valid = all_valid and _holding_values_are_complete(
+                    holding
+                )
+                *_, strong = _security_resolution(
+                    manifest,
+                    holding,
+                    identifier_rows,
+                    duplicate_isins,
+                    duplicate_cusips,
+                )
+                all_strong = all_strong and strong
+
+            status = (
+                "COVERED"
+                if all_valid and all_strong
+                else "PARTIALLY_COVERED"
             )
             _add_query_scope(
                 records,
@@ -1392,108 +1659,90 @@ def iter_eligible_nport_funds(
                 source_id=source_id,
                 product_id=binding.product_entity_id,
                 row_number=binding_number,
-                status="NOT_COVERED",
-                filing=None,
+                status=status,
+                filing=filing,
             )
-            yield MappedRow(
-                row_number=binding_number,
-                disposition="limited",
-                records_by_table={
-                    table: tuple(values) for table, values in records.items()
-                },
-                issues=tuple(issues),
-            )
-            continue
 
-        _add_manager(
-            records,
-            manifest=manifest,
-            source_id=source_id,
-            product_id=binding.product_entity_id,
-            filing=filing,
-        )
-        product_holdings = holdings_by_accession.get(filing.accession, ())
-        all_strong = True
-        all_valid = True
-        for holding in product_holdings:
-            identifier_rows = identifiers_by_holding.get(
-                holding.values["HOLDING_ID"], ()
-            )
-            try:
-                for numeric_column in ("BALANCE", "CURRENCY_VALUE", "PERCENTAGE"):
-                    _parse_decimal(holding.values[numeric_column])
-                currency = normalize_name(holding.values["CURRENCY_CODE"]).upper()
-                if re.fullmatch(r"[A-Z]{3}", currency) is None:
-                    raise ValueError
-            except ValueError:
-                all_valid = False
-                issues.append(
-                    MappingIssue(
-                        source_code=_SOURCE_CODE,
-                        row_number=holding.row_number,
-                        column="PERCENTAGE",
-                        code="SEC_NPORT_HOLDING_VALUE_INVALID",
-                        severity="limited",
+            batch_records = records
+            batch_issues: list[MappingIssue] = []
+            batch_size = 0
+            yielded = False
+            for holding, identifier_rows in holding_store.iter_holdings(
+                filing.accession
+            ):
+                if not _holding_values_are_valid(holding):
+                    batch_issues.append(
+                        MappingIssue(
+                            source_code=_SOURCE_CODE,
+                            row_number=holding.row_number,
+                            column="PERCENTAGE",
+                            code="SEC_NPORT_HOLDING_VALUE_INVALID",
+                            severity="limited",
+                        )
                     )
+                else:
+                    security_id, scheme, value, _ = _security_resolution(
+                        manifest,
+                        holding,
+                        identifier_rows,
+                        duplicate_isins,
+                        duplicate_cusips,
+                    )
+                    _add_security(
+                        batch_records,
+                        holding=holding,
+                        identifier_rows=identifier_rows,
+                        security_id=security_id,
+                        identifier_scheme=scheme,
+                        identifier_value=value,
+                    )
+                    relation_id = _add_holding_relation(
+                        batch_records,
+                        manifest=manifest,
+                        source_id=source_id,
+                        product_id=binding.product_entity_id,
+                        security_id=security_id,
+                        filing=filing,
+                        holding=holding,
+                        identifier_rows=identifier_rows,
+                        identifier_scheme=scheme,
+                        identifier_value=value,
+                    )
+                    _add_holding_observations(
+                        batch_records,
+                        manifest=manifest,
+                        source_id=source_id,
+                        product_id=binding.product_entity_id,
+                        relation_id=relation_id,
+                        filing=filing,
+                        holding=holding,
+                    )
+                batch_size += 1
+                if batch_size == _HOLDING_OUTPUT_BATCH_SIZE:
+                    yield MappedRow(
+                        row_number=binding_number,
+                        disposition=(
+                            "accepted" if status == "COVERED" else "limited"
+                        ),
+                        records_by_table={
+                            table: tuple(values)
+                            for table, values in batch_records.items()
+                        },
+                        issues=tuple(batch_issues),
+                    )
+                    yielded = True
+                    batch_records = _empty_records()
+                    batch_issues = []
+                    batch_size = 0
+            if batch_size or not yielded:
+                yield MappedRow(
+                    row_number=binding_number,
+                    disposition=(
+                        "accepted" if status == "COVERED" else "limited"
+                    ),
+                    records_by_table={
+                        table: tuple(values)
+                        for table, values in batch_records.items()
+                    },
+                    issues=tuple(batch_issues),
                 )
-                continue
-            security_id, scheme, value, strong = _security_resolution(
-                manifest,
-                holding,
-                identifier_rows,
-                isin_counts,
-                cusip_counts,
-            )
-            all_strong = all_strong and strong
-            _add_security(
-                records,
-                holding=holding,
-                identifier_rows=identifier_rows,
-                security_id=security_id,
-                identifier_scheme=scheme,
-                identifier_value=value,
-            )
-            relation_id = _add_holding_relation(
-                records,
-                manifest=manifest,
-                source_id=source_id,
-                product_id=binding.product_entity_id,
-                security_id=security_id,
-                filing=filing,
-                holding=holding,
-                identifier_rows=identifier_rows,
-                identifier_scheme=scheme,
-                identifier_value=value,
-            )
-            _add_holding_observations(
-                records,
-                manifest=manifest,
-                source_id=source_id,
-                product_id=binding.product_entity_id,
-                relation_id=relation_id,
-                filing=filing,
-                holding=holding,
-            )
-
-        status = (
-            "COVERED"
-            if all_valid and all_strong
-            else "PARTIALLY_COVERED"
-        )
-        _add_query_scope(
-            records,
-            manifest=manifest,
-            source_id=source_id,
-            product_id=binding.product_entity_id,
-            row_number=binding_number,
-            status=status,
-            filing=filing,
-        )
-        yield MappedRow(
-            row_number=binding_number,
-            disposition="accepted" if status == "COVERED" else "limited",
-            records_by_table={
-                table: tuple(values) for table, values in records.items()
-            },
-            issues=tuple(issues),
-        )

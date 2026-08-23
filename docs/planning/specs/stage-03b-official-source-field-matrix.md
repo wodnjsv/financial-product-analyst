@@ -22,7 +22,7 @@
 | `KRX_ETF_PDF` | 공식 화면과 PDF 정의만 확인 | 과거 export 미확인 | ETF·보유종목 crosswalk 및 헤더 미확인 | `ACCESS_NOT_CONFIRMED` |
 | `KRX_ETF_BASIC_EXPORT` | 필요성만 확인 | 과거 export 미확인 | 주최 측 ETF와 KRX ETF 코드 crosswalk에 필요 | `ACCESS_NOT_CONFIRMED` |
 | `SEC_SERIES_CLASS_20260601` | 공식 CSV 필드·게시일 확인 | 2026-06-01 공개본 | `(CIK, Class Ticker) -> Series ID` | `DOCS_CONFIRMED_CAPTURE_DEFERRED` |
-| `SEC_NPORT_2026Q2` | 공식 ZIP·Readme·필드 확인 | 2026-06-30 공개본 | `Series ID` 및 holding strong ID | `DOCS_CONFIRMED_CAPTURE_DEFERRED` |
+| `SEC_NPORT_2026Q2` | 공식 ZIP·Readme·필드 확인 | 2026-06-30 게시·2026-07-09 데이터 라이브러리 공개본 | `Series ID` 및 holding strong ID | `DOCS_CONFIRMED_CAPTURE_DEFERRED` |
 
 KRX Open API와 ECOS 실호출에서는 응답 스키마·행 수·날짜·단위만 확인했고 원시 값은 보존하지 않았다. SEC는 공식 문서와 컷오프 이전 공개 패키지만 고정했으며, 사용자 식별 가능한 User-Agent를 준비할 때까지 실제 ZIP 캡처는 수행하지 않는다.
 
@@ -149,7 +149,7 @@ organizer overseas ETF
 
 ## 8. SEC Form N-PORT 필드
 
-공통 access는 SEC 2026 Q2 공식 ZIP의 UTF-8 tab-delimited 파일이다. package 공개일·available date는 2026-06-30으로 고정한다. 모든 locator는 `package/file/primary key/field`를 포함한다.
+공통 access는 SEC 2026 Q2 공식 ZIP의 UTF-8 tab-delimited 파일이다. package 게시일은 SEC 데이터셋 페이지의 2026-06-30, available date는 SEC 데이터 라이브러리의 2026-07-09로 고정한다. 모든 locator는 `package/file/primary key/field`를 포함한다.
 
 | source_code | publisher | access_method | object_name | source_field | source_type | source_grain | classification | target | identifier_or_metric | unit | currency | applicable_date_rule | published_at_rule | available_at_rule | vintage_date_rule | coverage_rule | conflict_rule | evidence_locator | usage_note |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

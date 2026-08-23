@@ -109,6 +109,7 @@ _OFFICIAL_SOURCE_ORDER = (
     "SEC_NPORT_2026Q2",
 )
 _SUPPORTED_SOURCES = frozenset(_OFFICIAL_SOURCE_ORDER)
+_OFFICIAL_WRITE_RECORD_LIMIT = 100_000
 
 
 def _ordered_manifests(
@@ -725,6 +726,7 @@ async def _write_official_sources(
             "snapshots": source.snapshot_count,
         }
         batch: list[MappedRow] = []
+        batch_record_count = 0
         for factory in source.row_factories:
             for row in factory():
                 counts["rows"] += 1
@@ -738,10 +740,23 @@ async def _write_official_sources(
                 if fatal:
                     counts["fatal"] += 1
                     passed = False
+                row_record_count = sum(
+                    len(records) for records in row.records_by_table.values()
+                )
+                if (
+                    batch
+                    and batch_record_count + row_record_count
+                    > _OFFICIAL_WRITE_RECORD_LIMIT
+                ):
+                    await writer.write_rows(dataset_version, batch)
+                    batch = []
+                    batch_record_count = 0
                 batch.append(row)
+                batch_record_count += row_record_count
                 if len(batch) == batch_size:
                     await writer.write_rows(dataset_version, batch)
                     batch = []
+                    batch_record_count = 0
         if batch:
             await writer.write_rows(dataset_version, batch)
         source_counts[source.source_code] = counts

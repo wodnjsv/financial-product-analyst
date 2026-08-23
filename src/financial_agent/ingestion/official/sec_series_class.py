@@ -13,6 +13,22 @@ from .models import OfficialSnapshotManifest
 from .snapshot import validate_official_snapshot
 
 
+_SOURCE_FIELDS = (
+    "Reporting File Number",
+    "CIK Number",
+    "Entity Name",
+    "Entity Org Type",
+    "Series ID",
+    "Series Name",
+    "Class ID",
+    "Class Name",
+    "Class Ticker",
+    "Address_1",
+    "Address_2",
+    "City",
+    "State",
+    "Zip Code",
+)
 _FIELDS = (
     "CIK",
     "Series ID",
@@ -29,14 +45,25 @@ def _error(code: str, message: str) -> SourceVerificationError:
 
 def parse_sec_series_class(payload: bytes) -> tuple[Mapping[str, object], ...]:
     try:
-        reader = csv.DictReader(io.StringIO(payload.decode("utf-8"), newline=""))
-        if tuple(reader.fieldnames or ()) != _FIELDS:
+        reader = csv.DictReader(
+            io.StringIO(payload.decode("utf-8-sig"), newline="")
+        )
+        if tuple(reader.fieldnames or ()) != _SOURCE_FIELDS:
             raise TypeError
         rows: list[Mapping[str, object]] = []
         for raw_row in reader:
-            if None in raw_row or set(raw_row) != set(_FIELDS):
+            if None in raw_row or set(raw_row) != set(_SOURCE_FIELDS):
                 raise TypeError
-            row = {field: raw_row[field] for field in _FIELDS}
+            if all(value == "" for value in raw_row.values()):
+                continue
+            if raw_row["Reporting File Number"] == "No filters applied" and all(
+                raw_row[field] in {None, ""} for field in _SOURCE_FIELDS[1:]
+            ):
+                continue
+            row = {
+                "CIK": raw_row["CIK Number"],
+                **{field: raw_row[field] for field in _FIELDS[1:]},
+            }
             if any(not isinstance(value, str) for value in row.values()):
                 raise TypeError
             if not all(row[field] for field in ("CIK", "Series ID", "Class ID")):

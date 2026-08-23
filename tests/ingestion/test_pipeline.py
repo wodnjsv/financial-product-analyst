@@ -165,6 +165,44 @@ async def _async_value(value: object) -> object:
     return value
 
 
+@pytest.mark.asyncio
+async def test_official_writer_flushes_before_a_batch_exceeds_record_limit(
+) -> None:
+    from financial_agent.ingestion.official_pipeline import (
+        _PreparedOfficialSource,
+        _write_official_sources,
+    )
+
+    RecordingWriter.instances.clear()
+    writer = RecordingWriter(object())
+    rows = tuple(
+        MappedRow(
+            row_number=row_number,
+            disposition="accepted",
+            records_by_table={
+                "observation.observation_record": ({},) * 60_000
+            },
+            issues=(),
+        )
+        for row_number in (1, 2)
+    )
+    source = _PreparedOfficialSource(
+        source_code="SEC_NPORT_2026Q2",
+        snapshot_count=1,
+        row_factories=(lambda: iter(rows),),
+    )
+
+    result = await _write_official_sources(
+        writer,
+        dataset_version="bounded-official-write",
+        sources=(source,),
+        batch_size=1_000,
+    )
+
+    assert writer.batch_sizes == [1, 1]
+    assert result.source_counts["SEC_NPORT_2026Q2"]["rows"] == 2
+
+
 def _inputs(order: Sequence[str] = SOURCE_CODES):
     data_paths = {code: Path(f"/{code}.xlsx") for code in order}
     schema_paths = {code: Path(f"/{code}-schema.xlsx") for code in order}
@@ -792,6 +830,7 @@ def test_ingestion_container_is_linux_amd64_and_excludes_external_data() -> None
     assert "not postgres" in dockerfile
     assert "not organizer_data" in dockerfile
     assert "not object_storage" in dockerfile
+    assert "not official_data" in dockerfile
     assert "COPY data/" not in dockerfile
     for protected in ("data/", ".env.*", ".gstack/", ".agents/", ".codex/"):
         assert protected in dockerignore

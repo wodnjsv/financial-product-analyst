@@ -57,7 +57,6 @@ def test_ecos_parser_preserves_the_four_approved_numeric_text_values() -> None:
     ("column", "value"),
     (
         ("STAT_CODE", "731Y999"),
-        ("ITEM_CODE1", "9999999"),
         ("ITEM_NAME1", "잘못된 항목명"),
         ("UNIT_NAME", "달러"),
     ),
@@ -73,6 +72,36 @@ def test_ecos_parser_rejects_unapproved_codes_names_and_units(
 
     assert captured.value.code == "ECOS_FX_SCHEMA_MISMATCH"
     assert captured.value.__cause__ is None
+
+
+def test_ecos_parser_ignores_unapproved_rows_and_selects_the_four_allowlist_items() -> None:
+    rows = _payload_rows()
+    rows.append(
+        dict(rows[0])
+        | {
+            "ITEM_CODE1": "9999999",
+            "ITEM_NAME1": "공식 응답의 다른 환율 항목",
+            "DATA_VALUE": "123.45",
+        }
+    )
+
+    selected = parse_ecos_731y001(ecos_731y001_payload(tuple(rows)))
+
+    assert len(selected) == 4
+    assert {str(row["ITEM_CODE1"]) for row in selected} == set(ECOS_ITEMS)
+
+
+def test_ecos_parser_does_not_count_an_unapproved_item_as_required_coverage() -> None:
+    rows = _payload_rows()
+    rows[0] = dict(rows[0]) | {
+        "ITEM_CODE1": "9999999",
+        "ITEM_NAME1": "공식 응답의 다른 환율 항목",
+    }
+
+    with pytest.raises(SourceVerificationError) as captured:
+        parse_ecos_731y001(ecos_731y001_payload(tuple(rows)))
+
+    assert captured.value.code == "ECOS_FX_COVERAGE_INCOMPLETE"
 
 
 def test_ecos_parser_requires_every_approved_item() -> None:

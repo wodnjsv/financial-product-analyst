@@ -29,6 +29,10 @@ from financial_agent.ingestion.official_pipeline import (
     load_official_manifests,
     validate_stage03b_inputs,
 )
+from financial_agent.ingestion.official.capture import (
+    capture_approved_official_sources,
+    load_capture_configuration,
+)
 from financial_agent.ingestion.sources import (
     SourceVerificationError,
     download_verified_object,
@@ -273,7 +277,14 @@ async def _object_storage_command() -> int:
 
 
 async def _capture_official_command() -> int:
-    raise OfficialSourceConfigurationError() from None
+    configuration = load_capture_configuration(os.environ)
+    result = capture_approved_official_sources(configuration)
+    print(
+        f"OFFICIAL_CAPTURE_OK sources={result.source_count} "
+        f"objects={result.object_count} bytes={result.total_bytes} "
+        f"eligible={result.eligible_start}..{result.eligible_end}"
+    )
+    return 0
 
 
 async def _validate_official_command() -> int:

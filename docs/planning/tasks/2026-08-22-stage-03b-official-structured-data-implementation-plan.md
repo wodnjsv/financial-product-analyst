@@ -945,6 +945,15 @@ source's approved capture configuration is supplied.
 
 **Files:**
 
+- Create: `src/financial_agent/ingestion/official/capture.py`
+- Modify: `src/financial_agent/ingestion/official/ecos_fx.py`
+- Modify: `src/financial_agent/ingestion/official/sec_series_class.py`
+- Modify: `src/financial_agent/ingestion/official/sec_nport.py`
+- Modify: `src/financial_agent/ingestion/cli.py`
+- Modify: `tests/ingestion/test_ecos_fx.py`
+- Modify: `tests/ingestion/test_sec_series_class.py`
+- Modify: `tests/ingestion/test_sec_nport.py`
+- Modify: `tests/fixtures/official_ingestion.py`
 - Create: `tests/ingestion/test_real_official_sources.py`
 - Create: `tests/ingestion/test_ncp_official_object_storage.py`
 - Create: `tests/ingestion/test_official_question_gates.py`
@@ -952,6 +961,53 @@ source's approved capture configuration is supplied.
 - Modify: `docker/ingestion-check.Dockerfile`
 - Modify: `.dockerignore` only if the existing rules do not exclude a new generated path
 - Modify: `docs/planning/STATUS.md`
+
+Task 8 intentionally left `capture-official` fail-closed because the approved
+source-specific request configuration had not yet been implemented. Task 9
+closes that boundary with a small explicit capture module and CLI wiring. It
+does not introduce a generic connector framework: each KRX, ECOS, or SEC
+request, response media type, byte limit, cutoff date, and output object name
+is fixed in reviewed code. Credentials and the SEC contact-bearing User-Agent
+remain environment-only and are never written to a manifest or log.
+
+The live ECOS `731Y001` response contains 43 official item rows rather than
+only the four approved answer metrics. Capture preserves all 43 rows in the
+hashed raw object; normalization selects only the approved USD, 100 JPY, EUR,
+and CNY items and still fails if any of those four are absent or malformed.
+The live SEC Series/Class CSV uses its complete 14-column report header, with
+`CIK Number` as the source column. Capture preserves the complete CSV while
+normalization projects only the six previously approved identity fields.
+The live N-PORT tables use exact `DD-MON-YYYY` dates and include legitimate
+filings without a Series ID. Those unbound filings remain in the captured raw
+archive but are excluded from the ETF Series/Class mapping population.
+The SEC data-library listing dated `2026-07-09` is the archive availability
+boundary; the dataset page's `2026-06-30` update remains its publication date.
+Both are cutoff-eligible, and neither is replaced with the later capture time.
+
+The first full live mapping measurement retained selected holding and
+identifier payloads in Python and reached approximately `4.6 GB` after only
+`143,537` mapped holdings. Task 9 therefore exercises the already-approved
+Task 7 keyed-spill path: all structural keys and selected payloads are held in
+a disposable SQLite join file beside the extracted snapshot, duplicate
+ISIN/CUSIP values are reduced to small sets, and each product is read twice
+from that file before emitting fixed batches of at most `250` holdings. The
+temporary join file is deleted with the extraction workspace. This is not a
+new database boundary and does not change PostgreSQL DDL, writer semantics,
+or coverage rules.
+
+The live selected population also contains `817` legitimate incomplete
+derivative rows: `755` foreign-exchange forwards report the official currency
+code as `N/A`, while `62` swap/future rows omit one or more numeric Item C.2
+values. SEC guidance explicitly permits `N/A` for foreign-forward currency
+reporting. These rows retain their `holdsSecurity` relation and raw Evidence;
+the affected Observation is stored as `unknown` with
+`SOURCE_VALUE_NOT_APPLICABLE` or `SOURCE_VALUE_MISSING`, and the product scope
+remains `PARTIALLY_COVERED`. Non-empty malformed numbers and unrecognized
+currency tokens remain limited and do not create an inferred relation.
+
+The four manager fallback holdings files remain blocked in Task 9. They are not
+accepted through a generic manager parser and remain `NOT_COVERED` until each
+source format and authority boundary receives separate approval.
 
 - [ ] **Step 1: Add explicit live markers and fail-closed configuration**
 

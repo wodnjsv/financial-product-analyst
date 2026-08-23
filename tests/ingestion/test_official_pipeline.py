@@ -617,7 +617,7 @@ async def test_sec_crosswalk_precedes_bounded_nport_holdings(
         payload=archive_payload,
         applicable_date=date(2026, 3, 31),
         published_at=datetime(2026, 6, 30, tzinfo=timezone.utc),
-        available_at=datetime(2026, 6, 30, tzinfo=timezone.utc),
+        available_at=datetime(2026, 7, 9, tzinfo=timezone.utc),
         media_type="application/zip",
     )
     _store_manifest_object(tmp_path, series_manifest, series_payload)

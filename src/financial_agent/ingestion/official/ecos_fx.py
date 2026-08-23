@@ -131,10 +131,13 @@ def parse_ecos_731y001(payload: bytes) -> tuple[Mapping[str, object], ...]:
                 raise TypeError
             stat_code = str(row["STAT_CODE"])
             item_code = str(row["ITEM_CODE1"])
+            if stat_code != "731Y001":
+                raise TypeError
+            if item_code not in _ITEM_DEFINITIONS:
+                continue
             item_definition = _ITEM_DEFINITIONS[item_code]
             if (
-                stat_code != "731Y001"
-                or row["ITEM_NAME1"] != item_definition["item_name"]
+                row["ITEM_NAME1"] != item_definition["item_name"]
                 or row["UNIT_NAME"] != "원"
             ):
                 raise TypeError

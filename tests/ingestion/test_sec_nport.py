@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import gc
 import io
 import stat
 import zipfile
@@ -12,6 +13,7 @@ from typing import cast
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+import financial_agent.ingestion.official.sec_nport as sec_nport_module
 from financial_agent.ingestion.official import (
     NportArchiveLimits,
     NportProductBinding,
@@ -96,7 +98,7 @@ def _nport_manifest(files: dict[str, bytes]):
         payload=package,
         applicable_date=date(2026, 3, 31),
         published_at=datetime(2026, 6, 30, tzinfo=UTC),
-        available_at=datetime(2026, 6, 30, tzinfo=UTC),
+        available_at=datetime(2026, 7, 9, tzinfo=UTC),
         media_type="application/zip",
     )
 
@@ -327,13 +329,13 @@ def test_nport_mapper_selects_latest_eligible_amendment_and_preserves_provenance
             dict(submissions[0])
             | {
                 "ACCESSION_NUMBER": original_accession,
-                "FILING_DATE": "2026-05-15",
+                "FILING_DATE": "15-MAY-2026",
                 "SUB_TYPE": "NPORT-P",
             },
             dict(submissions[0])
             | {
                 "ACCESSION_NUMBER": after_cutoff_accession,
-                "FILING_DATE": "2026-07-12",
+                "FILING_DATE": "12-JUL-2026",
                 "SUB_TYPE": "NPORT-P/A",
             },
         )
@@ -376,6 +378,34 @@ def test_nport_mapper_selects_latest_eligible_amendment_and_preserves_provenance
     )
 
 
+def test_nport_mapper_excludes_an_official_filing_without_a_series_id(
+    tmp_path: Path,
+) -> None:
+    files = sec_nport_tsv_files()
+    submission_fields, submissions = _decode_tsv(files["SUBMISSION.tsv"])
+    registrant_fields, registrants = _decode_tsv(files["REGISTRANT.tsv"])
+    fund_fields, funds = _decode_tsv(files["FUND_REPORTED_INFO.tsv"])
+    unbound_accession = "0000000000-26-000099"
+    submissions.append(
+        dict(submissions[0]) | {"ACCESSION_NUMBER": unbound_accession}
+    )
+    registrants.append(
+        dict(registrants[0]) | {"ACCESSION_NUMBER": unbound_accession}
+    )
+    funds.append(
+        dict(funds[0])
+        | {"ACCESSION_NUMBER": unbound_accession, "SERIES_ID": ""}
+    )
+    files["SUBMISSION.tsv"] = _encode_tsv(submission_fields, submissions)
+    files["REGISTRANT.tsv"] = _encode_tsv(registrant_fields, registrants)
+    files["FUND_REPORTED_INFO.tsv"] = _encode_tsv(fund_fields, funds)
+
+    mapped = _map_files(tmp_path, files)
+
+    assert len(mapped) == 1
+    assert mapped[0].disposition == "accepted"
+
+
 def test_nport_mapper_selects_the_latest_eligible_report_period(
     tmp_path: Path,
 ) -> None:
@@ -385,7 +415,7 @@ def test_nport_mapper_selects_the_latest_eligible_report_period(
         fields, rows = _decode_tsv(files[name])
         newer = dict(rows[0]) | {"ACCESSION_NUMBER": newer_accession}
         if name == "SUBMISSION.tsv":
-            newer |= {"FILING_DATE": "2026-07-10", "REPORT_DATE": "2026-06-30"}
+            newer |= {"FILING_DATE": "10-JUL-2026", "REPORT_DATE": "30-JUN-2026"}
         rows.append(newer)
         files[name] = _encode_tsv(fields, rows)
     holding_fields, holdings = _decode_tsv(files["FUND_REPORTED_HOLDING.tsv"])
@@ -573,6 +603,133 @@ def test_nport_mapper_keeps_duplicate_lots_and_does_not_promote_duplicate_ids(
     assert scope["scope_completeness"] == "bounded_unknown"
 
 
+def test_nport_mapper_bounds_each_output_row_to_250_holdings(
+    tmp_path: Path,
+) -> None:
+    files = sec_nport_tsv_files()
+    holding_fields, holdings = _decode_tsv(files["FUND_REPORTED_HOLDING.tsv"])
+    identifier_fields, identifiers = _decode_tsv(files["IDENTIFIERS.tsv"])
+    holdings[0]["ISSUER_CUSIP"] = ""
+    identifiers[0]["IDENTIFIER_ISIN"] = ""
+    for offset in range(2, 252):
+        holding_id = str(1000 + offset)
+        holdings.append(
+            dict(holdings[0])
+            | {
+                "HOLDING_ID": holding_id,
+                "ISSUER_NAME": f"Synthetic Issuer {offset}",
+                "ISSUER_TITLE": f"Synthetic Security {offset}",
+            }
+        )
+        identifiers.append(
+            dict(identifiers[0])
+            | {
+                "HOLDING_ID": holding_id,
+                "IDENTIFIERS_ID": str(offset),
+                "IDENTIFIER_TICKER": f"S{offset}",
+            }
+        )
+    files["FUND_REPORTED_HOLDING.tsv"] = _encode_tsv(
+        holding_fields, holdings
+    )
+    files["IDENTIFIERS.tsv"] = _encode_tsv(identifier_fields, identifiers)
+
+    mapped = _map_files(tmp_path, files)
+
+    holding_counts = tuple(
+        sum(
+            record["predicate_id"] == "holdsSecurity"
+            for record in row.records_by_table["relation.relation_record"]
+        )
+        for row in mapped
+    )
+    assert holding_counts == (250, 1)
+    assert len(_records(mapped, "observation.observation_record")) == 251 * 6
+
+
+def test_nport_mapper_does_not_retain_all_source_rows_in_memory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files = sec_nport_tsv_files()
+    _, base_holdings = _decode_tsv(files["FUND_REPORTED_HOLDING.tsv"])
+    _, base_identifiers = _decode_tsv(files["IDENTIFIERS.tsv"])
+    original_iter_tsv = sec_nport_module._iter_tsv
+
+    class TrackedRow:
+        active = 0
+
+        def __init__(self, row_number: int, values: dict[str, str]) -> None:
+            self.row_number = row_number
+            self.values = values
+            TrackedRow.active += 1
+
+        def __del__(self) -> None:
+            TrackedRow.active -= 1
+
+    def tracked_rows(paths: object, name: str):
+        if name == "FUND_REPORTED_HOLDING.tsv":
+            for offset in range(1, 1_001):
+                yield TrackedRow(
+                    offset + 1,
+                    dict(base_holdings[0])
+                    | {
+                        "HOLDING_ID": str(10_000 + offset),
+                        "ISSUER_CUSIP": "",
+                    },
+                )
+            return
+        if name == "IDENTIFIERS.tsv":
+            for offset in range(1, 1_001):
+                yield TrackedRow(
+                    offset + 1,
+                    dict(base_identifiers[0])
+                    | {
+                        "HOLDING_ID": str(10_000 + offset),
+                        "IDENTIFIERS_ID": str(offset),
+                        "IDENTIFIER_ISIN": "",
+                    },
+                )
+            return
+        yield from original_iter_tsv(paths, name)
+
+    monkeypatch.setattr(sec_nport_module, "_iter_tsv", tracked_rows)
+    mapped = iter_eligible_nport_funds(
+        _write_mapping_files(tmp_path / "nport-files", files),
+        date(2026, 7, 11),
+        manifest=_nport_manifest(files),
+        series_class_index=_series_index(),
+        product_bindings=(_binding(),),
+    )
+
+    first = next(mapped)
+    gc.collect()
+
+    assert first.records_by_table["relation.relation_record"]
+    assert TrackedRow.active <= 2
+    mapped.close()
+
+
+def test_nport_mapper_redacts_a_temporary_join_store_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    private_detail = "PRIVATE-NPORT-TEMPORARY-PATH"
+
+    def fail_connect(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise sec_nport_module.sqlite3.OperationalError(private_detail)
+
+    monkeypatch.setattr(sec_nport_module.sqlite3, "connect", fail_connect)
+
+    with pytest.raises(SourceVerificationError) as captured:
+        _map_files(tmp_path)
+
+    assert captured.value.code == "SEC_NPORT_JOIN_STORE_FAILED"
+    assert captured.value.__cause__ is None
+    assert private_detail not in str(captured.value)
+
+
 def test_nport_mapper_promotes_unique_isin_but_ticker_is_alias_only(
     tmp_path: Path,
 ) -> None:
@@ -643,6 +800,30 @@ def test_nport_mapper_preserves_percentage_points_and_all_holding_metrics(
             if item["predicate_id"] == "holdsSecurity"
         )
     }
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    ((".25", Decimal("0.25")), ("-.25", Decimal("-0.25"))),
+)
+def test_nport_mapper_accepts_the_official_leading_decimal_point_format(
+    tmp_path: Path,
+    raw_value: str,
+    expected: Decimal,
+) -> None:
+    files = sec_nport_tsv_files()
+    fields, holdings = _decode_tsv(files["FUND_REPORTED_HOLDING.tsv"])
+    holdings[0]["PERCENTAGE"] = raw_value
+    files["FUND_REPORTED_HOLDING.tsv"] = _encode_tsv(fields, holdings)
+
+    mapped = _map_files(tmp_path, files)
+
+    weight = next(
+        item
+        for item in _records(mapped, "observation.observation_record")
+        if item["metric_id"] == "official_holding_weight_pct"
+    )
+    assert weight["numeric_value"] == expected
     assert len(_records(mapped, "evidence.evidence_observation_origin")) == 6
     observation_evidence = tuple(
         item
@@ -652,6 +833,61 @@ def test_nport_mapper_preserves_percentage_points_and_all_holding_metrics(
     assert {item["subject_id"] for item in observation_evidence} == {
         "organizer-overseas-etf-1"
     }
+
+
+def test_nport_mapper_preserves_official_not_applicable_currency(
+    tmp_path: Path,
+) -> None:
+    files = sec_nport_tsv_files()
+    fields, holdings = _decode_tsv(files["FUND_REPORTED_HOLDING.tsv"])
+    holdings[0]["CURRENCY_CODE"] = "N/A"
+    files["FUND_REPORTED_HOLDING.tsv"] = _encode_tsv(fields, holdings)
+
+    mapped = _map_files(tmp_path, files)
+
+    relations = _records(mapped, "relation.relation_record")
+    assert any(row["predicate_id"] == "holdsSecurity" for row in relations)
+    observations = {
+        row["metric_id"]: row
+        for row in _records(mapped, "observation.observation_record")
+    }
+    assert observations["official_holding_currency"]["value_status"] == "unknown"
+    assert observations["official_holding_currency"]["text_value"] is None
+    assert observations["official_holding_currency"]["reason_code"] == (
+        "SOURCE_VALUE_NOT_APPLICABLE"
+    )
+    assert observations["official_holding_currency_value"]["currency"] is None
+    assert not mapped[0].issues
+    assert mapped[0].disposition == "limited"
+
+
+def test_nport_mapper_preserves_official_missing_numeric_values(
+    tmp_path: Path,
+) -> None:
+    files = sec_nport_tsv_files()
+    fields, holdings = _decode_tsv(files["FUND_REPORTED_HOLDING.tsv"])
+    for column in ("BALANCE", "CURRENCY_VALUE", "PERCENTAGE"):
+        holdings[0][column] = ""
+    files["FUND_REPORTED_HOLDING.tsv"] = _encode_tsv(fields, holdings)
+
+    mapped = _map_files(tmp_path, files)
+
+    relations = _records(mapped, "relation.relation_record")
+    assert any(row["predicate_id"] == "holdsSecurity" for row in relations)
+    observations = {
+        row["metric_id"]: row
+        for row in _records(mapped, "observation.observation_record")
+    }
+    for metric_id in (
+        "official_holding_balance",
+        "official_holding_currency_value",
+        "official_holding_weight_pct",
+    ):
+        assert observations[metric_id]["numeric_value"] is None
+        assert observations[metric_id]["value_status"] == "unknown"
+        assert observations[metric_id]["reason_code"] == "SOURCE_VALUE_MISSING"
+    assert not mapped[0].issues
+    assert mapped[0].disposition == "limited"
 
 
 def test_nport_mapper_limits_a_malformed_holding_without_inventing_a_relation(

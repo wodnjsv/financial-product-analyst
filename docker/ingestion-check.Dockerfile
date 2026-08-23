@@ -21,7 +21,7 @@ COPY tests/ ./tests/
 
 RUN python -m pip install ".[dev,storage,ingestion]" \
     && python -m pytest tests/contracts tests/ingestion \
-       -m "not postgres and not organizer_data and not object_storage and not ncp_integration" -q \
+       -m "not postgres and not organizer_data and not object_storage and not official_data and not ncp_integration" -q \
     && python scripts/export_contract_schemas.py --check
 
-CMD ["python", "-m", "pytest", "tests/ingestion", "-m", "not postgres and not organizer_data and not object_storage and not ncp_integration", "-q"]
+CMD ["python", "-m", "pytest", "tests/ingestion", "-m", "not postgres and not organizer_data and not object_storage and not official_data and not ncp_integration", "-q"]

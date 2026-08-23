@@ -16,7 +16,7 @@
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 최소 클래스와 13개 핵심 관계를 현재 기본안으로 기록; TTL·SHACL 필드 매핑은 후속 계획 필요 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
-| Stage 03B 공식 외부 정형 데이터 | Task 1~8 구현·검증 완료; Stage 03A+03B 결합 파이프라인은 모든 입력을 선검증한 뒤 하나의 비활성 `building` 데이터셋을 만들며, NCP Ubuntu의 Linux/amd64·폐기 가능 PostgreSQL 회귀까지 통과했다. Task 9의 실데이터·Object Storage·coverage·재현성 acceptance가 후속 | [Stage 03B Field Matrix](specs/stage-03b-official-source-field-matrix.md), [Stage 03B Implementation Plan](tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md), [ADR-0014](decisions/ADR-0014-use-bounded-official-source-snapshots.md), [ADR-0015](decisions/ADR-0015-use-isin-derived-krx-etf-bindings.md) |
+| Stage 03B 공식 외부 정형 데이터 | Task 1~8 구현·검증 완료; Task 9 로컬 공식 캡처·전체 N-PORT coverage·메모리 경계 검증 완료. Private Object Storage·Linux/amd64와 확장된 폐기 가능 PostgreSQL 재현성 acceptance가 후속 | [Stage 03B Field Matrix](specs/stage-03b-official-source-field-matrix.md), [Stage 03B Implementation Plan](tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md), [ADR-0014](decisions/ADR-0014-use-bounded-official-source-snapshots.md), [ADR-0015](decisions/ADR-0015-use-isin-derived-krx-etf-bindings.md) |
 
 ## 2. 구현 Stage
 
@@ -82,7 +82,7 @@
 
 ### Stage 03B 공식 외부 정형 데이터
 
-**상태: Task 8 결합 파이프라인 검증 완료 — Task 9 실데이터 acceptance 대기**
+**상태: Task 9 로컬 실데이터 acceptance 완료 — NCP 외부 게이트 대기**
 
 - SEC N-PORT Task 7은 공식 5개 TSV만 안전 추출하고, 컷오프 이하 최신 report·amendment를 선택하며, 주최 측 해외 ETF를 명시적 `product_entity_id + CIK + Class Ticker` binding으로 Series와 대조한다. Series ID를 주최 측 상품의 고유 식별자로 승격하지 않고 새 테이블·DDL·온톨로지 관계도 추가하지 않았다.
 - 보유종목은 고유하고 유효한 ISIN, 그다음 CUSIP만 승격한다. 중복·미해소 식별자는 snapshot-local Security로 보존하고 `PARTIALLY_COVERED/bounded_unknown`으로 제한하며, ticker는 별칭으로만 사용한다. 동일 원본 lot은 합산하지 않고 별도 `holdsSecurity` 관계로 유지한다.
@@ -90,6 +90,9 @@
 - 국내 ETF holdings 로컬 inventory는 KRX CSV 1,129개와 운용사 공식 fallback 4개로 exact binding 1,133개를 모두 채웠다. 이 파일들은 비추적 원본이며 Task 9에서 실제 manifest·coverage·결합 재현을 검증한다.
 - Task 5는 KRX 2026-07-10 ETF 일별 응답의 1,141행을 검증하고, exact binding 1,133개에 대해서만 종가와 NAV를 별도 Decimal Observation·Evidence로 매핑한다. KRX-only 8개와 주최 측 미연결 69개에는 상품 가격 사실을 만들지 않으며, 이름 차이는 식별키로 사용하지 않는다.
 - Task 8은 Stage 03A organizer 입력과 승인 공식 manifest를 모두 검증한 뒤 한 canonical manifest와 하나의 `building` 데이터셋에 순차 결합한다. NCP Ubuntu에서 Linux/amd64 이미지 `266 passed, 13 deselected`, PostgreSQL ingestion `9 passed, 270 deselected`, 전체 비-live 회귀 `938 passed, 9 deselected`를 확인했다. 최종 NCP PostgreSQL 데이터셋은 아직 적재하거나 활성화하지 않았다.
+- Task 9 로컬 캡처는 7개 공식 소스의 1,135개 객체, 약 454 MB를 컷오프 이하 불변 manifest로 고정했다. SEC N-PORT의 게시일은 2026-06-30, 공식 데이터 라이브러리 available date는 2026-07-09로 분리했다. 실제 SEC Series/Class 43,121행, N-PORT 공식 5개 TSV와 주최 측 해외 ETF 5,646개 binding을 전부 검증했다.
+- 첫 전체 N-PORT 측정은 Python 내 연결표가 약 4.6 GB를 사용해 중단했다. 선택 행을 폐기 가능한 SQLite keyed join으로 spill하고 250 holdings·10만 생성 레코드 상한을 적용한 뒤, 9,672개 출력 묶음에서 구성종목 1,299,751개와 관측값 7,798,506개를 약 33분 42초·최대 0.26 GB로 처리했다. 공식 `N/A`·공란 파생상품 817행은 추가 검증 후 관계를 보존하고 `unknown` Observation으로 정규화했다.
+- Task 9 일반 계약·ingestion 회귀는 `511 passed, 15 deselected`, 로컬 공식 캡처 재검증은 `1 passed`였다. NCP Object Storage 왕복, Linux/amd64 이미지, 실제 PostgreSQL 결합 재현은 로컬에 자격증명·Docker·DB URL이 없어 실행하지 않았다. 예상 N-PORT 논리 payload와 인덱스·두 재현 빌드를 고려하면 현재 10 GB NCP DB는 부족하므로 실제 적재 전에 최소 50 GB, 권장 100 GB로 확장해야 한다.
 
 ## 3. 현재 실행하면 안 되는 계획
 
@@ -144,6 +147,6 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 25. ~~Stage 03B Task 4의 1,133개 연결 ETF PDF full capture inventory 생성·검증~~ — 2026-08-23 완료
 26. ~~Stage 03B Task 5 KRX ETF 종가·NAV 구현~~ — 2026-08-23 완료
 27. ~~Stage 03B Task 8의 Stage 03A+03B 결합 파이프라인 구현·Linux/amd64·폐기 가능 PostgreSQL 검증~~ — 2026-08-23 완료
-28. Stage 03B Task 9의 실데이터·Object Storage·coverage·재현성 acceptance 수행
+28. Stage 03B Task 9의 NCP Object Storage·Linux/amd64·확장된 폐기 가능 PostgreSQL 재현성 acceptance 수행
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

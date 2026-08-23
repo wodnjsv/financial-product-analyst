@@ -36,6 +36,7 @@ markers = [
   "performance: requires RUN_DB_SCALE_TESTS=1 and synthetic scale data",
   "organizer_data: requires the ignored local organizer workbooks",
   "object_storage: requires an explicitly configured private Object Storage target",
+  "official_data: requires explicitly configured live official sources",
 ]
 
 [tool.setuptools.packages.find]
