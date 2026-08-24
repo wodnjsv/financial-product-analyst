@@ -1204,6 +1204,59 @@ Contract schema export, source/test compilation, dependency compatibility,
 and diff checks also passed. These checks do not authorize a fresh NCP build,
 deletion of the partial probe, or dataset activation.
 
+### Task 9 organizer timestamp correction (approved 2026-08-24)
+
+The first organizer-authoritative rerun correctly refused to revive products
+that the organizer mapper had quarantined, but then reported
+`SEC_NPORT_SAMPLE_INSUFFICIENT`. Aggregate-only diagnosis proved that all
+`5,646` `PREF02N001` rows were quarantined on the same field:
+`du_nav_base_dt` contains a timezone-naive source timestamp such as
+`YYYY-MM-DD 00:00:00`, while the mapper passed its string form to the strict
+`YYYYMMDD` date parser. This contradicted the approved field matrix, which
+defines the source as `timestamp without time zone` and directs the mapper to
+use its date portion.
+
+Correct only this source-field boundary:
+
+- accept a valid timezone-naive ISO date-time string for
+  `PREF02N001.du_nav_base_dt` and retain only its calendar date;
+- continue accepting the existing date and `YYYYMMDD` forms;
+- reject timezone-bearing or malformed values without inference;
+- do not relax any other organizer date field; and
+- retain the rule that only an organizer-emitted product may receive an
+  N-PORT binding.
+
+TDD must first reproduce the real string-format quarantine. The corrected
+real-data aggregate must emit `5,638` products and leave only `8` rows
+quarantined for their separate invalid listing dates. This correction does
+not authorize deletion or activation of either partial NCP probe. After code,
+ordinary, gated organizer, and official-source checks pass, push a new narrow
+commit before attempting another capacity probe with a fresh dataset version.
+
+Correction verification evidence:
+
+- RED: a timezone-naive source timestamp string was quarantined as
+  `INVALID_SOURCE_VALUE` on `du_nav_base_dt`;
+- GREEN: the same value produced the calendar date while a timezone-bearing
+  timestamp remained quarantined;
+- focused overseas/official/N-PORT regression: `74 passed, 1 deselected`;
+- actual organizer aggregate: `5,646` rows, `4` accepted, `5,634` limited,
+  `8` quarantined, and `5,638` emitted product entities;
+- organizer-authoritative exact N-PORT matches: `4,253`, which is above the
+  approved `100`-product capacity sample; and
+- ordinary contract/ingestion regression: `525 passed, 18 deselected`.
+
+Review hardening additionally proved that Python's permissive ISO parser
+accepted unapproved `X`, `_`, and `/` date-time separators. Three RED cases
+captured that behavior; the final parser now admits only the approved space or
+`T` separator with second precision, while retaining the existing date-object
+and `YYYYMMDD` paths.
+
+The actual aggregate inspection read the private source and captured official
+objects without database writes or product-level output. The NCP PostgreSQL
+acceptance and renewed capacity run remain pending until this correction is
+committed, pushed, and pulled onto the NCP host.
+
 ## Task Checkpoints
 
 - Task 1 is a mandatory user approval gate before Tasks 3 through 7.

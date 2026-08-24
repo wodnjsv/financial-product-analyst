@@ -114,6 +114,13 @@ async def test_real_organizer_dataset_loads_but_never_activates(
 
     assert report.passed is True
     assert sum(counts["rows"] for counts in report.source_counts.values()) == 145_393
+    assert report.source_counts["PREF02N001"] == {
+        "accepted": 4,
+        "fatal": 0,
+        "limited": 5_634,
+        "quarantined": 8,
+        "rows": 5_646,
+    }
     assert report.table_counts["evidence.source_record"] == 4
     assert set(report.component_hashes) == {"evidence", "postgresql"}
     async with ingestion_admin_engine.connect() as connection:

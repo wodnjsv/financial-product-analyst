@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterable, Mapping, Set
 from datetime import UTC, date, datetime
@@ -396,6 +397,15 @@ def _date_result(
         return "present", raw.date(), None
     if isinstance(raw, date):
         return "present", raw, None
+    if column == "du_nav_base_dt" and isinstance(raw, str):
+        source_timestamp_text = normalize_name(raw)
+        if re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}[ T]"
+            r"[0-9]{2}:[0-9]{2}:[0-9]{2}",
+            source_timestamp_text,
+        ):
+            source_timestamp = datetime.fromisoformat(source_timestamp_text)
+            return "present", source_timestamp.date(), None
     token = normalize_name(str(raw)) if raw is not None else None
     if token in sentinels:
         return "placeholder", None, "SOURCE_VALUE_PLACEHOLDER"

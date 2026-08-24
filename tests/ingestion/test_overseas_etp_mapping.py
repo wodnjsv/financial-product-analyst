@@ -464,6 +464,55 @@ def test_missing_nav_and_mismatched_dates_do_not_derive_premium_discount() -> No
     )
 
 
+def test_nav_source_timestamp_string_uses_its_calendar_date() -> None:
+    mapped = map_synthetic(
+        15,
+        synthetic_overseas_etp_row()
+        | {"du_nav_base_dt": "2026-06-14 00:00:00"},
+    )
+
+    assert mapped.disposition != "quarantined"
+    assert observation(mapped, "du_nav_base_dt")["date_value"] == date(
+        2026, 6, 14
+    )
+    assert not any(issue.code == "INVALID_SOURCE_VALUE" for issue in mapped.issues)
+
+
+def test_nav_source_timestamp_string_with_timezone_is_quarantined() -> None:
+    mapped = map_synthetic(
+        16,
+        synthetic_overseas_etp_row()
+        | {"du_nav_base_dt": "2026-06-14T00:00:00+09:00"},
+    )
+
+    assert mapped.disposition == "quarantined"
+    assert not any(mapped.records_by_table.values())
+    assert mapped.issues[0].column == "du_nav_base_dt"
+    assert mapped.issues[0].code == "INVALID_SOURCE_VALUE"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        "2026-06-14X00:00:00",
+        "2026-06-14_00:00:00",
+        "2026-06-14/00:00:00",
+    ),
+)
+def test_nav_source_timestamp_string_rejects_unapproved_separator(
+    raw: str,
+) -> None:
+    mapped = map_synthetic(
+        17,
+        synthetic_overseas_etp_row() | {"du_nav_base_dt": raw},
+    )
+
+    assert mapped.disposition == "quarantined"
+    assert not any(mapped.records_by_table.values())
+    assert mapped.issues[0].column == "du_nav_base_dt"
+    assert mapped.issues[0].code == "INVALID_SOURCE_VALUE"
+
+
 def test_missing_optional_ids_remain_missing_observations() -> None:
     mapped = map_synthetic(
         15,
