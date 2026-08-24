@@ -78,6 +78,7 @@ The following problems connect the competition task to a credible internal workf
 ### Evidence boundary
 
 - The competition brief defines the evaluated data, query types, evidence rules, and risk controls.
+- The [2026-08-24 official data notice](../reference/official-data-notice-2026-08-24.md) replaces the earlier organizer workbooks, permits official data available through `2026-08-24`, fixes zero/missing and bond-availability rules, and confirms the 35-question evaluation shape.
 - The [official evaluation API specification](../reference/official-evaluation-api.md) defines the public `GET /answer` contract, sequential invocation, 300-second timeout, retry behavior, string-only JSON response, and stateless single-question interaction.
 - The [Financial Services Commission](https://www.fsc.go.kr/edu/news/84957) has identified incomplete suitability inputs, explanation focused on formal information transfer, and insufficiently detailed reasons in actual sales processes.
 - The [Korea Financial Investment Association's standard investment-recommendation rules](https://law.kofia.or.kr/service/law/lawFullScreenContent.do?historySeq=1421&seq=149) require product-risk classification, risk and cost explanations, investor-understanding checks, and records supporting the sales process.
@@ -97,7 +98,7 @@ The following problems connect the competition task to a credible internal workf
 
 ## 5. Hard Constraints
 
-- HyperCLOVA X is the only permitted language-model family. Other embedding models are allowed only to the extent confirmed by official competition guidance.
+- The evaluation path must use NCP HyperCLOVA X for Intent analysis and final answer generation. Intermediate retrieval, evidence construction, calculation, and verification stay deterministic in the approved design; any optional model or embedding use outside those two mandatory roles requires a separate scoped decision and must not replace the required HyperCLOVA X calls.
 - Every answer containing product facts or calculated values must identify its supporting data.
 - Do not create unsupported return forecasts or definitive investment recommendations.
 - Do not compare metrics across incompatible periods, meanings, units, currencies, or populations without an explicit normalization method and disclosed source.
@@ -111,6 +112,7 @@ The following problems connect the competition task to a credible internal workf
 - Make the Answer Composer output a structured `AnswerPlan` containing only approved Claim IDs and registered layout IDs. A deterministic Renderer, not the model, creates factual values, dates, units, and source strings.
 - Permit one shared LLM repair attempt per request across the Intent Resolver and Answer Composer. Semantic boundaries return `answer`, `partial`, `limitation`, or `abstain`; execution failures use the approved 5xx path.
 - Preserve raw organizer data unchanged and keep it out of the personal GitHub repository.
+- Use the eight `2026-08-24` organizer workbooks as the authoritative evaluation baseline. Preserve each fact's actual date and reject official information first available after `2026-08-24`.
 - The evaluation API must expose public `GET /answer`, accept `question_id` and `question` query parameters without an authentication header, and return `application/json` containing string values for `question_id`, `question`, `retrieved_context`, `think_trace`, and `answer`.
 - Evaluation requests arrive one at a time, have a 300-second timeout, and may be retried up to twice after timeout or 5xx. Request handling must be idempotent and must not depend on earlier requests.
 - Use an initial 55-second internal hard deadline, preserve the final 5 seconds for safe release, and recalibrate stage budgets from measured NCP benchmarks without removing evidence checks.
@@ -250,6 +252,8 @@ Accepted and superseded decisions live in `docs/planning/decisions/`. Each recor
 - [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](decisions/ADR-0005-bounded-llm-typed-capability-execution.md)
 - [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](decisions/ADR-0006-separate-disposition-and-bound-recovery.md)
 - [ADR-0007: Use a Normalized Evidence Ledger and Structured Answer Plans](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md)
+- [ADR-0016: Use the 2026-08-24 Organizer Baseline](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)
+- [ADR-0017: Adopt the Current Cutoff While Preserving Legacy Datasets](decisions/ADR-0017-adopt-current-cutoff-with-legacy-preservation.md)
 
 ## 14. Change Procedure
 

@@ -8,6 +8,8 @@
 
 **Related:** [Runtime Contracts](RUNTIME_CONTRACTS.md), [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md), [NCP Deployment Architecture](NCP_DEPLOYMENT_ARCHITECTURE.md), [Core Evaluation Set](../specs/core-evaluation-set.md), [Authoritative Data Requirements](../specs/authoritative-data-requirements.md)
 
+> **Current-baseline notice:** Cutoff examples that use `2026-07-11` are superseded by the `2026-08-24` availability cutoff in [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md). Claim-level actual dates remain unchanged.
+
 ## 1. 목적
 
 이 설계는 검색된 데이터가 어떤 주장을 지지하는지, 계산된 값이 어떤 입력과 규칙에서 나왔는지, 최종 답변의 어떤 문장과 표 셀이 그 근거를 사용했는지를 끝까지 추적하는 구조를 정의한다.

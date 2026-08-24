@@ -4,7 +4,7 @@
 
 **Status:** Approved conditional-source policy; first Stage 03B source boundary activated by [ADR-0014](../decisions/ADR-0014-use-bounded-official-source-snapshots.md)
 
-**Evaluation snapshot cutoff:** 2026-07-11
+**Evaluation snapshot cutoff:** Superseded by `2026-08-24` under [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md). The old source observations remain historical probes and require recapture or explicit reapproval.
 
 ## 1. 목적
 

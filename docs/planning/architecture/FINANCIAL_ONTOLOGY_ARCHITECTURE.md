@@ -4,7 +4,7 @@
 
 **Date:** 2026-08-18
 
-**Cutoff:** 2026-07-11
+**Cutoff:** Superseded by `2026-08-24` under [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md). Literal `2026-07-11` URNs and examples below are historical examples until the rebaseline implementation updates them.
 
 **Related:** [Core Evaluation Set](../specs/core-evaluation-set.md), [Authoritative Data Requirements](../specs/authoritative-data-requirements.md), [NCP Deployment Architecture](NCP_DEPLOYMENT_ARCHITECTURE.md), [Runtime Contracts](RUNTIME_CONTRACTS.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md)
 

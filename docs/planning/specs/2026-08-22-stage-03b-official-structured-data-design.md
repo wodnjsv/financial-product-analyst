@@ -2,9 +2,9 @@
 
 **Date:** 2026-08-22
 
-**Status:** Approved design
+**Status:** Historical approved design; current snapshot recapture pending under [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)
 
-**Cutoff:** 2026-07-11
+**Cutoff:** Historical `2026-07-11`; current cutoff is `2026-08-24`
 
 **Scope:** ETF 구성종목·공식 식별자·국내 ETF 동일일 가격/NAV·ECOS 환율의 수집, 표준화, 커버리지와 Evidence 검증
 

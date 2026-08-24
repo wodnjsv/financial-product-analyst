@@ -4,7 +4,7 @@
 
 **Status:** Approved Task 1 requirements; concrete source activation deferred to ADR-0008
 
-**Snapshot cutoff:** 2026-07-11
+**Snapshot cutoff:** Superseded by `2026-08-24` under [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md). Older literal dates below remain historical requirement text until the source recapture plan is approved.
 
 ## 1. 기준
 

@@ -8,6 +8,8 @@
 
 **Related:** [Multi-Agent Architecture](MULTI_AGENT_ARCHITECTURE.md), [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [NCP Deployment Architecture](NCP_DEPLOYMENT_ARCHITECTURE.md), [Core Evaluation Set](../specs/core-evaluation-set.md)
 
+> **Current-baseline notice:** The JSON shape remains approved, but every fixed `2026-07-11` cutoff literal below is superseded by `2026-08-24` under [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md). The minimal compatibility migration is proposed in [ADR-0017](../decisions/ADR-0017-adopt-current-cutoff-with-legacy-preservation.md).
+
 ## 1. 목적
 
 이 문서는 평가 API가 질문을 받은 뒤 질문 해석, 실행, 검증, 답변 출력 단계가 서로 어떤 데이터를 주고받는지 정의한다. 실행 계약은 에이전트 수를 늘리는 장치가 아니다. LLM과 결정론적 컴포넌트 사이에 자유 문장 대신 검증 가능한 구조화 데이터만 전달하는 안전 경계다.

@@ -16,8 +16,8 @@
 
 현재 로드맵은 다음을 전제로 한다.
 
-- Stage 01 런타임 계약과 Stage 02 PostgreSQL 저장 계층은 구현·검증이 완료된 동결 입력이다.
-- 최종 데이터 스냅샷 컷오프는 `2026-07-11`이다.
+- Stage 01 계약의 JSON shape와 Stage 02의 정규화 사실 저장구조는 동결 입력이다. 다만 공식 기준 변경으로 고정 cutoff literal과 DB CHECK만 [ADR-0017](decisions/ADR-0017-adopt-current-cutoff-with-legacy-preservation.md)에 따라 최소 보강해야 한다.
+- 최종 organizer 기준은 `2026-08-24` 재배포본이며, 외부 공식자료는 `2026-08-24`까지 공개·이용 가능해진 자료만 사용한다. 각 사실의 실제 기준일은 그대로 보존한다. ([ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md))
 - 주최 측 데이터가 평가 기준이며, 공식 외부 데이터는 주최 측에 없는 필드와 관계만 보완한다.
 - 정상 경로의 LLM은 HyperCLOVA X Intent Resolver와 Answer Composer 두 역할로 제한한다.
 - 필터·정렬·순위·집계·금융 계산·비교 가능성·유사도는 결정론적 코드가 수행한다.
@@ -29,7 +29,7 @@
 
 ```mermaid
 flowchart LR
-    S01["Stage 01<br/>런타임 계약<br/>완료"] --> S02["Stage 02<br/>PostgreSQL 저장<br/>완료"]
+    S01["Stage 01<br/>런타임 계약 shape<br/>완료"] --> S02["Stage 02<br/>PostgreSQL 사실 구조<br/>완료"]
     S02 --> S03["Stage 03<br/>데이터 수집·표준화"]
     S03 --> S04["Stage 04<br/>온톨로지·검색 투영"]
     S04 --> S05["Stage 05<br/>통합 검색·금융 엔진"]
@@ -45,8 +45,8 @@ flowchart LR
 
 Stage 03부터 Stage 09까지 다음 조건을 계속 적용한다.
 
-1. 평가용 사실의 관측일·적용일·게시일·이용 가능일·빈티지일은 가능한 범위에서 `2026-07-11` 이후일 수 없다.
-2. 실제 기준일이 7월 10일이면 7월 11일 값으로 바꾸지 않고 실제 날짜를 답변과 Evidence에 보존한다.
+1. 평가용 사실의 게시일·이용 가능일은 `2026-08-24` 이후일 수 없고, 관측일·적용일·빈티지일은 원천의 실제 값을 보존한다.
+2. 실제 기준일이 `2026-08-24`보다 이르면 cutoff 날짜로 바꾸지 않고 실제 날짜를 답변과 Evidence에 보존한다.
 3. 원본 주최 측 파일, 공식 외부 원문, Parquet, 임베딩, 로컬 DB, 비밀정보는 Git에 커밋하지 않는다.
 4. Graph 또는 Vector 결과는 PostgreSQL의 `dataset_version`, Source, Evidence 또는 관계 원장 ID로 돌아와야 사실을 지지할 수 있다.
 5. LLM 출력은 실행 가능한 SQL·필터·계산식이나 최종 사실값의 권위가 될 수 없다.
@@ -111,7 +111,7 @@ Stage 03부터 Stage 09까지 다음 조건을 계속 적용한다.
 **완료 게이트:**
 
 - 네 마스터의 원본 행 수, 적재 행 수, 제외·중복·결측 사유가 대조된다.
-- 52개 질문마다 `supported`, `limited`, `requires_data`, `unsupported`가 근거와 함께 확정된다.
+- 내부 52개 회귀 질문과 공식 35문항 유형마다 `supported`, `limited`, `requires_data`, `unsupported`가 근거와 함께 확정된다.
 - 핵심 P0 데이터는 적재되거나, 확보 불가 사유와 영향받는 질문이 명시된다.
 - 컷오프 이후 처음 공개되거나 수정된 값이 평가 스냅샷 후보에 없다.
 - 표준 ID 연결률, 충돌, 단위·통화·기준일과 원문 위치가 검증된다.

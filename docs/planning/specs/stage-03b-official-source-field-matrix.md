@@ -2,9 +2,9 @@
 
 **Date:** 2026-08-22
 
-**Status:** Approved - Task 1 boundary frozen on 2026-08-22
+**Status:** Historical Task 1 boundary; current source matrix requires `2026-08-24` recapture under [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)
 
-**Cutoff:** 2026-07-11
+**Cutoff:** Historical `2026-07-11`; current cutoff is `2026-08-24`
 **Scope:** KRX 공식 종목·ETF 시장정보, ECOS `731Y001`, SEC Series/Class Report 및 Form N-PORT 2026 Q2
 
 ## 1. 결론

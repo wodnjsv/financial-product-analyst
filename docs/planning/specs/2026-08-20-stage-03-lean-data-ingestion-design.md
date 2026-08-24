@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-20
 
-**Status:** Approved baseline
+**Status:** Historical structural baseline; organizer boundary and cutoff superseded by [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)
 
 **Scope:** Stage 03 전체 경계와 Stage 03A 주최 측 4개 마스터 수집·표준화 구조
 

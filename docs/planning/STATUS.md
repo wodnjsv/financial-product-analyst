@@ -1,6 +1,6 @@
 # Financial Product Agent 계획·구현 현황
 
-**Updated:** 2026-08-23
+**Updated:** 2026-08-25
 
 이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.
 
@@ -9,20 +9,20 @@
 | 구분 | 현재 상태 | 기준 문서 |
 | --- | --- | --- |
 | 전체 대회 Stage 로드맵 | Stage 01~09 확정; 종점은 제출과 공식 평가 운영 기간 종료 | [Competition Stage Roadmap](ROADMAP.md), [ADR-0012](decisions/ADR-0012-use-nine-stage-competition-delivery-roadmap.md) |
-| Task 1 요구사항·평가 질문·추가 데이터 | 완료; 52개 질문 유형과 공식 데이터 공백 기록 | [Core Evaluation Set](specs/core-evaluation-set.md), [Authoritative Data Requirements](specs/authoritative-data-requirements.md), [Official API Source Matrix](specs/official-api-source-matrix.md) |
+| Task 1 요구사항·평가 질문·추가 데이터 | 내부 52개 회귀 질문은 유지; 새 공식 35문항 유형과 `2026-08-24` 데이터 공지로 재베이스 진행 중 | [Official Data Notice](../reference/official-data-notice-2026-08-24.md), [Rebaseline Design](specs/2026-08-24-stage-03-organizer-rebaseline-design.md) |
 | Task 2 상위 아키텍처 | 확정; 2개 제한 LLM 역할 + 결정론적 Orchestrator·Capability·Verifier | [Planning Harness](HARNESS.md), [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) |
 | 실패·판정·시간 예산 | 확정 기본안; 55초 내부 마감은 NCP 벤치마크 후 단계별 재배분 가능 | [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md), [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) |
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 최소 클래스와 13개 핵심 관계를 현재 기본안으로 기록; TTL·SHACL 필드 매핑은 후속 계획 필요 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
-| Stage 03B 공식 외부 정형 데이터 | Task 1~8 구현·검증 완료; Task 9 로컬 공식 캡처·전체 N-PORT coverage·메모리 경계 검증 완료. Private Object Storage·Linux/amd64와 확장된 폐기 가능 PostgreSQL 재현성 acceptance가 후속 | [Stage 03B Field Matrix](specs/stage-03b-official-source-field-matrix.md), [Stage 03B Implementation Plan](tasks/2026-08-22-stage-03b-official-structured-data-implementation-plan.md), [ADR-0014](decisions/ADR-0014-use-bounded-official-source-snapshots.md), [ADR-0015](decisions/ADR-0015-use-isin-derived-krx-etf-bindings.md) |
+| Stage 03 organizer·외부 정형 데이터 | 7월 기준 구현·캡처는 역사적 검증으로 보존; 새 8개 workbook·8월 24일 cutoff·외부 source 재승인으로 재베이스 설계 중 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [280-field Matrix](specs/organizer-master-field-matrix-2026-08-24.md), [ADR-0017](decisions/ADR-0017-adopt-current-cutoff-with-legacy-preservation.md) |
 
 ## 2. 구현 Stage
 
 ### Stage 01 런타임 계약
 
-**상태: 구현·검증 완료, Stage 02 인계용 동결**
+**상태: JSON shape 구현·검증 완료; 공식 cutoff literal의 `2026-08-24` 보강 승인 대기**
 
 - 기본 계약과 JSON Schema는 커밋 `c5d387d`∼`36ffa82`에 구현되었다.
 - AnswerPlan의 구조적 경계는 `4dc6c30`에 잠겼다.
@@ -43,7 +43,7 @@
 
 ### Stage 02 PostgreSQL 저장 계층
 
-**상태: Stage 02A 핵심 저장 및 Stage 02B NCP·이식성 증명 완료**
+**상태: 정규화 저장구조와 NCP·이식성 증명 완료; legacy 보존형 cutoff migration `0006` 승인 대기**
 
 - 상세 계획은 2026-08-18 최종 재리뷰에서 승인된 1A~18A 결정을 반영해 Stage 02A 핵심 저장과 Stage 02B NCP·이식성 증명으로 나뉘었다.
 - 사용자가 PostgreSQL DDL·Alembic·리포지터리·JSONB 구현 범위를 승인했으며, `codex/stage-02-storage` 격리 브랜치에서 Task 1 데이터베이스 하니스부터 Task 7 `0005` 불변 request artifact·request lifecycle 저장까지 Stage 02A 범위를 구현했다.
@@ -66,7 +66,7 @@
 
 ### Stage 03A 주최 측 마스터 적재
 
-**상태: 완료 — 로컬 실데이터·private Object Storage·Linux/amd64 검증 통과**
+**상태: 7월 배포본 기준 역사적 완료 — 새 공식 배포본으로 교체 필요**
 
 - 207개 원천 필드를 승인된 분류와 Stage 02 저장 경계에 매핑하고, 네 소스별 결정론적 매퍼와 하나의 FK 순서 보장 배치 writer를 구현했다.
 - Task 9는 8개 워크북 전체의 체크섬·헤더·행 수·중복 구조를 먼저 검증한 뒤에만 `building` 데이터셋을 만들며, 네 소스를 1,000행 배치로 순차 적재한다. 해외 ETP 중복 식별자는 자동 병합하지 않고, 공모펀드 반복행은 공통값 일치 검증 후 대표 원본 위치만 Evidence locator로 사용한다.
@@ -82,7 +82,7 @@
 
 ### Stage 03B 공식 외부 정형 데이터
 
-**상태: Task 9 로컬 실데이터 acceptance 완료 — NCP 외부 게이트 대기**
+**상태: 7월 cutoff 로컬 acceptance는 역사적 기록 — 8월 24일 cutoff 재캡처 필요**
 
 - SEC N-PORT Task 7은 공식 5개 TSV만 안전 추출하고, 컷오프 이하 최신 report·amendment를 선택하며, 주최 측 해외 ETF를 명시적 `product_entity_id + CIK + Class Ticker` binding으로 Series와 대조한다. Series ID를 주최 측 상품의 고유 식별자로 승격하지 않고 새 테이블·DDL·온톨로지 관계도 추가하지 않았다.
 - 보유종목은 고유하고 유효한 ISIN, 그다음 CUSIP만 승격한다. 중복·미해소 식별자는 snapshot-local Security로 보존하고 `PARTIALLY_COVERED/bounded_unknown`으로 제한하며, ticker는 별칭으로만 사용한다. 동일 원본 lot은 합산하지 않고 별도 `holdsSecurity` 관계로 유지한다.
@@ -106,7 +106,7 @@
 
 | Stage | 범위 | 상태 |
 | --- | --- | --- |
-| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 03A 완료; 03B Task 1~8 완료·Task 9 acceptance 대기; 03C 대기 |
+| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 새 organizer 280필드·cutoff migration·외부 source 재캡처 설계 중; 03C 대기 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
 | 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
@@ -147,6 +147,10 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 25. ~~Stage 03B Task 4의 1,133개 연결 ETF PDF full capture inventory 생성·검증~~ — 2026-08-23 완료
 26. ~~Stage 03B Task 5 KRX ETF 종가·NAV 구현~~ — 2026-08-23 완료
 27. ~~Stage 03B Task 8의 Stage 03A+03B 결합 파이프라인 구현·Linux/amd64·폐기 가능 PostgreSQL 검증~~ — 2026-08-23 완료
-28. Stage 03B Task 9의 NCP Object Storage·Linux/amd64·확장된 폐기 가능 PostgreSQL 재현성 acceptance 수행
+28. ~~옛 Stage 03B Task 9 NCP acceptance~~ — 공식 2026-08-24 재배포로 실행 중단; 역사적 산출물만 보존
+29. 새 8개 workbook 전수 분석과 280필드 매핑·identity·cutoff 보강안 승인
+30. 승인안 기준 Stage 03 organizer rebaseline 상세 구현계획 작성·승인
+31. Stage 01 current cutoff literal과 Stage 02 Alembic `0006` 구현·로컬/NCP 검증
+32. 네 organizer mapper·identity pre-scan·외부 source 재캡처 구현 및 새 `building` 재현
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

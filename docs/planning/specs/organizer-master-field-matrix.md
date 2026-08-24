@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-20
 
-**Status:** Approved
+**Status:** Superseded historical matrix — use [2026-08-24 280-field matrix](organizer-master-field-matrix-2026-08-24.md)
 
 **Cutoff:** 2026-07-11
 **Scope:** `PRBD01N001`, `PREF01N001`, `PREF02N001`, `PRFD01N001`의 실제 데이터 컬럼 207개

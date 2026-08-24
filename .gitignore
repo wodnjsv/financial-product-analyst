@@ -17,6 +17,8 @@ credentials/
 # Organizer-provided competition materials
 data/
 docs/*.pdf
+ai-festival2026_*Dataset260824/
+ai-festival2026_*DtataSet260824/
 
 # Local data products and search indexes
 *.db

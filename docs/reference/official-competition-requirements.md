@@ -6,6 +6,8 @@
 
 **Status:** Official competition requirements supplied by the user
 
+> **Precedence notice:** 데이터 cutoff·코드값·결측·채권 구매가능성·문항 수·HyperCLOVA X 적용 범위는 [2026-08-24 추가 공지](official-data-notice-2026-08-24.md)가 이 문서보다 우선한다.
+
 이 문서는 다음 두 주최측 PDF에서 구현과 평가에 영향을 주는 요구사항만 추려 프로젝트 기준으로 정리한다. 원본 PDF는 대회 한정 활용 자료이므로 저장소에 넣지 않는다.
 
 - `AI페스티벌_과제설명_금융상품Agent_참여자공유용.pdf`

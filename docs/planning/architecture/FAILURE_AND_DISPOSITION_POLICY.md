@@ -8,6 +8,8 @@
 
 **Related:** [Runtime Contracts](RUNTIME_CONTRACTS.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [Multi-Agent Architecture](MULTI_AGENT_ARCHITECTURE.md), [Official Evaluation API](../../reference/official-evaluation-api.md), [Core Evaluation Set](../specs/core-evaluation-set.md)
 
+> **Current-baseline notice:** Product-existence and cutoff examples now use the `2026-08-24` baseline from [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md); older literal dates below are historical examples.
+
 ## 1. 목적
 
 이 정책은 질문에 답할 수 없는 이유와 서버가 요청을 처리하지 못한 이유를 분리한다. 존재하지 않는 상품, 공식 데이터 부재, 호환되지 않는 지표는 정상적인 금융 판정이다. DB 타임아웃, 모델 API 장애, 계약 불변식 훼손은 시스템 실패다. 두 종류를 같은 `abstain` 또는 같은 HTTP 코드로 처리하지 않는다.

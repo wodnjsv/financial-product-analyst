@@ -8,7 +8,7 @@
 
 **Related:** [공식 평가 API 규격](../../reference/official-evaluation-api.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0009](../decisions/ADR-0009-ncp-postgresql-storage-encryption-boundary.md), [ADR-0010](../decisions/ADR-0010-use-ncp-direct-database-users.md), [Stage 01 Runtime Contracts 구현 계획](../tasks/2026-08-17-stage-01-runtime-contracts-implementation-plan.md), [Stage 02 PostgreSQL Storage 구현 계획](../tasks/2026-08-17-stage-02-postgresql-storage-implementation-plan.md)
 
-이 문서는 금융상품 Agent를 Naver Cloud Platform에 배포할 때 사용할 인프라 기준을 기록한다. 금융 데이터는 계속 **2026-07-11**을 컷오프로 사용한다. 인프라 제품과 소프트웨어 버전은 실제 배포 시점에 NCP가 지원하는 안정 버전을 사용하되, 금융 데이터 기준일을 바꾸지 않는다.
+이 문서는 금융상품 Agent를 Naver Cloud Platform에 배포할 때 사용할 인프라 기준을 기록한다. 금융 데이터의 현재 cutoff는 [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)에 따라 **2026-08-24**다. 아래의 `2026-07-11` object key와 URN 예시는 과거 배포 구조의 예시이며, 현재 재적재에서는 `2026-08-24` prefix를 사용한다. 인프라 제품과 소프트웨어 버전은 실제 배포 시점에 NCP가 지원하는 안정 버전을 사용한다.
 
 폐기된 2026-08-10 구현 계획의 DuckDB·로컬 인덱스는 이 결정 이전의 제안이다. 새 단계별 구현 계획은 이 문서를 NCP 기준으로 사용하며, 기존 계획이나 ADR을 소급해서 덮어쓰지 않는다.
 
