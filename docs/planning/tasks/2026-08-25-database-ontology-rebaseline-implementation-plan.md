@@ -331,6 +331,13 @@ git commit -m "feat: replace organizer source contracts"
 
 ### Task 4: Normalize Domestic Bonds at Product and Sale-Lot Grain
 
+**Implementation status:** Completed and verified on `2026-08-25`. The mapper
+uses one canonical `catalog.product` per `pd_no`, preserves composite-key LOT
+observations and row-level Evidence, rejects source-order selection for 18
+verified product-static conflict pairs, and ignores `buyable_quantity`
+completely. All 21,882 replacement rows completed the read-only mapper pass
+without quarantine; intended missing values remain explicitly limited.
+
 **Files:**
 
 - Modify: `src/financial_agent/ingestion/mapping/domestic_bond.py`
@@ -341,7 +348,8 @@ git commit -m "feat: replace organizer source contracts"
 
 - Consumes: `AuthoritativeIdentityIndex` and one source row keyed by
   `(pd_no, pd_exg_mkt, info_base_dt, info_seq)`.
-- Produces: one canonical domestic-bond product/security per valid `pd_no`.
+- Produces: one canonical domestic-bond `catalog.product` per valid `pd_no`.
+  It emits no duplicate or subtype-incompatible `catalog.security` row.
 - Produces: source-record-specific price/yield observations whose Evidence
   locator contains the complete composite key.
 - Produces no fact, Evidence, filter, or availability value from

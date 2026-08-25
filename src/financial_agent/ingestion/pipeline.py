@@ -41,8 +41,10 @@ from financial_agent.ingestion.identity import (
 )
 from financial_agent.ingestion.mapping.common import make_record_hash, stable_id
 from financial_agent.ingestion.mapping.domestic_bond import (
+    DomesticBondAnalysis,
     SPEC as DOMESTIC_BOND_SPEC,
 )
+from financial_agent.ingestion.mapping.domestic_bond import analyze_bond_rows
 from financial_agent.ingestion.mapping.domestic_bond import (
     map_row as map_domestic_bond_row,
 )
@@ -199,6 +201,8 @@ def _prescan_source(
     source_code: str,
     rows: Iterable[Mapping[str, object]],
 ) -> object:
+    if source_code == DOMESTIC_BOND_SPEC.source_code:
+        return analyze_bond_rows(rows)
     if source_code == OVERSEAS_ETP_SPEC.source_code:
         return collect_duplicate_identifier_values(rows)
     if source_code == PUBLIC_FUND_SPEC.source_code:
@@ -213,9 +217,17 @@ def _map_source_row(
     row_number: int,
     row: Mapping[str, object],
     context: object,
+    identity_index: AuthoritativeIdentityIndex,
 ) -> MappedRow:
     if source_code == DOMESTIC_BOND_SPEC.source_code:
-        return map_domestic_bond_row(row_number, row)
+        if not isinstance(context, DomesticBondAnalysis):
+            raise OrganizerBuildError("SOURCE_PRESCAN_CONTEXT_INVALID")
+        return map_domestic_bond_row(
+            row_number,
+            row,
+            analysis=context,
+            identity_index=identity_index,
+        )
     if source_code == DOMESTIC_ETP_SPEC.source_code:
         return map_domestic_etp_row(row_number, row)
     if source_code == OVERSEAS_ETP_SPEC.source_code:
@@ -501,6 +513,7 @@ async def write_preflighted_organizer_rows(
                 row_number,
                 row,
                 preflight.contexts[source_code],
+                preflight.identity_index,
             )
             if mapped.disposition not in {
                 "accepted",

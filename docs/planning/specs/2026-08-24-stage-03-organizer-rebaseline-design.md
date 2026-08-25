@@ -45,7 +45,13 @@ No new product, identity, listing, observation, relation, or Evidence table is a
 
 ### 4.1 Domestic bond
 
-Create one canonical product/security per valid `pd_no`. Preserve every composite source record. Product-static values must converge byte-for-byte; when the same `pd_no` reports conflicting static values, record a source conflict instead of selecting a row.
+Create one canonical product identity per valid `pd_no`. It represents the
+bond product in `catalog.product`; do not also attach `catalog.security` to the
+same entity because Stage 02 enforces exclusive entity subtypes, and do not
+create an unlinked duplicate security entity. Preserve every composite source
+record. Product-static values must converge byte-for-byte; when the same
+`pd_no` reports conflicting static values, record a source conflict instead of
+selecting a row.
 
 Sale-lot fields such as price and buy yield may vary by `info_seq`. Store them as distinct source-record observations against the canonical product with `info_base_dt` as applicable date and the composite key in Evidence. Deterministic retrieval selects or ranks the eligible lot explicitly; it never treats repeated values as independent products.
 

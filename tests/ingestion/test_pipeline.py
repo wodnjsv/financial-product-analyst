@@ -150,7 +150,9 @@ def _configure_synthetic_pipeline(
         row_number: int,
         row: Mapping[str, object],
         context: object,
+        identity_index: object,
     ) -> MappedRow:
+        del row, context, identity_index
         index = counters[source_code]
         counters[source_code] += 1
         disposition = (
@@ -544,7 +546,9 @@ async def test_build_reads_an_immutable_snapshot_after_preflight(
         row_number: int,
         row: Mapping[str, object],
         context: object,
+        identity_index: object,
     ) -> MappedRow:
+        del source, context, identity_index
         observed_values.append(row["value"])
         return _mapped_row(row_number)
 
@@ -646,7 +650,9 @@ async def test_fatal_mapping_issue_returns_failed_report_without_activation(
         row_number: int,
         row: Mapping[str, object],
         context: object,
+        identity_index: object,
     ) -> MappedRow:
+        del row, context, identity_index
         issue = MappingIssue(
             source_code=source_code,
             row_number=row_number,
