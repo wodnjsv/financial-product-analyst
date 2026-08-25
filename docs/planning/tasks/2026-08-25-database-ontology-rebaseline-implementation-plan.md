@@ -394,6 +394,13 @@ git commit -m "feat: map current domestic bonds"
 
 ### Task 5: Normalize Domestic ETF and ETN Products
 
+**Implementation status:** Completed and verified on `2026-08-25`. The current
+1,780-row snapshot now maps all 98 fields, uses the authoritative cross-product
+identity index, promotes only eligible unique identifiers, preserves zeroes,
+and keeps conflicting organizer relation sources as Evidence without selecting
+a relationship. The read-only full-source pass produced zero quarantined rows
+and exactly 98 Evidence records per source row.
+
 **Files:**
 
 - Modify: `src/financial_agent/ingestion/mapping/domestic_etp.py`

@@ -49,7 +49,9 @@ from financial_agent.ingestion.mapping.domestic_bond import (
     map_row as map_domestic_bond_row,
 )
 from financial_agent.ingestion.mapping.domestic_etp import (
+    DomesticEtpAnalysis,
     SPEC as DOMESTIC_ETP_SPEC,
+    analyze_domestic_etp_rows,
 )
 from financial_agent.ingestion.mapping.domestic_etp import (
     map_row as map_domestic_etp_row,
@@ -203,6 +205,8 @@ def _prescan_source(
 ) -> object:
     if source_code == DOMESTIC_BOND_SPEC.source_code:
         return analyze_bond_rows(rows)
+    if source_code == DOMESTIC_ETP_SPEC.source_code:
+        return analyze_domestic_etp_rows(rows)
     if source_code == OVERSEAS_ETP_SPEC.source_code:
         return collect_duplicate_identifier_values(rows)
     if source_code == PUBLIC_FUND_SPEC.source_code:
@@ -229,7 +233,14 @@ def _map_source_row(
             identity_index=identity_index,
         )
     if source_code == DOMESTIC_ETP_SPEC.source_code:
-        return map_domestic_etp_row(row_number, row)
+        if not isinstance(context, DomesticEtpAnalysis):
+            raise OrganizerBuildError("SOURCE_PRESCAN_CONTEXT_INVALID")
+        return map_domestic_etp_row(
+            row_number,
+            row,
+            analysis=context,
+            identity_index=identity_index,
+        )
     if source_code == OVERSEAS_ETP_SPEC.source_code:
         if not isinstance(context, Mapping):
             raise OrganizerBuildError("SOURCE_PRESCAN_CONTEXT_INVALID")

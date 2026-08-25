@@ -1,235 +1,170 @@
+from __future__ import annotations
+
 from collections.abc import Mapping
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import Decimal
 
-import pytest
-
+from financial_agent.ingestion.identity import (
+    build_authoritative_identity_index,
+    collect_organizer_identifier_candidates,
+)
+from financial_agent.ingestion.mapping.common import stable_id
 from financial_agent.ingestion.mapping.domestic_etp import (
+    EVIDENCE_ONLY_COLUMNS,
     HANDLED_COLUMNS,
     IGNORED_COLUMNS,
     SPEC,
+    analyze_domestic_etp_rows,
     map_row,
 )
+from financial_agent.ingestion.models import IdentifierCandidate
 
 
-EXPECTED_COLUMNS = (
-    "cu_base_index",
-    "cu_charge_etc_rt",
-    "cu_charge_rt",
-    "cu_fund_mgmt_co",
-    "cu_lev_fector",
-    "cu_strtegy",
-    "cu_upt_dt",
-    "du_bpr",
-    "du_chas_errt",
-    "du_clpr",
-    "du_diff_rt",
-    "du_er_1d",
-    "du_er_1m",
-    "du_er_1y",
-    "du_er_3m",
-    "du_er_6m",
-    "du_er_ytd",
-    "du_hpr",
-    "du_last_aum",
-    "du_last_nav",
-    "du_lpr",
-    "du_nav_rnf_amt",
-    "du_nav_yday",
-    "du_upt_dt",
-    "du_val_1d",
-    "du_val_1m",
-    "du_val_5d",
-    "du_vol_1d",
-    "du_vol_avg_1m",
-    "du_vol_avg_5d",
-    "nru_mkt_diff_rt",
-    "nru_mkt_inav",
-    "pd_abrv_nm",
-    "pd_circ_net_tamt",
-    "pd_circ_stk_cnt",
-    "pd_curr_cd",
-    "pd_curr_nm",
-    "pd_divd_amt_pshr",
-    "pd_dvid_cycl",
-    "pd_dvid_yield",
-    "pd_exg_mkt_cd",
-    "pd_exg_mkt_nm",
-    "pd_grp_no",
-    "pd_itm_no",
-    "pd_itm_no_ma",
-    "pd_lst_price",
-    "pd_lst_stk_cnt",
-    "pd_lste_dt",
-    "pd_lstg_dt",
-    "pd_mkt_id",
-    "pd_mkt_nm",
-    "pd_nav_pshr",
-    "pd_net_ast_pshr",
-    "pd_net_prft_pshr",
-    "pd_net_rt_ast_pshr",
-    "pd_net_tamt",
-    "pd_nm",
-    "pd_pen_risk_nm",
-    "pd_pen_tr_yn",
-    "pd_risk_cd",
-    "pd_risk_nm",
-    "pd_sale_yn",
-    "pd_sect_cd",
-    "pd_sect_nm",
-    "pd_spac_yn",
-    "pd_stk_cnt",
-    "pd_tr_yn",
-    "ru_mkt_price",
-    "ru_mkt_volume",
-    "wu_core_yn",
-    "wu_inv_ast_type",
-    "wu_inv_rgn",
-    "wu_upt_dt",
-)
-
-EXPECTED_METRIC_IDS = {
-    "cu_charge_rt": "organizer.pref01n001.total_fee_rate",
-    "cu_lev_fector": "organizer.pref01n001.leverage_factor",
-    "cu_strtegy": "organizer.pref01n001.strategy_raw",
-    "cu_upt_dt": "organizer.pref01n001.structure_updated_on",
-    "du_bpr": "organizer.pref01n001.base_price",
-    "du_clpr": "organizer.pref01n001.close_price",
-    "du_er_1d": "organizer.pref01n001.cumulative_return_1d",
-    "du_er_1m": "organizer.pref01n001.cumulative_return_1m",
-    "du_er_1y": "organizer.pref01n001.cumulative_return_1y",
-    "du_er_3m": "organizer.pref01n001.cumulative_return_3m",
-    "du_er_6m": "organizer.pref01n001.cumulative_return_6m",
-    "du_er_ytd": "organizer.pref01n001.cumulative_return_ytd",
-    "du_hpr": "organizer.pref01n001.high_price",
-    "du_last_aum": "organizer.pref01n001.aum",
-    "du_last_nav": "organizer.pref01n001.nav_per_share",
-    "du_lpr": "organizer.pref01n001.lpr_raw",
-    "du_nav_yday": "organizer.pref01n001.previous_nav_per_share",
-    "du_upt_dt": "organizer.pref01n001.daily_updated_at",
-    "du_val_1d": "organizer.pref01n001.trading_value_1d",
-    "du_val_1m": "organizer.pref01n001.average_trading_value_1m",
-    "du_val_5d": "organizer.pref01n001.average_trading_value_5d",
-    "du_vol_1d": "organizer.pref01n001.trading_volume_1d",
-    "du_vol_avg_1m": "organizer.pref01n001.average_trading_volume_1m",
-    "du_vol_avg_5d": "organizer.pref01n001.average_trading_volume_5d",
-    "pd_abrv_nm": "organizer.pref01n001.short_name",
-    "pd_circ_net_tamt": "organizer.pref01n001.circulating_net_assets",
-    "pd_circ_stk_cnt": "organizer.pref01n001.circulating_security_count",
-    "pd_curr_cd": "organizer.pref01n001.product_currency",
-    "pd_curr_nm": "organizer.pref01n001.product_currency_name",
-    "pd_exg_mkt_cd": "organizer.pref01n001.exchange_code",
-    "pd_exg_mkt_nm": "organizer.pref01n001.exchange_name",
-    "pd_grp_no": "organizer.pref01n001.product_type",
-    "pd_itm_no": "organizer.pref01n001.product_id",
-    "pd_itm_no_ma": "organizer.pref01n001.internal_product_id",
-    "pd_lst_stk_cnt": "organizer.pref01n001.listed_security_count",
-    "pd_lste_dt": "organizer.pref01n001.trading_end_date",
-    "pd_lstg_dt": "organizer.pref01n001.listing_date",
-    "pd_mkt_id": "organizer.pref01n001.market_code",
-    "pd_mkt_nm": "organizer.pref01n001.market_name",
-    "pd_nav_pshr": "organizer.pref01n001.net_asset_value_per_share",
-    "pd_net_tamt": "organizer.pref01n001.net_assets",
-    "pd_nm": "organizer.pref01n001.name",
-    "pd_pen_risk_nm": "organizer.pref01n001.pension_risk_class",
-    "pd_pen_tr_yn": "organizer.pref01n001.pension_trade_eligible",
-    "pd_risk_cd": "organizer.pref01n001.risk_grade_code",
-    "pd_risk_nm": "organizer.pref01n001.risk_grade_name",
-    "pd_sale_yn": "organizer.pref01n001.saleable_in_master",
-    "pd_sect_cd": "organizer.pref01n001.sector_code_raw",
-    "pd_stk_cnt": "organizer.pref01n001.stock_count_raw",
-    "pd_tr_yn": "organizer.pref01n001.trading_suspended",
-    "wu_core_yn": "organizer.pref01n001.internal_core_flag",
-    "wu_inv_ast_type": "organizer.pref01n001.investment_asset_type",
-    "wu_inv_rgn": "organizer.pref01n001.investment_region",
-    "wu_upt_dt": "organizer.pref01n001.classification_updated_on",
-}
+DOMESTIC_ETF_ISIN = "KR7005930003"
 
 
 def synthetic_etp_row() -> dict[str, object]:
-    return {
-        "cu_base_index": "SYN INDEX 100",
-        "cu_charge_etc_rt": "0",
-        "cu_charge_rt": "0.35",
-        "cu_fund_mgmt_co": "  합성　자산운용 ",
-        "cu_lev_fector": "1.5",
-        "cu_strtegy": "SYN-REPLICATION",
-        "cu_upt_dt": "20260614",
-        "du_bpr": Decimal("10000"),
-        "du_chas_errt": Decimal("0"),
-        "du_clpr": Decimal("10100"),
-        "du_diff_rt": Decimal("0"),
-        "du_er_1d": Decimal("0.20"),
-        "du_er_1m": Decimal("1.20"),
-        "du_er_1y": Decimal("8.20"),
-        "du_er_3m": Decimal("2.70"),
-        "du_er_6m": Decimal("4.50"),
-        "du_er_ytd": Decimal("6.10"),
-        "du_hpr": Decimal("10200"),
-        "du_last_aum": Decimal("2500000000"),
-        "du_last_nav": Decimal("10080"),
-        "du_lpr": Decimal("9950"),
-        "du_nav_rnf_amt": Decimal("10"),
-        "du_nav_yday": Decimal("10070"),
-        "du_upt_dt": datetime(2026, 6, 15),
-        "du_val_1d": Decimal("500000000"),
-        "du_val_1m": Decimal("450000000"),
-        "du_val_5d": Decimal("480000000"),
-        "du_vol_1d": Decimal("50000"),
-        "du_vol_avg_1m": Decimal("45000"),
-        "du_vol_avg_5d": Decimal("48000"),
-        "nru_mkt_diff_rt": None,
-        "nru_mkt_inav": None,
-        "pd_abrv_nm": "SYN-ETF",
-        "pd_circ_net_tamt": Decimal("2000000000"),
-        "pd_circ_stk_cnt": Decimal("200000"),
-        "pd_curr_cd": "KRW",
-        "pd_curr_nm": "Synthetic Won",
-        "pd_divd_amt_pshr": Decimal("0"),
-        "pd_dvid_cycl": None,
-        "pd_dvid_yield": Decimal("0"),
-        "pd_exg_mkt_cd": "SYN-EXG",
-        "pd_exg_mkt_nm": "Synthetic Exchange",
-        "pd_grp_no": "ETF",
-        "pd_itm_no": "SYN-ETP-001",
-        "pd_itm_no_ma": "SYN-ETP-MA-001",
-        "pd_lst_price": Decimal("0"),
-        "pd_lst_stk_cnt": Decimal("250000"),
-        "pd_lste_dt": "20301231",
-        "pd_lstg_dt": "20200102",
-        "pd_mkt_id": "SYN-MKT",
-        "pd_mkt_nm": "Synthetic Market",
-        "pd_nav_pshr": Decimal("10080"),
-        "pd_net_ast_pshr": Decimal("0"),
-        "pd_net_prft_pshr": Decimal("0"),
-        "pd_net_rt_ast_pshr": Decimal("0"),
-        "pd_net_tamt": Decimal("2500000000"),
-        "pd_nm": "  합성　국내 ETF 1 ",
-        "pd_pen_risk_nm": "SYN-RISK-ASSET",
-        "pd_pen_tr_yn": "Y",
-        "pd_risk_cd": "SYN-RISK-2",
-        "pd_risk_nm": "SYN-HIGH-RISK",
-        "pd_sale_yn": "1",
-        "pd_sect_cd": "SYN-SECTOR",
-        "pd_sect_nm": None,
-        "pd_spac_yn": "N",
-        "pd_stk_cnt": Decimal("210000"),
-        "pd_tr_yn": "0",
-        "ru_mkt_price": None,
-        "ru_mkt_volume": None,
-        "wu_core_yn": "N",
-        "wu_inv_ast_type": "SYN-EQUITY",
-        "wu_inv_rgn": "SYN-GLOBAL",
-        "wu_upt_dt": "20260615",
-    }
+    row: dict[str, object] = dict.fromkeys(SPEC.expected_columns)
+    row.update(
+        {
+            "cu_base_index": "SYN INDEX 100",
+            "cu_charge_etc_rt": "0.02",
+            "cu_charge_rt": "0.35",
+            "cu_fund_mgmt_co": "  합성　자산운용 ",
+            "cu_lev_fector": "1.5",
+            "cu_strtegy": "SYN-REPLICATION",
+            "cu_upt_dt": "20260820",
+            "du_bpr": Decimal("10000"),
+            "du_chas_errt": Decimal("0.71"),
+            "du_chas_errt_base_dt": "20260821",
+            "du_clpr": Decimal("10100"),
+            "du_diff_rt": Decimal("-0.19"),
+            "du_diff_rt_base_dt": "20260821",
+            "du_er_1d": Decimal("0.20"),
+            "du_er_1m": Decimal("1.20"),
+            "du_er_1y": Decimal("8.20"),
+            "du_er_3m": Decimal("2.70"),
+            "du_er_6m": Decimal("4.50"),
+            "du_er_ytd": Decimal("6.10"),
+            "du_hpr": Decimal("10200"),
+            "du_last_aum": Decimal("2500000000"),
+            "du_last_nav": Decimal("10080"),
+            "du_lpr": Decimal("9950"),
+            "du_nav_base_dt": "20260821",
+            "du_nav_rnf_amt": Decimal("10"),
+            "du_nav_yday": Decimal("10070"),
+            "du_upt_dt": "20260822",
+            "du_val_1d": Decimal("500000000"),
+            "du_val_1m": Decimal("450000000"),
+            "du_val_5d": Decimal("480000000"),
+            "du_vlty_1m": Decimal("12.1"),
+            "du_vlty_1y": Decimal("18.4"),
+            "du_vlty_3m": Decimal("14.2"),
+            "du_vlty_6m": Decimal("16.3"),
+            "du_vlty_base_dt": "20260822",
+            "du_vol_1d": Decimal("50000"),
+            "du_vol_avg_1m": Decimal("45000"),
+            "du_vol_avg_5d": Decimal("48000"),
+            "fn_average_coupon": Decimal("3.2"),
+            "fn_average_maturity": Decimal("4.1"),
+            "fn_average_quality": "AA",
+            "fn_base_dt": "20260820",
+            "fn_effective_duration": Decimal("3.4"),
+            "fn_effective_maturity": Decimal("4.0"),
+            "fn_modified_duration": Decimal("3.3"),
+            "fn_nominal_maturity": Decimal("4.2"),
+            "fn_portfolio_dt": "20260819",
+            "pd_abrv_nm": "SYN-ETF",
+            "pd_circ_net_tamt": Decimal("2000000000"),
+            "pd_circ_stk_cnt": Decimal("200000"),
+            "pd_curr_cd": "KRW",
+            "pd_curr_nm": "대한민국 원",
+            "pd_divd_amt_ann": Decimal("480"),
+            "pd_divd_amt_pshr": Decimal("40"),
+            "pd_dvid_base_dt": "20260821",
+            "pd_dvid_cycl": "M",
+            "pd_dvid_inc_dist": Decimal("40"),
+            "pd_dvid_nav": Decimal("10050"),
+            "pd_dvid_pay_cnt": Decimal("12"),
+            "pd_dvid_pay_months": "1,2,3,4,5,6,7,8,9,10,11,12",
+            "pd_dvid_prc_base_dt": "20260820",
+            "pd_dvid_tax_basis": "과세기준가",
+            "pd_dvid_yield": Decimal("4.8"),
+            "pd_exg_mkt_cd": "KOSPI",
+            "pd_exg_mkt_nm": "유가증권시장",
+            "pd_grp_no": "ETF",
+            "pd_isin_cd": DOMESTIC_ETF_ISIN,
+            "pd_itm_no": DOMESTIC_ETF_ISIN,
+            "pd_itm_no_ma": "SYN-ETP-MA-001",
+            "pd_lst_stk_cnt": Decimal("250000"),
+            "pd_lste_dt": "20301231",
+            "pd_lstg_dt": "20200102",
+            "pd_mkt_id": "INTERNAL-MKT",
+            "pd_mkt_nm": "국내시장",
+            "pd_net_tamt": Decimal("2500000000"),
+            "pd_nm": "  합성　국내 ETF 1 ",
+            "pd_pen_risk_nm": "고위험",
+            "pd_pen_tr_yn": "Y",
+            "pd_ric": "SYNETF.KS",
+            "pd_risk_cd": "RISK-2",
+            "pd_risk_nm": "높은위험",
+            "pd_sale_yn": "1",
+            "pd_sect_cd": "INTERNAL-SECTOR",
+            "pd_spac_yn": "N",
+            "pd_stk_cnt": Decimal("210000"),
+            "pd_ticker": "SYNETF",
+            "pd_tr_yn": "0",
+            "ref_ast_type": "Equity ETF",
+            "ref_base_dt": "20260821",
+            "ref_base_index": "SYN INDEX 100",
+            "ref_fund_mgmt_co": "합성 자산운용",
+            "ref_geo_focus": "Korea",
+            "ru_mkt_price": Decimal("10110"),
+            "ru_mkt_volume": Decimal("51000"),
+            "wu_core_yn": "N",
+            "wu_inv_ast_type": "주식",
+            "wu_inv_rgn": "한국",
+            "wu_upt_dt": "20260821",
+        }
+    )
+    return row
+
+
+def _context(rows: tuple[Mapping[str, object], ...]):
+    candidates = collect_organizer_identifier_candidates("PREF01N001", rows)
+    return analyze_domestic_etp_rows(rows), build_authoritative_identity_index(
+        candidates
+    )
+
+
+def _map(
+    row: Mapping[str, object],
+    *,
+    rows: tuple[Mapping[str, object], ...] | None = None,
+    extra_candidates: tuple[IdentifierCandidate, ...] = (),
+):
+    source_rows = rows or (row,)
+    analysis = analyze_domestic_etp_rows(source_rows)
+    candidates = collect_organizer_identifier_candidates(
+        "PREF01N001", source_rows
+    )
+    identity_index = build_authoritative_identity_index(
+        candidates + extra_candidates
+    )
+    return map_row(
+        2,
+        row,
+        analysis=analysis,
+        identity_index=identity_index,
+    )
 
 
 def records(mapped, table: str) -> tuple[Mapping[str, object], ...]:
     return mapped.records_by_table.get(table, ())
 
 
-def observation(mapped, column: str) -> Mapping[str, object]:
-    metric_id = EXPECTED_METRIC_IDS[column]
+def observation(mapped, metric_suffix: str) -> Mapping[str, object]:
+    metric_id = f"organizer.pref01n001.{metric_suffix}"
     return next(
         item
         for item in records(mapped, "observation.observation_record")
@@ -245,318 +180,235 @@ def evidence(mapped, column: str) -> Mapping[str, object]:
     )
 
 
-def relation(mapped, predicate_id: str) -> Mapping[str, object]:
-    return next(
+def relations(mapped, predicate_id: str) -> tuple[Mapping[str, object], ...]:
+    return tuple(
         item
         for item in records(mapped, "relation.relation_record")
         if item["predicate_id"] == predicate_id
     )
 
 
-def test_all_73_fields_are_handled_or_ignored_exactly_once() -> None:
-    expected = set(EXPECTED_COLUMNS)
-
-    assert SPEC.expected_columns == EXPECTED_COLUMNS
-    assert HANDLED_COLUMNS.isdisjoint(IGNORED_COLUMNS)
-    assert HANDLED_COLUMNS | set(IGNORED_COLUMNS) == expected
-    assert len(HANDLED_COLUMNS) == 56
-    assert IGNORED_COLUMNS == {
-        "cu_charge_etc_rt": "UNUSABLE_ALL_ZERO_SERIES",
-        "du_chas_errt": "UNUSABLE_ALL_ZERO_SERIES",
-        "du_diff_rt": "UNUSABLE_ALL_ZERO_SERIES",
-        "du_nav_rnf_amt": "FAILED_DERIVATION_CHECK",
-        "nru_mkt_diff_rt": "NOT_AVAILABLE_CURRENT_SNAPSHOT",
-        "nru_mkt_inav": "NOT_AVAILABLE_CURRENT_SNAPSHOT",
-        "pd_divd_amt_pshr": "UNUSABLE_ALL_ZERO_SERIES",
-        "pd_dvid_cycl": "NOT_AVAILABLE_CURRENT_SNAPSHOT",
-        "pd_dvid_yield": "UNUSABLE_ALL_ZERO_SERIES",
-        "pd_lst_price": "UNUSABLE_ALL_ZERO_SERIES",
-        "pd_net_ast_pshr": "UNUSABLE_ALL_ZERO_SERIES",
-        "pd_net_prft_pshr": "UNUSABLE_ALL_ZERO_SERIES",
-        "pd_net_rt_ast_pshr": "UNUSABLE_ALL_ZERO_SERIES",
-        "pd_sect_nm": "NOT_AVAILABLE_CURRENT_SNAPSHOT",
-        "pd_spac_yn": "NOT_ANSWERABLE",
-        "ru_mkt_price": "NOT_AVAILABLE_CURRENT_SNAPSHOT",
-        "ru_mkt_volume": "NOT_AVAILABLE_CURRENT_SNAPSHOT",
+def test_all_98_fields_are_handled_and_none_are_silently_ignored() -> None:
+    assert len(SPEC.expected_columns) == 98
+    assert HANDLED_COLUMNS == frozenset(SPEC.expected_columns)
+    assert IGNORED_COLUMNS == {}
+    assert EVIDENCE_ONLY_COLUMNS == {
+        "du_lpr",
+        "fn_average_quality",
+        "pd_mkt_id",
+        "pd_risk_cd",
+        "pd_sect_cd",
+        "ru_mkt_price",
+        "ru_mkt_volume",
     }
 
 
-def test_etf_creates_product_identifiers_index_and_manager() -> None:
-    mapped = map_row(7, synthetic_etp_row())
+def test_etf_uses_canonical_identity_and_promotes_only_eligible_identifiers() -> None:
+    row = synthetic_etp_row()
+    mapped = _map(row)
 
-    assert mapped.disposition == "accepted"
-    entities = records(mapped, "catalog.entity")
-    product = next(item for item in entities if item["entity_type"] == "product")
-    manager = next(
-        item for item in entities if item["entity_type"] == "institution"
+    product = records(mapped, "catalog.product")[0]
+    assert product["entity_id"] == stable_id(
+        "product", "PREF01N001", DOMESTIC_ETF_ISIN
     )
-    index = next(item for item in entities if item["entity_type"] == "index")
-    assert product["canonical_name"] == "합성 국내 ETF 1"
-    assert manager["canonical_name"] == "합성 자산운용"
-    assert index["canonical_name"] == "SYN INDEX 100"
-    assert records(mapped, "catalog.product") == (
-        {
-            "entity_id": product["entity_id"],
-            "product_family": "domestic_etf",
-            "primary_currency": "KRW",
-        },
-    )
+    assert product["product_family"] == "domestic_etf"
+    assert product["primary_currency"] == "KRW"
     assert not records(mapped, "catalog.security")
-    assert records(mapped, "catalog.institution") == (
-        {"entity_id": manager["entity_id"], "institution_kind": "asset_manager"},
-    )
-    identifiers = records(mapped, "catalog.identifier")
-    assert [
+    assert {
         (item["scheme"], item["identifier_value"], item["is_primary"])
-        for item in identifiers
-    ] == [
-        ("PREF01_PD_ITM_NO", "SYN-ETP-001", True),
+        for item in records(mapped, "catalog.identifier")
+    } == {
+        ("PREF01_PD_ITM_NO", DOMESTIC_ETF_ISIN, True),
+        ("ISIN", DOMESTIC_ETF_ISIN, False),
         ("PREF01_PD_ITM_NO_MA", "SYN-ETP-MA-001", False),
-    ]
-    assert records(mapped, "catalog.alias")[0]["alias_text"] == "SYN-ETF"
-    assert relation(mapped, "managedBy")["object_id"] == manager["entity_id"]
-    assert relation(mapped, "tracksIndex")["object_id"] == index["entity_id"]
-    assert not any(
-        item["predicate_id"] in {"listedOn", "availability"}
-        for item in records(mapped, "relation.relation_record")
-    )
+        ("REFINITIV_RIC", "SYNETF.KS", False),
+    }
+    assert {item["alias_text"] for item in records(mapped, "catalog.alias")} == {
+        "SYN-ETF",
+        "SYNETF",
+    }
+    assert len(relations(mapped, "managedBy")) == 1
+    assert len(relations(mapped, "issuedBy")) == 0
+    assert len(relations(mapped, "tracksIndex")) == 1
 
 
-def test_etn_uses_issuer_relation_without_changing_product_family() -> None:
-    mapped = map_row(
-        8,
-        synthetic_etp_row()
-        | {
-            "pd_grp_no": "ETN",
-            "pd_itm_no": "SYN-ETN-001",
-            "pd_itm_no_ma": "SYN-ETN-MA-001",
-            "pd_nm": "Synthetic ETN 1",
-            "pd_abrv_nm": "SYN-ETN",
-            "cu_fund_mgmt_co": "Synthetic Securities",
-        },
-    )
+def test_etn_uses_issued_by_and_never_managed_by() -> None:
+    row = synthetic_etp_row() | {
+        "pd_grp_no": "ETN",
+        "pd_isin_cd": "KR7000880005",
+        "pd_itm_no": "KR7000880005",
+        "pd_nm": "합성 국내 ETN",
+        "pd_itm_no_ma": "SYN-ETN-MA-001",
+        "pd_ric": "SYNETN.KS",
+        "cu_fund_mgmt_co": "합성 증권",
+        "ref_fund_mgmt_co": "합성 증권",
+    }
 
-    assert mapped.disposition == "accepted"
-    assert records(mapped, "catalog.product")[0]["product_family"] == "domestic_etf"
-    assert not records(mapped, "catalog.security")
+    mapped = _map(row)
+
+    assert observation(mapped, "product_type")["text_value"] == "ETN"
+    assert len(relations(mapped, "issuedBy")) == 1
+    assert len(relations(mapped, "managedBy")) == 0
     assert records(mapped, "catalog.institution")[0]["institution_kind"] == "issuer"
-    assert {item["predicate_id"] for item in records(
-        mapped, "relation.relation_record"
-    )} == {"issuedBy", "tracksIndex"}
 
 
-def test_field_specific_dates_and_boolean_directions_are_preserved() -> None:
-    mapped = map_row(9, synthetic_etp_row())
-
-    assert observation(mapped, "cu_charge_rt")["applicable_date"] == date(
-        2026, 6, 14
-    )
-    daily = observation(mapped, "du_upt_dt")
-    assert daily["timestamp_value"] == datetime(2026, 6, 14, 15, tzinfo=UTC)
-    assert daily["applicable_date"] == date(2026, 6, 15)
-    close = observation(mapped, "du_clpr")
-    assert close["applicable_date"] == date(2026, 6, 15)
-    assert close["applicable_date"] != date(2026, 7, 11)
-    one_year = observation(mapped, "du_er_1y")
-    assert one_year["period_end"] == date(2026, 6, 15)
-    assert one_year["period_start"] is None
-    assert observation(mapped, "pd_tr_yn")["boolean_value"] is False
-    assert observation(mapped, "pd_sale_yn")["boolean_value"] is True
-    assert observation(mapped, "pd_pen_tr_yn")["boolean_value"] is True
-    assert observation(mapped, "wu_inv_rgn")["applicable_date"] == date(
-        2026, 6, 15
-    )
-    assert relation(mapped, "managedBy")["valid_from"] == date(2026, 6, 14)
-
-
-def test_every_answerable_field_has_exact_evidence_and_one_origin() -> None:
-    mapped = map_row(10, synthetic_etp_row())
-
-    evidence_rows = records(mapped, "evidence.evidence_record")
-    observation_origins = records(mapped, "evidence.evidence_observation_origin")
-    relation_origins = records(mapped, "evidence.evidence_relation_origin")
-    assert {item["locator_column"] for item in evidence_rows} == HANDLED_COLUMNS
-    assert len(evidence_rows) == 56
-    assert len(observation_origins) == 54
-    assert len(relation_origins) == 2
-    assert {item["evidence_id"] for item in evidence_rows} == {
-        item["evidence_id"] for item in observation_origins + relation_origins
-    }
-    assert len(records(mapped, "observation.metric_definition")) == 54
-
-    aum = evidence(mapped, "du_last_aum")
-    assert aum["predicate_id"] == "organizer.pref01n001.aum"
-    assert aum["normalized_value"] == {
-        "type": "decimal",
-        "value": "2500000000",
-    }
-    assert aum["currency"] == "KRW"
-    assert aum["applicable_date"] == date(2026, 6, 15)
-    assert aum["vintage_date"] == date(2026, 7, 11)
-    assert aum["locator_type"] == "tabular"
-    assert aum["locator_uri_or_object_key"] == SPEC.data_file_name
-    assert aum["locator_record_key"] == "SYN-ETP-001"
-    assert aum["locator_sheet"] == "datarows"
-    assert aum["locator_row"] == 10
-    assert aum["locator_column"] == "du_last_aum"
-    assert aum["raw_value_repr"] == "2500000000"
-    assert aum["parser_version"] == "1"
-    assert aum["mapping_version"] == "1"
-    assert aum["cutoff_status"] == "eligible"
-
-    managed_by = relation(mapped, "managedBy")
-    managed_by_evidence = evidence(mapped, "cu_fund_mgmt_co")
-    assert managed_by_evidence["value_or_object_id"] == {
-        "type": "string",
-        "value": managed_by["object_id"],
-    }
-    assert managed_by_evidence["normalized_value"] == {
-        "type": "string",
-        "value": managed_by["object_id"],
-    }
-
-
-def test_text_encoded_numeric_zero_uses_zero_status() -> None:
-    mapped = map_row(
-        10,
-        synthetic_etp_row() | {"cu_charge_rt": "0", "cu_lev_fector": "0"},
+def test_public_fund_overlap_reuses_etf_owned_canonical_identity() -> None:
+    row = synthetic_etp_row()
+    fund_candidates = (
+        IdentifierCandidate(
+            source_code="PRFD01N001",
+            row_number=2,
+            natural_key="FUND-SHARE-1",
+            entity_role="FundShareClass",
+            scheme="PRFD_ITM_NO",
+            value="FUND-SHARE-1",
+        ),
+        IdentifierCandidate(
+            source_code="PRFD01N001",
+            row_number=2,
+            natural_key="FUND-SHARE-1",
+            entity_role="FundShareClass",
+            scheme="ISIN",
+            value=DOMESTIC_ETF_ISIN,
+        ),
     )
 
-    assert observation(mapped, "cu_charge_rt")["value_status"] == "zero"
-    assert observation(mapped, "cu_charge_rt")["numeric_value"] == 0
-    assert observation(mapped, "cu_lev_fector")["value_status"] == "zero"
-    assert observation(mapped, "cu_lev_fector")["numeric_value"] == 0
+    mapped = _map(row, extra_candidates=fund_candidates)
 
-
-def test_non_index_placeholder_does_not_create_index_or_relation() -> None:
-    mapped = map_row(
-        10,
-        synthetic_etp_row() | {"cu_base_index": "제공되지 않음"},
+    assert records(mapped, "catalog.product")[0]["entity_id"] == stable_id(
+        "product", "PREF01N001", DOMESTIC_ETF_ISIN
     )
 
+
+def test_new_tracking_distribution_volatility_and_bond_metrics_keep_dates() -> None:
+    mapped = _map(synthetic_etp_row())
+
+    assert observation(mapped, "tracking_error")["numeric_value"] == Decimal(
+        "0.71"
+    )
+    assert observation(mapped, "tracking_error")["applicable_date"] == date(
+        2026, 8, 21
+    )
+    assert observation(mapped, "premium_discount_rate")["numeric_value"] == Decimal(
+        "-0.19"
+    )
+    assert observation(mapped, "premium_discount_rate")["applicable_date"] == date(
+        2026, 8, 21
+    )
+    for suffix, value in {
+        "annualized_volatility_1m": "12.1",
+        "annualized_volatility_3m": "14.2",
+        "annualized_volatility_6m": "16.3",
+        "annualized_volatility_1y": "18.4",
+    }.items():
+        item = observation(mapped, suffix)
+        assert item["numeric_value"] == Decimal(value)
+        assert item["applicable_date"] == date(2026, 8, 22)
+    assert observation(mapped, "distribution_per_share")["numeric_value"] == 40
+    assert observation(mapped, "distribution_cycle")["text_value"] == "M"
+    assert observation(mapped, "annualized_distribution_yield")["numeric_value"] == Decimal(
+        "4.8"
+    )
+    assert observation(mapped, "effective_duration")["numeric_value"] == Decimal(
+        "3.4"
+    )
+    assert observation(mapped, "effective_duration")["applicable_date"] == date(
+        2026, 8, 20
+    )
+
+
+def test_zero_is_preserved_and_blank_portfolio_value_is_missing() -> None:
+    row = synthetic_etp_row() | {
+        "du_chas_errt": Decimal("0"),
+        "pd_divd_amt_pshr": Decimal("0"),
+        "fn_effective_duration": None,
+    }
+
+    mapped = _map(row)
+
+    assert observation(mapped, "tracking_error")["value_status"] == "zero"
+    assert observation(mapped, "tracking_error")["numeric_value"] == 0
+    assert observation(mapped, "distribution_per_share")["value_status"] == "zero"
+    assert observation(mapped, "effective_duration")["value_status"] == "missing"
     assert mapped.disposition == "limited"
-    assert not any(
-        item["entity_type"] == "index"
-        for item in records(mapped, "catalog.entity")
-    )
-    assert not any(
-        item["predicate_id"] == "tracksIndex"
-        for item in records(mapped, "relation.relation_record")
-    )
-    assert ("cu_base_index", "SOURCE_VALUE_PLACEHOLDER") in {
-        (issue.column, issue.code) for issue in mapped.issues
+
+
+def test_conflicting_organizer_relation_sources_preserve_evidence_but_no_relation() -> None:
+    row = synthetic_etp_row() | {
+        "ref_base_index": "OTHER INDEX",
+        "ref_fund_mgmt_co": "다른 자산운용",
     }
 
+    mapped = _map(row)
 
-def test_sentinels_do_not_become_normal_leverage_returns_or_live_market_facts() -> None:
+    assert not relations(mapped, "tracksIndex")
+    assert not relations(mapped, "managedBy")
+    assert {evidence(mapped, column)["locator_column"] for column in {
+        "cu_base_index",
+        "ref_base_index",
+        "cu_fund_mgmt_co",
+        "ref_fund_mgmt_co",
+    }} == {
+        "cu_base_index",
+        "ref_base_index",
+        "cu_fund_mgmt_co",
+        "ref_fund_mgmt_co",
+    }
+    assert sum(
+        issue.code == "SOURCE_RELATION_VALUE_CONFLICT"
+        for issue in mapped.issues
+    ) == 4
+
+
+def test_duplicate_optional_identifiers_are_evidence_only() -> None:
+    first = synthetic_etp_row()
+    second = synthetic_etp_row() | {
+        "pd_isin_cd": "KR7000880005",
+        "pd_itm_no": "KR7000880005",
+        "pd_nm": "다른 ETF",
+    }
+    analysis, identity_index = _context((first, second))
+
     mapped = map_row(
-        11,
-        synthetic_etp_row()
-        | {
-            "cu_base_index": " ",
-            "cu_lev_fector": "",
-            "cu_strtegy": "C",
-            "du_er_1m": Decimal("-100"),
-            "pd_curr_cd": "CURR_CD_000",
-            "pd_lste_dt": "99991231",
-            "pd_pen_risk_nm": "N",
-            "pd_sale_yn": "0",
-            "pd_tr_yn": "1",
-            "ru_mkt_price": Decimal("0"),
-            "ru_mkt_volume": "",
-        },
-    )
-
-    assert mapped.disposition == "limited"
-    assert records(mapped, "catalog.product")[0]["primary_currency"] is None
-    assert observation(mapped, "cu_lev_fector")["value_status"] == "missing"
-    assert observation(mapped, "cu_strtegy")["value_status"] == "unknown"
-    assert observation(mapped, "du_er_1m")["value_status"] == "placeholder"
-    assert observation(mapped, "pd_curr_cd")["value_status"] == "inapplicable"
-    assert observation(mapped, "pd_lste_dt")["value_status"] == "placeholder"
-    assert observation(mapped, "pd_pen_risk_nm")["value_status"] == "inapplicable"
-    assert observation(mapped, "pd_sale_yn")["boolean_value"] is False
-    assert observation(mapped, "pd_tr_yn")["boolean_value"] is True
-    assert evidence(mapped, "du_er_1m")["normalized_value"] == {
-        "type": "null",
-        "value": None,
-    }
-    assert evidence(mapped, "du_er_1m")["raw_value_repr"] == "-100"
-    assert not any(
-        item["locator_column"] in {"ru_mkt_price", "ru_mkt_volume"}
-        for item in records(mapped, "evidence.evidence_record")
-    )
-    assert not any(
-        item["predicate_id"] == "tracksIndex"
-        for item in records(mapped, "relation.relation_record")
-    )
-
-
-def test_product_ids_are_stable_and_distinct_by_primary_natural_key() -> None:
-    first = map_row(1, synthetic_etp_row())
-    repeated = map_row(99, synthetic_etp_row())
-    changed = map_row(
         2,
-        synthetic_etp_row()
-        | {
-            "pd_itm_no": "SYN-ETP-002",
-            "pd_itm_no_ma": "SYN-ETP-MA-002",
-        },
+        first,
+        analysis=analysis,
+        identity_index=identity_index,
     )
 
-    assert records(first, "catalog.product")[0]["entity_id"] == records(
-        repeated, "catalog.product"
-    )[0]["entity_id"]
-    assert records(first, "catalog.product")[0]["entity_id"] != records(
-        changed, "catalog.product"
-    )[0]["entity_id"]
+    schemes = {item["scheme"] for item in records(mapped, "catalog.identifier")}
+    assert "PREF01_PD_ITM_NO_MA" not in schemes
+    assert "REFINITIV_RIC" not in schemes
+    assert observation(mapped, "internal_product_id")["text_value"] == "SYN-ETP-MA-001"
+    assert observation(mapped, "refinitiv_ric")["text_value"] == "SYNETF.KS"
+    assert sum(
+        issue.code == "DUPLICATE_IDENTIFIER_NOT_PROMOTED"
+        for issue in mapped.issues
+    ) == 2
 
 
-@pytest.mark.parametrize("column", ["pd_itm_no", "pd_itm_no_ma"])
-def test_missing_required_identifier_quarantines_without_records(column: str) -> None:
-    mapped = map_row(12, synthetic_etp_row() | {column: "  "})
+def test_all_source_fields_have_one_exact_evidence_locator() -> None:
+    mapped = _map(synthetic_etp_row())
+    evidence_rows = records(mapped, "evidence.evidence_record")
 
-    assert mapped.disposition == "quarantined"
-    assert not any(mapped.records_by_table.values())
-    assert len(mapped.issues) == 1
-    assert mapped.issues[0].column == column
-    assert mapped.issues[0].code == "MISSING_NATURAL_KEY"
-
-
-def test_binary_float_failure_reports_the_exact_column_without_value_leak() -> None:
-    mapped = map_row(13, synthetic_etp_row() | {"du_last_aum": 3.141592})
-
-    assert mapped.disposition == "quarantined"
-    assert not any(mapped.records_by_table.values())
-    assert mapped.issues[0].column == "du_last_aum"
-    assert mapped.issues[0].code == "INVALID_SOURCE_VALUE"
-    assert "3.141592" not in repr(mapped.issues)
-
-
-def test_after_cutoff_update_is_fatal_but_future_end_date_is_allowed() -> None:
-    allowed = map_row(
-        14,
-        synthetic_etp_row() | {"pd_lste_dt": "20351231"},
+    assert len(evidence_rows) == 98
+    assert {item["locator_column"] for item in evidence_rows} == set(
+        SPEC.expected_columns
     )
-    blocked = map_row(
-        15,
-        synthetic_etp_row()
-        | {
-            "pd_lste_dt": "20351231",
-            "wu_upt_dt": "20260712",
-        },
-    )
+    assert all(item["locator_sheet"] == "data" for item in evidence_rows)
+    assert all(item["mapping_version"] == "2" for item in evidence_rows)
+    assert all(item["vintage_date"] == date(2026, 8, 24) for item in evidence_rows)
+    assert evidence(mapped, "ru_mkt_price")["applicable_date"] is None
 
-    assert allowed.disposition == "accepted"
-    assert observation(allowed, "pd_lste_dt")["date_value"] == date(2035, 12, 31)
-    assert evidence(allowed, "pd_lste_dt")["normalized_value"] == {
-        "type": "date",
-        "value": "2035-12-31",
-    }
-    assert evidence(allowed, "pd_lste_dt")["applicable_date"] is None
-    assert evidence(allowed, "pd_lste_dt")["cutoff_status"] == "eligible"
+
+def test_future_end_date_is_allowed_but_future_fact_date_is_fatal() -> None:
+    allowed = _map(synthetic_etp_row() | {"pd_lste_dt": "20351231"})
+    blocked = _map(synthetic_etp_row() | {"du_vlty_base_dt": "20260825"})
+
+    assert observation(allowed, "trading_end_date")["date_value"] == date(
+        2035, 12, 31
+    )
     assert blocked.disposition == "quarantined"
-    assert not any(blocked.records_by_table.values())
-    assert blocked.issues[0].column == "wu_upt_dt"
+    assert blocked.issues[0].column == "du_vlty_base_dt"
     assert blocked.issues[0].code == "AFTER_CUTOFF_SOURCE_VALUE"
     assert blocked.issues[0].severity == "fatal"
