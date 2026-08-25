@@ -66,10 +66,9 @@ from financial_agent.ingestion.mapping.overseas_etp import (
     map_row as map_overseas_etp_row,
 )
 from financial_agent.ingestion.mapping.public_fund import (
+    PublicFundAnalysis,
     SPEC as PUBLIC_FUND_SPEC,
-)
-from financial_agent.ingestion.mapping.public_fund import (
-    analyze_repeated_fund_rows,
+    analyze_public_fund_rows,
 )
 from financial_agent.ingestion.mapping.public_fund import (
     map_row as map_public_fund_row,
@@ -210,7 +209,7 @@ def _prescan_source(
     if source_code == OVERSEAS_ETP_SPEC.source_code:
         return collect_duplicate_identifier_values(rows)
     if source_code == PUBLIC_FUND_SPEC.source_code:
-        return analyze_repeated_fund_rows(rows)
+        return analyze_public_fund_rows(rows)
     for _ in rows:
         pass
     return None
@@ -251,10 +250,13 @@ def _map_source_row(
             identity_index=identity_index,
         )
     if source_code == PUBLIC_FUND_SPEC.source_code:
+        if not isinstance(context, PublicFundAnalysis):
+            raise OrganizerBuildError("SOURCE_PRESCAN_CONTEXT_INVALID")
         return map_public_fund_row(
             row_number,
             row,
-            repeat_analysis=context,  # type: ignore[arg-type]
+            analysis=context,
+            identity_index=identity_index,
         )
     raise OrganizerBuildError("SOURCE_CODE_UNSUPPORTED")
 

@@ -513,6 +513,14 @@ git commit -m "feat: map current overseas etps"
 
 ### Task 7: Normalize One-Row Public Funds and Reuse Domestic ETF Identity
 
+**Implementation status:** Completed and verified on `2026-08-25`. The current
+23,676-row master now maps one row per `itm_no`, preserves exactly 75 raw
+Evidence records per row, expands ordered attributes without assigning code
+semantics, suppresses ambiguous optional identifiers and representative-fund
+self references, and reuses all 217 domestic-ETF canonical identities. No row
+was quarantined in the read-only full-source pass; PostgreSQL mapper, identity,
+pipeline, and writer regression checks passed.
+
 **Files:**
 
 - Modify: `src/financial_agent/ingestion/mapping/public_fund.py`
