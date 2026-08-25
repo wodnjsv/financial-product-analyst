@@ -12,7 +12,12 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from financial_agent.ingestion.mapping.common import make_record_hash, stable_id
-from financial_agent.ingestion.models import MappedRow, MappingIssue, SourceSpec
+from financial_agent.ingestion.models import (
+    IdentifierCandidate,
+    MappedRow,
+    MappingIssue,
+    SourceSpec,
+)
 from financial_agent.ingestion.pipeline import (
     CUTOFF_DATE,
     OrganizerSourceValidationError,
@@ -236,6 +241,110 @@ def test_preflight_exposes_the_manifest_used_for_its_hash(
     )
 
     assert canonical_sha256(preflight.manifest) == preflight.manifest_hash
+
+
+def test_preflight_freezes_one_cross_source_identity_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from financial_agent.ingestion import pipeline
+
+    _configure_synthetic_pipeline(
+        monkeypatch,
+        row_counts={code: 1 for code in SOURCE_CODES},
+    )
+
+    def candidates(source_code: str, rows: object):
+        tuple(rows)  # type: ignore[arg-type]
+        if source_code == "PREF01N001":
+            return (
+                IdentifierCandidate(
+                    source_code=source_code,
+                    row_number=2,
+                    natural_key="KR7005930003",
+                    entity_role="DomesticETF",
+                    scheme="ISIN",
+                    value="KR7005930003",
+                ),
+            )
+        if source_code == "PRFD01N001":
+            return (
+                IdentifierCandidate(
+                    source_code=source_code,
+                    row_number=2,
+                    natural_key="FUND-1",
+                    entity_role="FundShareClass",
+                    scheme="ISIN",
+                    value="KR7005930003",
+                ),
+            )
+        return ()
+
+    monkeypatch.setattr(
+        pipeline,
+        "collect_organizer_identifier_candidates",
+        candidates,
+    )
+    inputs = _inputs(tuple(reversed(SOURCE_CODES)))
+
+    preflight = _preflight_sources(
+        data_paths=inputs[0],
+        schema_paths=inputs[1],
+        data_sha256=inputs[2],
+        schema_sha256=inputs[3],
+    )
+
+    resolution = preflight.identity_index.resolve("ISIN", "KR7005930003")
+    assert resolution.status == "MATCHED"
+    assert resolution.canonical_identity is not None
+    assert resolution.canonical_identity.roles == frozenset(
+        {"DomesticETF", "FundShareClass"}
+    )
+
+
+def test_preflight_aggregates_identity_failures_without_raw_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from financial_agent.ingestion import pipeline
+
+    _configure_synthetic_pipeline(
+        monkeypatch,
+        row_counts={code: 1 for code in SOURCE_CODES},
+    )
+    private_value = "KR7005930004"
+
+    def candidates(source_code: str, rows: object):
+        tuple(rows)  # type: ignore[arg-type]
+        if source_code != "PREF01N001":
+            return ()
+        return (
+            IdentifierCandidate(
+                source_code=source_code,
+                row_number=2,
+                natural_key="PRIVATE-NATURAL-KEY",
+                entity_role="DomesticETF",
+                scheme="ISIN",
+                value=private_value,
+            ),
+        )
+
+    monkeypatch.setattr(
+        pipeline,
+        "collect_organizer_identifier_candidates",
+        candidates,
+    )
+    inputs = _inputs()
+
+    with pytest.raises(OrganizerSourceValidationError) as failure:
+        _preflight_sources(
+            data_paths=inputs[0],
+            schema_paths=inputs[1],
+            data_sha256=inputs[2],
+            schema_sha256=inputs[3],
+        )
+
+    assert failure.value.issue_counts == {"IDENTITY_ISIN_INVALID": 1}
+    assert private_value not in str(failure.value)
+    assert "PRIVATE-NATURAL-KEY" not in str(failure.value)
 
 
 @pytest.mark.asyncio

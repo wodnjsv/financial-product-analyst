@@ -41,6 +41,30 @@ class MappedRow:
 
 
 @dataclass(frozen=True, slots=True)
+class IdentifierCandidate:
+    source_code: str
+    row_number: int
+    natural_key: str
+    entity_role: str
+    scheme: str
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalIdentity:
+    entity_id: str
+    owner_source_code: str
+    owner_natural_key: str
+    roles: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityResolution:
+    status: Literal["MATCHED", "NOT_FOUND", "AMBIGUOUS"]
+    canonical_identity: CanonicalIdentity | None
+
+
+@dataclass(frozen=True, slots=True)
 class BuildReport:
     dataset_version: str
     cutoff_date: date

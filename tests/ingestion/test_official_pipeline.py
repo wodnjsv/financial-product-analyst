@@ -12,6 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from financial_agent.contracts import canonical_sha256
+from financial_agent.ingestion.identity import build_authoritative_identity_index
 from financial_agent.ingestion.official.models import (
     OfficialObjectManifest,
     OfficialSnapshotManifest,
@@ -318,6 +319,8 @@ def _configure_build_seams(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             manifest=ORGANIZER_MANIFEST,
             manifest_hash=canonical_sha256(ORGANIZER_MANIFEST),
             contexts={"PREF02N001": {}},
+            data_hashes={},
+            identity_index=build_authoritative_identity_index(()),
         )
 
     async def write_organizer(*args: object, **kwargs: object) -> OrganizerWriteResult:
@@ -849,6 +852,9 @@ async def test_combined_build_remains_building_and_inactive(
         lambda **kwargs: SimpleNamespace(
             manifest=ORGANIZER_MANIFEST,
             manifest_hash=canonical_sha256(ORGANIZER_MANIFEST),
+            contexts={},
+            data_hashes={},
+            identity_index=build_authoritative_identity_index(()),
         ),
     )
     monkeypatch.setattr(

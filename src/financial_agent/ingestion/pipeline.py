@@ -33,6 +33,12 @@ from financial_agent.db.schema.observation import (
     observation_record,
 )
 from financial_agent.db.schema.relation import relation_record
+from financial_agent.ingestion.identity import (
+    AuthoritativeIdentityIndex,
+    AuthoritativeIdentityValidationError,
+    build_authoritative_identity_index,
+    collect_organizer_identifier_candidates,
+)
 from financial_agent.ingestion.mapping.common import make_record_hash, stable_id
 from financial_agent.ingestion.mapping.domestic_bond import (
     SPEC as DOMESTIC_BOND_SPEC,
@@ -64,7 +70,12 @@ from financial_agent.ingestion.mapping.public_fund import (
 from financial_agent.ingestion.mapping.public_fund import (
     map_row as map_public_fund_row,
 )
-from financial_agent.ingestion.models import BuildReport, MappedRow, SourceSpec
+from financial_agent.ingestion.models import (
+    BuildReport,
+    IdentifierCandidate,
+    MappedRow,
+    SourceSpec,
+)
 from financial_agent.ingestion.sources import (
     SourceVerificationError,
     iter_workbook_rows,
@@ -134,6 +145,7 @@ class _PreflightResult:
     manifest_hash: str
     contexts: Mapping[str, object]
     data_hashes: Mapping[str, str]
+    identity_index: AuthoritativeIdentityIndex
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +244,9 @@ def _record_preflight_issue(
     except SourceVerificationError as error:
         issues[error.code] += 1
         return None
+    except AuthoritativeIdentityValidationError as error:
+        issues.update(error.issue_counts)
+        return None
     except Exception:
         issues["SOURCE_PREFLIGHT_FAILED"] += 1
         return None
@@ -254,6 +269,7 @@ def _preflight_sources(
     manifest_sources: list[dict[str, object]] = []
     contexts: dict[str, object] = {}
     verified_data_hashes: dict[str, str] = {}
+    identity_candidates: list[IdentifierCandidate] = []
 
     for source_code in sorted(SOURCE_SPECS):
         spec = SOURCE_SPECS[source_code]
@@ -284,6 +300,15 @@ def _preflight_sources(
                     iter_workbook_rows(data_paths[source_code], spec),
                 ),
             )
+            candidates = _record_preflight_issue(
+                issues,
+                lambda: collect_organizer_identifier_candidates(
+                    source_code,
+                    iter_workbook_rows(data_paths[source_code], spec),
+                ),
+            )
+            if isinstance(candidates, tuple):
+                identity_candidates.extend(candidates)
         if (
             data_hash is not None
             and schema_hash is not None
@@ -308,6 +333,11 @@ def _preflight_sources(
     if issues:
         raise OrganizerSourceValidationError(issues)
 
+    try:
+        identity_index = build_authoritative_identity_index(identity_candidates)
+    except AuthoritativeIdentityValidationError as error:
+        raise OrganizerSourceValidationError(error.issue_counts) from None
+
     manifest = {
         "cutoff_date": CUTOFF_DATE.isoformat(),
         "sources": manifest_sources,
@@ -317,6 +347,7 @@ def _preflight_sources(
         manifest_hash=canonical_sha256(manifest),
         contexts=contexts,
         data_hashes=verified_data_hashes,
+        identity_index=identity_index,
     )
 
 

@@ -57,6 +57,10 @@ on Java 21, Docker, Naver Cloud Platform.
 
 ### Task 1: Enforce the Current Cutoff While Preserving Legacy Rows
 
+**Implementation status:** Completed and verified on `2026-08-25` in commit
+`921056c`. Contract, ingestion, migration-cycle, object-manifest, and full
+PostgreSQL checks passed; legacy rows remain stored but cannot activate.
+
 **Files:**
 
 - Modify: `src/financial_agent/contracts/base.py`
@@ -169,6 +173,11 @@ git commit -m "feat: adopt current data cutoff"
 ---
 
 ### Task 2: Build One Organizer-Authoritative Identity Index
+
+**Implementation status:** Completed and verified on `2026-08-25`. Synthetic
+tests and a read-only pass over the replacement workbooks reproduced 217
+`DomesticETF + FundShareClass` identities, 63 ambiguous ISIN groups, and 63
+ambiguous Lipper groups without exposing raw identifier values.
 
 **Files:**
 
