@@ -248,6 +248,7 @@ def _map_source_row(
             row_number,
             row,
             duplicate_identifier_values=context,
+            identity_index=identity_index,
         )
     if source_code == PUBLIC_FUND_SPEC.source_code:
         return map_public_fund_row(

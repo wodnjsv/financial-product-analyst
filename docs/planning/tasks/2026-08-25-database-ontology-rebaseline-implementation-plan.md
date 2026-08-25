@@ -456,6 +456,12 @@ git commit -m "feat: map current domestic etps"
 
 ### Task 6: Normalize Overseas ETF and ETN Products Without Ambiguous IDs
 
+**Implementation status:** Completed and verified on `2026-08-25`. All 6,037
+current rows map all 49 fields with zero quarantines and exactly 49 Evidence
+records per row. The 63 two-row ISIN groups and 63 two-row Lipper groups are
+the same row pairs; all 252 affected observations remain Evidence-only while
+unique eligible identifiers use the authoritative identity index.
+
 **Files:**
 
 - Modify: `src/financial_agent/ingestion/mapping/overseas_etp.py`
