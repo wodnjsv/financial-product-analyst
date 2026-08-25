@@ -248,8 +248,8 @@ def test_released_answer_preserves_exact_rendered_strings_and_bindings() -> None
             "cd806469109317e2a27c11e513d78b4"
         ),
         run_id="run-syn-001",
-        dataset_version="2026-07-11-v1",
-        cutoff_date=date(2026, 7, 11),
+            dataset_version="2026-08-24-v1",
+            cutoff_date=date(2026, 8, 24),
         producer="renderer",
         created_at=datetime(2026, 8, 17, tzinfo=UTC),
         answer_disposition=AnswerDisposition.ANSWER,

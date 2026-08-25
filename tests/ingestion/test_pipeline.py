@@ -31,6 +31,10 @@ SOURCE_CODES = ("PRBD01N001", "PREF01N001", "PREF02N001", "PRFD01N001")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_new_ingestion_builds_use_the_current_cutoff() -> None:
+    assert CUTOFF_DATE.isoformat() == "2026-08-24"
+
+
 def _spec(source_code: str, row_count: int) -> SourceSpec:
     return SourceSpec(
         source_code=source_code,

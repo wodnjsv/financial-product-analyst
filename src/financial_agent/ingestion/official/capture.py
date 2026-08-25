@@ -22,7 +22,7 @@ from .models import OfficialObjectManifest, OfficialSnapshotManifest
 from .snapshot import capture_http_object, write_canonical_manifest
 
 
-_CUTOFF_DATE = date(2026, 7, 11)
+_CUTOFF_DATE = date(2026, 8, 24)
 _DAILY_DATE = date(2026, 7, 10)
 _DAILY_AVAILABLE_AT = datetime(2026, 7, 10, 23, 59, 59, tzinfo=UTC)
 

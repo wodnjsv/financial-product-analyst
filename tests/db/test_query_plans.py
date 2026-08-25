@@ -85,7 +85,7 @@ def _load_ncp_build_scale_data(
         INSERT INTO operations.dataset_version (
             dataset_version, cutoff_date, manifest_hash, created_at
         ) VALUES (
-            %s, DATE '2026-07-11', repeat('a', 64),
+            %s, DATE '2026-08-24', repeat('a', 64),
             TIMESTAMPTZ '2026-08-19 00:00:00+00'
         )
         """,
@@ -317,7 +317,7 @@ def _load_synthetic_scale_data(connection: psycopg.Connection) -> None:
             dataset_version, cutoff_date, created_at, deadline_at
         ) VALUES (
             'run-scale', repeat('f', 64), 'Q-SCALE', 'synthetic scale', '1.0.0',
-            %s, DATE '2026-07-11',
+            %s, DATE '2026-08-24',
             TIMESTAMPTZ '2026-08-19 00:00:00+00',
             TIMESTAMPTZ '2026-08-19 00:00:55+00'
         )
@@ -395,7 +395,7 @@ def _load_synthetic_scale_data(connection: psycopg.Connection) -> None:
                 'request_key', repeat('f', 64),
                 'run_id', 'run-scale',
                 'dataset_version', %s::text,
-                'cutoff_date', '2026-07-11',
+                'cutoff_date', '2026-08-24',
                 'producer', 'synthetic-scale',
                 'created_at', '2026-08-19T00:00:00+00:00',
                 'task_id', 'task-' || lpad(series::text, 6, '0'),
@@ -420,7 +420,7 @@ def _load_ncp_migration_scale_scaffolding(
             dataset_version, cutoff_date, created_at, deadline_at
         ) VALUES (
             'run-scale', repeat('f', 64), 'Q-SCALE', 'synthetic scale', '1.0.0',
-            %s, DATE '2026-07-11',
+            %s, DATE '2026-08-24',
             TIMESTAMPTZ '2026-08-19 00:00:00+00',
             TIMESTAMPTZ '2026-08-19 00:00:55+00'
         )
@@ -500,7 +500,7 @@ def _load_ncp_runtime_scale_data(connection: psycopg.Connection) -> None:
             "request_key": "f" * 64,
             "run_id": "run-scale",
             "dataset_version": SCALE_DATASET_VERSION,
-            "cutoff_date": "2026-07-11",
+            "cutoff_date": "2026-08-24",
             "producer": "synthetic-scale",
             "created_at": "2026-08-19T00:00:00+00:00",
             "task_id": TARGET_CONTRACT_ID,

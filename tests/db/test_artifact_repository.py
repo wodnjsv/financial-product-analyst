@@ -103,7 +103,7 @@ def _artifact_context(database_url: str) -> ArtifactContext:
             INSERT INTO operations.request_run (
                 run_id, request_key, question_id, question, schema_version,
                 dataset_version, cutoff_date, created_at, deadline_at
-            ) VALUES (%s, %s, %s, %s, '1.0', %s, DATE '2026-07-11', %s, %s)
+            ) VALUES (%s, %s, %s, %s, '1.0', %s, DATE '2026-08-24', %s, %s)
             """,
             (
                 run_id,
@@ -137,7 +137,7 @@ def _artifact(
             "request_key": context.request_key,
             "run_id": context.run_id,
             "dataset_version": context.dataset_version,
-            "cutoff_date": "2026-07-11",
+            "cutoff_date": "2026-08-24",
             "producer": "deterministic-renderer",
             "created_at": context.created_at.isoformat().replace("+00:00", "Z"),
             "answer_disposition": "answer",

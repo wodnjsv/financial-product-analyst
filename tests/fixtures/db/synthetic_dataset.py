@@ -18,7 +18,7 @@ def insert_building_dataset(
         """
         INSERT INTO operations.dataset_version (
             dataset_version, cutoff_date, status, manifest_hash, created_at
-        ) VALUES (%s, DATE '2026-07-11', 'building', %s, %s)
+        ) VALUES (%s, DATE '2026-08-24', 'building', %s, %s)
         """,
         (dataset_version, VALID_MANIFEST_HASH, CREATED_AT),
     )
@@ -116,7 +116,7 @@ def insert_request_run(
             run_id, request_key, question_id, question, schema_version,
             dataset_version, cutoff_date, created_at, deadline_at
         ) VALUES (%s, %s, 'Q-001', 'Synthetic question', '1.0', %s,
-                  DATE '2026-07-11', %s, %s)
+                  DATE '2026-08-24', %s, %s)
         """,
         (
             run_id,

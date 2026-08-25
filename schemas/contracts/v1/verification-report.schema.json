@@ -265,7 +265,7 @@
       "type": "string"
     },
     "cutoff_date": {
-      "default": "2026-07-11",
+      "default": "2026-08-24",
       "format": "date",
       "title": "Cutoff Date",
       "type": "string"

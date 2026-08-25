@@ -20,8 +20,8 @@ def valid_json_payload() -> dict[str, object]:
         "schema_version": "1.0",
         "request_key": "a" * 64,
         "run_id": "run-001",
-        "dataset_version": "2026-07-11-v1",
-        "cutoff_date": "2026-07-11",
+        "dataset_version": "2026-08-24-v1",
+        "cutoff_date": "2026-08-24",
         "producer": "test",
         "created_at": "2026-08-17T00:00:00Z",
         "value": "ok",
@@ -36,8 +36,8 @@ def valid_python_payload() -> dict[str, object]:
         "schema_version": "1.0",
         "request_key": "a" * 64,
         "run_id": "run-001",
-        "dataset_version": "2026-07-11-v1",
-        "cutoff_date": date(2026, 7, 11),
+        "dataset_version": "2026-08-24-v1",
+        "cutoff_date": date(2026, 8, 24),
         "producer": "test",
         "created_at": datetime(2026, 8, 17, tzinfo=UTC),
         "value": "ok",
@@ -51,7 +51,7 @@ def test_raw_json_accepts_iso_temporal_enum_and_array_shapes() -> None:
     artifact = ExampleArtifact.model_validate_json(json.dumps(valid_json_payload()))
 
     assert artifact.created_at == datetime(2026, 8, 17, tzinfo=UTC)
-    assert artifact.cutoff_date == date(2026, 7, 11)
+    assert artifact.cutoff_date == date(2026, 8, 24)
     assert artifact.mode is InteractionMode.COMPETITION
     assert artifact.labels == ("one", "two")
 
@@ -61,7 +61,7 @@ def test_raw_json_accepts_iso_temporal_enum_and_array_shapes() -> None:
     [
         {"count": "1"},
         {"count": True},
-        {"cutoff_date": "2026-07-11"},
+        {"cutoff_date": "2026-08-24"},
         {"created_at": "2026-08-17T00:00:00Z"},
         {"mode": "competition"},
         {"labels": ["one", "two"]},
@@ -86,7 +86,10 @@ def test_runtime_artifact_is_frozen() -> None:
         artifact.value = "changed"
 
 
-@pytest.mark.parametrize("bad_cutoff", ["2026-07-10", "2026-07-12"])
+@pytest.mark.parametrize(
+    "bad_cutoff",
+    ["2026-07-11", "2026-08-23", "2026-08-25"],
+)
 def test_runtime_artifact_requires_fixed_cutoff(bad_cutoff: str) -> None:
     payload = valid_json_payload() | {"cutoff_date": bad_cutoff}
     with pytest.raises(ValidationError):
@@ -117,4 +120,4 @@ def test_runtime_artifact_rejects_non_utc_created_at() -> None:
 def test_runtime_artifact_accepts_typed_python_values() -> None:
     artifact = ExampleArtifact.model_validate(valid_python_payload())
     assert artifact.created_at == datetime(2026, 8, 17, tzinfo=UTC)
-    assert artifact.cutoff_date == date(2026, 7, 11)
+    assert artifact.cutoff_date == date(2026, 8, 24)

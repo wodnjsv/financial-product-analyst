@@ -1,9 +1,9 @@
 {
   "schema_version": "1.0",
-  "request_key": "5fb658a65798ff794b8f3ac0414da936ecd806469109317e2a27c11e513d78b4",
+  "request_key": "d61ec12bd4ba61fff6f0b3e2f9525ef0a4dd5b18171056d019f398dfca95f265",
   "run_id": "run-syn-001",
-  "dataset_version": "2026-07-11-v1",
-  "cutoff_date": "2026-07-11",
+  "dataset_version": "2026-08-24-v1",
+  "cutoff_date": "2026-08-24",
   "producer": "intent-resolver",
   "created_at": "2026-08-17T00:00:00Z",
   "intent_types": ["screen", "rank"],

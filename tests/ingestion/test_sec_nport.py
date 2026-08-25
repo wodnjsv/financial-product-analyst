@@ -140,7 +140,7 @@ def _map_files(
     return tuple(
         iter_eligible_nport_funds(
             _write_mapping_files(tmp_path / "nport-files", values),
-            date(2026, 7, 11),
+            date(2026, 8, 24),
             manifest=_nport_manifest(values),
             series_class_index=series_index or _series_index(),
             product_bindings=bindings or (_binding(),),
@@ -383,7 +383,7 @@ def test_nport_mapper_selects_latest_eligible_amendment_and_preserves_provenance
             dict(submissions[0])
             | {
                 "ACCESSION_NUMBER": after_cutoff_accession,
-                "FILING_DATE": "12-JUL-2026",
+                    "FILING_DATE": "25-AUG-2026",
                 "SUB_TYPE": "NPORT-P/A",
             },
         )
@@ -744,7 +744,7 @@ def test_nport_mapper_does_not_retain_all_source_rows_in_memory(
     monkeypatch.setattr(sec_nport_module, "_iter_tsv", tracked_rows)
     mapped = iter_eligible_nport_funds(
         _write_mapping_files(tmp_path / "nport-files", files),
-        date(2026, 7, 11),
+        date(2026, 8, 24),
         manifest=_nport_manifest(files),
         series_class_index=_series_index(),
         product_bindings=(_binding(),),

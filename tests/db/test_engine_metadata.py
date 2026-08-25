@@ -5,6 +5,7 @@ import pytest
 from financial_agent.db.config import DatabaseConfig
 from financial_agent.db.engine import create_database_engine
 from financial_agent.db.metadata import metadata
+from financial_agent.db.schema.operations import dataset_version
 
 
 @pytest.mark.asyncio
@@ -31,3 +32,15 @@ def test_database_metadata_uses_deterministic_constraint_names() -> None:
         "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
         "pk": "pk_%(table_name)s",
     }
+
+
+def test_dataset_metadata_preserves_only_the_approved_cutoff_dates() -> None:
+    cutoff_constraint = next(
+        constraint
+        for constraint in dataset_version.constraints
+        if constraint.name == "ck_dataset_version_cutoff_date"
+    )
+
+    assert str(cutoff_constraint.sqltext) == (
+        "cutoff_date IN (DATE '2026-07-11', DATE '2026-08-24')"
+    )

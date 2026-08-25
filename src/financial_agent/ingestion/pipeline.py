@@ -74,7 +74,7 @@ from financial_agent.ingestion.sources import (
 from financial_agent.ingestion.writer import DatasetBuildWriter
 
 
-CUTOFF_DATE = date(2026, 7, 11)
+CUTOFF_DATE = date(2026, 8, 24)
 SOURCE_SPECS: Mapping[str, SourceSpec] = {
     spec.source_code: spec
     for spec in (

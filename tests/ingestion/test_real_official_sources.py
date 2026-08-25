@@ -91,7 +91,7 @@ def test_capture_plan_contains_only_the_seven_approved_source_codes() -> None:
         "KRX_ETF_PDF",
     )
     assert all(
-        spec.cutoff_date.isoformat() == "2026-07-11"
+        spec.cutoff_date.isoformat() == "2026-08-24"
         for spec in APPROVED_CAPTURE_SPECS
     )
     assert all(

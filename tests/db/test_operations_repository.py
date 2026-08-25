@@ -71,7 +71,7 @@ def _request_context(
                 ),
                 "run_id": run_id,
                 "dataset_version": dataset_version,
-                "cutoff_date": "2026-07-11",
+                "cutoff_date": "2026-08-24",
                 "producer": "request-normalizer",
                 "created_at": CREATED_AT.isoformat().replace("+00:00", "Z"),
                 "question_id": question_id,
@@ -175,7 +175,7 @@ def test_start_run_rejects_deadlines_outside_the_strict_ordered_window(
                 """
                 SELECT operations.start_request_run(
                     %s, %s, 'Q-deadline', 'question', '1.0', %s,
-                    DATE '2026-07-11', %s, %s
+                    DATE '2026-08-24', %s, %s
                 )
                 """,
                 (
@@ -212,8 +212,8 @@ def test_start_run_requires_the_current_dataset_and_matching_cutoff(
             )
         """
         for supplied_dataset, cutoff_date in (
-            (stale_dataset, date(2026, 7, 11)),
-            (active_dataset, date(2026, 7, 10)),
+            (stale_dataset, date(2026, 8, 24)),
+            (active_dataset, date(2026, 8, 23)),
         ):
             with pytest.raises(
                 psycopg.errors.ObjectNotInPrerequisiteState,

@@ -107,7 +107,7 @@ def evidence_record(
     *,
     evidence_kind: EvidenceKind = EvidenceKind.POLICY,
     value: object = Decimal("125000000.000100000000"),
-    applicable_date: date = date(2026, 7, 11),
+    applicable_date: date = date(2026, 8, 24),
     cutoff_status: CutoffStatus = CutoffStatus.ELIGIBLE,
     scope_completeness: str | None = None,
     record_hash: str = "3" * 64,
@@ -281,8 +281,8 @@ async def test_source_and_cutoff_evidence_round_trip_losslessly(
     after_cutoff = evidence_record(
         repository_context,
         "evidence-after-cutoff",
-        value="2026-07-12",
-        applicable_date=date(2026, 7, 12),
+        value="2026-08-25",
+        applicable_date=date(2026, 8, 25),
         cutoff_status=CutoffStatus.AFTER_CUTOFF,
         record_hash="8" * 64,
     )

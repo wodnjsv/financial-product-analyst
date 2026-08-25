@@ -185,7 +185,7 @@ def test_build_can_create_only_a_building_dataset_version(
         INSERT INTO operations.dataset_version (
             dataset_version, cutoff_date, manifest_hash, created_at
         ) VALUES (
-            'dataset-build-default', DATE '2026-07-11', %s, %s
+            'dataset-build-default', DATE '2026-08-24', %s, %s
         )
         """,
         (VALID_MANIFEST_HASH, created_at),
@@ -223,7 +223,7 @@ def test_build_can_create_only_a_building_dataset_version(
             INSERT INTO operations.dataset_version (
                 dataset_version, cutoff_date, status, manifest_hash, created_at
             ) VALUES (
-                'dataset-build-active', DATE '2026-07-11', 'active',
+                'dataset-build-active', DATE '2026-08-24', 'active',
                 repeat('a', 64), clock_timestamp()
             )
         """,
@@ -280,7 +280,7 @@ def test_runtime_cannot_insert_request_runs_directly(
                 dataset_version, cutoff_date, created_at, deadline_at
             ) VALUES (
                 'forbidden', repeat('a', 64), 'Q', 'question', '1',
-                'forbidden', DATE '2026-07-11',
+                'forbidden', DATE '2026-08-24',
                 clock_timestamp(), clock_timestamp() + interval '1 second'
             )
         """,
@@ -354,7 +354,7 @@ def test_build_and_runtime_can_use_only_their_approved_functions(
     assert connection.execute(
         """
         SELECT (operations.start_request_run(
-            %s, %s, %s, %s, %s, %s, DATE '2026-07-11', %s, %s
+            %s, %s, %s, %s, %s, %s, DATE '2026-08-24', %s, %s
         )).run_id
         """,
         (
@@ -374,7 +374,7 @@ def test_build_and_runtime_can_use_only_their_approved_functions(
             "request_key": "d" * 64,
             "run_id": "run-permission-path",
             "dataset_version": "dataset-permission-path",
-            "cutoff_date": "2026-07-11",
+            "cutoff_date": "2026-08-24",
             "producer": "intent-resolver",
             "created_at": created_at.isoformat().replace("+00:00", "Z"),
             "intent_types": ["lookup"],

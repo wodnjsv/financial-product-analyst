@@ -217,7 +217,7 @@ async def _load_command() -> int:
     database_url = _required_env("FINANCIAL_AGENT_BUILD_DATABASE_URL")
     dataset_version = os.getenv(
         "FINANCIAL_AGENT_DATASET_VERSION",
-        "organizer-2026-07-11-03a",
+        "organizer-2026-08-24-rebaseline",
     )
     engine = create_async_engine(
         _async_database_url(database_url),
@@ -255,12 +255,12 @@ async def _object_storage_command() -> int:
         objects.extend(
             (
                 (
-                    f"organizer/2026-07-11/{spec.table_id}/{spec.data_file_name}",
+                    f"organizer/2026-08-24/{spec.table_id}/{spec.data_file_name}",
                     data_paths[source_code],
                     data_hashes[source_code],
                 ),
                 (
-                    f"organizer/2026-07-11/{spec.table_id}/{spec.schema_file_name}",
+                    f"organizer/2026-08-24/{spec.table_id}/{spec.schema_file_name}",
                     schema_paths[source_code],
                     schema_hashes[source_code],
                 ),
@@ -315,7 +315,7 @@ async def _load_stage03b_command() -> int:
     database_url = _required_env("FINANCIAL_AGENT_BUILD_DATABASE_URL")
     dataset_version = os.getenv(
         "FINANCIAL_AGENT_DATASET_VERSION",
-        "combined-2026-07-11-03b",
+        "combined-2026-08-24-rebaseline",
     )
     engine = create_async_engine(
         _async_database_url(database_url),

@@ -203,7 +203,7 @@ async def test_database_lineage_gate_returns_only_a_stable_connection_error(
 
     result = await _load_build_lineage(
         "postgresql://user:PRIVATE-PASSWORD@db.example.invalid/private",
-        "organizer-2026-07-11-03a",
+        "organizer-2026-08-24-rebaseline",
     )
 
     assert result == (None, (), "DATABASE_UNREACHABLE")
@@ -235,7 +235,7 @@ async def test_database_lineage_gate_sanitizes_disposal_errors(
 
     assert await _load_build_lineage(
         "postgresql://user:PRIVATE-PASSWORD@db.example.invalid/private",
-        "organizer-2026-07-11-03a",
+        "organizer-2026-08-24-rebaseline",
     ) == (None, (), "DATABASE_UNREACHABLE")
 
 
@@ -271,7 +271,7 @@ def test_private_object_storage_bytes_match_all_eight_approved_local_objects() -
                     client,
                     bucket=bucket,
                     key=(
-                        f"organizer/2026-07-11/{spec.table_id}/"
+                        f"organizer/2026-08-24/{spec.table_id}/"
                         f"{local_path.name}"
                     ),
                     expected_sha256=expected_hash,
@@ -299,7 +299,7 @@ async def test_object_hashes_match_the_build_manifest_and_source_records() -> No
     )
     dataset_version = os.getenv(
         "FINANCIAL_AGENT_DATASET_VERSION",
-        "organizer-2026-07-11-03a",
+        "organizer-2026-08-24-rebaseline",
     )
     manifest_hash, source_rows, error_code = await _load_build_lineage(
         os.environ["FINANCIAL_AGENT_BUILD_DATABASE_URL"],

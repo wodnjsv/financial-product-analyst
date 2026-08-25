@@ -41,7 +41,7 @@ from tests.fixtures.official_ingestion import (
 
 
 ORGANIZER_MANIFEST = {
-    "cutoff_date": "2026-07-11",
+    "cutoff_date": "2026-08-24",
     "sources": [
         {
             "data_sha256": "a" * 64,
@@ -62,7 +62,7 @@ def _manifest(
 ) -> OfficialSnapshotManifest:
     import hashlib
 
-    object_key = f"external/2026-07-11/{source_code}/{snapshot_id}/data.json"
+    object_key = f"external/2026-08-24/{source_code}/{snapshot_id}/data.json"
     destination = tmp_path / object_key
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(payload)
@@ -70,7 +70,7 @@ def _manifest(
         source_code=source_code,
         snapshot_id=snapshot_id,
         publisher_code="KRX",
-        cutoff_date=date(2026, 7, 11),
+        cutoff_date=date(2026, 8, 24),
         applicable_date=date(2026, 7, 10),
         published_at=None,
         available_at=datetime(2026, 7, 10, 23, 59, tzinfo=timezone.utc),
@@ -370,7 +370,7 @@ async def test_organizer_only_combined_build_preserves_manifest_and_order(
         (
             "combined-organizer-only",
             canonical_sha256(ORGANIZER_MANIFEST),
-            date(2026, 7, 11),
+                date(2026, 8, 24),
         )
     ]
     assert report.dataset_manifest_hash == canonical_sha256(ORGANIZER_MANIFEST)

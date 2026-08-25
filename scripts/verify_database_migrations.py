@@ -49,6 +49,7 @@ class MigrationVerificationReport:
     ncp_extensions_preserved: bool
     bootstrap_roles_preserved: bool
     foundation_cutoff_enforced: bool
+    foundation_legacy_activation_rejected: bool
     foundation_transition_enforced: bool
     foundation_incomplete_readiness_rejected: bool
     foundation_readiness_activation_enforced: bool
@@ -304,8 +305,9 @@ def _verify_base_state(database_url: str) -> tuple[bool, bool]:
 
 def _verify_foundation_behavior(
     database_url: str,
-) -> tuple[bool, bool, bool, bool, bool, bool, bool, bool, bool]:
+) -> tuple[bool, bool, bool, bool, bool, bool, bool, bool, bool, bool]:
     cutoff_enforced = False
+    legacy_activation_rejected = False
     transition_enforced = False
     incomplete_readiness_rejected = False
     readiness_activation_enforced = False
@@ -323,8 +325,19 @@ def _verify_foundation_behavior(
                     dataset_version, cutoff_date, status, manifest_hash,
                     created_at
                 ) VALUES (
-                    'task8-foundation-probe', DATE '2026-07-11', 'building',
+                    'task8-foundation-probe', DATE '2026-08-24', 'building',
                     repeat('1', 64), TIMESTAMPTZ '2026-08-19 00:00:00+00'
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO operations.dataset_version (
+                    dataset_version, cutoff_date, status, manifest_hash,
+                    created_at
+                ) VALUES (
+                    'task8-legacy-cutoff-probe', DATE '2026-07-11', 'building',
+                    repeat('9', 64), TIMESTAMPTZ '2026-08-19 00:00:00+00'
                 )
                 """
             )
@@ -336,7 +349,7 @@ def _verify_foundation_behavior(
                             dataset_version, cutoff_date, status,
                             manifest_hash, created_at
                         ) VALUES (
-                            'task8-invalid-cutoff', DATE '2026-07-12',
+                            'task8-invalid-cutoff', DATE '2026-08-25',
                             'building', repeat('2', 64),
                             TIMESTAMPTZ '2026-08-19 00:00:00+00'
                         )
@@ -346,6 +359,17 @@ def _verify_foundation_behavior(
                 cutoff_enforced = (
                     error.diag.constraint_name
                     == "ck_dataset_version_cutoff_date"
+                    and connection.execute(
+                        """
+                        SELECT count(*)
+                        FROM operations.dataset_version
+                        WHERE dataset_version IN (
+                            'task8-foundation-probe',
+                            'task8-legacy-cutoff-probe'
+                        )
+                        """
+                    ).fetchone()[0]
+                    == 2
                 )
             try:
                 with connection.transaction():
@@ -367,7 +391,7 @@ def _verify_foundation_behavior(
             INSERT INTO operations.dataset_version (
                 dataset_version, cutoff_date, status, manifest_hash, created_at
             ) VALUES (
-                'task8-second-head-active', DATE '2026-07-11', 'building',
+                'task8-second-head-active', DATE '2026-08-24', 'building',
                 repeat('3', 64), TIMESTAMPTZ '2026-08-19 00:00:00+00'
             )
             """
@@ -459,6 +483,66 @@ def _verify_foundation_behavior(
                 "second-head readiness or activation behavior is incompatible",
             )
 
+        connection.execute(
+            """
+            INSERT INTO operations.dataset_version (
+                dataset_version, cutoff_date, status, manifest_hash, created_at
+            ) VALUES (
+                'task8-legacy-not-active', DATE '2026-07-11', 'building',
+                repeat('9', 64), TIMESTAMPTZ '2026-08-19 00:00:00+00'
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO operations.dataset_validation_run (
+                validation_run_id, dataset_version, dataset_manifest_hash,
+                validator_id, validator_version, started_at, finished_at,
+                status, report_hash
+            ) VALUES (
+                'task8-legacy-validation', 'task8-legacy-not-active',
+                repeat('9', 64), 'task8-verifier', '1',
+                TIMESTAMPTZ '2026-08-19 00:00:00+00',
+                TIMESTAMPTZ '2026-08-19 00:00:01+00', 'pass', repeat('8', 64)
+            )
+            """
+        )
+        connection.execute(
+            "SELECT operations.finish_dataset_validation(%s)",
+            ("task8-legacy-validation",),
+        )
+        for component in ("postgres", "graph", "vector", "evidence"):
+            connection.execute(
+                """
+                SELECT operations.record_dataset_readiness(
+                    %s, %s, %s, %s,
+                    TIMESTAMPTZ '2026-08-19 00:00:02+00', '1'
+                )
+                """,
+                (
+                    "task8-legacy-not-active",
+                    component,
+                    "task8-legacy-validation",
+                    "7" * 64,
+                ),
+            )
+        try:
+            with connection.transaction():
+                connection.execute(
+                    "SELECT operations.activate_dataset(%s)",
+                    ("task8-legacy-not-active",),
+                )
+        except psycopg.errors.CheckViolation as error:
+            legacy_activation_rejected = (
+                error.diag.message_primary
+                == "LEGACY_DATASET_CANNOT_ACTIVATE"
+            )
+        if not legacy_activation_rejected:
+            raise MigrationVerificationFailure(
+                "FOUNDATION_INVARIANT_FAILED",
+                "legacy dataset activation was not rejected",
+            )
+
         request_statement = """
             SELECT (operations.start_request_run(
                 %s, %s, %s, %s, %s, %s, %s, %s, %s
@@ -471,7 +555,7 @@ def _verify_foundation_behavior(
             "second-head behavior probe",
             "1.0.0",
             "task8-second-head-active",
-            "2026-07-11",
+            "2026-08-24",
             "2026-08-19T00:00:03+00:00",
             "2026-08-19T00:00:58+00:00",
         )
@@ -518,7 +602,7 @@ def _verify_foundation_behavior(
                 "request_key": "6" * 64,
                 "run_id": "task8-second-head-run",
                 "dataset_version": "task8-second-head-active",
-                "cutoff_date": "2026-07-11",
+                "cutoff_date": "2026-08-24",
                 "producer": "task8-migration-verifier",
                 "created_at": "2026-08-19T00:00:03+00:00",
             },
@@ -562,7 +646,7 @@ def _verify_foundation_behavior(
             "second-head concurrent probe",
             "1.0.0",
             "task8-second-head-active",
-            "2026-07-11",
+            "2026-08-24",
             "2026-08-19T00:00:04+00:00",
             "2026-08-19T00:00:59+00:00",
         )
@@ -621,7 +705,7 @@ def _verify_foundation_behavior(
                 question,
                 "1.0.0",
                 "task8-second-head-active",
-                "2026-07-11",
+                "2026-08-24",
                 "2026-08-19T00:00:05+00:00",
                 "2026-08-19T00:01:00+00:00",
             )
@@ -668,6 +752,7 @@ def _verify_foundation_behavior(
     if not all(
         (
             cutoff_enforced,
+            legacy_activation_rejected,
             transition_enforced,
             incomplete_readiness_rejected,
             readiness_activation_enforced,
@@ -684,6 +769,7 @@ def _verify_foundation_behavior(
         )
     return (
         cutoff_enforced,
+        legacy_activation_rejected,
         transition_enforced,
         incomplete_readiness_rejected,
         readiness_activation_enforced,
@@ -726,6 +812,7 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
         second_inventory = _collect_inventory(disposable_url)
         (
             foundation_cutoff_enforced,
+            foundation_legacy_activation_rejected,
             foundation_transition_enforced,
             foundation_incomplete_readiness_rejected,
             foundation_readiness_activation_enforced,
@@ -746,12 +833,15 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
                 "preflight result changed across the migration cycle",
             )
         return MigrationVerificationReport(
-            alembic_head="0005",
+            alembic_head="0006",
             application_schema_count=len(EXPECTED_APPLICATION_SCHEMAS),
             object_counts=second_inventory,
             ncp_extensions_preserved=ncp_extensions_preserved,
             bootstrap_roles_preserved=bootstrap_roles_preserved,
             foundation_cutoff_enforced=foundation_cutoff_enforced,
+            foundation_legacy_activation_rejected=(
+                foundation_legacy_activation_rejected
+            ),
             foundation_transition_enforced=foundation_transition_enforced,
             foundation_incomplete_readiness_rejected=(
                 foundation_incomplete_readiness_rejected

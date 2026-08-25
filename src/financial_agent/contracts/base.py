@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
 CONTRACT_SCHEMA_VERSION = "1.0"
-SNAPSHOT_CUTOFF = date(2026, 7, 11)
+SNAPSHOT_CUTOFF = date(2026, 8, 24)
 
 Identifier = Annotated[
     str,
@@ -43,5 +43,5 @@ class RuntimeArtifact(ContractModel):
     @classmethod
     def validate_cutoff(cls, value: date) -> date:
         if value != SNAPSHOT_CUTOFF:
-            raise ValueError("cutoff_date must be 2026-07-11")
+            raise ValueError("cutoff_date must be 2026-08-24")
         return value

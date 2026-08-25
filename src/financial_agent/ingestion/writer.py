@@ -31,7 +31,7 @@ from financial_agent.db.schema.relation import relation_record
 from financial_agent.ingestion.models import MappedRow
 
 
-_CUTOFF_DATE = date(2026, 7, 11)
+_CUTOFF_DATE = date(2026, 8, 24)
 _SQL_CHUNK_SIZE = 500
 _WRITE_TABLES = (
     entity,

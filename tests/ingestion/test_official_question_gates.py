@@ -177,7 +177,7 @@ def test_overseas_question_gate_discloses_bounded_scope_and_manager(
     mapped = tuple(
         iter_eligible_nport_funds(
             file_paths,
-            date(2026, 7, 11),
+            date(2026, 8, 24),
             manifest=nport_manifest,
             series_class_index=build_sec_series_class_index(
                 series_manifest,

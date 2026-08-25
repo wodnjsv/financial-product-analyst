@@ -939,9 +939,11 @@ def collect_post_migration_snapshot(
             """
         )
         cutoff_row = cursor.fetchone()
-        cutoff_constraint_matches = bool(
-            cutoff_row
-            and "cutoff_date = '2026-07-11'::date" in str(cutoff_row[0])
+        cutoff_definition = str(cutoff_row[0]) if cutoff_row else ""
+        cutoff_constraint_matches = (
+            "cutoff_date = ANY" in cutoff_definition
+            and "'2026-07-11'::date" in cutoff_definition
+            and "'2026-08-24'::date" in cutoff_definition
         )
         cursor.execute(
             """

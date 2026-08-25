@@ -370,7 +370,7 @@ def test_holdings_map_rejects_after_cutoff_and_wrong_product_object() -> None:
 
     with pytest.raises(SourceVerificationError) as cutoff_error:
         map_krx_holding_snapshot(
-            replace(manifest, applicable_date=date(2026, 7, 12)),
+            replace(manifest, applicable_date=date(2026, 8, 25)),
             parse_krx_etf_pdf_csv(payload),
             binding=_binding(),
             security_index=_security_index(),

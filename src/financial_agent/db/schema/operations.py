@@ -33,7 +33,7 @@ dataset_version = sa.Table(
     sa.Column("validated_at", sa.TIMESTAMP(timezone=True)),
     sa.Column("activated_at", sa.TIMESTAMP(timezone=True)),
     sa.CheckConstraint(
-        "cutoff_date = DATE '2026-07-11'",
+        "cutoff_date IN (DATE '2026-07-11', DATE '2026-08-24')",
         name="cutoff_date",
     ),
     sa.CheckConstraint(

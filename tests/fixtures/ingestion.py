@@ -30,7 +30,7 @@ def write_schema_workbook(
 ) -> Path:
     workbook = Workbook(write_only=True)
     worksheet = workbook.create_sheet(sheet_name)
-    worksheet.append(("2026-07-11",))
+    worksheet.append(("2026-08-24",))
     worksheet.append(
         ("컬럼명", "PK/FK", "컬럼타입", "컬럼한글명", "컬럼값 예시")
     )

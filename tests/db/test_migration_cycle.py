@@ -9,6 +9,7 @@ import psycopg
 import pytest
 from alembic import command
 from psycopg import sql
+from sqlalchemy.exc import DBAPIError
 
 from financial_agent.db.preflight import (
     PreflightFailure,
@@ -449,7 +450,7 @@ def test_manifest_and_postflight_reject_redacted_unexpected_principals(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0005",
+                alembic_head="0006",
             )
             with pytest.raises(PreflightFailure) as preflight_error:
                 validate_post_migration_snapshot(snapshot)
@@ -505,7 +506,7 @@ def test_manifest_and_postflight_reject_column_acl_drift(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0005",
+                alembic_head="0006",
             )
             with pytest.raises(PreflightFailure) as preflight_error:
                 validate_post_migration_snapshot(snapshot)
@@ -552,7 +553,7 @@ def test_disposable_database_runs_base_head_base_head_cycle(
 ) -> None:
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0005"
+    assert report.alembic_head == "0006"
     assert report.application_schema_count == 7
     assert report.object_counts["tables"] > 0
     assert report.object_counts["checks"] > 0
@@ -564,6 +565,7 @@ def test_disposable_database_runs_base_head_base_head_cycle(
     assert report.ncp_extensions_preserved is True
     assert report.bootstrap_roles_preserved is True
     assert report.foundation_cutoff_enforced is True
+    assert report.foundation_legacy_activation_rejected is True
     assert report.foundation_transition_enforced is True
     assert report.foundation_incomplete_readiness_rejected is True
     assert report.foundation_readiness_activation_enforced is True
@@ -572,6 +574,70 @@ def test_disposable_database_runs_base_head_base_head_cycle(
     assert report.foundation_append_only_enforced is True
     assert report.foundation_concurrent_request_idempotent is True
     assert report.foundation_concurrent_request_conflict_rejected is True
+
+
+@pytest.mark.postgres
+def test_cutoff_rebaseline_preserves_legacy_rows_and_fails_closed_on_downgrade(
+    postgres_database_url: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "0005")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            connection.execute(
+                """
+                INSERT INTO operations.dataset_version (
+                    dataset_version, cutoff_date, status, manifest_hash,
+                    created_at
+                ) VALUES (
+                    'legacy-before-rebaseline', DATE '2026-07-11', 'building',
+                    repeat('1', 64), TIMESTAMPTZ '2026-08-25 00:00:00+00'
+                )
+                """
+            )
+
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                """
+                SELECT cutoff_date::text
+                FROM operations.dataset_version
+                WHERE dataset_version = 'legacy-before-rebaseline'
+                """
+            ).fetchone()[0] == "2026-07-11"
+            connection.execute(
+                """
+                INSERT INTO operations.dataset_version (
+                    dataset_version, cutoff_date, status, manifest_hash,
+                    created_at
+                ) VALUES (
+                    'current-after-rebaseline', DATE '2026-08-24', 'building',
+                    repeat('2', 64), TIMESTAMPTZ '2026-08-25 00:00:01+00'
+                )
+                """
+            )
+
+        with configured_alembic_target_only():
+            with pytest.raises(DBAPIError) as captured:
+                command.downgrade(config, "0005")
+
+        assert "CURRENT_CUTOFF_DATASET_PREVENTS_DOWNGRADE" in str(
+            captured.value.orig
+        )
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                "SELECT version_num FROM public.alembic_version"
+            ).fetchone()[0] == "0006"
+            assert connection.execute(
+                """
+                SELECT count(*) FROM operations.dataset_version
+                WHERE dataset_version IN (
+                    'legacy-before-rebaseline', 'current-after-rebaseline'
+                )
+                """
+            ).fetchone()[0] == 2
 
 
 def _mutate_second_head_behavior(
@@ -655,10 +721,10 @@ def _mutate_second_head_behavior(
             ).fetchone()[0]
         )
         readiness_guard = (
-            "            IF readiness_count <> 4 THEN\n"
-            "                RAISE EXCEPTION 'DATASET_READINESS_INCOMPLETE'\n"
-            "                    USING ERRCODE = '23514';\n"
-            "            END IF;\n"
+            "    IF readiness_count <> 4 THEN\n"
+            "        RAISE EXCEPTION 'DATASET_READINESS_INCOMPLETE'\n"
+            "            USING ERRCODE = '23514';\n"
+            "    END IF;\n"
         )
         assert definition.count(readiness_guard) == 1
         mutated = definition.replace(readiness_guard, "")
@@ -771,7 +837,7 @@ def test_migration_cycle_never_uses_an_ambient_database_url(
 
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0005"
+    assert report.alembic_head == "0006"
     assert os.environ["FINANCIAL_AGENT_DATABASE_URL"] == stale_url
 
 

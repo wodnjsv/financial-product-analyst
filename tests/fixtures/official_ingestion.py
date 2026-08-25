@@ -34,7 +34,7 @@ def official_manifest(
             if source_code.startswith("ECOS_")
             else "SEC"
         ),
-        cutoff_date=date(2026, 7, 11),
+        cutoff_date=date(2026, 8, 24),
         applicable_date=applicable_date,
         published_at=published_at,
         available_at=available_at
@@ -46,7 +46,7 @@ def official_manifest(
             OfficialObjectManifest(
                 object_name=object_name,
                 object_key=(
-                    f"external/2026-07-11/{source_code}/synthetic/{object_name}"
+                    f"external/2026-08-24/{source_code}/synthetic/{object_name}"
                 ),
                 media_type=media_type,
                 size_bytes=len(payload),

@@ -14,15 +14,28 @@ from financial_agent.ingestion.mapping.common import make_record_hash
 from financial_agent.ingestion.models import MappedRow
 from financial_agent.ingestion.writer import (
     DatasetBuildConflict,
+    DatasetBuildPayloadError,
     DatasetBuildRoleError,
     DatasetBuildStateError,
     DatasetBuildWriter,
 )
 
 
-CUTOFF_DATE = date(2026, 7, 11)
+CUTOFF_DATE = date(2026, 8, 24)
 MANIFEST_HASH = "a" * 64
 APPROVED_AT = datetime(2026, 8, 20, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_writer_rejects_the_legacy_cutoff_before_opening_a_connection() -> None:
+    writer = DatasetBuildWriter(None)  # type: ignore[arg-type]
+
+    with pytest.raises(DatasetBuildPayloadError):
+        await writer.create_building_dataset(
+            "legacy-build",
+            MANIFEST_HASH,
+            date(2026, 7, 11),
+        )
 
 
 def _hashed(payload: dict[str, object]) -> dict[str, object]:

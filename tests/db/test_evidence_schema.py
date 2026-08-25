@@ -87,7 +87,7 @@ def insert_evidence(
     subject_id: str | None = "subject-one",
     value: object = VALID_TAGGED_STRING,
     normalized_value: object = VALID_TAGGED_STRING,
-    applicable_date: date | None = date(2026, 7, 11),
+    applicable_date: date | None = date(2026, 8, 24),
     valid_from: date | None = None,
     valid_to: date | None = None,
     published_at: datetime | None = None,
@@ -195,7 +195,7 @@ def test_after_cutoff_evidence_is_retained_with_explicit_status(
     prepare_dataset(connection)
     insert_evidence(
         connection,
-        applicable_date=date(2026, 7, 12),
+        applicable_date=date(2026, 8, 25),
         cutoff_status="after_cutoff",
     )
 
@@ -211,10 +211,10 @@ def test_after_cutoff_evidence_is_retained_with_explicit_status(
 @pytest.mark.parametrize(
     ("field", "value"),
     (
-        ("applicable_date", date(2026, 7, 12)),
-        ("published_at", datetime(2026, 7, 12, tzinfo=UTC)),
-        ("available_at", datetime(2026, 7, 12, tzinfo=UTC)),
-        ("vintage_date", date(2026, 7, 12)),
+        ("applicable_date", date(2026, 8, 25)),
+        ("published_at", datetime(2026, 8, 25, tzinfo=UTC)),
+        ("available_at", datetime(2026, 8, 25, tzinfo=UTC)),
+        ("vintage_date", date(2026, 8, 25)),
     ),
 )
 def test_each_cutoff_bearing_field_rejects_eligible_after_cutoff(
@@ -247,7 +247,7 @@ def test_timestamptz_cutoff_uses_utc_in_a_non_utc_session(
     insert_evidence(
         connection,
         applicable_date=None,
-        published_at=datetime(2026, 7, 11, 23, 30, tzinfo=UTC),
+        published_at=datetime(2026, 8, 24, 23, 30, tzinfo=UTC),
     )
 
     assert connection.execute(
@@ -273,7 +273,7 @@ def test_safe_view_repeats_all_cutoff_and_source_eligibility_filters(
     insert_evidence(
         connection,
         evidence_id="after-cutoff",
-        applicable_date=date(2026, 7, 12),
+        applicable_date=date(2026, 8, 25),
         cutoff_status="after_cutoff",
     )
     insert_evidence(

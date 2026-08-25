@@ -140,7 +140,7 @@ def test_ecos_mapper_selects_each_latest_pre_cutoff_observation_independently() 
         (
             dict(rows[0]) | {"TIME": "20260709", "DATA_VALUE": "1299.75"},
             dict(rows[1]) | {"TIME": "20260708", "DATA_VALUE": "889.50"},
-            dict(rows[2]) | {"TIME": "20260711", "DATA_VALUE": "9999.99"},
+            dict(rows[2]) | {"TIME": "20260825", "DATA_VALUE": "9999.99"},
             dict(rows[3]) | {"TIME": "20260707", "DATA_VALUE": "179.25"},
         )
     )
@@ -162,7 +162,7 @@ def test_ecos_mapper_selects_each_latest_pre_cutoff_observation_independently() 
 
 def test_ecos_mapper_rejects_an_item_with_no_pre_cutoff_observation() -> None:
     rows = _payload_rows()
-    rows[0]["TIME"] = "20260711"
+    rows[0]["TIME"] = "20260825"
     payload = ecos_731y001_payload(tuple(rows))
 
     with pytest.raises(SourceVerificationError) as captured:

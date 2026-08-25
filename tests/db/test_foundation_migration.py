@@ -58,15 +58,16 @@ def insert_dataset_validation(
     validation_run_id: str,
     validation_status: str = "pass",
     manifest_hash: str = VALID_MANIFEST_HASH,
+    cutoff_date: str = "2026-08-24",
 ) -> None:
     started_at = datetime(2026, 8, 18, tzinfo=UTC)
     connection.execute(
         """
         INSERT INTO operations.dataset_version (
             dataset_version, cutoff_date, status, manifest_hash, created_at
-        ) VALUES (%s, DATE '2026-07-11', 'building', %s, %s)
+        ) VALUES (%s, %s, 'building', %s, %s)
         """,
-        (dataset_version, manifest_hash, started_at),
+        (dataset_version, cutoff_date, manifest_hash, started_at),
     )
     connection.execute(
         """
@@ -163,8 +164,46 @@ def test_foundation_creates_only_its_schemas_and_extensions(
 
 
 @pytest.mark.postgres
-def test_dataset_rejects_a_cutoff_other_than_the_competition_cutoff(
+def test_dataset_preserves_legacy_and_current_approved_cutoffs(
     connection: psycopg.Connection,
+) -> None:
+    created_at = datetime(2026, 8, 25, tzinfo=UTC)
+    for suffix, cutoff_date, manifest_hash in (
+        ("legacy", "2026-07-11", "1" * 64),
+        ("current", "2026-08-24", "2" * 64),
+    ):
+        connection.execute(
+            """
+            INSERT INTO operations.dataset_version (
+                dataset_version, cutoff_date, status, manifest_hash, created_at
+            ) VALUES (%s, %s, 'building', %s, %s)
+            """,
+            (
+                f"dataset-approved-{suffix}",
+                cutoff_date,
+                manifest_hash,
+                created_at,
+            ),
+        )
+
+    assert connection.execute(
+        """
+        SELECT dataset_version, cutoff_date::text
+        FROM operations.dataset_version
+        WHERE dataset_version LIKE 'dataset-approved-%'
+        ORDER BY dataset_version
+        """
+    ).fetchall() == [
+        ("dataset-approved-current", "2026-08-24"),
+        ("dataset-approved-legacy", "2026-07-11"),
+    ]
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("cutoff_date", ("2026-07-12", "2026-08-23", "2026-08-25"))
+def test_dataset_rejects_a_cutoff_outside_the_approved_set(
+    connection: psycopg.Connection,
+    cutoff_date: str,
 ) -> None:
     with pytest.raises(psycopg.errors.CheckViolation):
         connection.execute(
@@ -174,8 +213,8 @@ def test_dataset_rejects_a_cutoff_other_than_the_competition_cutoff(
             ) VALUES (%s, %s, 'building', %s, %s)
             """,
             (
-                "dataset-invalid-cutoff",
-                "2026-07-12",
+                f"dataset-invalid-cutoff-{cutoff_date}",
+                cutoff_date,
                 VALID_MANIFEST_HASH,
                 datetime(2026, 8, 18, tzinfo=UTC),
             ),
@@ -191,7 +230,7 @@ def test_dataset_rejects_a_malformed_manifest_hash(
             """
             INSERT INTO operations.dataset_version (
                 dataset_version, cutoff_date, status, manifest_hash, created_at
-            ) VALUES (%s, DATE '2026-07-11', 'building', %s, %s)
+            ) VALUES (%s, DATE '2026-08-24', 'building', %s, %s)
             """,
             (
                 "dataset-invalid-hash",
@@ -209,7 +248,7 @@ def test_readiness_requires_a_successful_matching_validation_run(
         """
         INSERT INTO operations.dataset_version (
             dataset_version, cutoff_date, status, manifest_hash, created_at
-        ) VALUES (%s, DATE '2026-07-11', 'building', %s, %s)
+        ) VALUES (%s, DATE '2026-08-24', 'building', %s, %s)
         """,
         (
             "dataset-failed-validation",
@@ -283,7 +322,7 @@ def test_request_deadline_and_storage_columns_match_the_runtime_contract(
         """
         INSERT INTO operations.dataset_version (
             dataset_version, cutoff_date, status, manifest_hash, created_at
-        ) VALUES (%s, DATE '2026-07-11', 'building', %s, %s)
+        ) VALUES (%s, DATE '2026-08-24', 'building', %s, %s)
         """,
         (
             "dataset-request-deadline",
@@ -298,7 +337,7 @@ def test_request_deadline_and_storage_columns_match_the_runtime_contract(
             INSERT INTO operations.request_run (
                 run_id, request_key, question_id, question, schema_version,
                 dataset_version, cutoff_date, created_at, deadline_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, DATE '2026-07-11', %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, DATE '2026-08-24', %s, %s)
             """,
             (
                 "run-too-long",
@@ -410,6 +449,40 @@ def test_activation_requires_all_four_readiness_components(
 
 
 @pytest.mark.postgres
+def test_legacy_dataset_can_be_validated_but_cannot_be_activated(
+    connection: psycopg.Connection,
+) -> None:
+    insert_dataset_validation(
+        connection,
+        dataset_version="dataset-legacy-preserved",
+        validation_run_id="validation-legacy-preserved",
+        cutoff_date="2026-07-11",
+    )
+    finish_and_ready_dataset(
+        connection,
+        dataset_version="dataset-legacy-preserved",
+        validation_run_id="validation-legacy-preserved",
+    )
+
+    with pytest.raises(
+        psycopg.errors.CheckViolation,
+        match="LEGACY_DATASET_CANNOT_ACTIVATE",
+    ):
+        with connection.transaction():
+            connection.execute(
+                "SELECT operations.activate_dataset(%s)",
+                ("dataset-legacy-preserved",),
+            )
+
+    assert connection.execute(
+        """
+        SELECT status FROM operations.dataset_version
+        WHERE dataset_version = 'dataset-legacy-preserved'
+        """
+    ).fetchone()[0] == "validated"
+
+
+@pytest.mark.postgres
 def test_second_activation_retires_the_previous_dataset_atomically(
     connection: psycopg.Connection,
 ) -> None:
@@ -493,7 +566,7 @@ def test_start_request_is_idempotent_and_rejects_conflicting_run_reuse(
         "question",
         "1.0.0",
         "dataset-request-active",
-        "2026-07-11",
+        "2026-08-24",
         created_at,
         created_at + timedelta(seconds=55),
     )
@@ -567,7 +640,7 @@ def _concurrent_request_parameters(question: str) -> tuple[object, ...]:
         question,
         "1.0.0",
         "dataset-request-concurrent",
-        "2026-07-11",
+        "2026-08-24",
         created_at,
         created_at + timedelta(seconds=55),
     )
@@ -666,7 +739,7 @@ def test_request_deadline_must_be_after_creation(
         """
         INSERT INTO operations.dataset_version (
             dataset_version, cutoff_date, status, manifest_hash, created_at
-        ) VALUES (%s, DATE '2026-07-11', 'building', %s, %s)
+        ) VALUES (%s, DATE '2026-08-24', 'building', %s, %s)
         """,
         (
             f"dataset-deadline-order-{offset_seconds}",
@@ -683,7 +756,7 @@ def test_request_deadline_must_be_after_creation(
                 run_id, request_key, question_id, question, schema_version,
                 dataset_version, cutoff_date, created_at, deadline_at
             ) VALUES (%s, %s, 'Q', 'question', '1', %s,
-                      DATE '2026-07-11', %s, %s)
+                      DATE '2026-08-24', %s, %s)
             """,
             (
                 f"run-deadline-order-{offset_seconds}",
@@ -703,7 +776,7 @@ def test_failed_execution_cannot_store_an_answer_disposition(
         """
         INSERT INTO operations.dataset_version (
             dataset_version, cutoff_date, status, manifest_hash, created_at
-        ) VALUES ('dataset-failed-run', DATE '2026-07-11', 'building', %s, %s)
+        ) VALUES ('dataset-failed-run', DATE '2026-08-24', 'building', %s, %s)
         """,
         (VALID_MANIFEST_HASH, datetime(2026, 8, 18, tzinfo=UTC)),
     )
@@ -718,7 +791,7 @@ def test_failed_execution_cannot_store_an_answer_disposition(
                 execution_outcome, answer_disposition
             ) VALUES (
                 'run-failed-with-answer', %s, 'Q', 'question', '1',
-                'dataset-failed-run', DATE '2026-07-11', %s, %s,
+                'dataset-failed-run', DATE '2026-08-24', %s, %s,
                 'failed', 'answer'
             )
             """,
@@ -735,7 +808,7 @@ def test_failure_events_preserve_every_attempt_and_are_immutable(
         """
         INSERT INTO operations.dataset_version (
             dataset_version, cutoff_date, status, manifest_hash, created_at
-        ) VALUES ('dataset-failure-events', DATE '2026-07-11', 'building', %s, %s)
+        ) VALUES ('dataset-failure-events', DATE '2026-08-24', 'building', %s, %s)
         """,
         (VALID_MANIFEST_HASH, created_at),
     )
@@ -746,7 +819,7 @@ def test_failure_events_preserve_every_attempt_and_are_immutable(
             dataset_version, cutoff_date, created_at, deadline_at
         ) VALUES (
             'run-failure-events', %s, 'Q', 'question', '1',
-            'dataset-failure-events', DATE '2026-07-11', %s, %s
+            'dataset-failure-events', DATE '2026-08-24', %s, %s
         )
         """,
         ("3" * 64, created_at, created_at + timedelta(seconds=55)),
