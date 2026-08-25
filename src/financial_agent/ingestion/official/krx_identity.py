@@ -7,6 +7,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from datetime import UTC, datetime
 
 from financial_agent.contracts import encode_contract_value
+from financial_agent.ingestion.identity import AuthoritativeIdentityIndex
 from financial_agent.ingestion.mapping.common import (
     make_record_hash,
     normalize_name,
@@ -92,7 +93,10 @@ def _empty_records() -> dict[str, list[Mapping[str, object]]]:
 
 
 def _quarantined(
-    source_code: str, row_number: int, column: str
+    source_code: str,
+    row_number: int,
+    column: str,
+    code: str = "DUPLICATE_OFFICIAL_IDENTIFIER",
 ) -> MappedRow:
     return MappedRow(
         row_number=row_number,
@@ -103,7 +107,7 @@ def _quarantined(
                 source_code=source_code,
                 row_number=row_number,
                 column=column,
-                code="DUPLICATE_OFFICIAL_IDENTIFIER",
+                code=code,
                 severity="quarantined",
             ),
         ),
@@ -255,16 +259,40 @@ def _mapped_row(
     *,
     row_number: int,
     row: Mapping[str, object],
+    identity_index: AuthoritativeIdentityIndex | None,
 ) -> MappedRow:
     records = _empty_records()
     standard_code = str(row["ISU_CD"])
     short_code = str(row["ISU_SRT_CD"])
     canonical_name = normalize_name(str(row["ISU_NM"]))
-    entity_id = stable_id("security", manifest.source_code, standard_code)
+    resolution = (
+        identity_index.resolve("ISIN", standard_code)
+        if identity_index is not None
+        else None
+    )
+    if resolution is not None and resolution.status == "AMBIGUOUS":
+        return _quarantined(
+            manifest.source_code,
+            row_number,
+            "ISU_CD",
+            "ORGANIZER_IDENTITY_AMBIGUOUS",
+        )
+    reused = (
+        resolution is not None
+        and resolution.status == "MATCHED"
+        and resolution.canonical_identity is not None
+    )
+    entity_id = (
+        resolution.canonical_identity.entity_id
+        if reused
+        and resolution is not None
+        and resolution.canonical_identity is not None
+        else stable_id("security", manifest.source_code, standard_code)
+    )
     publisher, institution, source, source_id = _publisher_and_source(manifest)
-    records["catalog.entity"].extend(
-        (
-            publisher,
+    records["catalog.entity"].append(publisher)
+    if not reused:
+        records["catalog.entity"].append(
             _with_hash(
                 {
                     "entity_id": entity_id,
@@ -272,18 +300,18 @@ def _mapped_row(
                     "canonical_name": canonical_name,
                     "normalized_name": canonical_name,
                 }
-            ),
+            )
         )
-    )
     records["catalog.institution"].append(institution)
-    records["catalog.security"].append(
-        {
-            "entity_id": entity_id,
-            "security_kind": "listed_equity",
-            "ticker_display": short_code,
-            "isin_display": None,
-        }
-    )
+    if not reused:
+        records["catalog.security"].append(
+            {
+                "entity_id": entity_id,
+                "security_kind": "listed_equity",
+                "ticker_display": short_code,
+                "isin_display": None,
+            }
+        )
     records["evidence.source_record"].append(source)
 
     for scheme, value, primary in (
@@ -351,6 +379,8 @@ def _mapped_row(
 def map_krx_security_basic(
     manifest: OfficialSnapshotManifest,
     rows: Iterable[Mapping[str, object]],
+    *,
+    identity_index: AuthoritativeIdentityIndex | None = None,
 ) -> Iterator[MappedRow]:
     if manifest.source_code not in {"KRX_KOSPI_BASIC", "KRX_KOSDAQ_BASIC"}:
         raise SourceVerificationError(
@@ -367,4 +397,9 @@ def map_krx_security_basic(
         elif short_counts[str(row["ISU_SRT_CD"])] > 1:
             yield _quarantined(manifest.source_code, row_number, "ISU_SRT_CD")
         else:
-            yield _mapped_row(manifest, row_number=row_number, row=row)
+            yield _mapped_row(
+                manifest,
+                row_number=row_number,
+                row=row,
+                identity_index=identity_index,
+            )

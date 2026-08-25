@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from financial_agent.ingestion.identity import (
+    build_authoritative_identity_index,
+)
+from financial_agent.ingestion.models import (
+    IdentifierCandidate as OrganizerIdentifierCandidate,
+)
 from financial_agent.ingestion.official.identity import (
     IdentityCandidate,
     OfficialIdentityIndex,
@@ -153,3 +159,49 @@ def test_source_local_holding_id_is_scoped_by_snapshot() -> None:
 
     assert resolved.status == "exact"
     assert resolved.entity_id == "security-a"
+
+
+def _organizer_index(*natural_keys: str):
+    return build_authoritative_identity_index(
+        tuple(
+            OrganizerIdentifierCandidate(
+                source_code="PREF02N001",
+                row_number=row_number,
+                natural_key=natural_key,
+                entity_role="OverseasETF",
+                scheme="ISIN",
+                value=SYNTHETIC_ISIN,
+            )
+            for row_number, natural_key in enumerate(natural_keys, start=2)
+        )
+    )
+
+
+def test_official_identity_reuses_one_organizer_authoritative_isin() -> None:
+    organizer_index = _organizer_index("organizer-product-1")
+    canonical = organizer_index.resolve("ISIN", SYNTHETIC_ISIN)
+    assert canonical.canonical_identity is not None
+    index = OfficialIdentityIndex(organizer_index=organizer_index)
+
+    resolved = index.resolve_product(
+        (IdentityCandidate("ISIN", SYNTHETIC_ISIN),)
+    )
+
+    assert resolved.status == "exact"
+    assert resolved.entity_id == canonical.canonical_identity.entity_id
+
+
+def test_official_identity_rejects_an_ambiguous_organizer_isin() -> None:
+    index = OfficialIdentityIndex(
+        organizer_index=_organizer_index(
+            "organizer-product-1", "organizer-product-2"
+        )
+    )
+
+    resolved = index.resolve_product(
+        (IdentityCandidate("ISIN", SYNTHETIC_ISIN),)
+    )
+
+    assert resolved.status == "conflict"
+    assert resolved.entity_id is None
+    assert resolved.issue_code == "ORGANIZER_IDENTITY_AMBIGUOUS"

@@ -5,7 +5,7 @@ import json
 import os
 import re
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -16,6 +16,7 @@ from .models import OfficialObjectManifest, OfficialSnapshotManifest
 
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _STREAM_CHUNK_BYTES = 1024 * 1024
+_ASIA_SEOUL = timezone(timedelta(hours=9))
 
 
 class _Response(Protocol):
@@ -114,14 +115,26 @@ def validate_official_snapshot(manifest: OfficialSnapshotManifest) -> str:
 
     dates = (
         manifest.applicable_date,
-        manifest.published_at.date() if manifest.published_at is not None else None,
-        manifest.available_at.date(),
         manifest.vintage_date,
     )
     if any(value is not None and value > manifest.cutoff_date for value in dates):
         raise _error(
             "OFFICIAL_CUTOFF_VIOLATION",
             "official snapshot date exceeds the approved cutoff",
+        ) from None
+
+    cutoff_at = datetime.combine(
+        manifest.cutoff_date,
+        time(23, 59, 59),
+        tzinfo=_ASIA_SEOUL,
+    )
+    if any(
+        value is not None and value.astimezone(_ASIA_SEOUL) > cutoff_at
+        for value in timestamps
+    ):
+        raise _error(
+            "OFFICIAL_CUTOFF_VIOLATION",
+            "official snapshot timestamp exceeds the approved cutoff",
         ) from None
 
     object_keys: set[str] = set()

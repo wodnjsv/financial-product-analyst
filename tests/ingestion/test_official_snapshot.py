@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -21,7 +21,7 @@ from financial_agent.ingestion.sources import (
 )
 
 
-CUTOFF = date(2026, 7, 11)
+CUTOFF = date(2026, 8, 24)
 PAYLOAD = b'{"OutBlock_1":[{"BAS_DD":"20260710"}]}'
 PAYLOAD_SHA256 = hashlib.sha256(PAYLOAD).hexdigest()
 
@@ -164,23 +164,23 @@ def test_manifest_is_canonical_across_input_object_order(tmp_path: Path) -> None
         (_snapshot(objects=(_object(sha256="not-a-sha256"),)), "OFFICIAL_SHA256_INVALID"),
         (_snapshot(objects=(_object(size_bytes=0),)), "OFFICIAL_OBJECT_EMPTY"),
         (
-            _snapshot(applicable_date=date(2026, 7, 12)),
+            _snapshot(applicable_date=date(2026, 8, 25)),
             "OFFICIAL_CUTOFF_VIOLATION",
         ),
         (
             _snapshot(
-                published_at=datetime(2026, 7, 12, tzinfo=timezone.utc)
+                published_at=datetime(2026, 8, 25, tzinfo=timezone.utc)
             ),
             "OFFICIAL_CUTOFF_VIOLATION",
         ),
         (
             _snapshot(
-                available_at=datetime(2026, 7, 12, tzinfo=timezone.utc)
+                available_at=datetime(2026, 8, 25, tzinfo=timezone.utc)
             ),
             "OFFICIAL_CUTOFF_VIOLATION",
         ),
         (
-            _snapshot(vintage_date=date(2026, 7, 12)),
+            _snapshot(vintage_date=date(2026, 8, 25)),
             "OFFICIAL_CUTOFF_VIOLATION",
         ),
         (
@@ -217,6 +217,23 @@ def test_snapshot_validation_rejects_invalid_manifest(
 
     assert captured.value.code == expected_code
     assert captured.value.__cause__ is None
+
+
+def test_snapshot_cutoff_uses_end_of_day_in_asia_seoul() -> None:
+    one_second_before = datetime(
+        2026, 8, 24, 23, 59, 59, tzinfo=timezone(timedelta(hours=9))
+    )
+    one_second_after_in_utc = datetime(
+        2026, 8, 24, 15, 0, 0, tzinfo=timezone.utc
+    )
+
+    validate_official_snapshot(_snapshot(available_at=one_second_before))
+    with pytest.raises(SourceVerificationError) as captured:
+        validate_official_snapshot(
+            _snapshot(available_at=one_second_after_in_utc)
+        )
+
+    assert captured.value.code == "OFFICIAL_CUTOFF_VIOLATION"
 
 
 def test_invalid_manifest_is_not_published(tmp_path: Path) -> None:

@@ -6,6 +6,10 @@ from decimal import Decimal
 
 import pytest
 
+from financial_agent.ingestion.identity import (
+    build_authoritative_identity_index,
+    collect_organizer_identifier_candidates,
+)
 from financial_agent.ingestion.mapping.common import stable_id
 from financial_agent.ingestion.official.identity import (
     IdentityCandidate,
@@ -58,6 +62,12 @@ def _security_index() -> OfficialIdentityIndex:
     )
 
 
+def _organizer_index(rows):
+    return build_authoritative_identity_index(
+        collect_organizer_identifier_candidates("PREF01N001", rows)
+    )
+
+
 def _records(mapped, table: str) -> tuple[dict[str, object], ...]:
     return tuple(dict(row) for row in mapped.records_by_table[table])
 
@@ -84,29 +94,30 @@ def test_krx_pdf_parser_rejects_header_drift() -> None:
 
 
 def test_isin_derived_binding_uses_exact_historical_krx_code() -> None:
+    organizer_rows = (
+        {
+            "pd_grp_no": "ETF",
+            "pd_itm_no": "KR7305080004",
+            "pd_abrv_nm": "TIGER 미국채10년선물",
+        },
+        {
+            "pd_grp_no": "ETF",
+            "pd_itm_no": "KR",
+            "pd_abrv_nm": "malformed",
+        },
+        {
+            "pd_grp_no": "ETF",
+            "pd_itm_no": "KR7453540007",
+            "pd_abrv_nm": "inactive",
+        },
+        {
+            "pd_grp_no": "ETN",
+            "pd_itm_no": "KRG760000148",
+            "pd_abrv_nm": "excluded ETN",
+        },
+    )
     result = build_krx_etf_product_bindings(
-        organizer_rows=(
-            {
-                "pd_grp_no": "ETF",
-                "pd_itm_no": "KR7305080004",
-                "pd_abrv_nm": "TIGER 미국채10년선물",
-            },
-            {
-                "pd_grp_no": "ETF",
-                "pd_itm_no": "KR",
-                "pd_abrv_nm": "malformed",
-            },
-            {
-                "pd_grp_no": "ETF",
-                "pd_itm_no": "KR7453540007",
-                "pd_abrv_nm": "inactive",
-            },
-            {
-                "pd_grp_no": "ETN",
-                "pd_itm_no": "KRG760000148",
-                "pd_abrv_nm": "excluded ETN",
-            },
-        ),
+        organizer_rows=organizer_rows,
         daily_rows=(
             {
                 "종목코드": "305080",
@@ -117,7 +128,8 @@ def test_isin_derived_binding_uses_exact_historical_krx_code() -> None:
                 "종목명": "KRX only ETF",
             },
         ),
-        applicable_date=date(2026, 7, 10),
+        applicable_date=date(2026, 8, 22),
+        identity_index=_organizer_index(organizer_rows),
     )
 
     assert result.organizer_etf_count == 3
@@ -129,14 +141,15 @@ def test_isin_derived_binding_uses_exact_historical_krx_code() -> None:
 
 
 def test_isin_derived_binding_allows_name_drift_only_as_audit() -> None:
+    organizer_rows = (
+        {
+            "pd_grp_no": "ETF",
+            "pd_itm_no": "KR7284430006",
+            "pd_abrv_nm": "KODEX 200미국채혼합",
+        },
+    )
     result = build_krx_etf_product_bindings(
-        organizer_rows=(
-            {
-                "pd_grp_no": "ETF",
-                "pd_itm_no": "KR7284430006",
-                "pd_abrv_nm": "KODEX 200미국채혼합",
-            },
-        ),
+        organizer_rows=organizer_rows,
         daily_rows=(
             {
                 "종목코드": "284430",
@@ -144,6 +157,7 @@ def test_isin_derived_binding_allows_name_drift_only_as_audit() -> None:
             },
         ),
         applicable_date=date(2026, 7, 10),
+        identity_index=_organizer_index(organizer_rows),
     )
 
     assert len(result.bindings) == 1
@@ -157,7 +171,8 @@ def test_isin_derived_binding_rejects_a_different_historical_date() -> None:
         build_krx_etf_product_bindings(
             organizer_rows=(),
             daily_rows=(),
-            applicable_date=date(2026, 7, 11),
+            applicable_date=date(2026, 8, 25),
+            identity_index=build_authoritative_identity_index(()),
         )
 
     assert captured.value.code == "KRX_ETF_BINDING_DATE_MISMATCH"
@@ -189,6 +204,7 @@ def test_isin_derived_binding_rejects_duplicate_identity_axes(
             organizer_rows=organizer,
             daily_rows=daily,
             applicable_date=date(2026, 7, 10),
+            identity_index=_organizer_index(organizer),
         )
 
     assert captured.value.code == "KRX_ETF_BINDING_CONFLICT"

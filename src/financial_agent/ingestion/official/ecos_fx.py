@@ -414,7 +414,7 @@ def map_ecos_fx(
                 "ECOS_FX_SCHEMA_MISMATCH",
                 "ECOS exchange-rate row differs from the approved schema",
             ) from None
-        if observation_date >= manifest.cutoff_date:
+        if observation_date > manifest.cutoff_date:
             continue
         existing = latest.get(item_code)
         if existing is None or observation_date > existing[0]:
@@ -423,7 +423,8 @@ def map_ecos_fx(
     if set(latest) != set(ECOS_ITEMS):
         raise _error(
             "ECOS_FX_COVERAGE_INCOMPLETE",
-            "ECOS exchange-rate snapshot has no eligible row for every item",
+            "ECOS exchange-rate snapshot has no cutoff-eligible row "
+            "for every item",
         ) from None
 
     return tuple(

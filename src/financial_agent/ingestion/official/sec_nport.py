@@ -26,7 +26,11 @@ from financial_agent.ingestion.mapping.common import (
 from financial_agent.ingestion.models import MappedRow, MappingIssue
 from financial_agent.ingestion.sources import SourceVerificationError
 
-from .identity import IdentityResolution, OfficialIdentityIndex
+from .identity import (
+    IdentityCandidate,
+    IdentityResolution,
+    OfficialIdentityIndex,
+)
 from .models import OfficialSnapshotManifest
 from .snapshot import validate_official_snapshot
 
@@ -1058,7 +1062,8 @@ def _security_resolution(
     identifiers: tuple[_TsvRow, ...],
     duplicate_isins: frozenset[str],
     duplicate_cusips: frozenset[str],
-) -> tuple[str, str | None, str | None, bool]:
+    security_identity_index: OfficialIdentityIndex,
+) -> tuple[str | None, str | None, str | None, bool, bool]:
     isins = {
         value
         for value in _identifier_values(identifiers, "IDENTIFIER_ISIN")
@@ -1068,10 +1073,21 @@ def _security_resolution(
     if len(isins) == 1:
         isin = next(iter(isins))
         if isin not in duplicate_isins:
+            resolution = security_identity_index.resolve_product(
+                (IdentityCandidate("ISIN", isin),)
+            )
+            if resolution.status == "conflict":
+                return None, "ISIN", isin, False, False
+            if (
+                resolution.status == "exact"
+                and resolution.entity_id is not None
+            ):
+                return resolution.entity_id, "ISIN", isin, True, False
             return (
                 stable_id("security", _SOURCE_CODE, f"ISIN:{isin}"),
                 "ISIN",
                 isin,
+                True,
                 True,
             )
     if cusip and _valid_cusip(cusip) and cusip not in duplicate_cusips:
@@ -1079,6 +1095,7 @@ def _security_resolution(
             stable_id("security", _SOURCE_CODE, f"CUSIP:{cusip}"),
             "CUSIP",
             cusip,
+            True,
             True,
         )
     return (
@@ -1090,6 +1107,7 @@ def _security_resolution(
         None,
         None,
         False,
+        True,
     )
 
 
@@ -1542,8 +1560,10 @@ def iter_eligible_nport_funds(
     series_class_index: OfficialIdentityIndex,
     product_bindings: Iterable[NportProductBinding],
     matched_product_sample_size: int | None = None,
+    security_identity_index: OfficialIdentityIndex | None = None,
 ) -> Iterator[MappedRow]:
     manifest_hash = _validate_manifest(manifest, cutoff)
+    holding_identity_index = security_identity_index or OfficialIdentityIndex()
     filings, submission_accessions = _load_filings(files, cutoff)
     filing_by_series = {
         (
@@ -1657,6 +1677,7 @@ def iter_eligible_nport_funds(
             )
             all_strong = True
             all_valid = True
+            identity_conflict = False
             for holding, identifier_rows in holding_store.iter_holdings(
                 filing.accession
             ):
@@ -1666,14 +1687,35 @@ def iter_eligible_nport_funds(
                 all_valid = all_valid and _holding_values_are_complete(
                     holding
                 )
-                *_, strong = _security_resolution(
+                security_id, _, _, strong, _ = _security_resolution(
                     manifest,
                     holding,
                     identifier_rows,
                     duplicate_isins,
                     duplicate_cusips,
+                    holding_identity_index,
                 )
+                identity_conflict = identity_conflict or security_id is None
                 all_strong = all_strong and strong
+
+            if identity_conflict:
+                yield MappedRow(
+                    row_number=binding_number,
+                    disposition="quarantined",
+                    records_by_table={
+                        table: () for table in _empty_records()
+                    },
+                    issues=(
+                        MappingIssue(
+                            source_code=_SOURCE_CODE,
+                            row_number=binding_number,
+                            column="IDENTIFIER_ISIN",
+                            code="SEC_NPORT_HOLDING_IDENTITY_CONFLICT",
+                            severity="quarantined",
+                        ),
+                    ),
+                )
+                continue
 
             status = (
                 "COVERED"
@@ -1708,21 +1750,30 @@ def iter_eligible_nport_funds(
                         )
                     )
                 else:
-                    security_id, scheme, value, _ = _security_resolution(
+                    (
+                        security_id,
+                        scheme,
+                        value,
+                        _,
+                        create_security,
+                    ) = _security_resolution(
                         manifest,
                         holding,
                         identifier_rows,
                         duplicate_isins,
                         duplicate_cusips,
+                        holding_identity_index,
                     )
-                    _add_security(
-                        batch_records,
-                        holding=holding,
-                        identifier_rows=identifier_rows,
-                        security_id=security_id,
-                        identifier_scheme=scheme,
-                        identifier_value=value,
-                    )
+                    assert security_id is not None
+                    if create_security:
+                        _add_security(
+                            batch_records,
+                            holding=holding,
+                            identifier_rows=identifier_rows,
+                            security_id=security_id,
+                            identifier_scheme=scheme,
+                            identifier_value=value,
+                        )
                     relation_id = _add_holding_relation(
                         batch_records,
                         manifest=manifest,

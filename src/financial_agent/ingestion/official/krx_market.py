@@ -140,11 +140,11 @@ def parse_krx_etf_daily(
 def select_latest_eligible_krx_date(
     available_dates: Iterable[date], cutoff: date
 ) -> date:
-    eligible = tuple(value for value in available_dates if value < cutoff)
+    eligible = tuple(value for value in available_dates if value <= cutoff)
     if not eligible:
         raise _error(
             "KRX_ETF_DAILY_NO_ELIGIBLE_DATE",
-            "KRX ETF daily response has no eligible pre-cutoff date",
+            "KRX ETF daily response has no eligible cutoff date",
         ) from None
     return max(eligible)
 

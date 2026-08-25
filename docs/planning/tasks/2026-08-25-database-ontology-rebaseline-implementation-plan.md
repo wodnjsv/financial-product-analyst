@@ -576,6 +576,15 @@ git commit -m "feat: map current public funds"
 
 ### Task 8: Rebind Approved External Sources to the Current Organizer Index
 
+**Implementation status:** Resolver and cutoff code completed and verified on
+`2026-08-25`. KRX and SEC exact identities now reuse the frozen organizer
+canonical entity, ambiguous identities fail closed, and KRX/ECOS observations
+on `2026-08-24` are eligible. The approved capture plan now requests
+`2026-08-24` KRX/ECOS/ETF-PDF data while retaining the cutoff-eligible SEC Q2
+archive. The live KRX ETF-PDF recapture and checksum/coverage gate remain
+pending because the authenticated KRX session must be renewed; no current NCP
+facts have been written.
+
 **Files:**
 
 - Modify: `src/financial_agent/ingestion/official/models.py`

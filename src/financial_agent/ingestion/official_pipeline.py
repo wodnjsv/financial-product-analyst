@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from financial_agent.contracts import canonical_sha256
 from financial_agent.ingestion import pipeline as organizer_pipeline
+from financial_agent.ingestion.identity import AuthoritativeIdentityIndex
 from financial_agent.ingestion.capacity_probe import (
     CapacityProbeError,
     CapacityProbeReport,
@@ -388,6 +389,7 @@ def _prepare_official_sources(
     verified_paths: Mapping[tuple[str, str], Path],
     organizer_rows: Mapping[str, tuple[Mapping[str, object], ...]],
     organizer_contexts: Mapping[str, object],
+    organizer_identity_index: AuthoritativeIdentityIndex,
     scratch_root: Path,
     nport_matched_product_sample_size: int | None = None,
 ) -> tuple[_PreparedOfficialSource, ...]:
@@ -418,8 +420,18 @@ def _prepare_official_sources(
             market="KOSPI" if source_code == "KRX_KOSPI_BASIC" else "KOSDAQ",
         )
         for row in rows:
-            entity_id = stable_id(
-                "security", manifest.source_code, str(row["ISU_CD"])
+            organizer_resolution = organizer_identity_index.resolve(
+                "ISIN", str(row["ISU_CD"])
+            )
+            if organizer_resolution.status == "AMBIGUOUS":
+                continue
+            entity_id = (
+                organizer_resolution.canonical_identity.entity_id
+                if organizer_resolution.status == "MATCHED"
+                and organizer_resolution.canonical_identity is not None
+                else stable_id(
+                    "security", manifest.source_code, str(row["ISU_CD"])
+                )
             )
             for scheme, value in (
                 ("KRX_STANDARD_ISSUE_CODE", str(row["ISU_CD"])),
@@ -431,12 +443,17 @@ def _prepare_official_sources(
                 security_axes.setdefault((scheme, value), set()).add(entity_id)
         factories_by_source[source_code].append(
             lambda manifest=manifest, rows=rows: map_krx_security_basic(
-                manifest, rows
+                manifest,
+                rows,
+                identity_index=organizer_identity_index,
             )
         )
     if any(len(entity_ids) != 1 for entity_ids in security_axes.values()):
         raise OfficialPipelineError("OFFICIAL_IDENTITY_CONFLICT") from None
-    security_index = OfficialIdentityIndex(exact_entries=security_entries)
+    security_index = OfficialIdentityIndex(
+        exact_entries=security_entries,
+        organizer_index=organizer_identity_index,
+    )
 
     daily_rows: tuple[Mapping[str, object], ...] = ()
     bindings = ()
@@ -459,6 +476,7 @@ def _prepare_official_sources(
                 for row in daily_rows
             ),
             applicable_date=daily_manifest.applicable_date,
+            identity_index=organizer_identity_index,
         )
         bindings = binding_result.bindings
 
@@ -538,12 +556,21 @@ def _prepare_official_sources(
             record_key = normalize_name(str(row.get("pd_itm_no", "")))
             if record_key in {"", "NULL"}:
                 continue
-            product_id = stable_id("product", "PREF02N001", record_key)
+            resolution = organizer_identity_index.resolve(
+                "PREF02_PD_ITM_NO", record_key
+            )
+            if (
+                resolution.status != "MATCHED"
+                or resolution.canonical_identity is None
+            ):
+                continue
+            product_id = resolution.canonical_identity.entity_id
             mapped = organizer_pipeline._map_source_row(
                 "PREF02N001",
                 row_number,
                 row,
                 organizer_context,
+                organizer_identity_index,
             )
             if not any(
                 entity.get("entity_id") == product_id
@@ -583,6 +610,7 @@ def _prepare_official_sources(
                     manifest=manifest,
                     series_class_index=series_index,
                     product_bindings=bindings,
+                    security_identity_index=security_index,
                     matched_product_sample_size=(
                         nport_matched_product_sample_size
                     ),
@@ -729,6 +757,7 @@ def validate_stage03b_inputs(
                         },
                     ),
                     preflight.contexts,
+                    preflight.identity_index,
                     Path(temporary_root),
                 )
             return canonical_sha256(combined_manifest)
@@ -862,6 +891,7 @@ async def build_stage03b_dataset(
                         },
                     ),
                     preflight.contexts,
+                    preflight.identity_index,
                     Path(temporary_root),
                 )
 
@@ -964,6 +994,7 @@ async def build_stage03b_capacity_probe(
                         source_codes,
                     ),
                     preflight.contexts,
+                    preflight.identity_index,
                     Path(temporary_root),
                     nport_matched_product_sample_size=sample_product_count,
                 )

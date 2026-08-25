@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from financial_agent.contracts import canonical_sha256
 from financial_agent.ingestion.identity import build_authoritative_identity_index
+from financial_agent.ingestion.mapping.common import stable_id
+from financial_agent.ingestion.models import IdentifierCandidate, MappedRow
 from financial_agent.ingestion.official.models import (
     OfficialObjectManifest,
     OfficialSnapshotManifest,
@@ -315,12 +317,68 @@ def _configure_build_seams(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     def preflight(**kwargs: object) -> object:
         del kwargs
         events.append("organizer_preflight")
+        identity_index = build_authoritative_identity_index(
+            (
+                IdentifierCandidate(
+                    source_code="PREF01N001",
+                    row_number=2,
+                    natural_key="KR7305080004",
+                    entity_role="DomesticETF",
+                    scheme="PREF01_PD_ITM_NO",
+                    value="KR7305080004",
+                ),
+                IdentifierCandidate(
+                    source_code="PREF01N001",
+                    row_number=2,
+                    natural_key="KR7305080004",
+                    entity_role="DomesticETF",
+                    scheme="ISIN",
+                    value="KR7305080004",
+                ),
+                IdentifierCandidate(
+                    source_code="PREF02N001",
+                    row_number=2,
+                    natural_key="OVERSEAS-ETF-1",
+                    entity_role="OverseasETF",
+                    scheme="PREF02_PD_ITM_NO",
+                    value="OVERSEAS-ETF-1",
+                ),
+            )
+        )
         return SimpleNamespace(
             manifest=ORGANIZER_MANIFEST,
             manifest_hash=canonical_sha256(ORGANIZER_MANIFEST),
             contexts={"PREF02N001": {}},
             data_hashes={},
-            identity_index=build_authoritative_identity_index(()),
+            identity_index=identity_index,
+        )
+
+    def map_source_row(
+        source_code: str,
+        row_number: int,
+        row: dict[str, object],
+        context: object,
+        identity_index: object,
+    ) -> MappedRow:
+        del context, identity_index
+        product_id = stable_id(
+            "product", source_code, str(row["pd_itm_no"])
+        )
+        accepted = bool(row.get("pd_itm_no_ma"))
+        return MappedRow(
+            row_number=row_number,
+            disposition="accepted" if accepted else "quarantined",
+            records_by_table={
+                "catalog.entity": (
+                    {
+                        "entity_id": product_id,
+                        "entity_type": "product",
+                    },
+                )
+                if accepted
+                else (),
+            },
+            issues=(),
         )
 
     async def write_organizer(*args: object, **kwargs: object) -> OrganizerWriteResult:
@@ -345,6 +403,11 @@ def _configure_build_seams(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         write_organizer,
     )
     monkeypatch.setattr(official_pipeline, "_database_component_hashes", hashes)
+    monkeypatch.setattr(
+        official_pipeline.organizer_pipeline,
+        "_map_source_row",
+        map_source_row,
+    )
     return events
 
 

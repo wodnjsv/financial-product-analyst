@@ -34,12 +34,14 @@ def _records(
     )
 
 
-def _manifest(payload: bytes):
+def _manifest(
+    payload: bytes, *, applicable_date: date = date(2026, 7, 10)
+):
     return official_manifest(
         source_code="ECOS_731Y001",
         object_name="731Y001-daily.json",
         payload=payload,
-        applicable_date=date(2026, 7, 10),
+        applicable_date=applicable_date,
     )
 
 
@@ -158,6 +160,23 @@ def test_ecos_mapper_selects_each_latest_pre_cutoff_observation_independently() 
     assert {item["applicable_date"] for item in observations} == {
         date(2026, 7, 10)
     }
+
+
+def test_ecos_mapper_includes_observations_on_the_cutoff_date() -> None:
+    rows = tuple(
+        dict(row) | {"TIME": "20260824"} for row in _payload_rows()
+    )
+    payload = ecos_731y001_payload(rows)
+
+    mapped = map_ecos_fx(
+        _manifest(payload, applicable_date=date(2026, 8, 24)),
+        parse_ecos_731y001(payload),
+    )
+
+    assert {
+        item["applicable_date"]
+        for item in _records(mapped, "observation.observation_record")
+    } == {date(2026, 8, 24)}
 
 
 def test_ecos_mapper_rejects_an_item_with_no_pre_cutoff_observation() -> None:

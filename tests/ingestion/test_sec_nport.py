@@ -14,6 +14,12 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 import financial_agent.ingestion.official.sec_nport as sec_nport_module
+from financial_agent.ingestion.identity import (
+    build_authoritative_identity_index,
+)
+from financial_agent.ingestion.models import (
+    IdentifierCandidate as OrganizerIdentifierCandidate,
+)
 from financial_agent.ingestion.official import (
     NportArchiveLimits,
     NportProductBinding,
@@ -134,9 +140,15 @@ def _map_files(
     files: dict[str, bytes] | None = None,
     bindings: tuple[NportProductBinding, ...] | None = None,
     series_index: OfficialIdentityIndex | None = None,
+    security_index: OfficialIdentityIndex | None = None,
     matched_product_sample_size: int | None = None,
 ) -> tuple[MappedRow, ...]:
     values = files or sec_nport_tsv_files()
+    optional_security_index = (
+        {}
+        if security_index is None
+        else {"security_identity_index": security_index}
+    )
     return tuple(
         iter_eligible_nport_funds(
             _write_mapping_files(tmp_path / "nport-files", values),
@@ -145,6 +157,7 @@ def _map_files(
             series_class_index=series_index or _series_index(),
             product_bindings=bindings or (_binding(),),
             matched_product_sample_size=matched_product_sample_size,
+            **optional_security_index,
         )
     )
 
@@ -795,6 +808,73 @@ def test_nport_mapper_promotes_unique_isin_but_ticker_is_alias_only(
     security = _records(mapped, "catalog.security")[0]
     assert security["ticker_display"] == "SYNH"
     assert security["isin_display"] == "US0000000002"
+
+
+def _holding_organizer_index(*natural_keys: str):
+    return build_authoritative_identity_index(
+        tuple(
+            OrganizerIdentifierCandidate(
+                source_code="PREF02N001",
+                row_number=row_number,
+                natural_key=natural_key,
+                entity_role="OverseasETF",
+                scheme="ISIN",
+                value="US0000000002",
+            )
+            for row_number, natural_key in enumerate(natural_keys, start=2)
+        )
+    )
+
+
+def test_nport_holding_reuses_exact_organizer_security_without_duplicate_isin(
+    tmp_path: Path,
+) -> None:
+    organizer_index = _holding_organizer_index("organizer-holding-1")
+    canonical = organizer_index.resolve("ISIN", "US0000000002")
+    assert canonical.canonical_identity is not None
+
+    mapped = _map_files(
+        tmp_path,
+        security_index=OfficialIdentityIndex(
+            organizer_index=organizer_index
+        ),
+    )
+
+    holding = next(
+        row
+        for row in _records(mapped, "relation.relation_record")
+        if row["predicate_id"] == "holdsSecurity"
+    )
+    assert holding["object_id"] == canonical.canonical_identity.entity_id
+    assert not any(
+        row["entity_id"] == canonical.canonical_identity.entity_id
+        for row in _records(mapped, "catalog.entity")
+    )
+    assert not any(
+        row["scheme"] == "ISIN"
+        and row["identifier_value"] == "US0000000002"
+        for row in _records(mapped, "catalog.identifier")
+    )
+
+
+def test_nport_holding_quarantines_an_ambiguous_organizer_isin(
+    tmp_path: Path,
+) -> None:
+    mapped = _map_files(
+        tmp_path,
+        security_index=OfficialIdentityIndex(
+            organizer_index=_holding_organizer_index(
+                "organizer-holding-1", "organizer-holding-2"
+            )
+        ),
+    )
+
+    assert len(mapped) == 1
+    assert mapped[0].disposition == "quarantined"
+    assert {issue.code for issue in mapped[0].issues} == {
+        "SEC_NPORT_HOLDING_IDENTITY_CONFLICT"
+    }
+    assert not _records(mapped, "relation.relation_record")
 
 
 def test_nport_mapper_uses_unique_valid_cusip_when_isin_is_absent(

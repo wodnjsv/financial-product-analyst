@@ -94,6 +94,23 @@ def test_capture_plan_contains_only_the_seven_approved_source_codes() -> None:
         spec.cutoff_date.isoformat() == "2026-08-24"
         for spec in APPROVED_CAPTURE_SPECS
     )
+    current_daily = tuple(
+        spec
+        for spec in APPROVED_CAPTURE_SPECS
+        if spec.source_code
+        in {
+            "KRX_KOSPI_BASIC",
+            "KRX_KOSDAQ_BASIC",
+            "KRX_ETF_DAILY",
+            "ECOS_731Y001",
+            "KRX_ETF_PDF",
+        }
+    )
+    assert {
+        spec.applicable_date.isoformat()
+        for spec in current_daily
+        if spec.applicable_date is not None
+    } == {"2026-08-24"}
     assert all(
         "manager" not in spec.source_code.lower()
         for spec in APPROVED_CAPTURE_SPECS
@@ -151,7 +168,7 @@ class _Opener:
 def _configured_capture(tmp_path: Path) -> object:
     holdings_root = tmp_path / "holdings"
     holdings_root.mkdir()
-    (holdings_root / "123456_20260710.csv").write_text(
+    (holdings_root / "123456_20260824.csv").write_text(
         "종목코드,구성종목명,주식수(계약수),평가금액,시가총액,시가총액 구성비중\n"
         "KR7005930003,합성종목,1,1,1,1\n",
         "utf-8",
@@ -184,7 +201,8 @@ def test_capture_writes_canonical_manifests_without_credentials(
         spec.source_code for spec in APPROVED_CAPTURE_SPECS
     }
     assert all(request.get_method() == "GET" for request in opener.requests)
-    assert all("basDd=20260710" in request.full_url for request in opener.requests[:3])
+    assert all("basDd=20260824" in request.full_url for request in opener.requests[:3])
+    assert "/20260824/20260824" in opener.requests[3].full_url
     assert opener.requests[0].get_header("Auth_key") == "SYNTHETIC-KRX-SECRET"
     assert (
         opener.requests[-1].get_header("User-agent")
@@ -238,7 +256,7 @@ def test_capture_official_cli_reports_only_safe_aggregates(
             object_count=1_135,
             total_bytes=123_456,
             eligible_start="2026-06-01",
-            eligible_end="2026-07-10",
+            eligible_end="2026-08-24",
         )
         if observed is configuration
         else None,
@@ -250,7 +268,7 @@ def test_capture_official_cli_reports_only_safe_aggregates(
     assert captured.err == ""
     assert captured.out.strip() == (
         "OFFICIAL_CAPTURE_OK sources=7 objects=1135 bytes=123456 "
-        "eligible=2026-06-01..2026-07-10"
+        "eligible=2026-06-01..2026-08-24"
     )
 
 
@@ -279,7 +297,7 @@ def test_live_official_capture_is_complete_and_reproducibly_loadable() -> None:
     assert capture.manifest_count == expected_objects
     assert capture.total_bytes > 0
     assert capture.eligible_start == "2026-06-01"
-    assert capture.eligible_end == "2026-07-10"
+    assert capture.eligible_end == "2026-08-24"
     nport = next(
         manifest
         for manifest in manifests

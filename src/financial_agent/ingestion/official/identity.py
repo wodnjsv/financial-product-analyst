@@ -6,6 +6,8 @@ from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from financial_agent.ingestion.identity import AuthoritativeIdentityIndex
+
 
 ResolutionStatus = Literal["exact", "unresolved", "conflict"]
 
@@ -96,7 +98,9 @@ class OfficialIdentityIndex:
         compound_entries: Iterable[
             tuple[str, tuple[str, ...], str]
         ] = (),
+        organizer_index: AuthoritativeIdentityIndex | None = None,
     ) -> None:
+        self._organizer_index = organizer_index
         self._exact: dict[tuple[str, str], set[str]] = {}
         self._compound: dict[tuple[str, tuple[str, ...]], list[str]] = {}
         for candidate, entity_id in exact_entries:
@@ -116,6 +120,23 @@ class OfficialIdentityIndex:
             key = _normalize_candidate(candidate)
             if key is not None and key in self._exact:
                 matched.append((key[0], self._exact[key]))
+            if key is None or self._organizer_index is None:
+                continue
+            organizer = self._organizer_index.resolve(*key)
+            if organizer.status == "AMBIGUOUS":
+                return IdentityResolution(
+                    status="conflict",
+                    entity_id=None,
+                    matched_scheme=None,
+                    issue_code="ORGANIZER_IDENTITY_AMBIGUOUS",
+                )
+            if (
+                organizer.status == "MATCHED"
+                and organizer.canonical_identity is not None
+            ):
+                matched.append(
+                    (key[0], {organizer.canonical_identity.entity_id})
+                )
         return self._resolution(matched)
 
     def resolve_compound_product(

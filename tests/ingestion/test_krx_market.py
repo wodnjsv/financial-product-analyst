@@ -123,6 +123,13 @@ def test_latest_eligible_krx_date_selects_friday_before_saturday_cutoff() -> Non
     assert captured.value.code == "KRX_ETF_DAILY_NO_ELIGIBLE_DATE"
 
 
+def test_latest_eligible_krx_date_includes_the_cutoff_date() -> None:
+    assert select_latest_eligible_krx_date(
+        (date(2026, 8, 22), date(2026, 8, 24)),
+        date(2026, 8, 24),
+    ) == date(2026, 8, 24)
+
+
 def test_krx_market_maps_close_and_nav_to_exact_bound_product() -> None:
     payload = krx_etf_daily_payload()
 

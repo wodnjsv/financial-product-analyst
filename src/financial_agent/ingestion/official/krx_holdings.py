@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 
 from financial_agent.contracts import encode_contract_value
+from financial_agent.ingestion.identity import AuthoritativeIdentityIndex
 from financial_agent.ingestion.mapping.common import (
     make_record_hash,
     normalize_name,
@@ -34,7 +35,7 @@ _HEADERS = (
     "시가총액 구성비중",
 )
 _SUMMARY_CODE = "CASH00000001"
-_HISTORICAL_DATE = date(2026, 7, 10)
+_CUTOFF_DATE = date(2026, 8, 24)
 _DECIMAL_PATTERN = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?")
 _SHORT_CODE_PATTERN = re.compile(r"[A-Z0-9]{6}")
 _APPROVED_AT = datetime(2026, 8, 22, tzinfo=UTC)
@@ -150,11 +151,12 @@ def build_krx_etf_product_bindings(
     organizer_rows: Iterable[Mapping[str, object]],
     daily_rows: Iterable[Mapping[str, object]],
     applicable_date: date,
+    identity_index: AuthoritativeIdentityIndex,
 ) -> KrxEtfBindingResult:
-    if applicable_date != _HISTORICAL_DATE:
+    if applicable_date > _CUTOFF_DATE:
         raise _error(
             "KRX_ETF_BINDING_DATE_MISMATCH",
-            "KRX ETF binding input is not the approved historical date",
+            "KRX ETF binding input exceeds the approved cutoff",
         ) from None
     organizers = tuple(
         row
@@ -201,9 +203,15 @@ def build_krx_etf_product_bindings(
         krx_name = historical_by_code.get(short_code)
         if krx_name is None:
             continue
+        resolution = identity_index.resolve("ISIN", isin)
+        if (
+            resolution.status != "MATCHED"
+            or resolution.canonical_identity is None
+        ):
+            continue
         bindings.append(
             KrxEtfProductBinding(
-                product_entity_id=stable_id("product", "PREF01N001", isin),
+                product_entity_id=resolution.canonical_identity.entity_id,
                 organizer_isin=isin,
                 krx_short_code=short_code,
                 organizer_name=organizer_name,

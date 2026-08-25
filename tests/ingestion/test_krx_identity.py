@@ -4,7 +4,10 @@ from datetime import date
 
 import pytest
 
-from financial_agent.ingestion.models import MappedRow
+from financial_agent.ingestion.identity import (
+    build_authoritative_identity_index,
+)
+from financial_agent.ingestion.models import IdentifierCandidate, MappedRow
 from financial_agent.ingestion.official.krx_identity import (
     map_krx_security_basic,
     parse_krx_security_basic,
@@ -160,3 +163,96 @@ def test_duplicate_krx_issue_code_quarantines_every_candidate() -> None:
         issue.code for row in mapped for issue in row.issues
     } == {"DUPLICATE_OFFICIAL_IDENTIFIER"}
     assert all(_records(row, "catalog.identifier") == () for row in mapped)
+
+
+def _organizer_index(*natural_keys: str):
+    return build_authoritative_identity_index(
+        tuple(
+            IdentifierCandidate(
+                source_code="PREF02N001",
+                row_number=row_number,
+                natural_key=natural_key,
+                entity_role="OverseasETF",
+                scheme="ISIN",
+                value="KR7005930003",
+            )
+            for row_number, natural_key in enumerate(natural_keys, start=2)
+        )
+    )
+
+
+def test_krx_basic_mapper_reuses_an_exact_organizer_isin_without_overwrite() -> None:
+    payload = krx_security_basic_payload(
+        (
+            {
+                "ISU_CD": "KR7005930003",
+                "ISU_SRT_CD": "005930",
+                "ISU_NM": "삼성전자",
+                "ISU_ABBRV": "삼성전자",
+                "ISU_ENG_NM": "Samsung Electronics",
+            },
+        )
+    )
+    manifest = official_manifest(
+        source_code="KRX_KOSPI_BASIC",
+        object_name="kospi-basic.json",
+        payload=payload,
+        applicable_date=date(2026, 8, 22),
+    )
+    organizer_index = _organizer_index("organizer-product-1")
+    canonical = organizer_index.resolve("ISIN", "KR7005930003")
+    assert canonical.canonical_identity is not None
+
+    mapped = tuple(
+        map_krx_security_basic(
+            manifest,
+            parse_krx_security_basic(payload, market="KOSPI"),
+            identity_index=organizer_index,
+        )
+    )
+
+    assert mapped[0].disposition == "accepted"
+    assert not any(
+        row.get("entity_id") == canonical.canonical_identity.entity_id
+        for row in _records(mapped[0], "catalog.entity")
+    )
+    assert not _records(mapped[0], "catalog.security")
+    assert {
+        row["entity_id"]
+        for row in _records(mapped[0], "observation.observation_record")
+    } == {canonical.canonical_identity.entity_id}
+
+
+def test_krx_basic_mapper_quarantines_an_ambiguous_organizer_isin() -> None:
+    payload = krx_security_basic_payload(
+        (
+            {
+                "ISU_CD": "KR7005930003",
+                "ISU_SRT_CD": "005930",
+                "ISU_NM": "삼성전자",
+                "ISU_ABBRV": "삼성전자",
+                "ISU_ENG_NM": "Samsung Electronics",
+            },
+        )
+    )
+    manifest = official_manifest(
+        source_code="KRX_KOSPI_BASIC",
+        object_name="kospi-basic.json",
+        payload=payload,
+        applicable_date=date(2026, 8, 22),
+    )
+
+    mapped = tuple(
+        map_krx_security_basic(
+            manifest,
+            parse_krx_security_basic(payload, market="KOSPI"),
+            identity_index=_organizer_index(
+                "organizer-product-1", "organizer-product-2"
+            ),
+        )
+    )
+
+    assert mapped[0].disposition == "quarantined"
+    assert {issue.code for issue in mapped[0].issues} == {
+        "ORGANIZER_IDENTITY_AMBIGUOUS"
+    }
