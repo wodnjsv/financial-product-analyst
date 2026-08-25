@@ -18,6 +18,7 @@
 
 - Stage 01 계약의 JSON shape와 Stage 02의 정규화 사실 저장구조는 동결 입력이다. 다만 공식 기준 변경으로 고정 cutoff literal과 DB CHECK만 [ADR-0017](decisions/ADR-0017-adopt-current-cutoff-with-legacy-preservation.md)에 따라 최소 보강해야 한다.
 - 최종 organizer 기준은 `2026-08-24` 재배포본이며, 외부 공식자료는 `2026-08-24`까지 공개·이용 가능해진 자료만 사용한다. 각 사실의 실제 기준일은 그대로 보존한다. ([ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md))
+- 온톨로지는 13개 관계를 유지하고, exact organizer identity로 하나의 canonical 상품이 ETF와 펀드클래스 역할을 함께 가질 수 있도록 한다. 원천 행·sale LOT·내부 코드·구매가능 가정은 새 Graph 관계로 만들지 않는다. ([ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md))
 - 주최 측 데이터가 평가 기준이며, 공식 외부 데이터는 주최 측에 없는 필드와 관계만 보완한다.
 - 정상 경로의 LLM은 HyperCLOVA X Intent Resolver와 Answer Composer 두 역할로 제한한다.
 - 필터·정렬·순위·집계·금융 계산·비교 가능성·유사도는 결정론적 코드가 수행한다.

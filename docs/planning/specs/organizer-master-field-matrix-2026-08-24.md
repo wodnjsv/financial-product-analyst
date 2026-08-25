@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-24
 
-**Status:** Proposed — explicit approval required before mapper implementation
+**Status:** Approved for mapper implementation
 
 **Decision:** [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)
 

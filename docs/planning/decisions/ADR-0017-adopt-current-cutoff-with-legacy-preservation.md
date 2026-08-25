@@ -2,7 +2,10 @@
 
 **Date:** 2026-08-25
 
-**Status:** Proposed — explicit approval required before implementation
+**Status:** Accepted
+
+**Approved:** 2026-08-25 — the user approved the database and ontology
+rebaseline direction based on the reviewed `2026-08-24` organizer data.
 
 **Related:** [ADR-0016](ADR-0016-use-2026-08-24-organizer-baseline.md), [Rebaseline Design](../specs/2026-08-24-stage-03-organizer-rebaseline-design.md), [Stage 01 Contracts](../architecture/RUNTIME_CONTRACTS.md)
 

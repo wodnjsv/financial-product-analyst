@@ -254,6 +254,7 @@ Accepted and superseded decisions live in `docs/planning/decisions/`. Each recor
 - [ADR-0007: Use a Normalized Evidence Ledger and Structured Answer Plans](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md)
 - [ADR-0016: Use the 2026-08-24 Organizer Baseline](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)
 - [ADR-0017: Adopt the Current Cutoff While Preserving Legacy Datasets](decisions/ADR-0017-adopt-current-cutoff-with-legacy-preservation.md)
+- [ADR-0018: Keep the Minimal Ontology with Canonical Multi-Role Products](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md)
 
 ## 14. Change Procedure
 

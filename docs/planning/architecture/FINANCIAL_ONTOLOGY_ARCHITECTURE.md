@@ -1,10 +1,10 @@
 # 금융상품 Agent 최소 온톨로지 설계
 
-**Status:** Task 2에서 승인한 기본안; 실제 TTL·SHACL 구현 전 최종 필드 매핑 검증 필요
+**Status:** 2026-08-24 데이터 기준 승인안; TTL·SHACL 구현 대기
 
-**Date:** 2026-08-18
+**Date:** 2026-08-25
 
-**Cutoff:** Superseded by `2026-08-24` under [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md). Literal `2026-07-11` URNs and examples below are historical examples until the rebaseline implementation updates them.
+**Cutoff:** `2026-08-24` under [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)
 
 **Related:** [Core Evaluation Set](../specs/core-evaluation-set.md), [Authoritative Data Requirements](../specs/authoritative-data-requirements.md), [NCP Deployment Architecture](NCP_DEPLOYMENT_ARCHITECTURE.md), [Runtime Contracts](RUNTIME_CONTRACTS.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md)
 
@@ -56,6 +56,16 @@ flowchart LR
 
 ETF와 ETN은 분리된 클래스이며 기본 검색에서 섞지 않는다. 대표펀드와 펀드클래스도 서로 다른 엔티티로 유지하여 AUM 중복 집계를 막는다.
 
+상품군 클래스가 모두 상호 배타적인 것은 아니다. 주최 측 국내 ETF와
+공모펀드 마스터에서 checksum-valid ISIN이 정확히 일치하는 상품은 별도
+상품을 만들지 않고 하나의 canonical ID를 공유한다. 이 canonical 상품은
+`DomesticETF`와 `FundShareClass` 역할을 동시에 가질 수 있다. 반면 `ETF`와
+`ETN`처럼 경제적 구조가 양립할 수 없는 유형은 계속 상호 배타적이다.
+
+원천 테이블에 함께 등장한다는 사실은 `owl:sameAs` 관계의 근거가 아니다.
+정확한 organizer-authoritative 식별자 사전검사가 엔티티 생성보다 먼저
+실행되어 중복 엔티티 자체를 만들지 않아야 한다.
+
 ### 3.2 조직·기업·증권
 
 ```text
@@ -88,6 +98,23 @@ ETF와 ETN은 분리된 클래스이며 기본 검색에서 섞지 않는다. �
 | `RelationAssertion` | 기준일·출처를 가진 관계 주장 | Graph edge의 시간·근거 보존 |
 
 `Currency`, `ReturnMetric`, `FeeMetric`, `AvailabilityStatus`는 제어 어휘로 정의하되, 실제 수치와 시계열은 PostgreSQL `observation`이 권위를 갖는다.
+
+### 3.4 원천 레코드는 온톨로지 엔티티가 아니다
+
+워크북 행, 국내채권의 시장·기준일·정보순번별 sale LOT, API 응답과 파일
+locator는 PostgreSQL `SourceRecord`와 Evidence에 둔다. 하나의 상품에 여러
+원천 레코드가 존재해도 상품 엔티티를 늘리거나 새 온톨로지 관계를 만들지
+않는다.
+
+```text
+Canonical Product
+├─ Observation A ─ Evidence → SourceRecord row 10
+├─ Observation B ─ Evidence → SourceRecord row 11
+└─ Relation       ─ Evidence → official source object
+```
+
+해석할 수 없는 내부 코드도 SourceRecord/Evidence에 원문으로 남긴다. 공식
+코드표 없이 `Industry`, `Region`, `AssetClass`, `RiskGrade`로 승격하지 않는다.
 
 ## 4. 핵심 관계 13개
 
@@ -123,19 +150,19 @@ RelationAssertion-H001
 ├─ predicate_id: holdsSecurity
 ├─ object_id: Security-Samsung
 ├─ weight_pct: 27.4
-├─ valid_from: 2026-07-10
+├─ valid_from: 2026-08-21
 ├─ valid_to: null
-├─ published_at: 2026-07-10
-├─ available_at: 2026-07-10
+├─ published_at: 2026-08-21
+├─ available_at: 2026-08-21
 ├─ relation_assertion_id: relation-H001
 ├─ evidence_id: evidence-H001
-└─ dataset_version: 2026-07-11-v1
+└─ dataset_version: 2026-08-24-v1
 ```
 
 모든 관계 Assertion에는 다음을 적용한다.
 
 - `subject_id`, `predicate_id`, `object_id`는 같은 `dataset_version`의 유효한 ID여야 한다.
-- `applicable_date`, `valid_from`, `published_at`, `available_at`, `vintage_date` 중 해당하는 날짜는 2026-07-11 컷오프를 통과해야 한다.
+- `applicable_date`, `valid_from`, `published_at`, `available_at`, `vintage_date` 중 해당하는 날짜는 해당 dataset의 cutoff를 통과해야 하며, 현재 활성 후보는 `2026-08-24`다.
 - Graph에서 검색된 edge는 `relation_assertion_id`와 `evidence_id`를 반환해야 한다.
 - Graph 0건은 자동으로 “관계 없음”을 의미하지 않는다. 검색 모집단의 완전성이 정의된 `closed_world_scope`와 완료된 조회 근거가 있을 때만 부재 Claim을 만든다.
 
@@ -213,9 +240,14 @@ ontology/
 
 ```text
 urn:ontology:financial-product:v1
-urn:data:financial-product:2026-07-11-v1
-urn:evidence:financial-product:2026-07-11-v1
+urn:data:financial-product:2026-08-24-v1
+urn:evidence:financial-product:2026-08-24-v1
 ```
+
+SHACL은 `DomesticETF`와 `FundShareClass`의 근거 있는 다중 typing을 허용하고,
+`ETF`와 `ETN`의 동시 typing은 거부한다. 관계 Assertion은 PostgreSQL
+`relation_assertion_id`, `evidence_id`, `dataset_version`으로 역추적되어야
+한다.
 
 ## 8. 복잡도 제한
 
@@ -227,6 +259,8 @@ urn:evidence:financial-product:2026-07-11-v1
 - 자동 추론된 기업 지배관계의 무제한 전이 폐쇄
 - 수치 계산, 수익률 환산, AUM 순위, 유사도 가중치 연산을 OWL 규칙으로 실행하는 구조
 - 별도 근거 없이 임베딩 유사도만으로 확정한 관계
+- 워크북 행·sale LOT·source membership을 위한 별도 온톨로지 관계
+- 공식 공지상 무효인 `BUYABLE_QUANTITY`를 이용한 구매 관계
 
 새 평가 질문이 현재 13개 관계로 표현되지 않을 때만 다음 순서로 보강한다.
 
@@ -240,6 +274,6 @@ urn:evidence:financial-product:2026-07-11-v1
 이 문서는 논리 기본안을 고정한다. TTL·SHACL 구현 계획은 다음을 다시 검증한 후 별도로 작성한다.
 
 1. 52개 질문의 `required_relations` 전체가 13개 관계 또는 PostgreSQL 관측값 조회로 연결되는지
-2. 네 상품 마스터의 현실 필드가 클래스·속성·허용값에 손실 없이 매핑되는지
-3. ETF 구성종목, 기업 지배관계, 테마 이력, 공식 문서의 과거 스냅샷을 2026-07-11 컷오프로 확보할 수 있는지
+2. 승인된 280필드 매트릭스의 relation 필드가 13개 관계에 연결되고 observation·Evidence 필드가 Graph로 잘못 승격되지 않는지
+3. ETF 구성종목, 기업 지배관계, 테마 이력, 공식 문서의 스냅샷을 2026-08-24 컷오프로 확보할 수 있는지
 4. RDF 적재량과 SPARQL 경로의 NCP Fuseki 실측 지연이 응답 예산 안에 드는지

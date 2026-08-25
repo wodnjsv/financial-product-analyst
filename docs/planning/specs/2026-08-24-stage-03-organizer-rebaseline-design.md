@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-24
 
-**Status:** Approved direction; field-matrix review pending
+**Status:** Approved for implementation
 
 **Decision:** [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)
 **Field contract:** [2026-08-24 organizer 280-field matrix](organizer-master-field-matrix-2026-08-24.md)

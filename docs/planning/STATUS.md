@@ -14,15 +14,15 @@
 | 실패·판정·시간 예산 | 확정 기본안; 55초 내부 마감은 NCP 벤치마크 후 단계별 재배분 가능 | [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md), [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) |
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
-| 온톨로지 논리 구조 | 최소 클래스와 13개 핵심 관계를 현재 기본안으로 기록; TTL·SHACL 필드 매핑은 후속 계획 필요 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md) |
+| 온톨로지 논리 구조 | 최소 클래스·13개 관계 유지, canonical 다중 역할·SourceRecord 경계·2026-08-24 ABox 제약 승인; TTL·SHACL 구현 대기 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
-| Stage 03 organizer·외부 정형 데이터 | 7월 기준 구현·캡처는 역사적 검증으로 보존; 새 8개 workbook·8월 24일 cutoff·외부 source 재승인으로 재베이스 설계 중 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [280-field Matrix](specs/organizer-master-field-matrix-2026-08-24.md), [ADR-0017](decisions/ADR-0017-adopt-current-cutoff-with-legacy-preservation.md) |
+| Stage 03 organizer·외부 정형 데이터 | 7월 기준 구현·캡처는 역사적 검증으로 보존; 새 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스 계획 승인, 구현 대기 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [280-field Matrix](specs/organizer-master-field-matrix-2026-08-24.md), [DB·Ontology Rebaseline Plan](tasks/2026-08-25-database-ontology-rebaseline-implementation-plan.md) |
 
 ## 2. 구현 Stage
 
 ### Stage 01 런타임 계약
 
-**상태: JSON shape 구현·검증 완료; 공식 cutoff literal의 `2026-08-24` 보강 승인 대기**
+**상태: JSON shape 구현·검증 완료; 공식 cutoff literal의 `2026-08-24` 보강 승인, Alembic `0006` 구현 대기**
 
 - 기본 계약과 JSON Schema는 커밋 `c5d387d`∼`36ffa82`에 구현되었다.
 - AnswerPlan의 구조적 경계는 `4dc6c30`에 잠겼다.
@@ -106,7 +106,7 @@
 
 | Stage | 범위 | 상태 |
 | --- | --- | --- |
-| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 새 organizer 280필드·cutoff migration·외부 source 재캡처 설계 중; 03C 대기 |
+| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 새 organizer 280필드·cutoff migration·전역 identity·외부 source 재승인 계획 확정; 구현 대기 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
 | 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
@@ -148,8 +148,12 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 26. ~~Stage 03B Task 5 KRX ETF 종가·NAV 구현~~ — 2026-08-23 완료
 27. ~~Stage 03B Task 8의 Stage 03A+03B 결합 파이프라인 구현·Linux/amd64·폐기 가능 PostgreSQL 검증~~ — 2026-08-23 완료
 28. ~~옛 Stage 03B Task 9 NCP acceptance~~ — 공식 2026-08-24 재배포로 실행 중단; 역사적 산출물만 보존
-29. 새 8개 workbook 전수 분석과 280필드 매핑·identity·cutoff 보강안 승인
-30. 승인안 기준 Stage 03 organizer rebaseline 상세 구현계획 작성·승인
+29. ~~새 8개 workbook 전수 분석과 280필드 매핑·identity·cutoff 보강안 승인~~ — 2026-08-25 완료
+30. ~~승인안 기준 DB·온톨로지 rebaseline 상세 구현계획 작성~~ — 2026-08-25 완료
+31. Alembic `0006`과 2026-08-24 current cutoff 계약 구현
+32. organizer identity pre-scan과 네 source mapper 재구현
+33. 공식 외부 source 재승인·결합 DB 반복성 검증
+34. 최소 TBox·SHACL·Evidence-bound ABox 구현
 31. Stage 01 current cutoff literal과 Stage 02 Alembic `0006` 구현·로컬/NCP 검증
 32. 네 organizer mapper·identity pre-scan·외부 source 재캡처 구현 및 새 `building` 재현
 
