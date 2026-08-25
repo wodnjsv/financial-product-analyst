@@ -18,10 +18,10 @@ from .common import (
 )
 
 
-_CUTOFF_DATE = date(2026, 7, 11)
-_DEFINITION_APPROVED_AT = datetime(2026, 8, 20, tzinfo=UTC)
+_CUTOFF_DATE = date(2026, 8, 24)
+_DEFINITION_APPROVED_AT = datetime(2026, 8, 24, tzinfo=UTC)
 _SOURCE_CODE = "PRFD01N001"
-_SOURCE_FILE = "PRFD01N001_공모펀드마스터_20260711_datarows.xlsx"
+_SOURCE_FILE = "prfd01n001_data.xlsx"
 _SOURCE_ID = stable_id("source", _SOURCE_CODE, _SOURCE_FILE)
 _MISSING_VALUES = frozenset({None, "", "NULL"})
 _REPRESENTATIVE_SENTINELS = frozenset({"KR0000000000", "000000000000"})
@@ -41,15 +41,23 @@ _OPTIONAL_IDENTIFIER_COLUMNS = (
 _EXPECTED_COLUMNS = (
     "bmrk_eng_nm",
     "bmrk_nm",
+    "bns_bpr",
     "curr_cd",
     "exchdg_yn",
+    "fd_daily_bas_dt",
     "fd_estb_ctry_cd",
     "fd_ivst_rgn_desc",
+    "fd_last_dstb_actg_bss_dt",
+    "fd_last_dstb_actg_eot_dt",
+    "fd_last_dstb_r",
     "fd_mm18_ern_r",
     "fd_mm1_ern_r",
     "fd_mm3_ern_r",
     "fd_mm6_ern_r",
     "fd_nast_suma",
+    "fd_price_bas_dt",
+    "fd_prsv_r",
+    "fd_sbpr",
     "fd_set_pcd",
     "fd_wk1_ern_r",
     "fd_yr1_ern_r",
@@ -58,6 +66,10 @@ _EXPECTED_COLUMNS = (
     "fd_yr5_ern_r",
     "frc_bpr_itm_yn",
     "fss_itm_no",
+    "han_clas_fee_type",
+    "han_clas_nm",
+    "han_clas_policies",
+    "han_clas_sales_channel",
     "hdge_fd_yn",
     "int_dvd_desc",
     "itm_abrv_nm",
@@ -69,35 +81,53 @@ _EXPECTED_COLUMNS = (
     "ksd_itm_no",
     "mtco_itm_no",
     "ofsfd_yn",
+    "ofwk_trus_rwrd_r",
     "or_attr_desc",
+    "or_co_rwrd_r",
     "or_co_xtn_itt_cd",
     "ovrs_fd_desc",
     "pers_corp_desc",
     "pfiv_sale_cntl_tcd",
-    "prfd_attr_cd",
+    "prfd_attr_cds",
+    "prfd_attr_cnt",
+    "prfd_attr_search_text",
     "prvo_fd_desc",
     "prvo_pbff_desc",
     "rptt_ksd_itm_no",
+    "sale_co_rwrd_r",
     "sale_yn",
     "std_itm_no",
     "thco_sale_yn",
+    "trusc_rwrd_r",
     "trusc_xtn_itt_cd",
+    "zrin_attr_nms",
+    "zrin_btyp_cd",
+    "zrin_btyp_nm",
+    "zrin_dmst_bd_cmst_rt",
+    "zrin_dmst_stk_cmst_rt",
+    "zrin_etc_ast_cmst_rt",
+    "zrin_fd_cmst_rt",
     "zrin_fd_ivst_risk_gcd",
     "zrin_fd_ivst_risk_grd_nm",
+    "zrin_liqt_cmst_rt",
+    "zrin_ovrs_bd_cmst_rt",
+    "zrin_ovrs_stk_cmst_rt",
+    "zrin_pcd",
+    "zrin_ptn_nm",
 )
 
 SPEC = SourceSpec(
     source_code=_SOURCE_CODE,
     table_id=_SOURCE_CODE,
     data_file_name=_SOURCE_FILE,
-    data_sheet_name="datarows",
-    schema_file_name="PRFD01N001_공모펀드마스터_schema.xlsx",
-    schema_sheet_name="Sheet1_Schema",
+    data_sheet_name="data",
+    schema_file_name="prfd01n001_schema.xlsx",
+    schema_sheet_name="schema",
     expected_columns=_EXPECTED_COLUMNS,
-    expected_row_count=95_619,
-    natural_key=("itm_no", "prfd_attr_cd", "zrin_fd_ivst_risk_gcd"),
+    expected_row_count=23_676,
+    natural_key=("itm_no",),
     parser_version="1",
-    mapping_version="1",
+    mapping_version="2",
 )
 
 IGNORED_COLUMNS: Mapping[str, str] = {}

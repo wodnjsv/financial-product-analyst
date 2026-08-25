@@ -19,10 +19,55 @@ from financial_agent.ingestion import (
     verify_local_source,
     verify_schema_header,
 )
+from financial_agent.ingestion.pipeline import SOURCE_SPECS
 from tests.fixtures.ingestion import write_data_workbook, write_schema_workbook
 
 
 EXPECTED_COLUMNS = ("PD_NO", "ZERO_VALUE", "BLANK_VALUE", "TEXT_NULL")
+
+EXPECTED_CURRENT_SOURCE_CONTRACTS = {
+    "PRBD01N001": {
+        "data_file_name": "prbd01n001_data.xlsx",
+        "schema_file_name": "prbd01n001_schema.xlsx",
+        "natural_key": ("pd_no", "pd_exg_mkt", "info_base_dt", "info_seq"),
+        "row_count": 21_882,
+        "field_count": 58,
+    },
+    "PREF01N001": {
+        "data_file_name": "pref01n001_data.xlsx",
+        "schema_file_name": "pref01n001_schema.xlsx",
+        "natural_key": ("pd_itm_no",),
+        "row_count": 1_780,
+        "field_count": 98,
+    },
+    "PREF02N001": {
+        "data_file_name": "pref02n001_data.xlsx",
+        "schema_file_name": "pref02n001_schema.xlsx",
+        "natural_key": ("pd_itm_no",),
+        "row_count": 6_037,
+        "field_count": 49,
+    },
+    "PRFD01N001": {
+        "data_file_name": "prfd01n001_data.xlsx",
+        "schema_file_name": "prfd01n001_schema.xlsx",
+        "natural_key": ("itm_no",),
+        "row_count": 23_676,
+        "field_count": 75,
+    },
+}
+
+
+def test_current_organizer_source_contracts_match_the_replacement_files() -> None:
+    assert set(SOURCE_SPECS) == set(EXPECTED_CURRENT_SOURCE_CONTRACTS)
+    for source_code, expected in EXPECTED_CURRENT_SOURCE_CONTRACTS.items():
+        spec = SOURCE_SPECS[source_code]
+        assert spec.data_file_name == expected["data_file_name"]
+        assert spec.data_sheet_name == "data"
+        assert spec.schema_file_name == expected["schema_file_name"]
+        assert spec.schema_sheet_name == "schema"
+        assert spec.natural_key == expected["natural_key"]
+        assert spec.expected_row_count == expected["row_count"]
+        assert len(spec.expected_columns) == expected["field_count"]
 
 
 def source_spec(*, expected_row_count: int = 1) -> SourceSpec:
@@ -227,7 +272,7 @@ def test_object_download_is_rehashed_instead_of_trusting_etag(tmp_path: Path) ->
         download_verified_object(
             client,
             bucket="private-bucket",
-            key="organizer/2026-07-11/source.xlsx",
+            key="organizer/2026-08-24/source.xlsx",
             expected_sha256="0" * 64,
             destination=destination,
         )
@@ -251,7 +296,7 @@ def test_source_errors_do_not_include_credentials_or_cell_values(
         download_verified_object(
             client,
             bucket="private-bucket",
-            key="organizer/2026-07-11/source.xlsx",
+            key="organizer/2026-08-24/source.xlsx",
             expected_sha256="0" * 64,
             destination=tmp_path / "download.xlsx",
         )
@@ -272,7 +317,7 @@ def test_object_destination_errors_are_sanitized(tmp_path: Path) -> None:
         download_verified_object(
             FakeObjectClient(payload),
             bucket="private-bucket",
-            key="organizer/2026-07-11/source.xlsx",
+            key="organizer/2026-08-24/source.xlsx",
             expected_sha256=hashlib.sha256(payload).hexdigest(),
             destination=destination,
         )

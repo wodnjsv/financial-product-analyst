@@ -10,7 +10,11 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from financial_agent.ingestion.pipeline import SOURCE_SPECS, build_organizer_dataset
-from financial_agent.ingestion.sources import iter_workbook_rows, sha256_path
+from financial_agent.ingestion.sources import (
+    iter_workbook_rows,
+    sha256_path,
+    verify_schema_header,
+)
 
 
 RUN_REAL_DATA = os.getenv("RUN_ORGANIZER_DATA_TESTS") == "1"
@@ -40,7 +44,7 @@ def _paths(root: Path):
     reason="explicit organizer-data gate is disabled",
 )
 def test_real_organizer_workbooks_match_the_approved_safe_aggregates() -> None:
-    data_paths, _ = _paths(Path(SOURCE_ROOT or ""))
+    data_paths, schema_paths = _paths(Path(SOURCE_ROOT or ""))
     rows_by_source: dict[str, int] = {}
     product_types: dict[str, Counter[str]] = {}
     public_items: set[str] = set()
@@ -49,6 +53,9 @@ def test_real_organizer_workbooks_match_the_approved_safe_aggregates() -> None:
 
     for source_code in sorted(SOURCE_SPECS):
         spec = SOURCE_SPECS[source_code]
+        assert verify_schema_header(schema_paths[source_code], spec) == (
+            spec.expected_columns
+        )
         count = 0
         types: Counter[str] = Counter()
         for row in iter_workbook_rows(data_paths[source_code], spec):
@@ -68,21 +75,21 @@ def test_real_organizer_workbooks_match_the_approved_safe_aggregates() -> None:
         product_types[source_code] = types
 
     assert rows_by_source == {
-        "PRBD01N001": 42_394,
-        "PRFD01N001": 95_619,
-        "PREF01N001": 1_734,
-        "PREF02N001": 5_646,
+        "PRBD01N001": 21_882,
+        "PRFD01N001": 23_676,
+        "PREF01N001": 1_780,
+        "PREF02N001": 6_037,
     }
-    assert product_types["PREF01N001"] == Counter({"ETF": 1_202, "ETN": 532})
-    assert product_types["PREF02N001"] == Counter({"ETF": 5_587, "ETN": 59})
-    assert len(public_items) == 11_139
-    assert len(representatives) == 2_626
+    assert product_types["PREF01N001"] == Counter({"ETF": 1_235, "ETN": 545})
+    assert product_types["PREF02N001"] == Counter({"ETF": 5_972, "ETN": 65})
+    assert len(public_items) == 23_676
+    assert len(representatives) == 6_883
 
-    print("PRBD01N001 rows=42394 fields=40")
-    print("PREF01N001 rows=1734 fields=73 etf=1202 etn=532")
-    print("PREF02N001 rows=5646 fields=49 etf=5587 etn=59")
-    print("PRFD01N001 rows=95619 fields=45 items=11139 representatives=2626")
-    print("TOTAL rows=145393")
+    print("PRBD01N001 rows=21882 fields=58")
+    print("PREF01N001 rows=1780 fields=98 etf=1235 etn=545")
+    print("PREF02N001 rows=6037 fields=49 etf=5972 etn=65")
+    print("PRFD01N001 rows=23676 fields=75 items=23676 representatives=6883")
+    print("TOTAL rows=53375")
 
 
 @pytest.mark.organizer_data

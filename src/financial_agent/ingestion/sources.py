@@ -141,10 +141,23 @@ def verify_schema_header(path: Path, spec: SourceSpec) -> tuple[str, ...]:
                 "approved schema sheet is missing",
             )
         worksheet = workbook[spec.schema_sheet_name]
+        rows = worksheet.iter_rows(values_only=True)
+        header = tuple(next(rows, ())[:5])
+        if header != (
+            "순번",
+            "컬럼명",
+            "데이터타입",
+            "Nullable",
+            "컬럼코멘트",
+        ):
+            raise SourceVerificationError(
+                "SOURCE_SCHEMA_MISMATCH",
+                "schema columns differ from the approved source",
+            )
         columns = tuple(
-            row[0]
-            for row in worksheet.iter_rows(min_row=3, values_only=True)
-            if row[0] is not None
+            row[1]
+            for row in rows
+            if len(row) > 1 and row[1] is not None
         )
         if columns != spec.expected_columns:
             raise SourceVerificationError(

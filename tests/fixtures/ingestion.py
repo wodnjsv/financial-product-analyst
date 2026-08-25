@@ -30,11 +30,10 @@ def write_schema_workbook(
 ) -> Path:
     workbook = Workbook(write_only=True)
     worksheet = workbook.create_sheet(sheet_name)
-    worksheet.append(("2026-08-24",))
     worksheet.append(
-        ("컬럼명", "PK/FK", "컬럼타입", "컬럼한글명", "컬럼값 예시")
+        ("순번", "컬럼명", "데이터타입", "Nullable", "컬럼코멘트")
     )
-    for header in headers:
-        worksheet.append((header, "", "text", "", ""))
+    for index, header in enumerate(headers, start=1):
+        worksheet.append((index, header, "text", "YES", ""))
     workbook.save(path)
     return path

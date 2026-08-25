@@ -263,6 +263,12 @@ git commit -m "feat: add organizer identity prescan"
 
 ### Task 3: Replace the Four Source Contracts and Object Prefixes
 
+**Implementation status:** Completed and verified on `2026-08-25`. The four
+replacement source contracts now enforce the exact current filenames, `data`
+and `schema` sheet layouts, 280 ordered fields, 53,375 total rows, composite
+bond natural key, and `organizer/2026-08-24/` object prefix. Read-only
+validation passed against all eight replacement workbooks.
+
 **Files:**
 
 - Modify: `src/financial_agent/ingestion/mapping/domestic_bond.py`

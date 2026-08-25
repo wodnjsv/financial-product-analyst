@@ -19,10 +19,10 @@ from .common import (
 )
 
 
-_CUTOFF_DATE = date(2026, 7, 11)
-_DEFINITION_APPROVED_AT = datetime(2026, 8, 20, tzinfo=UTC)
+_CUTOFF_DATE = date(2026, 8, 24)
+_DEFINITION_APPROVED_AT = datetime(2026, 8, 24, tzinfo=UTC)
 _SOURCE_CODE = "PREF02N001"
-_SOURCE_FILE = "PREF02N001_해외ETF마스터_20260711_datarows.xlsx"
+_SOURCE_FILE = "pref02n001_data.xlsx"
 _SOURCE_ID = stable_id("source", _SOURCE_CODE, _SOURCE_FILE)
 _MISSING_VALUES = frozenset({None, "", "NULL"})
 _INDEX_PLACEHOLDERS = frozenset(
@@ -101,14 +101,14 @@ SPEC = SourceSpec(
     source_code=_SOURCE_CODE,
     table_id=_SOURCE_CODE,
     data_file_name=_SOURCE_FILE,
-    data_sheet_name="datarows",
-    schema_file_name="PREF02N001_해외ETF마스터_schema.xlsx",
-    schema_sheet_name="Sheet1_Schema",
+    data_sheet_name="data",
+    schema_file_name="pref02n001_schema.xlsx",
+    schema_sheet_name="schema",
     expected_columns=_EXPECTED_COLUMNS,
-    expected_row_count=5_646,
+    expected_row_count=6_037,
     natural_key=("pd_itm_no",),
     parser_version="1",
-    mapping_version="1",
+    mapping_version="2",
 )
 
 IGNORED_COLUMNS: Mapping[str, str] = {
