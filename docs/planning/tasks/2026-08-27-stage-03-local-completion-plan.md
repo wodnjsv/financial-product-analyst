@@ -393,8 +393,9 @@ git commit -m "feat: freeze current ecos exchange rates"
 - Modify: `tests/ingestion/test_sec_nport.py`
 - Modify: `tests/ingestion/test_official_pipeline.py`
 - Modify: `tests/ingestion/test_real_official_sources.py`
+- Create: `tests/ingestion/test_real_current_sec.py`
 - Local ignored output:
-  `data/generated/stage03b/current-official-capture/`
+  `data/generated/stage03b/current-sec-capture/`
 
 **Interfaces:**
 
@@ -405,14 +406,14 @@ git commit -m "feat: freeze current ecos exchange rates"
 - Must not produce: organizer product AUM, return, NAV, fee, risk, or
   classification replacements.
 
-- [ ] **Step 1: Write current-organizer binding and authority tests**
+- [x] **Step 1: Write current-organizer binding and authority tests**
 
 Cover exact CIK+ticker match, duplicate organizer identifier, unmatched class,
 amendment selection, filing availability, and an N-PORT holding whose ISIN
 matches one organizer entity. Assert that an attempted product-level external
 metric fails the Task 1 authority gate.
 
-- [ ] **Step 2: Run the focused SEC suite**
+- [x] **Step 2: Run the focused SEC suite**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -421,7 +422,7 @@ metric fails the Task 1 authority gate.
   tests/ingestion/test_official_pipeline.py -q
 ```
 
-- [ ] **Step 3: Reapprove or recapture immutable SEC bytes**
+- [x] **Step 3: Reapprove or recapture immutable SEC bytes**
 
 If the prior object checksum and official publication/availability metadata
 still match, copy the bytes into the current ignored capture and generate a
@@ -429,25 +430,37 @@ current-cutoff manifest while preserving actual dates. Otherwise download once
 with the configured SEC user agent and verify the official checksum/size. Do
 not download a second copy merely because the organizer cutoff changed.
 
-- [ ] **Step 4: Run full bounded mapping with disk-spilled joins**
+- [x] **Step 4: Run full bounded mapping with disk-spilled joins**
 
 Use the existing SQLite keyed join and record batching. Preserve all source
 lots, select only eligible filings, and record `COVERED`,
 `PARTIALLY_COVERED`, `NOT_COVERED`, and `CONFLICT` counts. Do not claim that
 the SEC population covers every organizer overseas ETF.
 
-- [ ] **Step 5: Run the configured real SEC gate**
+- [x] **Step 5: Run the configured real SEC gate**
 
 ```bash
-RUN_OFFICIAL_DATA_TESTS=1 \
-.venv/bin/python -m pytest \
-  tests/ingestion/test_real_official_sources.py -m organizer_data -q
+RUN_CURRENT_SEC_TESTS=1 \
+FINANCIAL_AGENT_CURRENT_ORGANIZER_ROOT=... \
+FINANCIAL_AGENT_CURRENT_SEC_CAPTURE_ROOT=... \
+PYTHONPATH=src .venv/bin/python -m pytest \
+  tests/ingestion/test_real_current_sec.py -q
 ```
 
 Expected: exact object/manifests and measured binding/coverage counts pass;
 raw CIKs, tickers, holdings, and object keys are absent from BuildReport.
 
-- [ ] **Step 6: Commit the current SEC binding**
+Result: the two prior immutable objects were reapproved without a second
+download. Their SHA-256 values remained unchanged while the new manifests use
+the `2026-08-24` cutoff and preserve the actual SEC publication and
+availability dates. Full current-organizer mapping processed `6,037` overseas
+product bindings through the disk-spilled join in `10,072` output batches:
+`COVERED=6`, `PARTIALLY_COVERED=4,247`, `NOT_COVERED=1,781`, and three holding
+identity conflicts. The configured deterministic ten-product real gate passed
+in `230.78s`; the final focused SEC suite passed `75` tests with three
+explicitly configured real-data gates skipped by default.
+
+- [x] **Step 6: Commit the current SEC binding**
 
 ```bash
 git add \

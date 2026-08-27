@@ -17,6 +17,7 @@ from financial_agent.ingestion.official.capture import (
     capture_local_krx_holdings,
     load_existing_capture,
     load_capture_configuration,
+    reapprove_existing_sec_capture,
 )
 from financial_agent.ingestion.official.ecos_fx import (
     map_ecos_fx,
@@ -26,7 +27,12 @@ from financial_agent.ingestion.official_pipeline import (
     load_official_manifests,
     verify_official_snapshot_objects,
 )
-from financial_agent.ingestion.sources import SourceVerificationError
+from financial_agent.ingestion.official.models import (
+    OfficialObjectManifest,
+    OfficialSnapshotManifest,
+)
+from financial_agent.ingestion.official.snapshot import write_canonical_manifest
+from financial_agent.ingestion.sources import SourceVerificationError, sha256_path
 
 
 RUN_OFFICIAL_DATA = os.getenv("RUN_OFFICIAL_DATA_TESTS") == "1"
@@ -279,6 +285,114 @@ def test_local_holdings_capture_needs_no_api_configuration(
     assert capture.eligible_end == "2026-08-24"
     assert manifests[0].applicable_date.isoformat() == "2026-08-22"
     assert manifests[0].objects[0].object_name == source.name
+
+
+def test_existing_verified_sec_bytes_can_be_reapproved_for_current_cutoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from financial_agent.ingestion.official import capture
+
+    old_root = tmp_path / "old"
+    old_objects = old_root / "objects"
+    old_manifests = old_root / "manifests"
+    old_specs = tuple(
+        spec
+        for spec in APPROVED_CAPTURE_SPECS
+        if spec.source_code
+        in {"SEC_SERIES_CLASS_20260601", "SEC_NPORT_2026Q2"}
+    )
+    expected_objects: dict[str, tuple[int, str]] = {}
+    for spec in old_specs:
+        assert spec.object_name is not None
+        payload = f"verified-{spec.source_code}".encode()
+        old_key = "/".join(
+            (
+                "external",
+                "2026-07-11",
+                spec.source_code,
+                spec.snapshot_id,
+                spec.object_name,
+            )
+        )
+        old_path = old_objects / old_key
+        old_path.parent.mkdir(parents=True, exist_ok=True)
+        old_path.write_bytes(payload)
+        expected_objects[spec.source_code] = (
+            len(payload),
+            sha256_path(old_path),
+        )
+        manifest = OfficialSnapshotManifest(
+            source_code=spec.source_code,
+            snapshot_id=spec.snapshot_id,
+            publisher_code=spec.publisher_code,
+            cutoff_date=date(2026, 7, 11),
+            applicable_date=spec.applicable_date,
+            published_at=spec.published_at,
+            available_at=spec.available_at,
+            vintage_date=spec.vintage_date,
+            parser_version="1",
+            mapping_version="1",
+            objects=(
+                OfficialObjectManifest(
+                    object_name=spec.object_name,
+                    object_key=old_key,
+                    media_type=spec.media_type,
+                    size_bytes=len(payload),
+                    sha256=sha256_path(old_path),
+                ),
+            ),
+        )
+        write_canonical_manifest(
+            manifest,
+            old_manifests
+            / spec.source_code
+            / f"{spec.snapshot_id}.json",
+        )
+    monkeypatch.setattr(
+        capture,
+        "_REAPPROVED_SEC_OBJECTS",
+        expected_objects,
+    )
+
+    current_root = tmp_path / "current"
+    result = reapprove_existing_sec_capture(
+        source_root=old_root,
+        output_root=current_root,
+    )
+
+    manifests = load_official_manifests(result.manifest_root)
+    verified = verify_official_snapshot_objects(
+        manifests,
+        result.object_root,
+    )
+    assert result.source_count == 2
+    assert result.object_count == 2
+    assert result.manifest_count == 2
+    assert {manifest.cutoff_date for manifest in manifests} == {
+        date(2026, 8, 24)
+    }
+    assert {
+        manifest.source_code: (
+            manifest.published_at,
+            manifest.available_at,
+            manifest.vintage_date,
+        )
+        for manifest in manifests
+    } == {
+        spec.source_code: (
+            spec.published_at,
+            spec.available_at,
+            spec.vintage_date,
+        )
+        for spec in old_specs
+    }
+    assert all(
+        item.object_key.startswith("external/2026-08-24/")
+        for manifest in manifests
+        for item in manifest.objects
+    )
+    assert len(verified) == 2
 
 
 def test_capture_official_cli_reports_only_safe_aggregates(

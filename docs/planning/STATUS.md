@@ -94,6 +94,7 @@
 
 - [ADR-0020](decisions/ADR-0020-treat-organizer-missingness-as-authoritative.md)에 따라 organizer 스키마가 정의한 상품 사실은 공란·`NULL`·placeholder여도 권위 있는 결측으로 유지한다. 동일 의미의 외부 값을 답변 사실로 적재하지 않고, 원문·manifest 감사 경계만 보존한다. 주최 측에 없는 구성종목 관계·증권 식별자·ECOS 환율·coverage 계보만 명시적 allowlist로 보완한다.
 - current cutoff 코드·테스트와 KRX ETF PDF의 `2026-08-22` 로컬 캡처는 구현·검증됐다. ECOS·SEC·운용사 객체는 국내 영업일 `2026-08-22`, 해외 한국시간 `2026-08-23`, 최종 가용성 cutoff `2026-08-24` 경계를 source별로 지켜 로컬에서 추가 동결한다. NCP 결합 적재는 Stage 08까지 수행하지 않는다.
+- SEC Series/Class와 2026 Q2 N-PORT 원본 448,751,052 byte는 재다운로드 없이 SHA-256을 재검증해 current cutoff manifest로 재승인했다. 최신 주최 측 해외상품 6,037개 전체 측정은 `COVERED=6`, `PARTIALLY_COVERED=4,247`, `NOT_COVERED=1,781`, 구성종목 식별 충돌 3개다. 이 결과는 SEC가 포괄하지 못한 상품을 구성종목 없음으로 단정하지 않고 bounded coverage로 보존한다. 결정론적 10개 상품 실데이터 gate는 `1 passed in 230.78s`였다.
 - 나머지 source 동결, 질문 coverage 확정, 두 로컬 PostgreSQL 최종 재현은 [Stage 03 Local Completion Plan](tasks/2026-08-27-stage-03-local-completion-plan.md)을 따른다. 주최 측에 종가·NAV 필드가 이미 있으므로 current KRX ETF daily 값은 답변 보강 source에서 제외한다.
 
 아래 7월 cutoff 캡처 기록은 역사적 검증 이력이다.
