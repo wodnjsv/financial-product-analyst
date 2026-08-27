@@ -90,10 +90,11 @@
 
 ### Stage 03B 공식 외부 정형 데이터
 
-**상태: current cutoff 재바인딩·8월 22일 KRX holdings 로컬 PostgreSQL 결합·재현·대표 질의 검증 완료; 새 NCP acceptance는 최종 배포 단계로 이연**
+**상태: current cutoff 재바인딩·8월 22일 KRX holdings 로컬 PostgreSQL 결합·재현·대표 질의 검증 완료; 주최 측 결측 권위 정책·나머지 공식 source 로컬 완료 계획 승인, 순차 구현 중; 새 NCP acceptance는 최종 배포 단계로 이연**
 
-- 최신 organizer 기준을 덮어쓰지 않도록 모든 외부 source를 enrichment-only로 재바인딩했다. organizer 평가 필드와 충돌하면 organizer 값을 유지하고 외부 값은 별도 Evidence와 제한 사유로만 보존한다.
+- [ADR-0020](decisions/ADR-0020-treat-organizer-missingness-as-authoritative.md)에 따라 organizer 스키마가 정의한 상품 사실은 공란·`NULL`·placeholder여도 권위 있는 결측으로 유지한다. 동일 의미의 외부 값을 답변 사실로 적재하지 않고, 원문·manifest 감사 경계만 보존한다. 주최 측에 없는 구성종목 관계·증권 식별자·ECOS 환율·coverage 계보만 명시적 allowlist로 보완한다.
 - current cutoff 코드·테스트와 KRX ETF PDF의 `2026-08-22` 로컬 캡처는 구현·검증됐다. ECOS·SEC·운용사 객체는 국내 영업일 `2026-08-22`, 해외 한국시간 `2026-08-23`, 최종 가용성 cutoff `2026-08-24` 경계를 source별로 지켜 로컬에서 추가 동결한다. NCP 결합 적재는 Stage 08까지 수행하지 않는다.
+- 나머지 source 동결, 질문 coverage 확정, 두 로컬 PostgreSQL 최종 재현은 [Stage 03 Local Completion Plan](tasks/2026-08-27-stage-03-local-completion-plan.md)을 따른다. 주최 측에 종가·NAV 필드가 이미 있으므로 current KRX ETF daily 값은 답변 보강 source에서 제외한다.
 
 아래 7월 cutoff 캡처 기록은 역사적 검증 이력이다.
 
@@ -170,7 +171,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 33. ~~공식 외부 source current cutoff 재바인딩 구현~~ — 2026-08-25 완료
 34. ~~두 로컬 PostgreSQL에서 current organizer 비활성 결정성 검증~~ — 2026-08-26 완료
 35. ~~current KRX ETF holdings 1,161개 exact binding·로컬 비활성 적재·대표 질의 검증~~ — 2026-08-27 완료
-36. 나머지 current 공식 외부 source 동결과 Stage 03 로컬 완료 게이트
+36. 나머지 current 공식 외부 source 동결과 Stage 03 로컬 완료 게이트 — [구현 계획](tasks/2026-08-27-stage-03-local-completion-plan.md) 승인, Task 1부터 순차 구현 중
 37. 최소 TBox·SHACL·Evidence-bound ABox 구현부터 로컬 평가 API까지 Stage 04~07 순차 구현
 38. Stage 08에서 최종 NCP 비활성 적재·Graph/Vector·권한·성능·복구·공개 API acceptance
 

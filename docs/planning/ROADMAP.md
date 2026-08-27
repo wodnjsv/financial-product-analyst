@@ -19,7 +19,7 @@
 - Stage 01 계약의 JSON shape와 Stage 02의 정규화 사실 저장구조는 동결 입력이다. 다만 공식 기준 변경으로 고정 cutoff literal과 DB CHECK만 [ADR-0017](decisions/ADR-0017-adopt-current-cutoff-with-legacy-preservation.md)에 따라 최소 보강해야 한다.
 - 최종 organizer 기준은 `2026-08-24` 재배포본이며, 외부 공식자료는 `2026-08-24`까지 공개·이용 가능해진 자료만 사용한다. 각 사실의 실제 기준일은 그대로 보존한다. ([ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md))
 - 온톨로지는 13개 관계를 유지하고, exact organizer identity로 하나의 canonical 상품이 ETF와 펀드클래스 역할을 함께 가질 수 있도록 한다. 원천 행·sale LOT·내부 코드·구매가능 가정은 새 Graph 관계로 만들지 않는다. ([ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md))
-- 주최 측 데이터가 평가 기준이며, 공식 외부 데이터는 주최 측에 없는 필드와 관계만 보완한다.
+- 주최 측 데이터가 평가 기준이며, 공식 외부 데이터는 주최 측 스키마에 없는 필드와 관계만 보완한다. 주최 측이 정의한 필드가 공란·`NULL`·placeholder인 경우에도 외부 값으로 채우지 않는다. ([ADR-0020](decisions/ADR-0020-treat-organizer-missingness-as-authoritative.md))
 - 정상 경로의 LLM은 HyperCLOVA X Intent Resolver와 Answer Composer 두 역할로 제한한다.
 - 필터·정렬·순위·집계·금융 계산·비교 가능성·유사도는 결정론적 코드가 수행한다.
 - PostgreSQL이 수치·관계·근거의 권위 있는 원장이고, Fuseki와 pgvector는 검증 가능한 투영 또는 후보 검색 계층이다.
@@ -57,6 +57,7 @@ Stage 03부터 Stage 09까지 다음 조건을 계속 적용한다.
 8. 사용자가 되물을 수 없는 대회 모드에서는 승인된 기본 규칙, 복수 후보, 제한 또는 답변 불가 중 하나로 끝낸다.
 9. 각 Stage는 별도 상세 구현 계획, 사용자 승인, 집중 검증, 전체 회귀, 최종 diff·비밀정보·데이터 감사를 거쳐야 한다.
 10. 직전 Stage의 로컬 완료 게이트를 통과하지 못한 상태에서 다음 Stage를 완료 처리하지 않는다. 로컬 통과를 NCP 운영 준비 완료로 표현하지 않으며, 최종 NCP 게이트는 Stage 08에서 별도로 통과해야 한다.
+11. 주최 측 스키마에 있는 상품 사실의 결측은 권위 있는 `missing`이다. 외부 공식 값이 있어도 동일 의미의 필터·순위·계산·Claim 근거로 대체하지 않는다.
 
 ## 4. Stage별 범위와 완료 게이트
 
