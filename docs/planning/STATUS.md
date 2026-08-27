@@ -173,7 +173,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 33. ~~공식 외부 source current cutoff 재바인딩 구현~~ — 2026-08-25 완료
 34. ~~두 로컬 PostgreSQL에서 current organizer 비활성 결정성 검증~~ — 2026-08-26 완료
 35. ~~current KRX ETF holdings 1,161개 exact binding·로컬 비활성 적재·대표 질의 검증~~ — 2026-08-27 완료
-36. 나머지 current 공식 외부 source 동결과 Stage 03 로컬 완료 게이트 — [구현 계획](tasks/2026-08-27-stage-03-local-completion-plan.md) 승인, Task 1부터 순차 구현 중
+36. 나머지 current 공식 외부 source 동결과 Stage 03 로컬 완료 게이트 — [구현 계획](tasks/2026-08-27-stage-03-local-completion-plan.md) 승인, Task 1~6 완료; 52개 질문 커버리지를 `supported` 16, `limited` 18, `requires_additional_data` 11, `unsupported` 7로 동결
 37. 최소 TBox·SHACL·Evidence-bound ABox 구현부터 로컬 평가 API까지 Stage 04~07 순차 구현
 38. Stage 08에서 최종 NCP 비활성 적재·Graph/Vector·권한·성능·복구·공개 API acceptance
 

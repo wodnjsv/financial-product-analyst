@@ -57,6 +57,59 @@ def _domestic_binding() -> KrxEtfProductBinding:
     )
 
 
+def test_stage03_question_coverage_contract_is_complete() -> None:
+    catalog = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "gold"
+            / "core_questions.json"
+        ).read_text("utf-8")
+    )
+
+    assert "required_source_registry" in catalog
+    assert "adversarial_missingness_cases" in catalog
+    registered_sources = set(catalog["required_source_registry"])
+    allowed_support = {
+        "supported",
+        "limited",
+        "requires_additional_data",
+        "unsupported",
+    }
+    partial_coverage_sources = {
+        "official_etf_holdings_snapshot",
+        "official_overseas_etf_holdings_snapshot",
+        "official_public_fund_holdings_snapshot",
+    }
+
+    assert len(catalog["cases"]) == 52
+    for case in catalog["cases"]:
+        assert case["support_level"] in allowed_support, case["id"]
+        assert isinstance(case["required_sources"], list), case["id"]
+        assert set(case["required_sources"]) <= registered_sources, case["id"]
+        assert "closed_world_scope" in case, case["id"]
+        assert case["missingness_policy"] == "organizer_authoritative", case["id"]
+        if case["support_level"] == "limited":
+            assert case["limitation_reason"], case["id"]
+        if partial_coverage_sources & set(case["required_sources"]):
+            assert case["closed_world_scope"] is None, case["id"]
+
+    adversarial_cases = catalog["adversarial_missingness_cases"]
+    assert {case["metric"] for case in adversarial_cases} == {
+        "aum",
+        "return",
+        "price",
+        "nav",
+        "risk",
+    }
+    assert all(
+        case["organizer_state"] in {"null", "blank"}
+        and case["external_state"] == "present"
+        and case["expected_result"] == "unavailable"
+        and case["forbidden_action"] == "external_backfill"
+        for case in adversarial_cases
+    )
+
+
 def test_cross_family_samsung_question_keeps_public_fund_gap_visible() -> None:
     catalog = json.loads(
         (

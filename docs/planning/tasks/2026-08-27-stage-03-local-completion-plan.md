@@ -571,7 +571,7 @@ plan without that approval.
   internal case plus coverage rules for the four organizer product families and
   five answer-impossible cases.
 
-- [ ] **Step 1: Add gold-set status validation**
+- [x] **Step 1: Add gold-set status validation**
 
 Require every JSON case to contain:
 
@@ -588,27 +588,27 @@ The validator must reject unknown sources, an empty limitation reason for a
 limited case, and `closed_world_scope` on partial SEC or unapproved fund
 coverage.
 
-- [ ] **Step 2: Rebase the 52 cases to measured current coverage**
+- [x] **Step 2: Rebase the 52 cases to measured current coverage**
 
 Keep question wording and archetype identity stable. Change only current data
 support, current required source, and limitation state. Add explicit adversarial
 cases for organizer-null/external-present AUM, return, price, NAV, and risk.
 
-- [ ] **Step 3: Document hidden-evaluation family coverage**
+- [x] **Step 3: Document hidden-evaluation family coverage**
 
 Because the 35 exact questions are private, map the announced categories rather
 than inventing question text. Cover single-family lookup, cross-family filter,
 holding-to-product, sector-to-product, ranking, comparison, multi-sentence
 reference, and answer-impossible families.
 
-- [ ] **Step 4: Run the question gates**
+- [x] **Step 4: Run the question gates**
 
 ```bash
 .venv/bin/python -m pytest \
   tests/ingestion/test_official_question_gates.py -q
 ```
 
-- [ ] **Step 5: Commit the coverage boundary**
+- [x] **Step 5: Commit the coverage boundary**
 
 ```bash
 git add \
