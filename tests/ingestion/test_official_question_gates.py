@@ -145,7 +145,7 @@ def test_fx_question_gate_has_four_fixed_definitions_and_actual_date() -> None:
     assert all(isinstance(row["numeric_value"], Decimal) for row in observations)
 
 
-def test_overseas_question_gate_discloses_bounded_scope_and_manager(
+def test_overseas_question_gate_discloses_bounded_holdings_scope(
     tmp_path: Path,
 ) -> None:
     files = sec_nport_tsv_files()
@@ -203,10 +203,7 @@ def test_overseas_question_gate_discloses_bounded_scope_and_manager(
         row for row in evidence if row["evidence_kind"] == "query_scope"
     )
 
-    assert {row["predicate_id"] for row in relations} == {
-        "holdsSecurity",
-        "managedBy",
-    }
+    assert {row["predicate_id"] for row in relations} == {"holdsSecurity"}
     assert {
         (row["scope_completeness"], row["normalized_value"]["value"])
         for row in scopes

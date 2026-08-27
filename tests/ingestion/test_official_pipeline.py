@@ -583,7 +583,7 @@ def _store_manifest_object(
 
 
 @pytest.mark.asyncio
-async def test_krx_identity_holdings_market_and_ecos_follow_fixed_order(
+async def test_krx_identity_holdings_and_ecos_follow_fixed_order(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -617,16 +617,9 @@ async def test_krx_identity_holdings_market_and_ecos_follow_fixed_order(
             },
         )
     )
-    daily_payload = krx_etf_daily_payload()
     holdings_payload = krx_etf_pdf_payload()
     ecos_payload = ecos_731y001_payload()
     manifests = (
-        official_manifest(
-            source_code="KRX_ETF_DAILY",
-            object_name="etf-daily-20260710.json",
-            payload=daily_payload,
-            applicable_date=date(2026, 7, 10),
-        ),
         official_manifest(
             source_code="ECOS_731Y001",
             object_name="ecos.json",
@@ -649,7 +642,7 @@ async def test_krx_identity_holdings_market_and_ecos_follow_fixed_order(
     )
     for manifest, payload in zip(
         manifests,
-        (daily_payload, ecos_payload, holdings_payload, basic_payload),
+        (ecos_payload, holdings_payload, basic_payload),
         strict=True,
     ):
         _store_manifest_object(tmp_path, manifest, payload)
@@ -667,13 +660,39 @@ async def test_krx_identity_holdings_market_and_ecos_follow_fixed_order(
     assert official_codes == [
         "KRX_KOSPI_BASIC",
         "KRX_ETF_PDF",
-        "KRX_ETF_DAILY",
         "ECOS_731Y001",
     ]
     assert report.source_counts["KRX_KOSPI_BASIC"]["accepted"] == 1
     assert report.source_counts["KRX_ETF_PDF"]["PARTIALLY_COVERED"] == 1
-    assert report.source_counts["KRX_ETF_DAILY"]["accepted"] == 1
     assert report.source_counts["ECOS_731Y001"]["accepted"] == 4
+
+
+@pytest.mark.asyncio
+async def test_current_krx_daily_snapshot_is_rejected_as_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure_build_seams(monkeypatch)
+    payload = krx_etf_daily_payload()
+    manifest = official_manifest(
+        source_code="KRX_ETF_DAILY",
+        object_name="etf-daily-20260822.json",
+        payload=payload,
+        applicable_date=date(2026, 8, 22),
+    )
+    _store_manifest_object(tmp_path, manifest, payload)
+
+    with pytest.raises(OfficialPipelineError) as captured:
+        await build_stage03b_dataset(
+            object(),
+            dataset_version="combined-current-daily-rejected",
+            organizer_inputs=_organizer_inputs(),
+            official_manifests=(manifest,),
+            official_object_root=tmp_path,
+        )
+
+    assert captured.value.code == "OFFICIAL_SOURCE_UNSUPPORTED"
+    assert _RecordingWriter.instances == []
 
 
 @pytest.mark.asyncio

@@ -191,7 +191,14 @@ async def test_official_writer_flushes_before_a_batch_exceeds_record_limit(
             row_number=row_number,
             disposition="accepted",
             records_by_table={
-                "observation.observation_record": ({},) * 60_000
+                "observation.observation_record": (
+                    {
+                        "entity_id": None,
+                        "relation_id": "synthetic-holding-relation",
+                        "metric_id": "official_holding_weight_pct",
+                    },
+                )
+                * 60_000
             },
             issues=(),
         )

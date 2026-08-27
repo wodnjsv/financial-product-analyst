@@ -917,111 +917,6 @@ def _add_base_records(
     return str(source["source_id"])
 
 
-def _add_manager(
-    records: dict[str, list[Mapping[str, object]]],
-    *,
-    manifest: OfficialSnapshotManifest,
-    source_id: str,
-    product_id: str,
-    filing: _Filing,
-) -> None:
-    name = normalize_name(filing.registrant.values["REGISTRANT_NAME"])
-    manager_id = stable_id("institution", _SOURCE_CODE, f"CIK:{filing.cik}")
-    records["catalog.entity"].append(
-        _with_hash(
-            {
-                "entity_id": manager_id,
-                "entity_type": "institution",
-                "canonical_name": name or f"SEC registrant {filing.cik}",
-                "normalized_name": name or f"SEC registrant {filing.cik}",
-            }
-        )
-    )
-    records["catalog.institution"].append(
-        {"entity_id": manager_id, "institution_kind": "asset_manager"}
-    )
-    identifiers = [("SEC_CIK", filing.cik, True)]
-    lei = normalize_name(filing.registrant.values["LEI"]).upper()
-    if lei and _valid_lei(lei):
-        identifiers.append(("LEI", lei, True))
-    for scheme, value, primary in identifiers:
-        records["catalog.identifier"].append(
-            _with_hash(
-                {
-                    "identifier_id": stable_id(
-                        "identifier", _SOURCE_CODE, f"{scheme}:{value}"
-                    ),
-                    "entity_id": manager_id,
-                    "scheme": scheme,
-                    "identifier_value": value,
-                    "is_primary": primary,
-                    "valid_from": None,
-                    "valid_to": None,
-                }
-            )
-        )
-
-    relation_id = stable_id(
-        "relation", _SOURCE_CODE, f"{product_id}:managedBy:{manager_id}"
-    )
-    records["relation.relation_record"].append(
-        _with_hash(
-            {
-                "relation_id": relation_id,
-                "subject_id": product_id,
-                "predicate_id": "managedBy",
-                "object_id": manager_id,
-                "valid_from": filing.report_date,
-                "valid_to": None,
-            }
-        )
-    )
-    evidence_id = stable_id(
-        "evidence", _SOURCE_CODE, f"{filing.accession}:managedBy"
-    )
-    records["evidence.evidence_record"].append(
-        _with_hash(
-            {
-                "evidence_id": evidence_id,
-                "evidence_kind": "relation",
-                "source_id": source_id,
-                "subject_id": product_id,
-                "predicate_id": "managedBy",
-                "value_or_object_id": _tag(manager_id),
-                "normalized_value": _tag(f"cik={filing.cik}"),
-                "unit": None,
-                "currency": None,
-                "applicable_date": filing.report_date,
-                "valid_from": None,
-                "valid_to": None,
-                "published_at": _filing_datetime(filing.filing_date),
-                "available_at": _available_at(manifest, filing.filing_date),
-                "vintage_date": manifest.vintage_date,
-                "locator_type": "tabular",
-                "locator_uri_or_object_key": (
-                    f"{manifest.objects[0].object_key}#REGISTRANT.tsv"
-                ),
-                "locator_record_key": filing.accession,
-                "locator_sheet": None,
-                "locator_row": filing.registrant.row_number,
-                "locator_column": "CIK",
-                "locator_page": None,
-                "locator_section": "REGISTRANT.tsv",
-                "locator_sentence_start": None,
-                "locator_sentence_end": None,
-                "raw_value_repr": filing.registrant.values["CIK"],
-                "parser_version": manifest.parser_version,
-                "mapping_version": manifest.mapping_version,
-                "cutoff_status": "eligible",
-                "scope_completeness": None,
-            }
-        )
-    )
-    records["evidence.evidence_relation_origin"].append(
-        {"evidence_id": evidence_id, "relation_id": relation_id}
-    )
-
-
 def _identifier_values(
     rows: tuple[_TsvRow, ...], field: str
 ) -> set[str]:
@@ -1668,13 +1563,6 @@ def iter_eligible_nport_funds(
                 )
                 continue
 
-            _add_manager(
-                records,
-                manifest=manifest,
-                source_id=source_id,
-                product_id=binding.product_entity_id,
-                filing=filing,
-            )
             all_strong = True
             all_valid = True
             identity_conflict = False

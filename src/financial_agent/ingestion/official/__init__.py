@@ -14,6 +14,10 @@ from .snapshot import (
     validate_official_snapshot,
     write_canonical_manifest,
 )
+from .authority import (
+    OfficialEnrichmentScopeError,
+    validate_official_enrichment_scope,
+)
 from .krx_identity import map_krx_security_basic, parse_krx_security_basic
 from .krx_holdings import (
     KrxEtfBindingResult,
@@ -52,6 +56,7 @@ __all__ = [
     "NportArchiveLimits",
     "NportProductBinding",
     "OfficialObjectManifest",
+    "OfficialEnrichmentScopeError",
     "OfficialIdentityIndex",
     "OfficialSnapshotManifest",
     "ResolutionStatus",
@@ -70,6 +75,7 @@ __all__ = [
     "parse_sec_series_class",
     "select_latest_eligible_krx_date",
     "validate_official_snapshot",
+    "validate_official_enrichment_scope",
     "validate_krx_etf_holding_inventory",
     "verify_and_extract_nport",
     "write_canonical_manifest",

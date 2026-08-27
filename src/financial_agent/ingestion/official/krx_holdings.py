@@ -68,7 +68,6 @@ _METRICS: dict[str, tuple[str, str | None, str | None]] = {
         None,
     ),
 }
-_SUMMARY_METRIC = "krx_etf_creation_cash_amount_krw"
 
 
 @dataclass(frozen=True, slots=True)
@@ -718,30 +717,6 @@ def map_krx_holding_snapshot(
         code = normalize_name(row["종목코드"]).upper()
         name = normalize_name(row["구성종목명"])
         if code == _SUMMARY_CODE:
-            metric_id = _SUMMARY_METRIC
-            _add_metric_definition(
-                records,
-                metric_id=metric_id,
-                source_field="시가총액",
-                unit="KRW",
-            )
-            _add_observation(
-                records,
-                manifest=manifest,
-                source_id=source_id,
-                product_id=binding.product_entity_id,
-                relation_id=None,
-                row_number=row_number,
-                record_key=(
-                    f"{binding.product_entity_id}:"
-                    f"{manifest.applicable_date}:summary"
-                ),
-                column="시가총액",
-                metric_id=metric_id,
-                raw=row["시가총액"],
-                unit="KRW",
-                currency="KRW",
-            )
             continue
 
         security_id, strong_identity = _add_security(

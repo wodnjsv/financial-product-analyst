@@ -81,11 +81,10 @@ def test_capture_configuration_keeps_credentials_out_of_repr(
     assert "test@example.invalid" not in rendered
 
 
-def test_capture_plan_contains_only_the_seven_approved_source_codes() -> None:
+def test_capture_plan_contains_only_the_six_approved_source_codes() -> None:
     assert tuple(spec.source_code for spec in APPROVED_CAPTURE_SPECS) == (
         "KRX_KOSPI_BASIC",
         "KRX_KOSDAQ_BASIC",
-        "KRX_ETF_DAILY",
         "ECOS_731Y001",
         "SEC_SERIES_CLASS_20260601",
         "SEC_NPORT_2026Q2",
@@ -102,7 +101,6 @@ def test_capture_plan_contains_only_the_seven_approved_source_codes() -> None:
         in {
             "KRX_KOSPI_BASIC",
             "KRX_KOSDAQ_BASIC",
-            "KRX_ETF_DAILY",
             "KRX_ETF_PDF",
         }
     )
@@ -200,14 +198,14 @@ def test_capture_writes_canonical_manifests_without_credentials(
     result = capture_approved_official_sources(configuration, opener=opener)
 
     manifests = load_official_manifests(result.manifest_root)
-    assert result.object_count == 7
-    assert len(manifests) == 7
+    assert result.object_count == 6
+    assert len(manifests) == 6
     assert {manifest.source_code for manifest in manifests} == {
         spec.source_code for spec in APPROVED_CAPTURE_SPECS
     }
     assert all(request.get_method() == "GET" for request in opener.requests)
-    assert all("basDd=20260822" in request.full_url for request in opener.requests[:3])
-    assert "/20260824/20260824" in opener.requests[3].full_url
+    assert all("basDd=20260822" in request.full_url for request in opener.requests[:2])
+    assert "/20260824/20260824" in opener.requests[2].full_url
     assert opener.requests[0].get_header("Auth_key") == "SYNTHETIC-KRX-SECRET"
     assert (
         opener.requests[-1].get_header("User-agent")

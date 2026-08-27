@@ -30,6 +30,9 @@ from financial_agent.ingestion.mapping.common import (
     normalize_name,
     stable_id,
 )
+from financial_agent.ingestion.official.authority import (
+    validate_official_enrichment_scope,
+)
 from financial_agent.ingestion.official.identity import (
     IdentityCandidate,
     OfficialIdentityIndex,
@@ -43,10 +46,6 @@ from financial_agent.ingestion.official.krx_holdings import (
 from financial_agent.ingestion.official.krx_identity import (
     map_krx_security_basic,
     parse_krx_security_basic,
-)
-from financial_agent.ingestion.official.krx_market import (
-    map_krx_etf_daily,
-    parse_krx_etf_daily,
 )
 from financial_agent.ingestion.official.sec_nport import (
     NportArchiveLimits,
@@ -115,7 +114,6 @@ _OFFICIAL_SOURCE_ORDER = (
     "KRX_KOSDAQ_BASIC",
     "SEC_SERIES_CLASS_20260601",
     "KRX_ETF_PDF",
-    "KRX_ETF_DAILY",
     "ECOS_731Y001",
     "SEC_NPORT_2026Q2",
 )
@@ -456,22 +454,11 @@ def _prepare_official_sources(
         organizer_index=organizer_identity_index,
     )
 
-    daily_rows: tuple[Mapping[str, object], ...] = ()
     bindings = ()
-    daily_manifests = grouped.get("KRX_ETF_DAILY", ())
-    if daily_manifests:
-        daily_manifest = daily_manifests[0]
-        daily_rows = parse_krx_etf_daily(
-            _read_bytes(_object_path(daily_manifest, verified_paths))
-        )
     holdings_manifests = grouped.get("KRX_ETF_PDF", ())
-    if daily_manifests or holdings_manifests:
+    if holdings_manifests:
         domestic_rows = organizer_rows.get("PREF01N001")
-        binding_manifest = (
-            holdings_manifests[0]
-            if holdings_manifests
-            else daily_manifests[0]
-        )
+        binding_manifest = holdings_manifests[0]
         if domestic_rows is None or binding_manifest.applicable_date is None:
             raise OfficialPipelineError("OFFICIAL_DEPENDENCY_MISSING") from None
         if any(
@@ -483,13 +470,7 @@ def _prepare_official_sources(
             ) from None
         binding_result = build_krx_etf_product_bindings(
             organizer_rows=domestic_rows,
-            daily_rows=(
-                {
-                    "종목코드": str(row["ISU_CD"]),
-                    "종목명": str(row["ISU_NM"]),
-                }
-                for row in daily_rows
-            ),
+            daily_rows=(),
             applicable_date=binding_manifest.applicable_date,
             identity_index=organizer_identity_index,
         )
@@ -525,17 +506,6 @@ def _prepare_official_sources(
                     ),
                 )
             )
-        )
-
-    if daily_manifests:
-        daily_manifest = daily_manifests[0]
-        mapped_daily = map_krx_etf_daily(
-            daily_manifest,
-            daily_rows,
-            bindings=bindings,
-        )
-        factories_by_source["KRX_ETF_DAILY"].append(
-            lambda mapped=mapped_daily: iter(mapped)
         )
 
     ecos_manifests = grouped.get("ECOS_731Y001", ())
@@ -725,7 +695,7 @@ def _organizer_rows_for_official(
     source_codes: set[str],
 ) -> Mapping[str, tuple[Mapping[str, object], ...]]:
     required: set[str] = set()
-    if source_codes & {"KRX_ETF_DAILY", "KRX_ETF_PDF"}:
+    if "KRX_ETF_PDF" in source_codes:
         required.add("PREF01N001")
     if "SEC_NPORT_2026Q2" in source_codes:
         required.add("PREF02N001")
@@ -830,6 +800,7 @@ async def _write_official_sources(
         batch_record_count = 0
         for factory in source.row_factories:
             for row in factory():
+                validate_official_enrichment_scope(source.source_code, row)
                 counts["rows"] += 1
                 counts[row.disposition] += 1
                 for status in _coverage_statuses(row):

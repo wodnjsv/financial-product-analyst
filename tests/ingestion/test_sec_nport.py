@@ -1079,31 +1079,19 @@ def test_nport_mapper_rejects_structural_key_and_join_corruption(
     assert captured.value.__cause__ is None
 
 
-def test_nport_mapper_creates_exact_registrant_identity_and_evidence(
+def test_nport_mapper_does_not_replace_organizer_manager_fact(
     tmp_path: Path,
 ) -> None:
     mapped = _map_files(tmp_path)
 
-    manager = next(
-        item
-        for item in _records(mapped, "catalog.entity")
-        if item["entity_type"] == "institution"
-        and item["canonical_name"] == "Synthetic Registrant"
-    )
-    identifiers = _records(mapped, "catalog.identifier")
-    assert any(
-        item["entity_id"] == manager["entity_id"]
-        and item["scheme"] == "SEC_CIK"
-        and item["identifier_value"] == "123456"
-        for item in identifiers
-    )
-    managed_by = next(
-        item
+    assert not any(
+        item["predicate_id"] == "managedBy"
         for item in _records(mapped, "relation.relation_record")
-        if item["predicate_id"] == "managedBy"
     )
-    assert managed_by["subject_id"] == "organizer-overseas-etf-1"
-    assert managed_by["object_id"] == manager["entity_id"]
+    assert not any(
+        item.get("canonical_name") == "Synthetic Registrant"
+        for item in _records(mapped, "catalog.entity")
+    )
 
 
 def test_nport_payload_matches_the_frozen_stage_02_writer_contract(
@@ -1114,10 +1102,10 @@ def test_nport_payload_matches_the_frozen_stage_02_writer_contract(
 
     prepared = writer._prepare_records("synthetic-stage-03b", mapped)
 
-    assert len(prepared["relation.relation_record"]) == 2
+    assert len(prepared["relation.relation_record"]) == 1
     assert len(prepared["observation.observation_record"]) == 6
     assert len(prepared["evidence.evidence_observation_origin"]) == 6
-    assert len(prepared["evidence.evidence_relation_origin"]) == 3
+    assert len(prepared["evidence.evidence_relation_origin"]) == 2
     assert not any(
         item["evidence_kind"] == "document_span"
         for item in prepared["evidence.evidence_record"]

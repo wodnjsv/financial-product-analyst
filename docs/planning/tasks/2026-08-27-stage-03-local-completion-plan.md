@@ -111,11 +111,17 @@ Series/Class and Form N-PORT datasets.
 
 - Create: `src/financial_agent/ingestion/official/authority.py`
 - Modify: `src/financial_agent/ingestion/official/capture.py`
+- Modify: `src/financial_agent/ingestion/official/krx_holdings.py`
+- Modify: `src/financial_agent/ingestion/official/sec_nport.py`
 - Modify: `src/financial_agent/ingestion/official_pipeline.py`
 - Modify: `src/financial_agent/ingestion/official/__init__.py`
 - Create: `tests/ingestion/test_official_authority.py`
 - Modify: `tests/ingestion/test_real_official_sources.py`
 - Modify: `tests/ingestion/test_official_pipeline.py`
+- Modify: `tests/ingestion/test_pipeline.py`
+- Modify: `tests/ingestion/test_krx_holdings.py`
+- Modify: `tests/ingestion/test_sec_nport.py`
+- Modify: `tests/ingestion/test_official_question_gates.py`
 
 **Interfaces:**
 
@@ -135,7 +141,7 @@ Series/Class and Form N-PORT datasets.
   - `SEC_NPORT_2026Q2`: `holdsSecurity`, holding-level observations, coverage,
     and lineage.
 
-- [ ] **Step 1: Write failing authority tests**
+- [x] **Step 1: Write failing authority tests**
 
 Add tests proving:
 
@@ -161,7 +167,7 @@ Also assert that the current approved capture source codes do not contain
 `KRX_ETF_DAILY` and that a current manifest containing that source fails closed
 as unsupported.
 
-- [ ] **Step 2: Run the tests and confirm the old behavior fails**
+- [x] **Step 2: Run the tests and confirm the old behavior fails**
 
 Run:
 
@@ -175,7 +181,7 @@ Run:
 Expected: failure because the authority module does not exist and the current
 capture plan still permits KRX daily price/NAV.
 
-- [ ] **Step 3: Implement the minimal source-specific allowlist**
+- [x] **Step 3: Implement the minimal source-specific allowlist**
 
 Create frozen allowed table/predicate/metric-prefix sets in `authority.py`.
 Inspect only normalized identifiers and record keys; never include raw values
@@ -183,15 +189,18 @@ in an exception. Call the validator before each official `MappedRow` enters the
 writer batch. Remove `KRX_ETF_DAILY` from the current capture specs,
 `_OFFICIAL_SOURCE_ORDER`, and `_SUPPORTED_SOURCES`; retain its parser module and
 historical tests without including it in the current combined build.
+Remove the KRX PDF summary-row product metric and the SEC N-PORT `managedBy`
+enrichment because both overlap organizer-defined product facts; preserve the
+raw source bytes and the approved holdings facts.
 
-- [ ] **Step 4: Run the focused authority suite**
+- [x] **Step 4: Run the focused authority suite**
 
 Run the Step 2 command.
 
 Expected: all selected tests pass and no current source can emit an
 organizer-overlapping product metric.
 
-- [ ] **Step 5: Commit the authority boundary**
+- [x] **Step 5: Commit the authority boundary**
 
 ```bash
 git add \

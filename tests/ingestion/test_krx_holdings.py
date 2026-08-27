@@ -314,7 +314,7 @@ def test_current_binding_rejects_duplicate_identity_axes(
     assert captured.value.code == "KRX_ETF_BINDING_CONFLICT"
 
 
-def test_holdings_map_relations_values_summary_and_bounded_coverage() -> None:
+def test_holdings_map_relations_values_and_bounded_coverage() -> None:
     payload = krx_etf_pdf_payload()
     mapped = map_krx_holding_snapshot(
         _manifest(payload),
@@ -335,11 +335,8 @@ def test_holdings_map_relations_values_summary_and_bounded_coverage() -> None:
         row["canonical_name"] == "설정현금액"
         for row in _records(mapped, "catalog.entity")
     )
-    assert any(
-        row["metric_id"] == "krx_etf_creation_cash_amount_krw"
-        and row["numeric_value"] == Decimal("1400")
-        and row["entity_id"] == _binding().product_entity_id
-        for row in observations
+    assert not any(
+        row["relation_id"] is None for row in observations
     )
     assert any(
         row["metric_id"] == "krx_etf_holding_market_cap_krw"
