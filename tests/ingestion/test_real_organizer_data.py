@@ -9,6 +9,10 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from financial_agent.ingestion.capacity_probe import (
+    measure_database_acceptance,
+    require_current_rebaseline_acceptance,
+)
 from financial_agent.ingestion.pipeline import SOURCE_SPECS, build_organizer_dataset
 from financial_agent.ingestion.sources import (
     iter_workbook_rows,
@@ -120,16 +124,20 @@ async def test_real_organizer_dataset_loads_but_never_activates(
     )
 
     assert report.passed is True
-    assert sum(counts["rows"] for counts in report.source_counts.values()) == 145_393
-    assert report.source_counts["PREF02N001"] == {
-        "accepted": 4,
-        "fatal": 0,
-        "limited": 5_634,
-        "quarantined": 8,
-        "rows": 5_646,
-    }
+    assert sum(counts["rows"] for counts in report.source_counts.values()) == 53_375
     assert report.table_counts["evidence.source_record"] == 4
     assert set(report.component_hashes) == {"evidence", "postgresql"}
+    acceptance = await measure_database_acceptance(
+        ingestion_build_engine,
+        report,
+    )
+    require_current_rebaseline_acceptance(acceptance)
+    assert acceptance.exact_reused_identity_count == 217
+    assert acceptance.ambiguous_identifier_counts_by_scheme == {
+        "ISIN": 63,
+        "LIPPER": 63,
+    }
+    assert acceptance.aligned_ambiguous_pair_count == 63
     async with ingestion_admin_engine.connect() as connection:
         status = await connection.scalar(
             sa.text(

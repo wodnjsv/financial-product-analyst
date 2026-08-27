@@ -1,6 +1,6 @@
 # Financial Product Agent 계획·구현 현황
 
-**Updated:** 2026-08-25
+**Updated:** 2026-08-27
 
 이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.
 
@@ -16,13 +16,13 @@
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 최소 클래스·13개 관계 유지, canonical 다중 역할·SourceRecord 경계·2026-08-24 ABox 제약 승인; TTL·SHACL 구현 대기 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
-| Stage 03 organizer·외부 정형 데이터 | 7월 기준 구현·캡처는 역사적 검증으로 보존; 새 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스 계획 승인, 구현 대기 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [280-field Matrix](specs/organizer-master-field-matrix-2026-08-24.md), [DB·Ontology Rebaseline Plan](tasks/2026-08-25-database-ontology-rebaseline-implementation-plan.md) |
+| Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
 
 ## 2. 구현 Stage
 
 ### Stage 01 런타임 계약
 
-**상태: JSON shape 구현·검증 완료; 공식 cutoff literal의 `2026-08-24` 보강 승인, Alembic `0006` 구현 대기**
+**상태: JSON shape 구현·검증 완료; current cutoff `2026-08-24` 계약 보강 완료**
 
 - 기본 계약과 JSON Schema는 커밋 `c5d387d`∼`36ffa82`에 구현되었다.
 - AnswerPlan의 구조적 경계는 `4dc6c30`에 잠겼다.
@@ -43,7 +43,7 @@
 
 ### Stage 02 PostgreSQL 저장 계층
 
-**상태: 정규화 저장구조와 NCP·이식성 증명 완료; legacy 보존형 cutoff migration `0006` 승인 대기**
+**상태: 정규화 저장구조와 NCP·이식성 증명 완료; legacy 보존형 cutoff migration `0006` 구현·검증 완료**
 
 - 상세 계획은 2026-08-18 최종 재리뷰에서 승인된 1A~18A 결정을 반영해 Stage 02A 핵심 저장과 Stage 02B NCP·이식성 증명으로 나뉘었다.
 - 사용자가 PostgreSQL DDL·Alembic·리포지터리·JSONB 구현 범위를 승인했으며, `codex/stage-02-storage` 격리 브랜치에서 Task 1 데이터베이스 하니스부터 Task 7 `0005` 불변 request artifact·request lifecycle 저장까지 Stage 02A 범위를 구현했다.
@@ -66,7 +66,15 @@
 
 ### Stage 03A 주최 측 마스터 적재
 
-**상태: 7월 배포본 기준 역사적 완료 — 새 공식 배포본으로 교체 필요**
+**상태: 최신 주최 측 배포본 기준 로컬 재베이스·결정성 검증 완료; 외부 데이터 로컬 통합 진행 중; NCP acceptance는 Stage 08로 이연**
+
+- 2026-08-24 공지로 교체된 8개 workbook을 유일한 current organizer 기준으로 사용한다. 실제 원본의 적용일은 행·필드별 2026-08-20∼2026-08-24 값을 보존하며, 옛 2026-07-11 배포본은 역사적 검증 자료로만 남긴다.
+- 4개 master의 280개 필드와 53,375행을 새 source 계약과 전역 identity pre-scan으로 재구현했다. 국내 ETF·공모펀드 exact overlap 217개는 하나의 canonical product로 재사용하고, 해외 ISIN·Lipper 모호 그룹 63쌍은 식별자로 승격하거나 자동 병합하지 않는다.
+- 두 개의 깨끗한 로컬 PostgreSQL 15 DB에 각각 전량 적재했다. 두 실행 모두 `building`, active 0, manifest 동일이었고 데이터셋 ID·생성시각을 제외한 모든 catalog·observation·relation·Evidence 행이 전수 일치했다.
+- 저장되지 않는 매핑 품질 집계도 두 번 독립 순회해 완전히 일치했다. 53,375행은 모두 원본 결측·코드 미정의·모호성을 제한정보로 보존한 `limited`이며 fatal·quarantined는 0이다.
+- 최신 focused PostgreSQL·mapper 테스트 68개, 비DB ingestion 회귀 313개, 계약·DB·ingestion 전체 비-live 회귀 997개가 통과했다. 최종 NCP `building` 적재와 `fa_runtime` 비활성·읽기 전용 확인은 ADR-0019에 따라 Stage 08에서 반복한다.
+
+아래 7월 배포본 기록은 역사적 검증 이력이다.
 
 - 207개 원천 필드를 승인된 분류와 Stage 02 저장 경계에 매핑하고, 네 소스별 결정론적 매퍼와 하나의 FK 순서 보장 배치 writer를 구현했다.
 - Task 9는 8개 워크북 전체의 체크섬·헤더·행 수·중복 구조를 먼저 검증한 뒤에만 `building` 데이터셋을 만들며, 네 소스를 1,000행 배치로 순차 적재한다. 해외 ETP 중복 식별자는 자동 병합하지 않고, 공모펀드 반복행은 공통값 일치 검증 후 대표 원본 위치만 Evidence locator로 사용한다.
@@ -75,19 +83,26 @@
 - 빠른 source·pipeline·외부 게이트 경계 검증은 36개, 비NCP ingestion 회귀는 `136 passed, 2 skipped, 2 deselected`였다. 깨끗한 기준 DB의 계약·DB·ingestion 전체 회귀는 `799 passed, 2 skipped, 7 deselected`였으며 계약 Schema, DB 객체 manifest, Python 컴파일, 의존성, diff 검사가 통과했다.
 - 2026-08-22 NCP Ubuntu에서 수정된 ingestion 검증 이미지를 Linux/amd64로 무캐시 빌드하고 실행해 모두 종료 코드 0을 확인했다. 이미지 내부 synthetic contract·ingestion 검증은 통과했고 organizer 원본은 이미지 계층에 포함하지 않았다.
 - VPC 접근 제어가 적용된 private Object Storage는 NCP 사설 S3 endpoint를 사용해 서버 원본 8개와 저장 객체 8개의 SHA-256 동일성을 검증했으며, 전용 gate는 `1 passed in 62.54s`였다. 공개 endpoint의 403은 권한 추가가 아니라 사설 endpoint 사용으로 해소했다.
-- NCP DB에는 03A 부분 데이터셋을 만들지 않았다. 로컬 폐기 가능 PostgreSQL에서 manifest·SourceRecord 계보를 이미 검증했으며, NCP DB의 결합 계보 검사는 03A·03B·03C 원천 manifest가 모두 동결된 뒤 03C 최종 `building` 재현에서 수행한다.
-- 이 단계의 데이터셋은 검증용 비활성 `building` 버전이다. 03B 공식 외부 정형 데이터와 03C 공식 문서·최종 품질 게이트가 끝난 뒤 NCP에서 최종 버전을 재현하므로 Stage 03 전체는 아직 진행 중이다.
+- NCP DB에는 03A 부분 데이터셋을 만들지 않았다. 로컬 폐기 가능 PostgreSQL에서 manifest·SourceRecord 계보를 이미 검증했으며, NCP DB의 결합 계보 검사는 03A·03B·03C 원천과 Stage 04~07 서비스 경계가 모두 동결된 뒤 Stage 08 최종 `building` 재현에서 수행한다.
+- 이 단계의 데이터셋은 검증용 비활성 `building` 버전이다. 03B 공식 외부 정형 데이터와 03C 공식 문서·최종 품질 게이트를 로컬에서 먼저 완료하고 Stage 08에서 NCP 최종 버전을 재현하므로 Stage 03 전체는 아직 진행 중이다.
 
 기준 계획: [Stage 03A Organizer Master Ingestion](tasks/2026-08-20-stage-03a-organizer-master-ingestion-plan.md)
 
 ### Stage 03B 공식 외부 정형 데이터
 
-**상태: 7월 cutoff 로컬 acceptance는 역사적 기록 — 8월 24일 cutoff 재캡처 필요**
+**상태: current cutoff 재바인딩·8월 22일 KRX holdings 로컬 PostgreSQL 결합·재현·대표 질의 검증 완료; 새 NCP acceptance는 최종 배포 단계로 이연**
+
+- 최신 organizer 기준을 덮어쓰지 않도록 모든 외부 source를 enrichment-only로 재바인딩했다. organizer 평가 필드와 충돌하면 organizer 값을 유지하고 외부 값은 별도 Evidence와 제한 사유로만 보존한다.
+- current cutoff 코드·테스트와 KRX ETF PDF의 `2026-08-22` 로컬 캡처는 구현·검증됐다. ECOS·SEC·운용사 객체는 국내 영업일 `2026-08-22`, 해외 한국시간 `2026-08-23`, 최종 가용성 cutoff `2026-08-24` 경계를 source별로 지켜 로컬에서 추가 동결한다. NCP 결합 적재는 Stage 08까지 수행하지 않는다.
+
+아래 7월 cutoff 캡처 기록은 역사적 검증 이력이다.
 
 - SEC N-PORT Task 7은 공식 5개 TSV만 안전 추출하고, 컷오프 이하 최신 report·amendment를 선택하며, 주최 측 해외 ETF를 명시적 `product_entity_id + CIK + Class Ticker` binding으로 Series와 대조한다. Series ID를 주최 측 상품의 고유 식별자로 승격하지 않고 새 테이블·DDL·온톨로지 관계도 추가하지 않았다.
 - 보유종목은 고유하고 유효한 ISIN, 그다음 CUSIP만 승격한다. 중복·미해소 식별자는 snapshot-local Security로 보존하고 `PARTIALLY_COVERED/bounded_unknown`으로 제한하며, ticker는 별칭으로만 사용한다. 동일 원본 lot은 합산하지 않고 별도 `holdsSecurity` 관계로 유지한다.
 - 일반 테스트는 합성 N-PORT 파일만 사용한다. SEC 2026 Q2 실제 ZIP 다운로드·Object Storage 업로드·실제 coverage 집계·NCP PostgreSQL 결합 적재는 아직 실행하지 않았으며 Task 9 게이트에 남아 있다.
-- 국내 ETF holdings 로컬 inventory는 KRX CSV 1,129개와 운용사 공식 fallback 4개로 exact binding 1,133개를 모두 채웠다. 이 파일들은 비추적 원본이며 Task 9에서 실제 manifest·coverage·결합 재현을 검증한다.
+- 2026-07-11 구기준 국내 ETF holdings inventory는 KRX CSV 1,129개와 운용사 공식 fallback 4개로 exact binding 1,133개를 채운 역사적 결과다. 최종 입력에는 재사용하지 않는다.
+- current 국내 ETF holdings 원본은 실제 기준일 `2026-08-22` KRX CSV 1,161개다. 최신 주최 측의 ETF·유효 `pd_ticker`·상장종료 조건으로 계산한 모집단과 파일명이 1,161 대 1,161로 일치하고 `MISSING=0`, `EXTRA=0`, `FILE_FAILURES=0`이다. 전수 로컬 변환은 구성종목 75,216개를 `holdsSecurity` 75,216건, Observation 301,517건, Evidence 377,894건으로 재현했고 gated 검증 `1 passed in 72.26s`를 통과했다.
+- 두 개의 깨끗한 로컬 PostgreSQL 15 DB에 최신 organizer 4개 master와 KRX holdings를 독립 적재했다. 두 실행의 manifest·재현성·PostgreSQL·Evidence 해시와 Samsung Electronics AUM 상위 5개 결과가 완전히 일치했다. 각 DB는 entity 77,832개, product 58,651개, relation 152,555건, Observation 3,859,702건, Evidence 4,042,495건이었다. KRX 보유 기준일 `2026-08-22`, 주최 측 ETF AUM 기준일 `2026-08-21`, 양쪽 Evidence locator, `building`·current active 0을 확인했고 `group_roles` postflight와 DB 객체 manifest 검사가 통과했다. 이 결과는 로컬 데이터 경계의 근거이며 NCP 준비 완료를 의미하지 않는다.
 - Task 5는 KRX 2026-07-10 ETF 일별 응답의 1,141행을 검증하고, exact binding 1,133개에 대해서만 종가와 NAV를 별도 Decimal Observation·Evidence로 매핑한다. KRX-only 8개와 주최 측 미연결 69개에는 상품 가격 사실을 만들지 않으며, 이름 차이는 식별키로 사용하지 않는다.
 - Task 8은 Stage 03A organizer 입력과 승인 공식 manifest를 모두 검증한 뒤 한 canonical manifest와 하나의 `building` 데이터셋에 순차 결합한다. NCP Ubuntu에서 Linux/amd64 이미지 `266 passed, 13 deselected`, PostgreSQL ingestion `9 passed, 270 deselected`, 전체 비-live 회귀 `938 passed, 9 deselected`를 확인했다. 최종 NCP PostgreSQL 데이터셋은 아직 적재하거나 활성화하지 않았다.
 - Task 9 로컬 캡처는 7개 공식 소스의 1,135개 객체, 약 454 MB를 컷오프 이하 불변 manifest로 고정했다. SEC N-PORT의 게시일은 2026-06-30, 공식 데이터 라이브러리 available date는 2026-07-09로 분리했다. 실제 SEC Series/Class 43,121행, N-PORT 공식 5개 TSV와 주최 측 해외 ETF 5,646개 binding을 전부 검증했다.
@@ -106,7 +121,7 @@
 
 | Stage | 범위 | 상태 |
 | --- | --- | --- |
-| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | 새 organizer 280필드·cutoff migration·전역 identity·외부 source 재승인 계획 확정; 구현 대기 |
+| 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | current organizer 로컬 결정성 검증 완료; current KRX holdings 로컬 통합과 나머지 공식 source 동결 대기; NCP acceptance는 Stage 08로 이연 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
 | 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
@@ -150,11 +165,13 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 28. ~~옛 Stage 03B Task 9 NCP acceptance~~ — 공식 2026-08-24 재배포로 실행 중단; 역사적 산출물만 보존
 29. ~~새 8개 workbook 전수 분석과 280필드 매핑·identity·cutoff 보강안 승인~~ — 2026-08-25 완료
 30. ~~승인안 기준 DB·온톨로지 rebaseline 상세 구현계획 작성~~ — 2026-08-25 완료
-31. Alembic `0006`과 2026-08-24 current cutoff 계약 구현
-32. organizer identity pre-scan과 네 source mapper 재구현
-33. 공식 외부 source 재승인·결합 DB 반복성 검증
-34. 최소 TBox·SHACL·Evidence-bound ABox 구현
-31. Stage 01 current cutoff literal과 Stage 02 Alembic `0006` 구현·로컬/NCP 검증
-32. 네 organizer mapper·identity pre-scan·외부 source 재캡처 구현 및 새 `building` 재현
+31. ~~Alembic `0006`과 2026-08-24 current cutoff 계약 구현~~ — 2026-08-25 완료
+32. ~~organizer identity pre-scan과 네 source mapper 재구현~~ — 2026-08-25 완료
+33. ~~공식 외부 source current cutoff 재바인딩 구현~~ — 2026-08-25 완료
+34. ~~두 로컬 PostgreSQL에서 current organizer 비활성 결정성 검증~~ — 2026-08-26 완료
+35. ~~current KRX ETF holdings 1,161개 exact binding·로컬 비활성 적재·대표 질의 검증~~ — 2026-08-27 완료
+36. 나머지 current 공식 외부 source 동결과 Stage 03 로컬 완료 게이트
+37. 최소 TBox·SHACL·Evidence-bound ABox 구현부터 로컬 평가 API까지 Stage 04~07 순차 구현
+38. Stage 08에서 최종 NCP 비활성 적재·Graph/Vector·권한·성능·복구·공개 API acceptance
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

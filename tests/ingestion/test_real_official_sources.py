@@ -12,6 +12,7 @@ from financial_agent.ingestion.official.capture import (
     APPROVED_CAPTURE_SPECS,
     OfficialCaptureConfigurationError,
     capture_approved_official_sources,
+    capture_local_krx_holdings,
     load_existing_capture,
     load_capture_configuration,
 )
@@ -94,7 +95,7 @@ def test_capture_plan_contains_only_the_seven_approved_source_codes() -> None:
         spec.cutoff_date.isoformat() == "2026-08-24"
         for spec in APPROVED_CAPTURE_SPECS
     )
-    current_daily = tuple(
+    domestic_market = tuple(
         spec
         for spec in APPROVED_CAPTURE_SPECS
         if spec.source_code
@@ -102,15 +103,19 @@ def test_capture_plan_contains_only_the_seven_approved_source_codes() -> None:
             "KRX_KOSPI_BASIC",
             "KRX_KOSDAQ_BASIC",
             "KRX_ETF_DAILY",
-            "ECOS_731Y001",
             "KRX_ETF_PDF",
         }
     )
     assert {
         spec.applicable_date.isoformat()
-        for spec in current_daily
+        for spec in domestic_market
         if spec.applicable_date is not None
-    } == {"2026-08-24"}
+    } == {"2026-08-22"}
+    assert next(
+        spec.applicable_date
+        for spec in APPROVED_CAPTURE_SPECS
+        if spec.source_code == "ECOS_731Y001"
+    ).isoformat() == "2026-08-24"
     assert all(
         "manager" not in spec.source_code.lower()
         for spec in APPROVED_CAPTURE_SPECS
@@ -168,7 +173,7 @@ class _Opener:
 def _configured_capture(tmp_path: Path) -> object:
     holdings_root = tmp_path / "holdings"
     holdings_root.mkdir()
-    (holdings_root / "123456_20260824.csv").write_text(
+    (holdings_root / "123456_20260822.csv").write_text(
         "종목코드,구성종목명,주식수(계약수),평가금액,시가총액,시가총액 구성비중\n"
         "KR7005930003,합성종목,1,1,1,1\n",
         "utf-8",
@@ -201,7 +206,7 @@ def test_capture_writes_canonical_manifests_without_credentials(
         spec.source_code for spec in APPROVED_CAPTURE_SPECS
     }
     assert all(request.get_method() == "GET" for request in opener.requests)
-    assert all("basDd=20260824" in request.full_url for request in opener.requests[:3])
+    assert all("basDd=20260822" in request.full_url for request in opener.requests[:3])
     assert "/20260824/20260824" in opener.requests[3].full_url
     assert opener.requests[0].get_header("Auth_key") == "SYNTHETIC-KRX-SECRET"
     assert (
@@ -233,6 +238,34 @@ def test_capture_failure_never_publishes_a_partial_output(
     assert captured.value.code == "OFFICIAL_CAPTURE_FAILED"
     assert not configuration.output_root.exists()
     assert "SYNTHETIC-PRIVATE-TRANSPORT-DETAIL" not in str(captured.value)
+
+
+def test_local_holdings_capture_needs_no_api_configuration(
+    tmp_path: Path,
+) -> None:
+    holdings_root = tmp_path / "holdings"
+    holdings_root.mkdir()
+    source = holdings_root / "123456_20260822.csv"
+    source.write_text(
+        "종목코드,구성종목명,주식수(계약수),평가금액,시가총액,"
+        "시가총액 구성비중\n"
+        "005930,삼성전자,1,1,1,1\n",
+        "cp949",
+    )
+
+    capture = capture_local_krx_holdings(
+        holdings_root=holdings_root,
+        output_root=tmp_path / "capture",
+    )
+    manifests = load_official_manifests(capture.manifest_root)
+
+    assert capture.source_count == 1
+    assert capture.object_count == 1
+    assert capture.manifest_count == 1
+    assert capture.eligible_start == "2026-08-22"
+    assert capture.eligible_end == "2026-08-24"
+    assert manifests[0].applicable_date.isoformat() == "2026-08-22"
+    assert manifests[0].objects[0].object_name == source.name
 
 
 def test_capture_official_cli_reports_only_safe_aggregates(

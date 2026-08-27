@@ -8,7 +8,7 @@
 
 **Scope:** Stage 01 런타임 계약부터 Stage 09 평가 운영 종료까지의 현재 권위 있는 구현 순서와 단계별 완료 게이트
 
-**Decision:** [ADR-0012: Use a Nine-Stage Competition Delivery Roadmap](decisions/ADR-0012-use-nine-stage-competition-delivery-roadmap.md)
+**Decision:** [ADR-0012: Use a Nine-Stage Competition Delivery Roadmap](decisions/ADR-0012-use-nine-stage-competition-delivery-roadmap.md), [ADR-0019: Defer NCP Acceptance Until Local End-to-End Readiness](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md)
 
 ## 1. 목적
 
@@ -25,6 +25,7 @@
 - PostgreSQL이 수치·관계·근거의 권위 있는 원장이고, Fuseki와 pgvector는 검증 가능한 투영 또는 후보 검색 계층이다.
 - 근거 없는 사실은 Claim Gate를 통과할 수 없다.
 - 로드맵의 종점은 제출 직전이 아니라 공식 평가 운영 기간의 종료다.
+- Stage 03~07의 기능 구현과 통합 검증은 로컬 동등 환경에서 먼저 완료하고, 새로운 NCP 적재·배포·성능·복구 검증은 Stage 08의 최종 인프라 게이트에서 수행한다.
 
 ## 2. 전체 흐름
 
@@ -55,7 +56,7 @@ Stage 03부터 Stage 09까지 다음 조건을 계속 적용한다.
 7. 단일 평가 요청 안의 여러 문장은 함께 해석하지만, 이전 평가 요청의 문맥에는 의존하지 않는다.
 8. 사용자가 되물을 수 없는 대회 모드에서는 승인된 기본 규칙, 복수 후보, 제한 또는 답변 불가 중 하나로 끝낸다.
 9. 각 Stage는 별도 상세 구현 계획, 사용자 승인, 집중 검증, 전체 회귀, 최종 diff·비밀정보·데이터 감사를 거쳐야 한다.
-10. 직전 Stage의 완료 게이트를 통과하지 못한 상태에서 다음 Stage를 완료 처리하지 않는다.
+10. 직전 Stage의 로컬 완료 게이트를 통과하지 못한 상태에서 다음 Stage를 완료 처리하지 않는다. 로컬 통과를 NCP 운영 준비 완료로 표현하지 않으며, 최종 NCP 게이트는 Stage 08에서 별도로 통과해야 한다.
 
 ## 4. Stage별 범위와 완료 게이트
 
@@ -165,7 +166,7 @@ Stage 03부터 Stage 09까지 다음 조건을 계속 적용한다.
 - 기간·정의·통화·단위·모집단이 호환되지 않는 직접 비교는 차단 또는 분리된다.
 - 유사도 `score_coverage < 60%`이면 숫자 순위를 출시하지 않는다.
 - Graph·Vector 후보가 원장 Evidence에 결합되지 않으면 사실 결과가 되지 않는다.
-- 대표 SQL·SPARQL·Keyword·Vector 경로의 NCP 지연이 요청 예산 안에 든다.
+- 대표 SQL·SPARQL·Keyword·Vector 경로의 로컬 지연과 결과 정확성이 요청 예산 설계에 부합한다. 실제 NCP 지연은 Stage 08에서 다시 측정한다.
 
 ### Stage 06 — 질문 이해·오케스트레이션
 
@@ -240,6 +241,7 @@ Stage 03부터 Stage 09까지 다음 조건을 계속 적용한다.
 - 공식 300초 타임아웃 전에 종료하며 내부 55초 하드 마감과 마지막 5초 안전 예산을 지킨다.
 - API 서버 한 대 장애 시 서비스가 계속되고 준비되지 않은 데이터 버전은 노출되지 않는다.
 - PostgreSQL·Fuseki 복구 훈련과 비밀정보·로그 노출 검사가 통과한다.
+- Stage 03 이후 미뤄 둔 최종 NCP migration·권한·비활성 데이터 적재·Graph/Vector 투영·읽기 전용 런타임 검사를 동일 최종 데이터와 이미지로 다시 통과한다.
 
 ### Stage 09 — 종합 평가·제출 동결·평가 운영
 

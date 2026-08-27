@@ -23,8 +23,10 @@ from .snapshot import capture_http_object, write_canonical_manifest
 
 
 _CUTOFF_DATE = date(2026, 8, 24)
-_DAILY_DATE = date(2026, 8, 24)
-_DAILY_DATE_TEXT = _DAILY_DATE.strftime("%Y%m%d")
+_DOMESTIC_MARKET_DATE = date(2026, 8, 22)
+_DOMESTIC_MARKET_DATE_TEXT = _DOMESTIC_MARKET_DATE.strftime("%Y%m%d")
+_ECOS_DATE = date(2026, 8, 24)
+_ECOS_DATE_TEXT = _ECOS_DATE.strftime("%Y%m%d")
 _DAILY_AVAILABLE_AT = datetime(2026, 8, 24, 14, 59, 59, tzinfo=UTC)
 
 
@@ -84,60 +86,60 @@ class OfficialCaptureResult:
 APPROVED_CAPTURE_SPECS = (
     OfficialCaptureSpec(
         source_code="KRX_KOSPI_BASIC",
-        snapshot_id=f"krx-kospi-basic-{_DAILY_DATE_TEXT}",
+        snapshot_id=f"krx-kospi-basic-{_DOMESTIC_MARKET_DATE_TEXT}",
         publisher_code="KRX",
         access_kind="krx_api",
         endpoint="https://data-dbg.krx.co.kr/svc/apis/sto/stk_isu_base_info",
-        object_name=f"krx-kospi-basic-{_DAILY_DATE_TEXT}.json",
+        object_name=f"krx-kospi-basic-{_DOMESTIC_MARKET_DATE_TEXT}.json",
         media_type="application/json",
         maximum_bytes=32 * 1024 * 1024,
         cutoff_date=_CUTOFF_DATE,
-        applicable_date=_DAILY_DATE,
+        applicable_date=_DOMESTIC_MARKET_DATE,
         published_at=None,
         available_at=_DAILY_AVAILABLE_AT,
         vintage_date=None,
     ),
     OfficialCaptureSpec(
         source_code="KRX_KOSDAQ_BASIC",
-        snapshot_id=f"krx-kosdaq-basic-{_DAILY_DATE_TEXT}",
+        snapshot_id=f"krx-kosdaq-basic-{_DOMESTIC_MARKET_DATE_TEXT}",
         publisher_code="KRX",
         access_kind="krx_api",
         endpoint="https://data-dbg.krx.co.kr/svc/apis/sto/ksq_isu_base_info",
-        object_name=f"krx-kosdaq-basic-{_DAILY_DATE_TEXT}.json",
+        object_name=f"krx-kosdaq-basic-{_DOMESTIC_MARKET_DATE_TEXT}.json",
         media_type="application/json",
         maximum_bytes=48 * 1024 * 1024,
         cutoff_date=_CUTOFF_DATE,
-        applicable_date=_DAILY_DATE,
+        applicable_date=_DOMESTIC_MARKET_DATE,
         published_at=None,
         available_at=_DAILY_AVAILABLE_AT,
         vintage_date=None,
     ),
     OfficialCaptureSpec(
         source_code="KRX_ETF_DAILY",
-        snapshot_id=f"krx-etf-daily-{_DAILY_DATE_TEXT}",
+        snapshot_id=f"krx-etf-daily-{_DOMESTIC_MARKET_DATE_TEXT}",
         publisher_code="KRX",
         access_kind="krx_api",
         endpoint="https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd",
-        object_name=f"krx-etf-daily-{_DAILY_DATE_TEXT}.json",
+        object_name=f"krx-etf-daily-{_DOMESTIC_MARKET_DATE_TEXT}.json",
         media_type="application/json",
         maximum_bytes=32 * 1024 * 1024,
         cutoff_date=_CUTOFF_DATE,
-        applicable_date=_DAILY_DATE,
+        applicable_date=_DOMESTIC_MARKET_DATE,
         published_at=None,
         available_at=_DAILY_AVAILABLE_AT,
         vintage_date=None,
     ),
     OfficialCaptureSpec(
         source_code="ECOS_731Y001",
-        snapshot_id=f"ecos-731y001-{_DAILY_DATE_TEXT}",
+        snapshot_id=f"ecos-731y001-{_ECOS_DATE_TEXT}",
         publisher_code="BOK",
         access_kind="ecos_api",
         endpoint="https://ecos.bok.or.kr/api/StatisticSearch",
-        object_name=f"ecos-731y001-{_DAILY_DATE_TEXT}.json",
+        object_name=f"ecos-731y001-{_ECOS_DATE_TEXT}.json",
         media_type="application/json",
         maximum_bytes=8 * 1024 * 1024,
         cutoff_date=_CUTOFF_DATE,
-        applicable_date=_DAILY_DATE,
+        applicable_date=_ECOS_DATE,
         published_at=None,
         available_at=_DAILY_AVAILABLE_AT,
         vintage_date=None,
@@ -181,7 +183,7 @@ APPROVED_CAPTURE_SPECS = (
     ),
     OfficialCaptureSpec(
         source_code="KRX_ETF_PDF",
-        snapshot_id=f"krx-etf-pdf-{_DAILY_DATE_TEXT}",
+        snapshot_id=f"krx-etf-pdf-{_DOMESTIC_MARKET_DATE_TEXT}",
         publisher_code="KRX",
         access_kind="local_directory",
         endpoint=None,
@@ -189,7 +191,7 @@ APPROVED_CAPTURE_SPECS = (
         media_type="text/csv",
         maximum_bytes=64 * 1024 * 1024,
         cutoff_date=_CUTOFF_DATE,
-        applicable_date=_DAILY_DATE,
+        applicable_date=_DOMESTIC_MARKET_DATE,
         published_at=None,
         available_at=_DAILY_AVAILABLE_AT,
         vintage_date=None,
@@ -254,13 +256,17 @@ def _request(
         ) from None
     headers = {"Accept": spec.media_type}
     if spec.access_kind == "krx_api":
-        url = f"{spec.endpoint}?{urlencode({'basDd': _DAILY_DATE_TEXT})}"
+        assert spec.applicable_date is not None
+        date_text = spec.applicable_date.strftime("%Y%m%d")
+        url = f"{spec.endpoint}?{urlencode({'basDd': date_text})}"
         headers["AUTH_KEY"] = configuration.krx_api_key
     elif spec.access_kind == "ecos_api":
+        assert spec.applicable_date is not None
+        date_text = spec.applicable_date.strftime("%Y%m%d")
         key = quote(configuration.ecos_api_key, safe="")
         url = (
             f"{spec.endpoint}/{key}/json/kr/1/100/731Y001/D/"
-            f"{_DAILY_DATE_TEXT}/{_DAILY_DATE_TEXT}"
+            f"{date_text}/{date_text}"
         )
     elif spec.access_kind == "sec_file":
         url = spec.endpoint
@@ -335,7 +341,7 @@ def _capture_http_sources(
 
 
 def _capture_holdings(
-    configuration: OfficialCaptureConfiguration,
+    holdings_root: Path,
     *,
     object_root: Path,
     manifest_root: Path,
@@ -346,9 +352,9 @@ def _capture_holdings(
         if item.source_code == "KRX_ETF_PDF"
     )
     try:
-        if not configuration.holdings_root.is_dir():
+        if not holdings_root.is_dir():
             raise OSError
-        paths = tuple(sorted(configuration.holdings_root.glob("*.csv")))
+        paths = tuple(sorted(holdings_root.glob("*.csv")))
         if not paths:
             raise OSError
     except OSError:
@@ -359,7 +365,7 @@ def _capture_holdings(
 
     for path in paths:
         if re.fullmatch(
-            rf"[A-Z0-9]{{6}}_{_DAILY_DATE_TEXT}\.csv", path.name
+            rf"[A-Z0-9]{{6}}_{_DOMESTIC_MARKET_DATE_TEXT}\.csv", path.name
         ) is None:
             raise _error(
                 "OFFICIAL_LOCAL_SOURCE_INVALID",
@@ -379,7 +385,9 @@ def _capture_holdings(
             ) from None
 
         short_code = path.name[:6]
-        snapshot_id = f"krx-etf-pdf-{short_code}-{_DAILY_DATE_TEXT}"
+        snapshot_id = (
+            f"krx-etf-pdf-{short_code}-{_DOMESTIC_MARKET_DATE_TEXT}"
+        )
         object_key = "/".join(
             (
                 "external",
@@ -413,6 +421,57 @@ def _capture_holdings(
     return len(paths), len(paths)
 
 
+def capture_local_krx_holdings(
+    *,
+    holdings_root: Path,
+    output_root: Path,
+) -> OfficialCaptureResult:
+    if output_root.exists():
+        raise _error(
+            "OFFICIAL_CAPTURE_TARGET_EXISTS",
+            "official capture target already exists",
+        ) from None
+    try:
+        output_root.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=".financial-agent-krx-holdings-capture-",
+            dir=output_root.parent,
+        ) as temporary:
+            staging_root = Path(temporary) / "capture"
+            object_root = staging_root / "objects"
+            manifest_root = staging_root / "manifests"
+            object_count, manifest_count = _capture_holdings(
+                holdings_root,
+                object_root=object_root,
+                manifest_root=manifest_root,
+            )
+            total_bytes = sum(
+                path.stat().st_size
+                for path in object_root.rglob("*")
+                if path.is_file()
+            )
+            staging_root.replace(output_root)
+    except SourceVerificationError:
+        raise
+    except Exception:
+        raise _error(
+            "OFFICIAL_CAPTURE_FAILED",
+            "official source capture failed",
+        ) from None
+
+    return OfficialCaptureResult(
+        output_root=output_root,
+        object_root=output_root / "objects",
+        manifest_root=output_root / "manifests",
+        source_count=1,
+        object_count=object_count,
+        manifest_count=manifest_count,
+        total_bytes=total_bytes,
+        eligible_start=_DOMESTIC_MARKET_DATE.isoformat(),
+        eligible_end=_CUTOFF_DATE.isoformat(),
+    )
+
+
 def capture_approved_official_sources(
     configuration: OfficialCaptureConfiguration,
     *,
@@ -441,7 +500,7 @@ def capture_approved_official_sources(
                 manifest_root=manifest_root,
             )
             holding_counts = _capture_holdings(
-                configuration,
+                configuration.holdings_root,
                 object_root=object_root,
                 manifest_root=manifest_root,
             )
@@ -468,7 +527,7 @@ def capture_approved_official_sources(
         manifest_count=http_counts[1] + holding_counts[1],
         total_bytes=total_bytes,
         eligible_start="2026-06-01",
-        eligible_end=_DAILY_DATE.isoformat(),
+        eligible_end=_CUTOFF_DATE.isoformat(),
     )
 
 

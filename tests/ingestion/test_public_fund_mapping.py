@@ -249,7 +249,7 @@ def test_domestic_etf_overlap_reuses_owner_without_second_product_or_isin() -> N
     } >= {"PRFD_ITM_NO", "KSD_PRODUCT"}
 
 
-def test_ordered_lists_are_trimmed_deduplicated_and_keep_one_raw_evidence() -> None:
+def test_ordered_lists_keep_raw_evidence_and_one_origin_per_item() -> None:
     mapped = _map(synthetic_public_fund_row())
 
     assert [item["text_value"] for item in observations(mapped, "attribute_code")] == [
@@ -260,20 +260,41 @@ def test_ordered_lists_are_trimmed_deduplicated_and_keep_one_raw_evidence() -> N
         item["text_value"] for item in observations(mapped, "zeroin_attribute_name")
     ] == ["성장형", "대형주"]
     assert observation(mapped, "attribute_codes_raw")["text_value"] == "A, B, A"
-    assert len(
-        [
-            item
-            for item in records(mapped, "evidence.evidence_record")
-            if item["locator_column"] == "prfd_attr_cds"
-        ]
-    ) == 1
-    raw_evidence_id = evidence(mapped, "prfd_attr_cds")["evidence_id"]
-    linked_observation_ids = {
-        item["observation_id"]
-        for item in records(mapped, "evidence.evidence_observation_origin")
-        if item["evidence_id"] == raw_evidence_id
+    attribute_evidence = [
+        item
+        for item in records(mapped, "evidence.evidence_record")
+        if item["locator_column"] == "prfd_attr_cds"
+    ]
+    assert len(attribute_evidence) == 3
+    raw_evidence = next(
+        item
+        for item in attribute_evidence
+        if item["predicate_id"]
+        == "organizer.prfd01n001.attribute_codes_raw"
+    )
+    item_evidence = [
+        item
+        for item in attribute_evidence
+        if item["predicate_id"] == "organizer.prfd01n001.attribute_code"
+    ]
+    assert len(item_evidence) == 2
+    assert {item["raw_value_repr"] for item in item_evidence} == {"A, B, A"}
+
+    origins = records(mapped, "evidence.evidence_observation_origin")
+    assert len({item["evidence_id"] for item in origins}) == len(origins)
+    raw_links = [
+        item
+        for item in origins
+        if item["evidence_id"] == raw_evidence["evidence_id"]
+    ]
+    assert len(raw_links) == 1
+    item_evidence_ids = {item["evidence_id"] for item in item_evidence}
+    item_links = [
+        item for item in origins if item["evidence_id"] in item_evidence_ids
+    ]
+    assert {item["observation_id"] for item in item_links} == {
+        item["observation_id"] for item in observations(mapped, "attribute_code")
     }
-    assert len(linked_observation_ids) == 3
 
 
 def test_declared_attribute_count_mismatch_is_limited_not_rewritten() -> None:
@@ -367,6 +388,22 @@ def test_values_dates_zero_and_float_cells_are_preserved() -> None:
     )
 
 
+def test_ambiguous_benchmark_preserves_raw_value_and_separates_quality_issue() -> None:
+    mapped = _map(
+        synthetic_public_fund_row()
+        | {"bmrk_nm": "SYN INDEX A + SYN INDEX B"}
+    )
+
+    assert not relations(mapped, "tracksIndex")
+    raw_observation = observation(mapped, "benchmark_raw")
+    assert raw_observation["value_status"] == "present"
+    assert raw_observation["text_value"] == "SYN INDEX A + SYN INDEX B"
+    assert raw_observation["reason_code"] is None
+    assert "AMBIGUOUS_BENCHMARK_TEXT" in {
+        issue.code for issue in mapped.issues
+    }
+
+
 def test_duplicate_optional_identifiers_are_evidence_only() -> None:
     first = synthetic_public_fund_row()
     second = synthetic_public_fund_row() | {
@@ -388,11 +425,19 @@ def test_duplicate_optional_identifiers_are_evidence_only() -> None:
     ) == 3
 
 
-def test_all_fields_have_one_evidence_and_future_date_is_fatal() -> None:
-    mapped = _map(synthetic_public_fund_row())
+def test_all_fields_keep_raw_evidence_and_future_date_is_fatal() -> None:
+    row = synthetic_public_fund_row()
+    mapped = _map(row)
     evidence_rows = records(mapped, "evidence.evidence_record")
 
-    assert len(evidence_rows) == 75
+    base_evidence_ids = {
+        stable_id("evidence", "PRFD01N001", f"SYN-FUND-001:{column}")
+        for column in SPEC.expected_columns
+    }
+    assert len(
+        [item for item in evidence_rows if item["evidence_id"] in base_evidence_ids]
+    ) == 75
+    assert len(evidence_rows) == 75 + 4
     assert {item["locator_column"] for item in evidence_rows} == set(
         SPEC.expected_columns
     )

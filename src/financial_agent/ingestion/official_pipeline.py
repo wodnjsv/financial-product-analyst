@@ -38,6 +38,7 @@ from financial_agent.ingestion.official.krx_holdings import (
     build_krx_etf_product_bindings,
     map_krx_holding_snapshot,
     parse_krx_etf_pdf_csv,
+    validate_krx_etf_holding_inventory,
 )
 from financial_agent.ingestion.official.krx_identity import (
     map_krx_security_basic,
@@ -463,9 +464,23 @@ def _prepare_official_sources(
         daily_rows = parse_krx_etf_daily(
             _read_bytes(_object_path(daily_manifest, verified_paths))
         )
+    holdings_manifests = grouped.get("KRX_ETF_PDF", ())
+    if daily_manifests or holdings_manifests:
         domestic_rows = organizer_rows.get("PREF01N001")
-        if domestic_rows is None or daily_manifest.applicable_date is None:
+        binding_manifest = (
+            holdings_manifests[0]
+            if holdings_manifests
+            else daily_manifests[0]
+        )
+        if domestic_rows is None or binding_manifest.applicable_date is None:
             raise OfficialPipelineError("OFFICIAL_DEPENDENCY_MISSING") from None
+        if any(
+            manifest.applicable_date != binding_manifest.applicable_date
+            for manifest in holdings_manifests
+        ):
+            raise OfficialPipelineError(
+                "OFFICIAL_SOURCE_DATE_MISMATCH"
+            ) from None
         binding_result = build_krx_etf_product_bindings(
             organizer_rows=domestic_rows,
             daily_rows=(
@@ -475,14 +490,21 @@ def _prepare_official_sources(
                 }
                 for row in daily_rows
             ),
-            applicable_date=daily_manifest.applicable_date,
+            applicable_date=binding_manifest.applicable_date,
             identity_index=organizer_identity_index,
         )
         bindings = binding_result.bindings
 
-    holdings_manifests = grouped.get("KRX_ETF_PDF", ())
-    if holdings_manifests and not daily_manifests:
-        raise OfficialPipelineError("OFFICIAL_DEPENDENCY_MISSING") from None
+    if holdings_manifests:
+        assert holdings_manifests[0].applicable_date is not None
+        validate_krx_etf_holding_inventory(
+            bindings=bindings,
+            object_names=(
+                manifest.objects[0].object_name
+                for manifest in holdings_manifests
+            ),
+            applicable_date=holdings_manifests[0].applicable_date,
+        )
     bindings_by_code = {binding.krx_short_code: binding for binding in bindings}
     for manifest in holdings_manifests:
         path = _object_path(manifest, verified_paths)

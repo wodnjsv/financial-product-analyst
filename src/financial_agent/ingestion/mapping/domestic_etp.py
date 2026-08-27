@@ -917,13 +917,13 @@ def _append_relation_fallback(
     applicable_date: date | None,
     conflict: bool = False,
 ) -> None:
-    reason_code = "SOURCE_RELATION_VALUE_CONFLICT" if conflict else reason
+    issue_code = "SOURCE_RELATION_VALUE_CONFLICT" if conflict else reason
     if conflict or status not in {"present", "zero"}:
         _append_issue(
             issues,
             row_number=row_number,
             column=column,
-            code=reason_code,
+            code=issue_code,
         )
     _append_observation(
         records_by_table,
@@ -934,7 +934,7 @@ def _append_relation_fallback(
         raw=row.get(column),
         status=status,
         normalized=normalized,
-        reason_code=reason_code,
+        reason_code=reason if status not in {"present", "zero"} else None,
         currency=None,
         applicable_date=applicable_date,
         period_end=None,

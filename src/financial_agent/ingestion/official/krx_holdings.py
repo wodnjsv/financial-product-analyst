@@ -85,10 +85,18 @@ class KrxEtfProductBinding:
 class KrxEtfBindingResult:
     bindings: tuple[KrxEtfProductBinding, ...]
     organizer_etf_count: int
-    invalid_isin_count: int
+    invalid_identifier_count: int
     unresolved_organizer_count: int
     unmatched_krx_count: int
     name_drift_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class KrxEtfHoldingInventoryResult:
+    binding_count: int
+    object_count: int
+    missing_codes: tuple[str, ...]
+    extra_codes: tuple[str, ...]
 
 
 def _error(code: str, message: str) -> SourceVerificationError:
@@ -158,20 +166,41 @@ def build_krx_etf_product_bindings(
             "KRX_ETF_BINDING_DATE_MISMATCH",
             "KRX ETF binding input exceeds the approved cutoff",
         ) from None
-    organizers = tuple(
-        row
-        for row in organizer_rows
-        if normalize_name(str(row.get("pd_grp_no", ""))) == "ETF"
-    )
+    organizers: list[Mapping[str, object]] = []
+    for row in organizer_rows:
+        if normalize_name(str(row.get("pd_grp_no", ""))) != "ETF":
+            continue
+        raw_listing_end = row.get("pd_lste_dt")
+        listing_end = normalize_name(
+            "" if raw_listing_end is None else str(raw_listing_end)
+        )
+        if listing_end:
+            try:
+                parsed_listing_end = datetime.strptime(
+                    listing_end, "%Y%m%d"
+                ).date()
+            except ValueError:
+                parsed_listing_end = None
+            if (
+                parsed_listing_end is not None
+                and parsed_listing_end < applicable_date
+            ):
+                continue
+        organizers.append(row)
     valid_organizers: list[tuple[str, str, str]] = []
     invalid_count = 0
     for row in organizers:
+        short_code = normalize_name(str(row.get("pd_ticker", ""))).upper()
         isin = normalize_name(str(row.get("pd_itm_no", ""))).upper()
         name = normalize_name(str(row.get("pd_abrv_nm", "")))
-        if not _valid_isin(isin):
+        if (
+            _SHORT_CODE_PATTERN.fullmatch(short_code) is None
+            or not _valid_isin(isin)
+            or not name
+        ):
             invalid_count += 1
             continue
-        valid_organizers.append((isin[3:9], isin, name))
+        valid_organizers.append((short_code, isin, name))
 
     organizer_counts = Counter(code for code, _, _ in valid_organizers)
     if any(count != 1 for count in organizer_counts.values()):
@@ -200,9 +229,7 @@ def build_krx_etf_product_bindings(
     historical_by_code = dict(historical)
     bindings: list[KrxEtfProductBinding] = []
     for short_code, isin, organizer_name in valid_organizers:
-        krx_name = historical_by_code.get(short_code)
-        if krx_name is None:
-            continue
+        krx_name = historical_by_code.get(short_code, organizer_name)
         resolution = identity_index.resolve("ISIN", isin)
         if (
             resolution.status != "MATCHED"
@@ -224,12 +251,67 @@ def build_krx_etf_product_bindings(
     bound_codes = {binding.krx_short_code for binding in bindings}
     return KrxEtfBindingResult(
         bindings=tuple(bindings),
-        organizer_etf_count=len(organizers),
-        invalid_isin_count=invalid_count,
-        unresolved_organizer_count=len(organizers) - len(bindings),
+        organizer_etf_count=len(valid_organizers),
+        invalid_identifier_count=invalid_count,
+        unresolved_organizer_count=len(valid_organizers) - len(bindings),
         unmatched_krx_count=len(historical_by_code.keys() - bound_codes),
         name_drift_count=sum(not binding.name_matches for binding in bindings),
     )
+
+
+def validate_krx_etf_holding_inventory(
+    *,
+    bindings: Iterable[KrxEtfProductBinding],
+    object_names: Iterable[str],
+    applicable_date: date,
+) -> KrxEtfHoldingInventoryResult:
+    materialized_bindings = tuple(bindings)
+    expected_codes = tuple(
+        sorted(binding.krx_short_code for binding in materialized_bindings)
+    )
+    if len(set(expected_codes)) != len(expected_codes):
+        raise _error(
+            "KRX_ETF_PDF_INVENTORY_CONFLICT",
+            "KRX ETF PDF bindings contain duplicate short codes",
+        ) from None
+
+    observed_codes: list[str] = []
+    expected_suffix = f"_{applicable_date:%Y%m%d}.csv"
+    for object_name in object_names:
+        match = re.fullmatch(r"([A-Z0-9]{6})_([0-9]{8})\.csv", object_name)
+        if match is None:
+            raise _error(
+                "KRX_ETF_PDF_INVENTORY_INVALID",
+                "KRX ETF PDF inventory contains an invalid object name",
+            ) from None
+        if not object_name.endswith(expected_suffix):
+            raise _error(
+                "KRX_ETF_PDF_INVENTORY_DATE_MISMATCH",
+                "KRX ETF PDF inventory contains a different applicable date",
+            ) from None
+        observed_codes.append(match.group(1))
+    if len(set(observed_codes)) != len(observed_codes):
+        raise _error(
+            "KRX_ETF_PDF_INVENTORY_CONFLICT",
+            "KRX ETF PDF inventory contains duplicate short codes",
+        ) from None
+
+    expected = set(expected_codes)
+    observed = set(observed_codes)
+    missing_codes = tuple(sorted(expected - observed))
+    extra_codes = tuple(sorted(observed - expected))
+    result = KrxEtfHoldingInventoryResult(
+        binding_count=len(expected_codes),
+        object_count=len(observed_codes),
+        missing_codes=missing_codes,
+        extra_codes=extra_codes,
+    )
+    if missing_codes or extra_codes:
+        raise _error(
+            "KRX_ETF_PDF_INVENTORY_MISMATCH",
+            "KRX ETF PDF inventory differs from organizer bindings",
+        ) from None
+    return result
 
 
 def _parse_decimal(raw: str) -> Decimal | None:

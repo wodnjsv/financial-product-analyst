@@ -358,6 +358,15 @@ def test_conflicting_organizer_relation_sources_preserve_evidence_but_no_relatio
         issue.code == "SOURCE_RELATION_VALUE_CONFLICT"
         for issue in mapped.issues
     ) == 4
+    for suffix in (
+        "base_index_raw",
+        "refinitiv_base_index_raw",
+        "fund_manager_raw",
+        "refinitiv_fund_manager_raw",
+    ):
+        raw_observation = observation(mapped, suffix)
+        assert raw_observation["value_status"] == "present"
+        assert raw_observation["reason_code"] is None
 
 
 def test_duplicate_optional_identifiers_are_evidence_only() -> None:

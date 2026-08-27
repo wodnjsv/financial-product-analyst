@@ -635,10 +635,14 @@ def _evidence_record(
     unit: str | None,
     currency: str | None,
     applicable_date: date | None,
+    identity_suffix: str | None = None,
 ) -> dict[str, object]:
     evidence_value = normalized if status in {"present", "zero"} else None
+    evidence_key = f"{record_key}:{column}"
+    if identity_suffix is not None:
+        evidence_key = f"{evidence_key}:{identity_suffix}"
     payload: dict[str, object] = {
-        "evidence_id": stable_id("evidence", _SOURCE_CODE, f"{record_key}:{column}"),
+        "evidence_id": stable_id("evidence", _SOURCE_CODE, evidence_key),
         "evidence_kind": evidence_kind,
         "source_id": _SOURCE_ID,
         "subject_id": subject_id,
@@ -960,13 +964,13 @@ def _append_relation_fallback(
     applicable_date: date | None,
     issue_code: str | None = None,
 ) -> None:
-    final_reason = issue_code or reason_code
+    issue_reason = issue_code or reason_code
     if issue_code is not None or status not in {"present", "zero"}:
         _append_issue(
             issues,
             row_number=row_number,
             column=column,
-            code=final_reason,
+            code=issue_reason,
         )
     _append_observation(
         records_by_table,
@@ -977,7 +981,9 @@ def _append_relation_fallback(
         raw=raw,
         status=status,
         normalized=normalized,
-        reason_code=final_reason,
+        reason_code=(
+            reason_code if status not in {"present", "zero"} else None
+        ),
         currency=None,
         applicable_date=applicable_date,
         period_end=None,
@@ -1003,9 +1009,11 @@ def _parse_ordered_list(raw: object) -> tuple[str, ...]:
 def _append_repeated_list_observations(
     records_by_table: dict[str, list[Mapping[str, object]]],
     *,
+    row_number: int,
     record_key: str,
     product_id: str,
     column: str,
+    raw: object,
     values: tuple[str, ...],
     applicable_date: date | None,
 ) -> None:
@@ -1018,7 +1026,6 @@ def _append_repeated_list_observations(
     records_by_table["observation.metric_definition"].append(
         _metric_definition(column, metric_id, "text", None, evidence_only=False)
     )
-    raw_evidence_id = stable_id("evidence", _SOURCE_CODE, f"{record_key}:{column}")
     for position, value in enumerate(values):
         observation_id = stable_id(
             "observation",
@@ -1047,8 +1054,27 @@ def _append_repeated_list_observations(
                 }
             )
         )
+        item_evidence = _evidence_record(
+            row_number=row_number,
+            record_key=record_key,
+            subject_id=product_id,
+            predicate_id=metric_id,
+            column=column,
+            raw=raw,
+            normalized=value,
+            status="present",
+            evidence_kind="observation",
+            unit=None,
+            currency=None,
+            applicable_date=applicable_date,
+            identity_suffix=f"item:{position}:{value}",
+        )
+        records_by_table["evidence.evidence_record"].append(item_evidence)
         records_by_table["evidence.evidence_observation_origin"].append(
-            {"evidence_id": raw_evidence_id, "observation_id": observation_id}
+            {
+                "evidence_id": item_evidence["evidence_id"],
+                "observation_id": observation_id,
+            }
         )
 
 
@@ -1426,17 +1452,21 @@ def map_row(
         attribute_names = _parse_ordered_list(row.get("zrin_attr_nms"))
         _append_repeated_list_observations(
             records_by_table,
+            row_number=row_number,
             record_key=record_key,
             product_id=product_id,
             column="prfd_attr_cds",
+            raw=row.get("prfd_attr_cds"),
             values=attribute_codes,
             applicable_date=None,
         )
         _append_repeated_list_observations(
             records_by_table,
+            row_number=row_number,
             record_key=record_key,
             product_id=product_id,
             column="zrin_attr_nms",
+            raw=row.get("zrin_attr_nms"),
             values=attribute_names,
             applicable_date=date_values["fd_daily_bas_dt"],
         )

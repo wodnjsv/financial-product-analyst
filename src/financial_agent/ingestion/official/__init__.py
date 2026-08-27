@@ -17,10 +17,12 @@ from .snapshot import (
 from .krx_identity import map_krx_security_basic, parse_krx_security_basic
 from .krx_holdings import (
     KrxEtfBindingResult,
+    KrxEtfHoldingInventoryResult,
     KrxEtfProductBinding,
     build_krx_etf_product_bindings,
     map_krx_holding_snapshot,
     parse_krx_etf_pdf_csv,
+    validate_krx_etf_holding_inventory,
 )
 from .krx_market import (
     map_krx_etf_daily,
@@ -45,6 +47,7 @@ __all__ = [
     "IdentityCandidate",
     "IdentityResolution",
     "KrxEtfBindingResult",
+    "KrxEtfHoldingInventoryResult",
     "KrxEtfProductBinding",
     "NportArchiveLimits",
     "NportProductBinding",
@@ -67,6 +70,7 @@ __all__ = [
     "parse_sec_series_class",
     "select_latest_eligible_krx_date",
     "validate_official_snapshot",
+    "validate_krx_etf_holding_inventory",
     "verify_and_extract_nport",
     "write_canonical_manifest",
 ]

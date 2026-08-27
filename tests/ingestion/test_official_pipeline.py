@@ -598,7 +598,9 @@ async def test_krx_identity_holdings_market_and_ecos_follow_fixed_order(
                 {
                     "pd_grp_no": "ETF",
                     "pd_itm_no": "KR7305080004",
+                    "pd_ticker": "305080",
                     "pd_abrv_nm": "TIGER 미국채10년선물",
+                    "pd_lste_dt": "99991231",
                 },
             )
         },
@@ -672,6 +674,55 @@ async def test_krx_identity_holdings_market_and_ecos_follow_fixed_order(
     assert report.source_counts["KRX_ETF_PDF"]["PARTIALLY_COVERED"] == 1
     assert report.source_counts["KRX_ETF_DAILY"]["accepted"] == 1
     assert report.source_counts["ECOS_731Y001"]["accepted"] == 4
+
+
+@pytest.mark.asyncio
+async def test_current_krx_holdings_do_not_require_daily_market_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from financial_agent.ingestion import official_pipeline
+
+    _configure_build_seams(monkeypatch)
+    monkeypatch.setattr(
+        official_pipeline,
+        "_organizer_rows_for_official",
+        lambda data_paths, source_codes: {
+            "PREF01N001": (
+                {
+                    "pd_grp_no": "ETF",
+                    "pd_itm_no": "KR7305080004",
+                    "pd_ticker": "305080",
+                    "pd_abrv_nm": "TIGER 미국채10년선물",
+                    "pd_lste_dt": "99991231",
+                },
+            )
+        },
+        raising=False,
+    )
+    holdings_payload = krx_etf_pdf_payload()
+    holdings_manifest = official_manifest(
+        source_code="KRX_ETF_PDF",
+        object_name="305080_20260822.csv",
+        payload=holdings_payload,
+        applicable_date=date(2026, 8, 22),
+        available_at=datetime(2026, 8, 24, 5, 59, 59, tzinfo=timezone.utc),
+        media_type="text/csv",
+    )
+    _store_manifest_object(tmp_path, holdings_manifest, holdings_payload)
+
+    report = await build_stage03b_dataset(
+        object(),
+        dataset_version="combined-current-holdings",
+        organizer_inputs=_organizer_inputs(),
+        official_manifests=(holdings_manifest,),
+        official_object_root=tmp_path,
+        batch_size=1000,
+    )
+
+    assert report.source_counts["KRX_ETF_PDF"]["PARTIALLY_COVERED"] == 1
+    assert report.source_counts["KRX_ETF_PDF"]["limited"] == 1
+    assert report.source_counts["KRX_ETF_PDF"]["fatal"] == 0
 
 
 @pytest.mark.asyncio

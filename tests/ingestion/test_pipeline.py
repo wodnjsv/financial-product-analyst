@@ -978,12 +978,40 @@ async def test_load_stage03b_uses_named_environment_boundaries(
             },
         )
 
+    async def measure(engine: object, report: object) -> object:
+        observed["acceptance_engine"] = engine
+        observed["build_report"] = report
+        return SimpleNamespace(
+            reproducibility_hash="a" * 64,
+            dataset_status="building",
+            canonical_product_count=53_095,
+            exact_reused_identity_count=217,
+            aligned_ambiguous_pair_count=63,
+            active=False,
+        )
+
+    def require_current(report: object) -> None:
+        observed["acceptance_report"] = report
+
     monkeypatch.setattr(cli, "build_stage03b_dataset", build, raising=False)
+    monkeypatch.setattr(
+        cli, "measure_database_acceptance", measure, raising=False
+    )
+    monkeypatch.setattr(
+        cli,
+        "require_current_rebaseline_acceptance",
+        require_current,
+        raising=False,
+    )
 
     assert await cli._load_stage03b_command() == 0
     assert observed["dataset_version"] == "combined-test"
+    assert observed["build_report"].passed is True
+    assert observed["acceptance_report"].reproducibility_hash == "a" * 64
     assert capsys.readouterr().out == (
-        "STAGE03B_BUILD_OK sources=2 rows=5 status=building\n"
+        "STAGE03B_BUILD_OK sources=2 rows=5 status=building active=0 "
+        f"acceptance={'a' * 64} products=53095 exact_reused=217 "
+        "ambiguous_pairs=63\n"
     )
 
 

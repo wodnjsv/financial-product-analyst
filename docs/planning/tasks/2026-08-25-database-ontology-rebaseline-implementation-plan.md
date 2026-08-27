@@ -16,7 +16,7 @@ organizer entity IDs before any write; four explicit mappers then normalize the
 approved 280 fields. RDFLib and pySHACL load the fixed TBox and validate an ABox
 materialized only from PostgreSQL entity/relation/Evidence IDs; Fuseki/TDB2 is a
 read-only projection, never the fact authority.
-
+이제 뭘 해야 하나 마법의 보면은 사수 인간의 저주 뭘 만들 수가 있긴 한데
 **Tech Stack:** Python 3.12, Pydantic 2, SQLAlchemy 2, Alembic 1, PostgreSQL 15,
 pytest 8, openpyxl 3, RDFLib 7.6, pySHACL 0.40, Apache Jena Fuseki/TDB2 6.2.0
 on Java 21, Docker, Naver Cloud Platform.
@@ -578,12 +578,14 @@ git commit -m "feat: map current public funds"
 
 **Implementation status:** Resolver and cutoff code completed and verified on
 `2026-08-25`. KRX and SEC exact identities now reuse the frozen organizer
-canonical entity, ambiguous identities fail closed, and KRX/ECOS observations
-on `2026-08-24` are eligible. The approved capture plan now requests
-`2026-08-24` KRX/ECOS/ETF-PDF data while retaining the cutoff-eligible SEC Q2
-archive. The live KRX ETF-PDF recapture and checksum/coverage gate remain
-pending because the authenticated KRX session must be renewed; no current NCP
-facts have been written.
+canonical entity and ambiguous identities fail closed. The later organizer
+notice fixes the domestic business-date boundary at `2026-08-22` while keeping
+the availability cutoff at `2026-08-24`; the KRX ETF-PDF recapture now contains
+1,161 ignored local files for that actual date. Exact organizer `pd_ticker`
+binding, manifest regeneration, and local ledger verification continue under
+the [2026-08-26 local KRX plan](2026-08-26-local-krx-holdings-integration-plan.md).
+No current NCP facts have been written, and ADR-0019 moves that acceptance to
+the final deployment gate.
 
 **Files:**
 
@@ -653,12 +655,27 @@ git commit -m "feat: rebind current official sources"
 
 ### Task 9: Prove a Deterministic Inactive Database Rebuild
 
+**Implementation status:** Local organizer implementation and acceptance
+verification completed on `2026-08-26`. Two clean local PostgreSQL databases
+independently loaded all 53,375 organizer rows and passed the current gates. An exact
+row-by-row comparison, excluding only `dataset_version` and `created_at`, found
+identical catalog, observation, relation, and Evidence contents. A separate
+read-only mapping pass repeated source and issue counts exactly. Both datasets
+remain `building`, with zero active current dataset. ADR-0019 removes the
+intermediate NCP build from this task; the final combined NCP acceptance remains
+mandatory in Stage 08.
+
 **Files:**
 
 - Modify: `src/financial_agent/ingestion/capacity_probe.py`
 - Modify: `src/financial_agent/ingestion/cli.py`
+- Modify: `src/financial_agent/ingestion/mapping/domestic_etp.py`
+- Modify: `src/financial_agent/ingestion/mapping/public_fund.py`
 - Modify: `tests/ingestion/test_capacity_probe.py`
-- Modify: `tests/ingestion/test_official_question_gates.py`
+- Modify: `tests/ingestion/test_domestic_etp_mapping.py`
+- Modify: `tests/ingestion/test_pipeline.py`
+- Modify: `tests/ingestion/test_public_fund_mapping.py`
+- Modify: `tests/ingestion/test_real_organizer_data.py`
 - Modify: `docs/planning/STATUS.md`
 
 **Interfaces:**
@@ -670,7 +687,7 @@ git commit -m "feat: rebind current official sources"
   dataset before Graph readiness.
 - Produces no final NCP activation.
 
-- [ ] **Step 1: Write aggregate and repeatability tests**
+- [x] **Step 1: Write aggregate and repeatability tests**
 
 The acceptance report must include source rows, accepted/limited/quarantined
 rows, canonical products, identifiers by scheme, relations by predicate,
@@ -678,21 +695,28 @@ observations, Evidence origins, exact reused identities, and ambiguous IDs.
 Counts not already approved by the design are measured outputs, not hardcoded
 expectations.
 
-- [ ] **Step 2: Run synthetic combined builds twice**
+- [x] **Step 2: Run synthetic combined builds twice**
 
-Run: `python -m pytest tests/ingestion/test_capacity_probe.py tests/ingestion/test_official_question_gates.py -q`
+Run:
 
-- [ ] **Step 3: Run the gated real local rebuild twice**
+```bash
+python -m pytest tests/ingestion/test_capacity_probe.py \
+  tests/ingestion/test_pipeline.py \
+  tests/ingestion/test_domestic_etp_mapping.py \
+  tests/ingestion/test_public_fund_mapping.py -q
+```
+
+- [x] **Step 3: Run the gated real local rebuild twice**
 
 Use ignored local workbooks and frozen official manifests. Build into two fresh
 disposable databases or dataset versions; never overwrite a prior probe.
 Compare reports byte-for-byte after excluding database-generated timestamps.
 
-- [ ] **Step 4: Run one NCP inactive `building` acceptance build**
+- [x] **Step 4: Defer the NCP inactive `building` acceptance to Stage 08**
 
-Use `fa_build`, the Private DB endpoint, and explicit environment variables.
-Verify with `fa_runtime` that the new version is not active and that no write
-permission is available. Do not print connection URLs or credentials.
+ADR-0019 moves this cost-bearing check to the final deployment gate, where it
+must use the final dataset, Graph/Vector projections, and service image. Local
+completion does not constitute NCP readiness.
 
 - [ ] **Step 5: Commit deterministic build acceptance**
 
@@ -912,12 +936,13 @@ python scripts/export_database_objects.py --check
 git diff --check
 ```
 
-- [ ] **Step 4: Run explicit NCP checks**
+- [ ] **Step 4: Preserve the explicit NCP checks for Stage 08**
 
-Run preflight with `fa_migration`, migration `0006`, postflight, one inactive
+Do not run these checks during local implementation. Stage 08 must run
+preflight with `fa_migration`, migration `0006`, postflight, one inactive final
 build with `fa_build`, read-only readiness with `fa_runtime`, ABox export, and a
-disposable Fuseki import. Preserve sanitized aggregate outputs in the task
-record; do not commit logs containing infrastructure identifiers.
+Fuseki import. Preserve sanitized aggregate outputs in the task record; do not
+commit logs containing infrastructure identifiers.
 
 - [ ] **Step 5: Audit the final diff and staged content**
 
@@ -945,8 +970,9 @@ The plan is complete only when all of the following are true:
    product each and retain both source lineages.
 4. The 63 overseas duplicate identifier pairs never become unique catalog
    identifiers.
-5. Two clean database builds are deterministic and the NCP build remains
-   inactive.
+5. Two clean local database builds are deterministic; the final NCP build is a
+   separate mandatory Stage 08 gate and remains inactive until all projections
+   are ready.
 6. The TBox contains exactly the approved minimum vocabulary and 13 relations.
 7. SHACL permits compatible ETF/share-class multi-typing and rejects invalid
    ETF/ETN typing, unregistered predicates, missing Evidence, and ineligible

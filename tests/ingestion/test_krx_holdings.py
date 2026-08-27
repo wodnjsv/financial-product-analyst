@@ -20,6 +20,7 @@ from financial_agent.ingestion.official.krx_holdings import (
     build_krx_etf_product_bindings,
     map_krx_holding_snapshot,
     parse_krx_etf_pdf_csv,
+    validate_krx_etf_holding_inventory,
 )
 from financial_agent.ingestion.sources import SourceVerificationError
 from tests.fixtures.official_ingestion import (
@@ -93,22 +94,28 @@ def test_krx_pdf_parser_rejects_header_drift() -> None:
     assert captured.value.__cause__ is None
 
 
-def test_isin_derived_binding_uses_exact_historical_krx_code() -> None:
+def test_current_binding_uses_exact_organizer_ticker_and_audits_krx_rows() -> None:
     organizer_rows = (
         {
             "pd_grp_no": "ETF",
             "pd_itm_no": "KR7305080004",
+            "pd_ticker": "305080",
             "pd_abrv_nm": "TIGER 미국채10년선물",
+            "pd_lste_dt": "99991231",
         },
         {
             "pd_grp_no": "ETF",
             "pd_itm_no": "KR",
+            "pd_ticker": "123456",
             "pd_abrv_nm": "malformed",
+            "pd_lste_dt": None,
         },
         {
             "pd_grp_no": "ETF",
             "pd_itm_no": "KR7453540007",
+            "pd_ticker": "453540",
             "pd_abrv_nm": "inactive",
+            "pd_lste_dt": "20260821",
         },
         {
             "pd_grp_no": "ETN",
@@ -132,20 +139,115 @@ def test_isin_derived_binding_uses_exact_historical_krx_code() -> None:
         identity_index=_organizer_index(organizer_rows),
     )
 
-    assert result.organizer_etf_count == 3
-    assert result.invalid_isin_count == 1
-    assert result.unresolved_organizer_count == 2
+    assert result.organizer_etf_count == 1
+    assert result.invalid_identifier_count == 1
+    assert result.unresolved_organizer_count == 0
     assert result.unmatched_krx_count == 1
     assert result.name_drift_count == 0
     assert result.bindings == (_binding(),)
 
 
-def test_isin_derived_binding_allows_name_drift_only_as_audit() -> None:
+def test_current_binding_uses_explicit_organizer_ticker_without_daily_rows() -> None:
+    organizer_rows = (
+        {
+            "pd_grp_no": "ETF",
+            "pd_itm_no": "KR7005930003",
+            "pd_ticker": "305080",
+            "pd_abrv_nm": "합성 현재 ETF",
+            "pd_lste_dt": "99991231",
+        },
+    )
+
+    result = build_krx_etf_product_bindings(
+        organizer_rows=organizer_rows,
+        daily_rows=(),
+        applicable_date=date(2026, 8, 22),
+        identity_index=_organizer_index(organizer_rows),
+    )
+
+    assert result.organizer_etf_count == 1
+    assert result.invalid_identifier_count == 0
+    assert result.unresolved_organizer_count == 0
+    assert result.bindings[0].organizer_isin == "KR7005930003"
+    assert result.bindings[0].krx_short_code == "305080"
+    assert result.bindings[0].product_entity_id == stable_id(
+        "product", "PREF01N001", "KR7005930003"
+    )
+
+
+def test_current_binding_excludes_listing_ended_before_holdings_date() -> None:
+    organizer_rows = (
+        {
+            "pd_grp_no": "ETF",
+            "pd_itm_no": "KR7305080004",
+            "pd_ticker": "305080",
+            "pd_abrv_nm": "current",
+            "pd_lste_dt": "99991231",
+        },
+        {
+            "pd_grp_no": "ETF",
+            "pd_itm_no": "KR7284430006",
+            "pd_ticker": "284430",
+            "pd_abrv_nm": "ended",
+            "pd_lste_dt": "20260821",
+        },
+    )
+
+    result = build_krx_etf_product_bindings(
+        organizer_rows=organizer_rows,
+        daily_rows=(),
+        applicable_date=date(2026, 8, 22),
+        identity_index=_organizer_index(organizer_rows),
+    )
+
+    assert result.organizer_etf_count == 1
+    assert tuple(binding.krx_short_code for binding in result.bindings) == (
+        "305080",
+    )
+
+
+def test_current_holdings_inventory_requires_one_file_per_binding() -> None:
+    result = validate_krx_etf_holding_inventory(
+        bindings=(_binding(),),
+        object_names=("305080_20260822.csv",),
+        applicable_date=date(2026, 8, 22),
+    )
+
+    assert result.binding_count == 1
+    assert result.object_count == 1
+    assert result.missing_codes == ()
+    assert result.extra_codes == ()
+
+
+@pytest.mark.parametrize(
+    ("object_names", "expected_code"),
+    (
+        (("305080_20260821.csv",), "KRX_ETF_PDF_INVENTORY_DATE_MISMATCH"),
+        (("999999_20260822.csv",), "KRX_ETF_PDF_INVENTORY_MISMATCH"),
+    ),
+)
+def test_current_holdings_inventory_fails_closed_on_wrong_file_set(
+    object_names: tuple[str, ...], expected_code: str
+) -> None:
+    with pytest.raises(SourceVerificationError) as captured:
+        validate_krx_etf_holding_inventory(
+            bindings=(_binding(),),
+            object_names=object_names,
+            applicable_date=date(2026, 8, 22),
+        )
+
+    assert captured.value.code == expected_code
+    assert captured.value.__cause__ is None
+
+
+def test_current_binding_allows_name_drift_only_as_audit() -> None:
     organizer_rows = (
         {
             "pd_grp_no": "ETF",
             "pd_itm_no": "KR7284430006",
+            "pd_ticker": "284430",
             "pd_abrv_nm": "KODEX 200미국채혼합",
+            "pd_lste_dt": "99991231",
         },
     )
     result = build_krx_etf_product_bindings(
@@ -179,14 +281,16 @@ def test_isin_derived_binding_rejects_a_different_historical_date() -> None:
 
 
 @pytest.mark.parametrize("duplicate_side", ("organizer", "krx"))
-def test_isin_derived_binding_rejects_duplicate_identity_axes(
+def test_current_binding_rejects_duplicate_identity_axes(
     duplicate_side: str,
 ) -> None:
     organizer = [
         {
             "pd_grp_no": "ETF",
             "pd_itm_no": "KR7305080004",
+            "pd_ticker": "305080",
             "pd_abrv_nm": "TIGER 미국채10년선물",
+            "pd_lste_dt": "99991231",
         }
     ]
     daily = [

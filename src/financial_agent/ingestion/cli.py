@@ -14,7 +14,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from financial_agent.db.preflight import normalize_psycopg_url
-from financial_agent.ingestion.capacity_probe import CapacityProbeError
+from financial_agent.ingestion.capacity_probe import (
+    CapacityProbeError,
+    measure_database_acceptance,
+    require_current_rebaseline_acceptance,
+)
 from financial_agent.ingestion.pipeline import (
     SOURCE_SPECS,
     OrganizerBuildError,
@@ -323,6 +327,7 @@ async def _load_stage03b_command() -> int:
         max_overflow=0,
         connect_args={"options": "-c timezone=UTC"},
     )
+    acceptance = None
     try:
         report = await build_stage03b_dataset(
             engine,
@@ -331,15 +336,25 @@ async def _load_stage03b_command() -> int:
             official_manifests=manifests,
             official_object_root=object_root,
         )
+        if report.passed:
+            acceptance = await measure_database_acceptance(engine, report)
+            require_current_rebaseline_acceptance(acceptance)
     finally:
         await engine.dispose()
     if not report.passed:
         print("BUILD_VALIDATION_FAILED", file=sys.stderr)
         return 2
+    if acceptance is None:
+        raise CapacityProbeError("DATABASE_ACCEPTANCE_GATE_FAILED") from None
     rows = sum(counts["rows"] for counts in report.source_counts.values())
     print(
         f"STAGE03B_BUILD_OK sources={len(report.source_counts)} "
-        f"rows={rows} status=building"
+        f"rows={rows} status={acceptance.dataset_status} "
+        f"active={int(acceptance.active)} "
+        f"acceptance={acceptance.reproducibility_hash} "
+        f"products={acceptance.canonical_product_count} "
+        f"exact_reused={acceptance.exact_reused_identity_count} "
+        f"ambiguous_pairs={acceptance.aligned_ambiguous_pair_count}"
     )
     return 0
 
