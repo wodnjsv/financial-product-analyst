@@ -10,6 +10,21 @@
 
 공식 예상 질문을 반영한 52개 핵심 평가 질문을 기준으로, 주최 측 마스터에 없는 데이터를 어떤 공식 API와 공시에서 확보할지 정한다. 출발점은 API 목록이 아니라 질문의 필수 사실과 관계다. 한국거래소 KRX OPEN API, 한국은행 ECOS Open API, Federal Reserve Bank of St. Louis FRED API는 사용할 수 있는 공식 후보이며, 세 곳을 모두 연결하는 것은 요구사항이 아니다.
 
+### 1.1 Current public-fund holdings decision
+
+The `2026-08-24` cutoff review found no source that simultaneously provides
+publisher-official security-level holdings, verifiable portfolio and
+publication dates, exact organizer share-class binding, measurable population
+coverage, and preservable raw evidence. The result is `requires_data`, not an
+empty holdings set. See
+[Public-Fund Holdings Source Decision](public-fund-holdings-source-decision-2026-08-24.md).
+
+KOFIA performance-comparison disclosure provides asset-class proportions, not
+security-level constituents. KOFIA asset-management report documents may
+contain holdings, but a complete exact identifier crosswalk and uniform
+machine-readable population have not been established. OpenDART and manager
+sites likewise fail at least one exact-binding or measurable-coverage gate.
+
 주최측이 명시한 RDB·Vector·Graph 결합과 공식 예상 질문은 [공식 과제·기술 요구사항](../../reference/official-competition-requirements.md)을 기준으로 한다. 공식 질문은 API만으로 충족되지 않으므로 법정 공시, 거래소·운용사 파일, 공식 상품·정책 문서도 동등한 소스 후보 레지스트리에서 관리한다.
 
 소스 선택 순서는 다음과 같다.
@@ -159,6 +174,7 @@ FRED는 거시·시장 문맥용이다. 개별 해외 ETF의 보유종목, AUM, 
 | --- | --- | --- | --- |
 | 국내 ETF 일별 가격·NAV | KRX ETF 일별매매정보 | API 제공 확인, 해당 질문에만 조건부 사용 | `CALC-DETF-001` |
 | 국내 ETF 구성종목·편입비중 | KRX Data Marketplace 또는 운용사 PDF | OPEN API 공백, 공식 파일 필요 | 삼성전자 편입 ETF, 업종 비중, 포트폴리오 중첩 |
+| 공모펀드 보유종목·편입비중 | 금융투자협회 자산운용보고서 또는 운용사 공식 | `requires_data`: 보고서 문서는 존재하나 exact share-class crosswalk·전수 coverage·통일 종목 스키마 미확정 | 국내·해외 ETF와 공모펀드의 특정 종목 보유 교차 질문 |
 | 국내 주식·ETF·지수 식별자 | KRX 종목기본정보와 지수정보 | API 제공 확인 | 종목명·코드 해소, 지수 추종 관계 |
 | KRW 환산 환율 | ECOS `731Y001` | API 제공과 컷오프 조회 확인, 교차통화 질문에만 사용 | `CMP-AUM-001`, `AMB-AUM-001` |
 | 해외 ETF 동일기간 가격/NAV·분배금 | 해외 거래소·운용사 공식 원천 | KRX·ECOS·FRED로 미충족 | 해외 ETF 1년 성과, 동일일 괴리율 |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -54,6 +55,34 @@ def _domestic_binding() -> KrxEtfProductBinding:
         krx_name="TIGER 미국채10년선물",
         name_matches=True,
     )
+
+
+def test_cross_family_samsung_question_keeps_public_fund_gap_visible() -> None:
+    catalog = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "gold"
+            / "core_questions.json"
+        ).read_text("utf-8")
+    )
+    case = next(
+        item for item in catalog["cases"] if item["id"] == "REL-HOLD-001"
+    )
+    requirements = {
+        item["name"]: item for item in case["data_requirements"]
+    }
+
+    assert case["product_families"] == [
+        "domestic_etf",
+        "overseas_etf",
+        "public_fund",
+    ]
+    assert requirements["official_public_fund_holdings_snapshot"]["status"] == (
+        "requires_additional_data"
+    )
+    assert case["coverage_policy"]["public_fund"] == "requires_data"
+    assert "NO_FALSE_EMPTY_FOR_UNCOVERED_FAMILY" in case["business_rules"]
+    assert case["expected_disposition"] == "limitation"
 
 
 def test_domestic_question_gate_joins_holding_price_nav_and_evidence() -> None:

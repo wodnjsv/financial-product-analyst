@@ -498,7 +498,7 @@ git commit -m "feat: reapprove current sec holdings"
   - `requires_data`: no source satisfies every gate, so affected questions stay
     limited and no holdings are inferred.
 
-- [ ] **Step 1: Write the source-approval checklist**
+- [x] **Step 1: Write the source-approval checklist**
 
 Require all of the following:
 
@@ -513,21 +513,29 @@ coverage population is measurable
 raw bytes and usage terms can be preserved
 ```
 
-- [ ] **Step 2: Evaluate candidates and record evidence URLs and dates**
+- [x] **Step 2: Evaluate candidates and record evidence URLs and dates**
 
 Use only primary official pages or files. Aggregators, search snippets, inferred
 portfolio text, and current pages without historical availability evidence
 fail the gate. The document records each failed criterion and the affected
 question IDs without copying raw organizer values.
 
-- [ ] **Step 3: Update question support deterministically**
+- [x] **Step 3: Update question support deterministically**
 
 If no source passes, keep the relevant domestic/public-fund constituent cases
 as `requires_additional_data`; do not silently downgrade them to a false empty
 answer. Add a test that a cross-family Samsung holding question reports the
 fund coverage limitation instead of asserting that no public fund holds it.
 
-- [ ] **Step 4: Commit the source decision**
+Result: KOFIA performance comparison, KOFIA asset-management reports, KOFIA
+Fund One-Click, OpenDART, and manager-site documents were evaluated against all
+eight gates. None established a security-level, date-verifiable, exact
+share-class-bound, measurable current-organizer population. The final decision
+is `requires_data`. `REL-HOLD-001` now models the organizer's domestic ETF,
+overseas ETF, and public-fund Samsung Electronics example and requires a
+public-fund coverage limitation instead of a false empty result.
+
+- [x] **Step 4: Commit the source decision**
 
 ```bash
 git add \

@@ -35,6 +35,10 @@
 
 ## 3. 2026-07-11 스냅샷 규칙
 
+The current organizer baseline and all newly approved external facts use the
+`2026-08-24` cutoff under ADR-0016. The older literal rules below are retained
+only as historical requirement text.
+
 - 평가용 데이터셋은 `2026-07-11` 시점에서 동결한다.
 - 원천 레코드의 실제 `applicable_date` 또는 `as_of`는 반드시 별도로 저장한다.
 - 기준일에 공식 파일이 없으면 `2026-07-11` 이전의 최신 공식 레코드를 선택한다.
@@ -113,6 +117,21 @@ source_locator
 - 해외 ETF는 `pd_itm_no`를 내부 대표키로 유지하고 유효한 ISIN·티커를 보조 연결키로 사용한다.
 - 종목명만으로 자동 결합하지 않고 표준 종목 ID를 우선한다.
 - 편입비중 합계와 기준일을 검증하며 현금·파생·기타 항목을 일반 주식과 구분한다.
+
+### P0: 공모펀드 구성종목과 편입비중
+
+**Current decision:** `requires_data`
+
+주최 측 공모펀드 마스터는 자산군 비중은 포함하지만 개별 증권 구성종목을
+포함하지 않는다. KOFIA 비교공시도 개별 증권이 아닌 주식·채권 등
+자산군 비중을 제공한다. 자산운용보고서에 종목 내역이 존재할 수는 있지만,
+`2026-08-24` 기준 전체 주최 측 상품과 exact로 연결되는 공개 교차표와 통일
+기계가독 종목 스키마를 확정하지 못했다.
+
+따라서 `REL-HOLD-001`의 공모펀드 경로는 결과 0이 아니라 커버리지 미확보다.
+국내·해외 ETF 결과만 반환할 때도 전체 상품군 결과로 표현하지 않고
+공모펀드 제한을 필수로 표시한다. 세부 근거와 재검토 조건은
+[Public-Fund Holdings Source Decision](public-fund-holdings-source-decision-2026-08-24.md)을 따른다.
 
 ### P0: 증권·기업·기관 식별자 마스터
 
@@ -457,7 +476,8 @@ unsupported_by_design
 
 | 질문·요구사항 | 필요한 추가 데이터 | 조건부 후보 | 판단 |
 | --- | --- | --- | --- |
-| `REL-HOLD-001`~`004`, `REL-MGR-001` | ETF 구성종목·편입비중 | KRX Data Marketplace 또는 운용사 공식 파일 | 필수 공백이지만 KRX OPEN API·ECOS·FRED로는 충족되지 않음 |
+| `REL-HOLD-001` | 국내·해외 ETF와 공모펀드의 삼성전자 보유 경로 | ETF는 KRX·SEC, 공모펀드는 KOFIA·운용사 공시 후보 | ETF는 source별 bounded coverage; 공모펀드는 `requires_data`로 제한 표시 |
+| `REL-HOLD-002`~`004`, `REL-MGR-001` | ETF 구성종목·편입비중 | KRX Data Marketplace 또는 운용사 공식 파일 | 승인 source별 coverage 규칙 적용 |
 | `REL-OETF-001` | 캠브리콘 공식 기업·증권 ID, 중국·반도체 분류, 해외 ETF 구성종목 | 해외 거래소·운용사 구성파일, 공식 증권·기업 식별 원천 | 세 API만으로 충족되지 않음 |
 | `REL-THEME-001` | 최근 6개월의 우주항공 테마 관계 이력 | 운용사·지수 제공기관의 공식 방법론·공시 | 관계 유효일과 문서 근거가 필요 |
 | `REL-CORP-001` | 에코프로 자회사·상장 관계, ETF 구성종목, 위험 문서 | 법정 기업공시·거래소·운용사 문서 | Graph·RDB·Vector 결합 필요 |
