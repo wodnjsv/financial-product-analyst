@@ -336,36 +336,38 @@ git commit -m "feat: bind current krx holding securities"
   `ecos_731y001_krw_per_usd`, `ecos_731y001_krw_per_100_jpy`,
   `ecos_731y001_krw_per_eur`, and `ecos_731y001_krw_per_cny`.
 
-- [ ] **Step 1: Add exact item, date, and uniqueness tests**
+- [x] **Step 1: Add exact item, date, and uniqueness tests**
 
-Assert that an unknown item, a duplicate currency/date row, a future available
-timestamp, or a missing approved currency fails the snapshot. Assert that JPY
-retains the per-100 unit.
+Ignore unrelated official `731Y001` items returned by the broad ECOS response,
+but require that a duplicate approved currency/date row, altered approved item
+semantics, a future available timestamp, or a missing approved currency fails
+the snapshot. Assert that JPY retains the per-100 unit.
 
-- [ ] **Step 2: Run the focused ECOS suite**
+- [x] **Step 2: Run the focused ECOS suite**
 
 ```bash
 .venv/bin/python -m pytest tests/ingestion/test_ecos_fx.py -q
 ```
 
-- [ ] **Step 3: Capture and validate the eligible ECOS response**
+- [x] **Step 3: Capture and validate the eligible ECOS response**
 
 Use the configured API key without printing it. Preserve the actual latest
 eligible observation date rather than rewriting the value date to
 `2026-08-24`. Re-read the captured object and require byte hash, manifest hash,
 row count, and four-currency coverage.
 
-- [ ] **Step 4: Run the configured real-source gate**
+- [x] **Step 4: Run the configured real-source gate**
 
 ```bash
-RUN_OFFICIAL_DATA_TESTS=1 \
+RUN_CURRENT_ECOS_TESTS=1 \
+FINANCIAL_AGENT_CURRENT_ECOS_CAPTURE_ROOT="$CURRENT_ECOS_CAPTURE_ROOT" \
 .venv/bin/python -m pytest \
-  tests/ingestion/test_real_official_sources.py -m organizer_data -q
+  tests/ingestion/test_real_official_sources.py -m official_data -q
 ```
 
 Expected: the ECOS object and manifest pass without adding any product fact.
 
-- [ ] **Step 5: Commit the current FX boundary**
+- [x] **Step 5: Commit the current FX boundary**
 
 ```bash
 git add \

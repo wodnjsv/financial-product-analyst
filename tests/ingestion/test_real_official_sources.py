@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.request import Request
@@ -16,11 +18,22 @@ from financial_agent.ingestion.official.capture import (
     load_existing_capture,
     load_capture_configuration,
 )
-from financial_agent.ingestion.official_pipeline import load_official_manifests
+from financial_agent.ingestion.official.ecos_fx import (
+    map_ecos_fx,
+    parse_ecos_731y001,
+)
+from financial_agent.ingestion.official_pipeline import (
+    load_official_manifests,
+    verify_official_snapshot_objects,
+)
 from financial_agent.ingestion.sources import SourceVerificationError
 
 
 RUN_OFFICIAL_DATA = os.getenv("RUN_OFFICIAL_DATA_TESTS") == "1"
+RUN_CURRENT_ECOS = os.getenv("RUN_CURRENT_ECOS_TESTS") == "1"
+CURRENT_ECOS_CAPTURE_ROOT = os.getenv(
+    "FINANCIAL_AGENT_CURRENT_ECOS_CAPTURE_ROOT"
+)
 OFFICIAL_ENVIRONMENT = (
     "FINANCIAL_AGENT_KRX_API_KEY",
     "FINANCIAL_AGENT_ECOS_API_KEY",
@@ -37,6 +50,8 @@ HAS_OFFICIAL_CONFIGURATION = all(
 def _require_explicit_official_configuration() -> None:
     if RUN_OFFICIAL_DATA and not HAS_OFFICIAL_CONFIGURATION:
         pytest.fail("OFFICIAL_DATA_CONFIGURATION_MISSING", pytrace=False)
+    if RUN_CURRENT_ECOS and CURRENT_ECOS_CAPTURE_ROOT is None:
+        pytest.fail("CURRENT_ECOS_CONFIGURATION_MISSING", pytrace=False)
 
 
 def test_capture_configuration_fails_closed_without_every_required_value(
@@ -283,8 +298,8 @@ def test_capture_official_cli_reports_only_safe_aggregates(
         cli,
         "capture_approved_official_sources",
         lambda observed: SimpleNamespace(
-            source_count=7,
-            object_count=1_135,
+            source_count=6,
+            object_count=1_134,
             total_bytes=123_456,
             eligible_start="2026-06-01",
             eligible_end="2026-08-24",
@@ -298,9 +313,51 @@ def test_capture_official_cli_reports_only_safe_aggregates(
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out.strip() == (
-        "OFFICIAL_CAPTURE_OK sources=7 objects=1135 bytes=123456 "
+        "OFFICIAL_CAPTURE_OK sources=6 objects=1134 bytes=123456 "
         "eligible=2026-06-01..2026-08-24"
     )
+
+
+@pytest.mark.official_data
+@pytest.mark.skipif(
+    not RUN_CURRENT_ECOS,
+    reason="explicit current-ECOS gate is disabled",
+)
+def test_current_ecos_snapshot_has_four_exact_cutoff_eligible_rates() -> None:
+    root = Path(CURRENT_ECOS_CAPTURE_ROOT or "")
+    manifests = load_official_manifests(root / "manifests")
+    assert len(manifests) == 1
+    manifest = manifests[0]
+    assert manifest.source_code == "ECOS_731Y001"
+    assert manifest.applicable_date == date(2026, 8, 24)
+    assert manifest.cutoff_date == date(2026, 8, 24)
+    verified = verify_official_snapshot_objects(manifests, root / "objects")
+    item = manifest.objects[0]
+    payload = verified[(manifest.snapshot_id, item.object_key)].read_bytes()
+    raw_rows = json.loads(payload.decode("utf-8"))["StatisticSearch"]["row"]
+    assert len(raw_rows) == 43
+
+    mapped = map_ecos_fx(manifest, parse_ecos_731y001(payload))
+    observations = {
+        str(observation["metric_id"]): observation
+        for row in mapped
+        for observation in row.records_by_table[
+            "observation.observation_record"
+        ]
+    }
+    assert {
+        metric_id: observation["numeric_value"]
+        for metric_id, observation in observations.items()
+    } == {
+        "ecos_731y001_krw_per_usd": Decimal("1383.6"),
+        "ecos_731y001_krw_per_100_jpy": Decimal("870.44"),
+        "ecos_731y001_krw_per_eur": Decimal("1615.49"),
+        "ecos_731y001_krw_per_cny": Decimal("205.55"),
+    }
+    assert {
+        observation["applicable_date"]
+        for observation in observations.values()
+    } == {date(2026, 8, 24)}
 
 
 @pytest.mark.official_data
@@ -320,10 +377,10 @@ def test_live_official_capture_is_complete_and_reproducibly_loadable() -> None:
     )
     manifests = load_official_manifests(capture.manifest_root)
     expected_objects = (
-        len(tuple(configuration.holdings_root.glob("*.csv"))) + 6
+        len(tuple(configuration.holdings_root.glob("*.csv"))) + 5
     )
 
-    assert capture.source_count == 7
+    assert capture.source_count == 6
     assert capture.object_count == expected_objects
     assert capture.manifest_count == expected_objects
     assert capture.total_bytes > 0

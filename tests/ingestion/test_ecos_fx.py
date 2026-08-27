@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from dataclasses import replace
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
@@ -177,6 +178,20 @@ def test_ecos_mapper_includes_observations_on_the_cutoff_date() -> None:
         item["applicable_date"]
         for item in _records(mapped, "observation.observation_record")
     } == {date(2026, 8, 24)}
+
+
+def test_ecos_mapper_rejects_a_snapshot_available_after_the_cutoff() -> None:
+    payload = ecos_731y001_payload()
+    manifest = replace(
+        _manifest(payload, applicable_date=date(2026, 8, 24)),
+        available_at=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+
+    with pytest.raises(SourceVerificationError) as captured:
+        map_ecos_fx(manifest, parse_ecos_731y001(payload))
+
+    assert captured.value.code == "OFFICIAL_CUTOFF_VIOLATION"
+    assert captured.value.__cause__ is None
 
 
 def test_ecos_mapper_rejects_an_item_with_no_pre_cutoff_observation() -> None:
