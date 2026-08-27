@@ -391,15 +391,17 @@ def map_krx_security_basic(
     materialized = tuple(rows)
     standard_counts = Counter(str(row["ISU_CD"]) for row in materialized)
     short_counts = Counter(str(row["ISU_SRT_CD"]) for row in materialized)
+    if any(count != 1 for count in standard_counts.values()) or any(
+        count != 1 for count in short_counts.values()
+    ):
+        raise SourceVerificationError(
+            "KRX_BASIC_IDENTITY_CONFLICT",
+            "KRX security basic response contains duplicate identifiers",
+        ) from None
     for row_number, row in enumerate(materialized, start=1):
-        if standard_counts[str(row["ISU_CD"])] > 1:
-            yield _quarantined(manifest.source_code, row_number, "ISU_CD")
-        elif short_counts[str(row["ISU_SRT_CD"])] > 1:
-            yield _quarantined(manifest.source_code, row_number, "ISU_SRT_CD")
-        else:
-            yield _mapped_row(
-                manifest,
-                row_number=row_number,
-                row=row,
-                identity_index=identity_index,
-            )
+        yield _mapped_row(
+            manifest,
+            row_number=row_number,
+            row=row,
+            identity_index=identity_index,
+        )

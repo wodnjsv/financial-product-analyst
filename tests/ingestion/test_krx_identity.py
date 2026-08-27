@@ -125,7 +125,10 @@ def test_krx_basic_mapper_emits_exact_security_identity_with_evidence() -> None:
     assert _records(mapped[0], "relation.relation_record") == ()
 
 
-def test_duplicate_krx_issue_code_quarantines_every_candidate() -> None:
+@pytest.mark.parametrize("duplicate_field", ("standard", "short"))
+def test_duplicate_krx_issue_code_rejects_the_snapshot(
+    duplicate_field: str,
+) -> None:
     payload = krx_security_basic_payload(
         (
             {
@@ -136,8 +139,14 @@ def test_duplicate_krx_issue_code_quarantines_every_candidate() -> None:
                 "ISU_ENG_NM": "Synthetic A",
             },
             {
-                "ISU_CD": "KR7000000001",
-                "ISU_SRT_CD": "000002",
+                "ISU_CD": (
+                    "KR7000000001"
+                    if duplicate_field == "standard"
+                    else "KR7000000002"
+                ),
+                "ISU_SRT_CD": (
+                    "000002" if duplicate_field == "standard" else "000001"
+                ),
                 "ISU_NM": "합성 보통주 B",
                 "ISU_ABBRV": "합성B",
                 "ISU_ENG_NM": "Synthetic B",
@@ -151,18 +160,16 @@ def test_duplicate_krx_issue_code_quarantines_every_candidate() -> None:
         applicable_date=date(2026, 7, 10),
     )
 
-    mapped = tuple(
-        map_krx_security_basic(
-            manifest,
-            parse_krx_security_basic(payload, market="KOSPI"),
+    with pytest.raises(SourceVerificationError) as captured:
+        tuple(
+            map_krx_security_basic(
+                manifest,
+                parse_krx_security_basic(payload, market="KOSPI"),
+            )
         )
-    )
 
-    assert [row.disposition for row in mapped] == ["quarantined", "quarantined"]
-    assert {
-        issue.code for row in mapped for issue in row.issues
-    } == {"DUPLICATE_OFFICIAL_IDENTIFIER"}
-    assert all(_records(row, "catalog.identifier") == () for row in mapped)
+    assert captured.value.code == "KRX_BASIC_IDENTITY_CONFLICT"
+    assert captured.value.__cause__ is None
 
 
 def _organizer_index(*natural_keys: str):

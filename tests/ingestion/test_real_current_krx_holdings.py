@@ -15,6 +15,7 @@ from financial_agent.ingestion.capacity_probe import (
     require_current_rebaseline_acceptance,
 )
 from financial_agent.ingestion.identity import (
+    AuthoritativeIdentityIndex,
     build_authoritative_identity_index,
     collect_organizer_identifier_candidates,
 )
@@ -24,12 +25,20 @@ from financial_agent.ingestion.official.krx_holdings import (
     parse_krx_etf_pdf_csv,
     validate_krx_etf_holding_inventory,
 )
+from financial_agent.ingestion.official.krx_identity import (
+    map_krx_security_basic,
+    parse_krx_security_basic,
+)
 from financial_agent.ingestion.official.capture import capture_local_krx_holdings
-from financial_agent.ingestion.official.identity import OfficialIdentityIndex
+from financial_agent.ingestion.official.identity import (
+    IdentityCandidate,
+    OfficialIdentityIndex,
+)
 from financial_agent.ingestion.official_pipeline import (
     OrganizerInputs,
     build_stage03b_dataset,
     load_official_manifests,
+    verify_official_snapshot_objects,
 )
 from financial_agent.ingestion.pipeline import SOURCE_SPECS
 from financial_agent.ingestion.sources import iter_workbook_rows, sha256_path
@@ -38,6 +47,9 @@ from financial_agent.ingestion.sources import iter_workbook_rows, sha256_path
 RUN_CURRENT_KRX = os.getenv("RUN_CURRENT_KRX_HOLDINGS_TESTS") == "1"
 ORGANIZER_PATH = os.getenv("FINANCIAL_AGENT_PREF01N001_DATA_PATH")
 HOLDINGS_ROOT = os.getenv("FINANCIAL_AGENT_KRX_HOLDINGS_ROOT")
+IDENTITY_CAPTURE_ROOT = os.getenv(
+    "FINANCIAL_AGENT_CURRENT_KRX_IDENTITY_CAPTURE_ROOT"
+)
 RUN_CURRENT_KRX_POSTGRES = (
     os.getenv("RUN_CURRENT_KRX_POSTGRES_TESTS") == "1"
 )
@@ -48,7 +60,11 @@ HAS_DATABASE = os.getenv("FINANCIAL_AGENT_TEST_DATABASE_URL") is not None
 
 @pytest.fixture(scope="session", autouse=True)
 def _require_explicit_current_krx_configuration() -> None:
-    if RUN_CURRENT_KRX and (ORGANIZER_PATH is None or HOLDINGS_ROOT is None):
+    if RUN_CURRENT_KRX and (
+        ORGANIZER_PATH is None
+        or HOLDINGS_ROOT is None
+        or IDENTITY_CAPTURE_ROOT is None
+    ):
         pytest.fail("CURRENT_KRX_CONFIGURATION_MISSING", pytrace=False)
     if RUN_CURRENT_KRX_POSTGRES and (
         ORGANIZER_ROOT is None or CAPTURE_ROOT is None or not HAS_DATABASE
@@ -72,6 +88,68 @@ def _organizer_inputs(root: Path) -> OrganizerInputs:
         schema_sha256={
             code: sha256_path(path) for code, path in schema_paths.items()
         },
+    )
+
+
+def _current_krx_security_index(
+    organizer_index: AuthoritativeIdentityIndex,
+) -> tuple[OfficialIdentityIndex, dict[str, int]]:
+    capture_root = Path(IDENTITY_CAPTURE_ROOT or "")
+    manifests = load_official_manifests(capture_root / "manifests")
+    assert {manifest.source_code for manifest in manifests} == {
+        "KRX_KOSPI_BASIC",
+        "KRX_KOSDAQ_BASIC",
+    }
+    verified = verify_official_snapshot_objects(
+        manifests,
+        capture_root / "objects",
+    )
+    entries: list[tuple[IdentityCandidate, str]] = []
+    mapped_counts: dict[str, int] = {}
+    for manifest in manifests:
+        assert manifest.applicable_date == date(2026, 8, 22)
+        assert manifest.cutoff_date == date(2026, 8, 24)
+        item = manifest.objects[0]
+        rows = parse_krx_security_basic(
+            verified[(manifest.snapshot_id, item.object_key)].read_bytes(),
+            market=(
+                "KOSPI"
+                if manifest.source_code == "KRX_KOSPI_BASIC"
+                else "KOSDAQ"
+            ),
+        )
+        mapped = tuple(
+            map_krx_security_basic(
+                manifest,
+                rows,
+                identity_index=organizer_index,
+            )
+        )
+        assert all(row.disposition == "accepted" for row in mapped)
+        mapped_counts[manifest.source_code] = len(mapped)
+        for row in mapped:
+            for identifier in row.records_by_table["catalog.identifier"]:
+                scheme = str(identifier["scheme"])
+                if scheme not in {
+                    "KRX_STANDARD_ISSUE_CODE",
+                    "KRX_SHORT_ISSUE_CODE",
+                }:
+                    continue
+                entries.append(
+                    (
+                        IdentityCandidate(
+                            scheme,
+                            str(identifier["identifier_value"]),
+                        ),
+                        str(identifier["entity_id"]),
+                    )
+                )
+    return (
+        OfficialIdentityIndex(
+            exact_entries=entries,
+            organizer_index=organizer_index,
+        ),
+        mapped_counts,
     )
 
 
@@ -140,7 +218,9 @@ def test_current_organizer_and_krx_holdings_inventory_match_exactly(
     bindings_by_code = {
         binding.krx_short_code: binding for binding in bindings.bindings
     }
-    security_index = OfficialIdentityIndex(organizer_index=identity_index)
+    security_index, krx_security_counts = _current_krx_security_index(
+        identity_index
+    )
     table_counts: Counter[str] = Counter()
     issue_counts: Counter[str] = Counter()
     for manifest in manifests:
@@ -163,15 +243,32 @@ def test_current_organizer_and_krx_holdings_inventory_match_exactly(
         issue_counts.update(issue.code for issue in mapped.issues)
 
     assert len(manifests) == 1_161
+    assert krx_security_counts == {
+        "KRX_KOSPI_BASIC": 942,
+        "KRX_KOSDAQ_BASIC": 1_822,
+    }
     assert table_counts["evidence.source_record"] == 1_161
     assert table_counts["relation.relation_record"] == 75_216
-    assert table_counts["observation.observation_record"] == 301_517
-    assert table_counts["evidence.evidence_record"] == 377_894
+    assert table_counts["observation.observation_record"] == 300_864
+    assert table_counts["evidence.evidence_record"] == 377_241
     assert table_counts["evidence.evidence_relation_origin"] == 75_216
-    assert table_counts["evidence.evidence_observation_origin"] == 301_517
-    assert issue_counts == {
-        "KRX_ETF_HOLDING_SOURCE_LOCAL_IDENTITY": 75_216
-    }
+    assert table_counts["evidence.evidence_observation_origin"] == 300_864
+    conflict_count = issue_counts["KRX_ETF_HOLDING_IDENTITY_CONFLICT"]
+    source_local_count = issue_counts[
+        "KRX_ETF_HOLDING_SOURCE_LOCAL_IDENTITY"
+    ]
+    exact_count = (
+        table_counts["relation.relation_record"] - source_local_count
+    )
+    assert conflict_count == 0
+    assert source_local_count == 41_648
+    assert exact_count == 33_568
+    print(
+        "CURRENT_KRX_IDENTITY_COUNTS "
+        f"exact={exact_count} "
+        f"source_local={source_local_count} "
+        f"conflict={conflict_count}"
+    )
 
 
 @pytest.mark.organizer_data

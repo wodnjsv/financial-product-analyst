@@ -719,12 +719,26 @@ def map_krx_holding_snapshot(
         if code == _SUMMARY_CODE:
             continue
 
-        security_id, strong_identity = _add_security(
-            records,
-            code=code,
-            name=name,
-            security_index=security_index,
-        )
+        try:
+            security_id, strong_identity = _add_security(
+                records,
+                code=code,
+                name=name,
+                security_index=security_index,
+            )
+        except SourceVerificationError as error:
+            if error.code != "KRX_ETF_HOLDING_IDENTITY_CONFLICT":
+                raise
+            issues.append(
+                MappingIssue(
+                    source_code=_SOURCE_CODE,
+                    row_number=row_number,
+                    column="종목코드",
+                    code=error.code,
+                    severity="limited",
+                )
+            )
+            continue
         if not strong_identity:
             issues.append(
                 MappingIssue(

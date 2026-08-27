@@ -354,6 +354,103 @@ def test_holdings_map_relations_values_and_bounded_coverage() -> None:
     assert scopes[0]["scope_completeness"] == "bounded_unknown"
 
 
+def test_holding_exact_krx_identifier_precedes_source_local_identity() -> None:
+    payload = krx_etf_pdf_payload(
+        (
+            {
+                "종목코드": "005930",
+                "구성종목명": "삼성전자 이름 변경을 가정",
+                "주식수(계약수)": "1",
+                "평가금액": "100",
+                "시가총액": "100",
+                "시가총액 구성비중": "1",
+            },
+        )
+    )
+
+    mapped = map_krx_holding_snapshot(
+        _manifest(payload),
+        parse_krx_etf_pdf_csv(payload),
+        binding=_binding(),
+        security_index=_security_index(),
+    )
+
+    relation = _records(mapped, "relation.relation_record")[0]
+    assert relation["object_id"] == "security-samsung"
+    assert not any(
+        row.get("entity_type") == "security"
+        for row in _records(mapped, "catalog.entity")
+    )
+
+
+def test_holding_ambiguous_krx_identifier_is_limited_without_a_relation() -> None:
+    payload = krx_etf_pdf_payload(
+        (
+            {
+                "종목코드": "005930",
+                "구성종목명": "삼성전자",
+                "주식수(계약수)": "1",
+                "평가금액": "100",
+                "시가총액": "100",
+                "시가총액 구성비중": "1",
+            },
+        )
+    )
+    security_index = OfficialIdentityIndex(
+        exact_entries=(
+            (
+                IdentityCandidate("KRX_SHORT_ISSUE_CODE", "005930"),
+                "security-a",
+            ),
+            (
+                IdentityCandidate("KRX_SHORT_ISSUE_CODE", "005930"),
+                "security-b",
+            ),
+        )
+    )
+
+    mapped = map_krx_holding_snapshot(
+        _manifest(payload),
+        parse_krx_etf_pdf_csv(payload),
+        binding=_binding(),
+        security_index=security_index,
+    )
+
+    assert mapped.disposition == "limited"
+    assert _records(mapped, "relation.relation_record") == ()
+    assert {issue.code for issue in mapped.issues} == {
+        "KRX_ETF_HOLDING_IDENTITY_CONFLICT"
+    }
+
+
+def test_holding_name_similarity_never_creates_an_identity_binding() -> None:
+    payload = krx_etf_pdf_payload(
+        (
+            {
+                "종목코드": "999999",
+                "구성종목명": "삼성전자",
+                "주식수(계약수)": "1",
+                "평가금액": "100",
+                "시가총액": "100",
+                "시가총액 구성비중": "1",
+            },
+        )
+    )
+
+    mapped = map_krx_holding_snapshot(
+        _manifest(payload),
+        parse_krx_etf_pdf_csv(payload),
+        binding=_binding(),
+        security_index=_security_index(),
+    )
+
+    relation = _records(mapped, "relation.relation_record")[0]
+    assert relation["object_id"] != "security-samsung"
+    assert {issue.code for issue in mapped.issues} == {
+        "KRX_ETF_HOLDING_SOURCE_LOCAL_IDENTITY"
+    }
+
+
 def test_holding_missing_numeric_values_stay_unknown_not_zero() -> None:
     payload = krx_etf_pdf_payload()
     mapped = map_krx_holding_snapshot(
@@ -434,7 +531,7 @@ def test_zero_holding_value_is_preserved_as_zero() -> None:
     )
 
 
-def test_conflicting_holding_identity_fails_closed() -> None:
+def test_conflicting_holding_identity_is_skipped_without_losing_other_lots() -> None:
     payload = krx_etf_pdf_payload()
     conflicting_index = OfficialIdentityIndex(
         exact_entries=(
@@ -449,16 +546,17 @@ def test_conflicting_holding_identity_fails_closed() -> None:
         )
     )
 
-    with pytest.raises(SourceVerificationError) as captured:
-        map_krx_holding_snapshot(
-            _manifest(payload),
-            parse_krx_etf_pdf_csv(payload),
-            binding=_binding(),
-            security_index=conflicting_index,
-        )
+    mapped = map_krx_holding_snapshot(
+        _manifest(payload),
+        parse_krx_etf_pdf_csv(payload),
+        binding=_binding(),
+        security_index=conflicting_index,
+    )
 
-    assert captured.value.code == "KRX_ETF_HOLDING_IDENTITY_CONFLICT"
-    assert captured.value.__cause__ is None
+    assert len(_records(mapped, "relation.relation_record")) == 2
+    assert {issue.code for issue in mapped.issues} >= {
+        "KRX_ETF_HOLDING_IDENTITY_CONFLICT"
+    }
 
 
 def test_empty_official_pdf_is_not_covered() -> None:

@@ -240,7 +240,7 @@ git commit -m "feat: enforce organizer fact authority"
 - Preserves: 75,216 `holdsSecurity` source lots; identity enrichment must not
   merge or aggregate lots.
 
-- [ ] **Step 1: Add identity-precedence and ambiguity tests**
+- [x] **Step 1: Add identity-precedence and ambiguity tests**
 
 Add cases for one exact KRX match, an ambiguous code, and no KRX match. Assert:
 
@@ -254,7 +254,7 @@ assert unresolved_holding.issue.code == (
 
 Assert that security-name or ticker similarity never creates a binding.
 
-- [ ] **Step 2: Run the focused KRX tests and record the failing assertion**
+- [x] **Step 2: Run the focused KRX tests and record the failing assertion**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -262,7 +262,7 @@ Assert that security-name or ticker similarity never creates a binding.
   tests/ingestion/test_krx_holdings.py -q
 ```
 
-- [ ] **Step 3: Capture or import the exact current KRX basic bytes**
+- [x] **Step 3: Capture or import the exact current KRX basic bytes**
 
 Use the existing KRX API capture boundary and the configured secret file. The
 capture must write immutable objects and manifests under the ignored output
@@ -278,18 +278,19 @@ publisher_code: KRX
 Reject empty responses, duplicate standard codes, duplicate short codes,
 schema drift, future dates, checksum mismatch, and partial pagination.
 
-- [ ] **Step 4: Reuse the security index in the holdings mapper**
+- [x] **Step 4: Reuse the security index in the holdings mapper**
 
 Keep organizer exact identity first, current KRX identity second, and
 source-local security last. Quarantine ambiguity. Do not overwrite organizer
 names or organizer product facts.
 
-- [ ] **Step 5: Run the real inventory and binding gate**
+- [x] **Step 5: Run the real inventory and binding gate**
 
 ```bash
 RUN_CURRENT_KRX_HOLDINGS_TESTS=1 \
 FINANCIAL_AGENT_PREF01N001_DATA_PATH="$CURRENT_ORGANIZER_ROOT/pref01n001_data.xlsx" \
 FINANCIAL_AGENT_KRX_HOLDINGS_ROOT="$CURRENT_KRX_HOLDINGS_ROOT" \
+FINANCIAL_AGENT_CURRENT_KRX_IDENTITY_CAPTURE_ROOT="$CURRENT_KRX_IDENTITY_CAPTURE_ROOT" \
 .venv/bin/python -m pytest \
   tests/ingestion/test_real_current_krx_holdings.py -m organizer_data -q
 ```
@@ -298,7 +299,7 @@ Expected: 1,161 ETF files and 75,216 holding relations remain; the test records
 measured exact, ambiguous, and source-local identity counts without assuming
 that every holding is a KRX-listed equity.
 
-- [ ] **Step 6: Commit current KRX security enrichment**
+- [x] **Step 6: Commit current KRX security enrichment**
 
 ```bash
 git add \
