@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from tests.fixtures.db.synthetic_dataset import (
     CREATED_AT,
@@ -18,6 +19,85 @@ from tests.fixtures.db.synthetic_dataset import (
 VALID_CHECKSUM = "c" * 64
 VALID_DEFINITION_HASH = "d" * 64
 VALID_MODEL_HASH = "e" * 64
+
+
+def test_document_corpus_metadata_is_registered() -> None:
+    from financial_agent.db.schema.document import (
+        BINDING_ROLES,
+        COVERAGE_STATUSES,
+        DOCUMENT_ROLES,
+        document_chunk,
+        document_coverage,
+        document_entity_binding,
+        document_profile,
+    )
+
+    assert DOCUMENT_ROLES == (
+        "product_summary",
+        "product_full",
+        "index_methodology",
+        "official_update",
+        "policy_base",
+    )
+    assert COVERAGE_STATUSES == (
+        "indexed",
+        "document_not_found",
+        "ambiguous_entity_binding",
+        "after_cutoff_only",
+        "version_unknown",
+        "unreadable_document",
+        "publisher_not_approved",
+        "section_missing",
+        "not_applicable_current_scope",
+        "review_required_chunk_budget",
+    )
+    assert BINDING_ROLES == (
+        "subject_product",
+        "subject_index",
+        "subject_policy",
+    )
+    assert {
+        "dataset_version",
+        "document_id",
+        "document_version",
+        "publisher_role",
+        "jurisdiction",
+        "original_language",
+        "effective_from",
+        "effective_to",
+        "amends_document_id",
+        "extraction_method",
+        "cutoff_eligible",
+        "record_hash",
+        "created_at",
+    } == set(document_profile.c.keys())
+    assert {
+        "dataset_version",
+        "binding_id",
+        "document_id",
+        "entity_id",
+        "binding_role",
+        "record_hash",
+        "created_at",
+    } == set(document_entity_binding.c.keys())
+    assert {
+        "dataset_version",
+        "coverage_id",
+        "entity_id",
+        "required_document_role",
+        "coverage_status",
+        "document_id",
+        "scope_evidence_id",
+        "reason_code",
+        "record_hash",
+        "created_at",
+    } == set(document_coverage.c.keys())
+    assert {
+        "section_type",
+        "section_path",
+        "character_start",
+        "character_end",
+    } <= set(document_chunk.c.keys())
 
 
 @pytest.fixture
@@ -181,6 +261,10 @@ def insert_chunk(
     page_end: int = 1,
     sentence_start: int = 0,
     sentence_end: int = 0,
+    section_type: str = "risk_factor",
+    section_path: str = "risk",
+    character_start: int = 0,
+    character_end: int = 9,
     content_hash: str = VALID_CHECKSUM,
 ) -> None:
     connection.execute(
@@ -189,9 +273,11 @@ def insert_chunk(
             dataset_version, chunk_id, document_id, parent_chunk_id,
             ordinal, page_start, page_end, section, sentence_start,
             sentence_end, exact_text, normalized_search_text, content_hash,
-            record_hash, created_at
+            record_hash, created_at, section_type, section_path,
+            character_start, character_end
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, 'risk', %s, %s,
-                  '정확한 합성 원문', '정확한 합성 원문', %s, %s, %s)
+                  '정확한 합성 원문', '정확한 합성 원문', %s, %s, %s,
+                  %s, %s, %s, %s)
         """,
         (
             dataset_version,
@@ -204,6 +290,139 @@ def insert_chunk(
             sentence_start,
             sentence_end,
             content_hash,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+            section_type,
+            section_path,
+            character_start,
+            character_end,
+        ),
+    )
+
+
+def insert_document_profile(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    document_id: str = "document-one",
+    effective_from: str = "2026-01-01",
+    effective_to: str | None = "2026-08-24",
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO document.document_profile (
+            dataset_version, document_id, document_version, publisher_role,
+            jurisdiction, original_language, effective_from, effective_to,
+            amends_document_id, extraction_method, cutoff_eligible,
+            record_hash, created_at
+        ) VALUES (%s, %s, 'v1', 'issuer', 'KR', 'ko', %s, %s, NULL,
+                  'text_layer', true, %s, %s)
+        """,
+        (
+            dataset_version,
+            document_id,
+            effective_from,
+            effective_to,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+
+
+def insert_document_binding(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    binding_id: str = "binding-one",
+    document_id: str = "document-one",
+    entity_id: str = "subject-one",
+    binding_role: str = "subject_product",
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO document.document_entity_binding (
+            dataset_version, binding_id, document_id, entity_id,
+            binding_role, record_hash, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            dataset_version,
+            binding_id,
+            document_id,
+            entity_id,
+            binding_role,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+
+
+def insert_scope_evidence(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    evidence_id: str = "scope-one",
+    evidence_kind: str = "query_scope",
+) -> None:
+    scope_completeness = (
+        "bounded_unknown" if evidence_kind == "query_scope" else None
+    )
+    tagged_value = {"type": "string", "value": "document coverage scope"}
+    connection.execute(
+        """
+        INSERT INTO evidence.evidence_record (
+            dataset_version, evidence_id, evidence_kind, source_id,
+            subject_id, predicate_id, value_or_object_id, normalized_value,
+            locator_type, locator_uri_or_object_key, parser_version,
+            mapping_version, cutoff_status, record_hash, scope_completeness,
+            created_at
+        ) VALUES (%s, %s, %s, 'source-one', 'subject-one',
+                  'document_coverage_scope', %s, %s, 'tabular',
+                  'synthetic://document/coverage', 'parser.v1', 'mapping.v1',
+                  'eligible', %s, %s, %s)
+        """,
+        (
+            dataset_version,
+            evidence_id,
+            evidence_kind,
+            Jsonb(tagged_value),
+            Jsonb(tagged_value),
+            VALID_RECORD_HASH,
+            scope_completeness,
+            CREATED_AT,
+        ),
+    )
+
+
+def insert_document_coverage(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    coverage_id: str = "coverage-one",
+    entity_id: str = "subject-one",
+    required_document_role: str = "product_summary",
+    coverage_status: str = "indexed",
+    document_id: str | None = "document-one",
+    scope_evidence_id: str | None = None,
+    reason_code: str | None = None,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO document.document_coverage (
+            dataset_version, coverage_id, entity_id, required_document_role,
+            coverage_status, document_id, scope_evidence_id, reason_code,
+            record_hash, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            dataset_version,
+            coverage_id,
+            entity_id,
+            required_document_role,
+            coverage_status,
+            document_id,
+            scope_evidence_id,
+            reason_code,
             VALID_RECORD_HASH,
             CREATED_AT,
         ),
@@ -529,6 +748,155 @@ def test_document_requires_an_existing_same_version_source(
 
 
 @pytest.mark.postgres
+def test_document_profile_rejects_a_reversed_effective_range(
+    connection: psycopg.Connection,
+) -> None:
+    prepare_document_graph(connection)
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        insert_document_profile(
+            connection,
+            dataset_version="facts-v1",
+            effective_from="2026-08-24",
+            effective_to="2026-01-01",
+        )
+
+
+@pytest.mark.postgres
+def test_document_binding_entity_must_belong_to_the_same_dataset_version(
+    connection: psycopg.Connection,
+) -> None:
+    prepare_document_graph(connection)
+    insert_building_dataset(connection, "facts-v2")
+    insert_entity(
+        connection,
+        dataset_version="facts-v2",
+        entity_id="subject-one",
+    )
+
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        insert_document_binding(connection, dataset_version="facts-v1")
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("document_id", "scope_evidence_id", "reason_code"),
+    (
+        (None, None, None),
+        ("document-one", None, "unexpected-reason"),
+        ("document-one", "scope-one", None),
+    ),
+)
+def test_indexed_coverage_requires_only_a_document_reference(
+    connection: psycopg.Connection,
+    document_id: str | None,
+    scope_evidence_id: str | None,
+    reason_code: str | None,
+) -> None:
+    prepare_document_graph(connection)
+    insert_entity(connection, dataset_version="facts-v1", entity_id="subject-one")
+    insert_scope_evidence(connection, dataset_version="facts-v1")
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        insert_document_coverage(
+            connection,
+            dataset_version="facts-v1",
+            document_id=document_id,
+            scope_evidence_id=scope_evidence_id,
+            reason_code=reason_code,
+        )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("document_id", "scope_evidence_id", "reason_code"),
+    (
+        ("document-one", "scope-one", "document-not-found"),
+        (None, None, "document-not-found"),
+        (None, "scope-one", None),
+        (None, "scope-one", ""),
+    ),
+)
+def test_nonindexed_coverage_requires_scope_evidence_and_a_reason(
+    connection: psycopg.Connection,
+    document_id: str | None,
+    scope_evidence_id: str | None,
+    reason_code: str | None,
+) -> None:
+    prepare_document_graph(connection)
+    insert_entity(connection, dataset_version="facts-v1", entity_id="subject-one")
+    insert_scope_evidence(connection, dataset_version="facts-v1")
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        insert_document_coverage(
+            connection,
+            dataset_version="facts-v1",
+            coverage_status="document_not_found",
+            document_id=document_id,
+            scope_evidence_id=scope_evidence_id,
+            reason_code=reason_code,
+        )
+
+
+@pytest.mark.postgres
+def test_nonindexed_coverage_rejects_non_scope_evidence(
+    connection: psycopg.Connection,
+) -> None:
+    prepare_document_graph(connection)
+    insert_entity(connection, dataset_version="facts-v1", entity_id="subject-one")
+    insert_scope_evidence(
+        connection,
+        dataset_version="facts-v1",
+        evidence_kind="exclusion",
+    )
+    insert_document_coverage(
+        connection,
+        dataset_version="facts-v1",
+        coverage_status="document_not_found",
+        document_id=None,
+        scope_evidence_id="scope-one",
+        reason_code="document-not-found",
+    )
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("required_document_role", "coverage_status", "binding_role"),
+    (
+        ("unsupported_role", "indexed", "subject_product"),
+        ("product_summary", "unsupported_status", "subject_product"),
+        ("product_summary", "indexed", "unsupported_binding"),
+    ),
+)
+def test_document_corpus_rejects_unregistered_vocabulary_values(
+    connection: psycopg.Connection,
+    required_document_role: str,
+    coverage_status: str,
+    binding_role: str,
+) -> None:
+    prepare_document_graph(connection)
+    insert_entity(connection, dataset_version="facts-v1", entity_id="subject-one")
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        if binding_role == "unsupported_binding":
+            insert_document_binding(
+                connection,
+                dataset_version="facts-v1",
+                binding_role=binding_role,
+            )
+        else:
+            insert_document_coverage(
+                connection,
+                dataset_version="facts-v1",
+                required_document_role=required_document_role,
+                coverage_status=coverage_status,
+            )
+
+
+@pytest.mark.postgres
 def test_parent_chunk_must_belong_to_the_same_document_and_dataset(
     connection: psycopg.Connection,
 ) -> None:
@@ -572,6 +940,21 @@ def test_chunk_rejects_reversed_page_or_sentence_ranges(
             page_end=page_end,
             sentence_start=sentence_start,
             sentence_end=sentence_end,
+        )
+
+
+@pytest.mark.postgres
+def test_chunk_rejects_a_reversed_character_range(
+    connection: psycopg.Connection,
+) -> None:
+    prepare_document_graph(connection)
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        insert_chunk(
+            connection,
+            dataset_version="facts-v1",
+            character_start=10,
+            character_end=9,
         )
 
 
@@ -939,6 +1322,48 @@ def test_versioned_fact_document_and_embedding_rows_freeze_after_validation(
 
 
 @pytest.mark.postgres
+@pytest.mark.parametrize(
+    "mutation_sql",
+    (
+        """
+        UPDATE document.document_profile
+        SET extraction_method = 'changed'
+        WHERE dataset_version = 'facts-v1' AND document_id = 'document-one'
+        """,
+        """
+        UPDATE document.document_entity_binding
+        SET binding_role = 'subject_index'
+        WHERE dataset_version = 'facts-v1' AND binding_id = 'binding-one'
+        """,
+        """
+        UPDATE document.document_coverage
+        SET reason_code = 'changed'
+        WHERE dataset_version = 'facts-v1' AND coverage_id = 'coverage-one'
+        """,
+    ),
+)
+def test_document_corpus_rows_freeze_after_validation(
+    connection: psycopg.Connection,
+    mutation_sql: str,
+) -> None:
+    prepare_document_graph(connection)
+    insert_entity(connection, dataset_version="facts-v1", entity_id="subject-one")
+    insert_document_profile(connection, dataset_version="facts-v1")
+    insert_document_binding(connection, dataset_version="facts-v1")
+    insert_document_coverage(connection, dataset_version="facts-v1")
+    connection.execute(
+        """
+        UPDATE operations.dataset_version
+        SET status = 'validated'
+        WHERE dataset_version = 'facts-v1'
+        """
+    )
+
+    with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState):
+        connection.execute(mutation_sql)
+
+
+@pytest.mark.postgres
 def test_task4_table_privileges_match_mutability_policy(
     connection: psycopg.Connection,
 ) -> None:
@@ -956,6 +1381,15 @@ def test_task4_table_privileges_match_mutability_policy(
             "SELECT", "INSERT", "UPDATE", "DELETE"
         },
         ("document", "document_chunk"): {
+            "SELECT", "INSERT", "UPDATE", "DELETE"
+        },
+        ("document", "document_profile"): {
+            "SELECT", "INSERT", "UPDATE", "DELETE"
+        },
+        ("document", "document_entity_binding"): {
+            "SELECT", "INSERT", "UPDATE", "DELETE"
+        },
+        ("document", "document_coverage"): {
             "SELECT", "INSERT", "UPDATE", "DELETE"
         },
         ("search", "document_embedding"): {
@@ -1005,6 +1439,9 @@ def test_task4_objects_have_migration_ownership_and_hardened_trigger_functions(
         ("search", "validate_document_embedding"): (
             "search_path=pg_catalog, search, cdb_admin, pg_temp"
         ),
+        ("document", "validate_document_coverage_scope_evidence"): (
+            "search_path=pg_catalog, document, evidence, pg_temp"
+        ),
     }
     function_rows = connection.execute(
         """
@@ -1029,7 +1466,8 @@ def test_task4_objects_have_migration_ownership_and_hardened_trigger_functions(
         WHERE (namespace.nspname, procedure.proname) IN (
             ('evidence', 'validate_source_publisher_type'),
             ('observation', 'validate_metric_value_kind'),
-            ('search', 'validate_document_embedding')
+            ('search', 'validate_document_embedding'),
+            ('document', 'validate_document_coverage_scope_evidence')
         )
         """
     ).fetchall()
@@ -1071,12 +1509,15 @@ def test_task4_objects_have_migration_ownership_and_hardened_trigger_functions(
               ('relation', 'relation_record'),
               ('document', 'document_record'),
               ('document', 'document_chunk'),
+              ('document', 'document_profile'),
+              ('document', 'document_entity_binding'),
+              ('document', 'document_coverage'),
               ('search', 'embedding_model'),
               ('search', 'document_embedding')
           )
         """
     ).fetchall()
-    assert len(table_owners) == 8
+    assert len(table_owners) == 11
     assert {str(row[2]) for row in table_owners} == {"fa_migration"}
 
 

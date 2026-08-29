@@ -164,6 +164,17 @@ def test_database_object_export_covers_non_table_ddl_and_permissions(
         check["name"] == "ck_dataset_version_cutoff_date"
         for check in manifest["checks"]
     )
+    assert {
+        "ck_document_coverage_state",
+        "ck_document_profile_effective_dates",
+        "ck_document_chunk_character_range",
+    } <= {check["name"] for check in manifest["checks"]}
+    assert {
+        "reject_document_profile_nonbuilding_mutation",
+        "reject_document_entity_binding_nonbuilding_mutation",
+        "reject_document_coverage_nonbuilding_mutation",
+        "validate_document_coverage_scope_evidence",
+    } <= {trigger["name"] for trigger in manifest["triggers"]}
     assert any(
         owner["owner"] == "fa_migration"
         for owner in manifest["owners"]
@@ -189,6 +200,17 @@ def test_database_object_export_covers_non_table_ddl_and_permissions(
         and owner["owner"] == "fa_migration"
         for owner in manifest["owners"]
     )
+    assert {
+        "document_profile",
+        "document_entity_binding",
+        "document_coverage",
+    } <= {
+        owner["name"]
+        for owner in manifest["owners"]
+        if owner["object_type"] == "table"
+        and owner["schema"] == "document"
+        and owner["owner"] == "fa_migration"
+    }
     alembic_grants = [
         grant
         for grant in manifest["table_grants"]
@@ -207,6 +229,18 @@ def test_database_object_export_covers_non_table_ddl_and_permissions(
         "TRUNCATE",
         "UPDATE",
     }
+    for table_name in (
+        "document_profile",
+        "document_entity_binding",
+        "document_coverage",
+    ):
+        assert {
+            grant["privilege"]
+            for grant in manifest["table_grants"]
+            if grant["schema"] == "document"
+            and grant["name"] == table_name
+            and grant["grantee"] == "fa_build"
+        } == {"SELECT", "INSERT", "UPDATE", "DELETE"}
     assert manifest["column_grants"] == [
         {
             "schema": "operations",
@@ -450,7 +484,7 @@ def test_manifest_and_postflight_reject_redacted_unexpected_principals(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0006",
+                alembic_head="0007",
             )
             with pytest.raises(PreflightFailure) as preflight_error:
                 validate_post_migration_snapshot(snapshot)
@@ -506,7 +540,7 @@ def test_manifest_and_postflight_reject_column_acl_drift(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0006",
+                alembic_head="0007",
             )
             with pytest.raises(PreflightFailure) as preflight_error:
                 validate_post_migration_snapshot(snapshot)
@@ -553,7 +587,7 @@ def test_disposable_database_runs_base_head_base_head_cycle(
 ) -> None:
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0006"
+    assert report.alembic_head == "0007"
     assert report.application_schema_count == 7
     assert report.object_counts["tables"] > 0
     assert report.object_counts["checks"] > 0
@@ -574,6 +608,200 @@ def test_disposable_database_runs_base_head_base_head_cycle(
     assert report.foundation_append_only_enforced is True
     assert report.foundation_concurrent_request_idempotent is True
     assert report.foundation_concurrent_request_conflict_rejected is True
+
+
+@pytest.mark.postgres
+def test_document_corpus_migration_backfills_and_reverses_without_losing_core_rows(
+    postgres_database_url: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "0006")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            connection.execute(
+                """
+                INSERT INTO operations.dataset_version (
+                    dataset_version, cutoff_date, status, manifest_hash,
+                    created_at
+                ) VALUES (
+                    'legacy-document-v1', DATE '2026-07-11', 'building',
+                    repeat('a', 64), TIMESTAMPTZ '2026-08-18 00:00:00+00'
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO catalog.entity (
+                    dataset_version, entity_id, entity_type, canonical_name,
+                    normalized_name, record_hash, created_at
+                ) VALUES (
+                    'legacy-document-v1', 'publisher-one', 'institution',
+                    'Publisher One', 'publisher one', repeat('b', 64),
+                    TIMESTAMPTZ '2026-08-18 00:00:00+00'
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO catalog.institution (
+                    dataset_version, entity_id, institution_kind
+                ) VALUES ('legacy-document-v1', 'publisher-one', 'organizer')
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO evidence.source_record (
+                    dataset_version, source_id, publisher, publisher_type,
+                    source_title, source_type, authority_tier,
+                    source_locator_root, content_checksum,
+                    eligible_for_claim, record_hash, created_at
+                ) VALUES (
+                    'legacy-document-v1', 'source-one', 'publisher-one',
+                    'organizer', 'Legacy source', 'dataset', 'organizer',
+                    'synthetic/source', repeat('c', 64), true,
+                    repeat('b', 64), TIMESTAMPTZ '2026-08-18 00:00:00+00'
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO document.document_record (
+                    dataset_version, document_id, source_id, document_title,
+                    document_type, object_key, content_checksum, record_hash,
+                    created_at
+                ) VALUES (
+                    'legacy-document-v1', 'document-one', 'source-one',
+                    'Legacy Document', 'filing', 'synthetic/document.pdf',
+                    repeat('c', 64), repeat('b', 64),
+                    TIMESTAMPTZ '2026-08-18 00:00:00+00'
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO document.document_chunk (
+                    dataset_version, chunk_id, document_id, ordinal, section,
+                    exact_text, normalized_search_text, content_hash,
+                    record_hash, created_at
+                ) VALUES (
+                    'legacy-document-v1', 'chunk-one', 'document-one', 0,
+                    NULL, 'legacy text', 'legacy text', repeat('c', 64),
+                    repeat('b', 64), TIMESTAMPTZ '2026-08-18 00:00:00+00'
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO search.embedding_model (
+                    model_id, model_version, dimension, distance_metric,
+                    approval_record_id, approved_at, model_hash
+                ) VALUES (
+                    'model-one', '1', 3, 'cosine', 'approval-one',
+                    TIMESTAMPTZ '2026-08-18 00:00:00+00', repeat('d', 64)
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO search.document_embedding (
+                    dataset_version, embedding_id, document_id, chunk_id,
+                    chunk_content_hash, model_id, model_version, dimension,
+                    embedding, created_at
+                ) VALUES (
+                    'legacy-document-v1', 'embedding-one', 'document-one',
+                    'chunk-one', repeat('c', 64), 'model-one', '1', 3,
+                    '[1,2,3]'::cdb_admin.vector,
+                    TIMESTAMPTZ '2026-08-18 00:00:00+00'
+                )
+                """
+            )
+            connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                """
+                SELECT section_type, section_path, character_start,
+                       character_end
+                FROM document.document_chunk
+                WHERE dataset_version = 'legacy-document-v1'
+                  AND chunk_id = 'chunk-one'
+                """
+            ).fetchone() == (
+                "legacy_unclassified",
+                "Legacy Document",
+                0,
+                11,
+            )
+            assert connection.execute(
+                """
+                SELECT conname
+                FROM pg_catalog.pg_constraint
+                WHERE conrelid = 'document.document_record'::regclass
+                  AND contype = 'p'
+                """
+            ).fetchone()[0] == "pk_document_record"
+            assert connection.execute(
+                """
+                SELECT conname
+                FROM pg_catalog.pg_constraint
+                WHERE conrelid = 'search.document_embedding'::regclass
+                  AND contype = 'p'
+                """
+            ).fetchone()[0] == "pk_document_embedding"
+
+        with configured_alembic_target_only():
+            command.downgrade(config, "0006")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                """
+                SELECT pg_catalog.to_regclass('document.document_profile'),
+                       pg_catalog.to_regclass(
+                           'document.document_entity_binding'
+                       ),
+                       pg_catalog.to_regclass('document.document_coverage')
+                """
+            ).fetchone() == (None, None, None)
+            assert connection.execute(
+                """
+                SELECT count(*)
+                FROM information_schema.columns
+                WHERE table_schema = 'document'
+                  AND table_name = 'document_chunk'
+                  AND column_name IN (
+                      'section_type', 'section_path',
+                      'character_start', 'character_end'
+                  )
+                """
+            ).fetchone()[0] == 0
+            assert connection.execute(
+                """
+                SELECT
+                    (SELECT count(*) FROM document.document_record),
+                    (SELECT count(*) FROM document.document_chunk),
+                    (SELECT count(*) FROM search.document_embedding)
+                """
+            ).fetchone() == (1, 1, 1)
+
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                """
+                SELECT section_type, section_path, character_start,
+                       character_end
+                FROM document.document_chunk
+                WHERE dataset_version = 'legacy-document-v1'
+                  AND chunk_id = 'chunk-one'
+                """
+            ).fetchone() == (
+                "legacy_unclassified",
+                "Legacy Document",
+                0,
+                11,
+            )
 
 
 @pytest.mark.postgres
@@ -629,7 +857,7 @@ def test_cutoff_rebaseline_preserves_legacy_rows_and_fails_closed_on_downgrade(
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 "SELECT version_num FROM public.alembic_version"
-            ).fetchone()[0] == "0006"
+            ).fetchone()[0] == "0007"
             assert connection.execute(
                 """
                 SELECT count(*) FROM operations.dataset_version
@@ -837,7 +1065,7 @@ def test_migration_cycle_never_uses_an_ambient_database_url(
 
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0006"
+    assert report.alembic_head == "0007"
     assert os.environ["FINANCIAL_AGENT_DATABASE_URL"] == stale_url
 
 

@@ -535,9 +535,11 @@ def insert_origin_fixtures(connection: psycopg.Connection) -> None:
         """
         INSERT INTO document.document_chunk (
             dataset_version, chunk_id, document_id, ordinal, exact_text,
-            normalized_search_text, content_hash, record_hash, created_at
+            normalized_search_text, content_hash, record_hash, created_at,
+            section_type, section_path, character_start, character_end
         ) VALUES ('ledger-v1', 'chunk-one', 'document-one', 0, 'Synthetic text',
-                  'synthetic text', %s, %s, %s)
+                  'synthetic text', %s, %s, %s, 'legacy_unclassified',
+                  'Synthetic doc', 0, 14)
         """,
         ("f" * 64, VALID_RECORD_HASH, CREATED_AT),
     )

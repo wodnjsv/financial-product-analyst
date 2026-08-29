@@ -11,6 +11,15 @@
       ]
     },
     {
+      "schema": "document",
+      "name": "validate_document_coverage_scope_evidence",
+      "identity_arguments": "",
+      "definition": "CREATE OR REPLACE FUNCTION document.validate_document_coverage_scope_evidence()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'document', 'evidence', 'pg_temp'\nAS $function$\n        DECLARE\n            scope_evidence_kind text;\n        BEGIN\n            IF NEW.coverage_status <> 'indexed' THEN\n                SELECT evidence_record.evidence_kind\n                  INTO scope_evidence_kind\n                  FROM evidence.evidence_record AS evidence_record\n                 WHERE evidence_record.dataset_version = NEW.dataset_version\n                   AND evidence_record.evidence_id = NEW.scope_evidence_id\n                 FOR KEY SHARE;\n                IF scope_evidence_kind IS NULL OR\n                   scope_evidence_kind NOT IN ('query_scope', 'policy') THEN\n                    RAISE EXCEPTION 'DOCUMENT_COVERAGE_SCOPE_EVIDENCE_INVALID'\n                        USING ERRCODE = '23514';\n                END IF;\n            END IF;\n            RETURN NEW;\n        END\n        $function$",
+      "configuration": [
+        "search_path=pg_catalog, document, evidence, pg_temp"
+      ]
+    },
+    {
       "schema": "evidence",
       "name": "is_valid_tagged_value",
       "identity_arguments": "candidate jsonb",
@@ -273,6 +282,30 @@
       "table": "document_chunk",
       "name": "reject_document_chunk_nonbuilding_mutation",
       "definition": "CREATE TRIGGER reject_document_chunk_nonbuilding_mutation BEFORE INSERT OR DELETE OR UPDATE ON document.document_chunk FOR EACH ROW EXECUTE FUNCTION operations.reject_nonbuilding_dataset_mutation()"
+    },
+    {
+      "schema": "document",
+      "table": "document_coverage",
+      "name": "reject_document_coverage_nonbuilding_mutation",
+      "definition": "CREATE TRIGGER reject_document_coverage_nonbuilding_mutation BEFORE INSERT OR DELETE OR UPDATE ON document.document_coverage FOR EACH ROW EXECUTE FUNCTION operations.reject_nonbuilding_dataset_mutation()"
+    },
+    {
+      "schema": "document",
+      "table": "document_coverage",
+      "name": "validate_document_coverage_scope_evidence",
+      "definition": "CREATE CONSTRAINT TRIGGER validate_document_coverage_scope_evidence AFTER INSERT OR UPDATE OF dataset_version, coverage_status, scope_evidence_id ON document.document_coverage DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION document.validate_document_coverage_scope_evidence()"
+    },
+    {
+      "schema": "document",
+      "table": "document_entity_binding",
+      "name": "reject_document_entity_binding_nonbuilding_mutation",
+      "definition": "CREATE TRIGGER reject_document_entity_binding_nonbuilding_mutation BEFORE INSERT OR DELETE OR UPDATE ON document.document_entity_binding FOR EACH ROW EXECUTE FUNCTION operations.reject_nonbuilding_dataset_mutation()"
+    },
+    {
+      "schema": "document",
+      "table": "document_profile",
+      "name": "reject_document_profile_nonbuilding_mutation",
+      "definition": "CREATE TRIGGER reject_document_profile_nonbuilding_mutation BEFORE INSERT OR DELETE OR UPDATE ON document.document_profile FOR EACH ROW EXECUTE FUNCTION operations.reject_nonbuilding_dataset_mutation()"
     },
     {
       "schema": "document",
@@ -663,6 +696,18 @@
     {
       "schema": "document",
       "table": "document_chunk",
+      "name": "ck_document_chunk_character_range",
+      "definition": "CHECK (character_end >= character_start)"
+    },
+    {
+      "schema": "document",
+      "table": "document_chunk",
+      "name": "ck_document_chunk_character_start",
+      "definition": "CHECK (character_start >= 0)"
+    },
+    {
+      "schema": "document",
+      "table": "document_chunk",
       "name": "ck_document_chunk_content_hash",
       "definition": "CHECK (content_hash ~ '^[0-9a-f]{64}$'::text)"
     },
@@ -699,6 +744,18 @@
     {
       "schema": "document",
       "table": "document_chunk",
+      "name": "ck_document_chunk_section_path",
+      "definition": "CHECK (section_path <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_chunk",
+      "name": "ck_document_chunk_section_type",
+      "definition": "CHECK (section_type <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_chunk",
       "name": "ck_document_chunk_sentence_range",
       "definition": "CHECK (sentence_end IS NULL OR sentence_start IS NOT NULL AND sentence_end >= sentence_start)"
     },
@@ -707,6 +764,84 @@
       "table": "document_chunk",
       "name": "ck_document_chunk_sentence_start",
       "definition": "CHECK (sentence_start IS NULL OR sentence_start >= 0)"
+    },
+    {
+      "schema": "document",
+      "table": "document_coverage",
+      "name": "ck_document_coverage_coverage_status",
+      "definition": "CHECK (coverage_status = ANY (ARRAY['indexed'::text, 'document_not_found'::text, 'ambiguous_entity_binding'::text, 'after_cutoff_only'::text, 'version_unknown'::text, 'unreadable_document'::text, 'publisher_not_approved'::text, 'section_missing'::text, 'not_applicable_current_scope'::text, 'review_required_chunk_budget'::text]))"
+    },
+    {
+      "schema": "document",
+      "table": "document_coverage",
+      "name": "ck_document_coverage_record_hash",
+      "definition": "CHECK (record_hash ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_coverage",
+      "name": "ck_document_coverage_required_document_role",
+      "definition": "CHECK (required_document_role = ANY (ARRAY['product_summary'::text, 'product_full'::text, 'index_methodology'::text, 'official_update'::text, 'policy_base'::text]))"
+    },
+    {
+      "schema": "document",
+      "table": "document_coverage",
+      "name": "ck_document_coverage_state",
+      "definition": "CHECK (coverage_status = 'indexed'::text AND document_id IS NOT NULL AND scope_evidence_id IS NULL AND reason_code IS NULL OR coverage_status <> 'indexed'::text AND document_id IS NULL AND scope_evidence_id IS NOT NULL AND reason_code IS NOT NULL AND reason_code <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_entity_binding",
+      "name": "ck_document_entity_binding_binding_role",
+      "definition": "CHECK (binding_role = ANY (ARRAY['subject_product'::text, 'subject_index'::text, 'subject_policy'::text]))"
+    },
+    {
+      "schema": "document",
+      "table": "document_entity_binding",
+      "name": "ck_document_entity_binding_record_hash",
+      "definition": "CHECK (record_hash ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_profile",
+      "name": "ck_document_profile_document_version",
+      "definition": "CHECK (document_version <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_profile",
+      "name": "ck_document_profile_effective_dates",
+      "definition": "CHECK (effective_to IS NULL OR effective_to >= effective_from)"
+    },
+    {
+      "schema": "document",
+      "table": "document_profile",
+      "name": "ck_document_profile_extraction_method",
+      "definition": "CHECK (extraction_method <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_profile",
+      "name": "ck_document_profile_jurisdiction",
+      "definition": "CHECK (jurisdiction <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_profile",
+      "name": "ck_document_profile_original_language",
+      "definition": "CHECK (original_language <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_profile",
+      "name": "ck_document_profile_publisher_role",
+      "definition": "CHECK (publisher_role <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_profile",
+      "name": "ck_document_profile_record_hash",
+      "definition": "CHECK (record_hash ~ '^[0-9a-f]{64}$'::text)"
     },
     {
       "schema": "document",
@@ -1318,6 +1453,12 @@
     },
     {
       "object_type": "function",
+      "schema": "document",
+      "name": "validate_document_coverage_scope_evidence()",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "function",
       "schema": "evidence",
       "name": "is_valid_tagged_value(candidate jsonb)",
       "owner": "fa_migration"
@@ -1524,6 +1665,24 @@
       "object_type": "table",
       "schema": "document",
       "name": "document_chunk",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "table",
+      "schema": "document",
+      "name": "document_coverage",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "table",
+      "schema": "document",
+      "name": "document_entity_binding",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "table",
+      "schema": "document",
+      "name": "document_profile",
       "owner": "fa_migration"
     },
     {
@@ -2316,6 +2475,258 @@
     {
       "schema": "document",
       "name": "document_chunk",
+      "grantee": "fa_runtime",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_build",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_build",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_build",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_build",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_migration",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_migration",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_migration",
+      "privilege": "REFERENCES",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_migration",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_migration",
+      "privilege": "TRIGGER",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_migration",
+      "privilege": "TRUNCATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_migration",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_coverage",
+      "grantee": "fa_runtime",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_build",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_build",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_build",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_build",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_migration",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_migration",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_migration",
+      "privilege": "REFERENCES",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_migration",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_migration",
+      "privilege": "TRIGGER",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_migration",
+      "privilege": "TRUNCATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_migration",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_entity_binding",
+      "grantee": "fa_runtime",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_build",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_build",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_build",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_build",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_migration",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_migration",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_migration",
+      "privilege": "REFERENCES",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_migration",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_migration",
+      "privilege": "TRIGGER",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_migration",
+      "privilege": "TRUNCATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
+      "grantee": "fa_migration",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_profile",
       "grantee": "fa_runtime",
       "privilege": "SELECT",
       "grantable": false
@@ -4747,6 +5158,14 @@
     {
       "schema": "catalog",
       "name": "validate_entity_subtype",
+      "identity_arguments": "",
+      "grantee": "fa_migration",
+      "privilege": "EXECUTE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "validate_document_coverage_scope_evidence",
       "identity_arguments": "",
       "grantee": "fa_migration",
       "privilege": "EXECUTE",
