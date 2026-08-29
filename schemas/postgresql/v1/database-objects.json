@@ -805,7 +805,7 @@
       "schema": "document",
       "table": "document_profile",
       "name": "ck_document_profile_document_version",
-      "definition": "CHECK (document_version <> ''::text)"
+      "definition": "CHECK (btrim(document_version) <> ''::text)"
     },
     {
       "schema": "document",

@@ -183,7 +183,8 @@ def _admit(
             "after_cutoff_only",
         )
     if (
-        not candidate.document_version
+        candidate.document_version is None
+        or not candidate.document_version.strip()
         or candidate.effective_from is None
         or candidate.effective_from > cutoff_date
         or (

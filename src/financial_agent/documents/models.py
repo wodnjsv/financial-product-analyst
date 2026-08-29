@@ -43,6 +43,13 @@ class SectionType(str, Enum):
     LEGACY_UNCLASSIFIED = "legacy_unclassified"
 
 
+SEARCHABLE_SECTION_TYPES = frozenset(
+    section
+    for section in SectionType
+    if section is not SectionType.LEGACY_UNCLASSIFIED
+)
+
+
 class PublisherRole(str, Enum):
     REGULATOR_DISCLOSURE = "regulator_disclosure"
     ASSET_MANAGER = "asset_manager"

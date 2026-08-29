@@ -789,6 +789,14 @@ def test_document_corpus_migration_backfills_blank_sections_and_reverses_core_ro
                   AND contype = 'p'
                 """
             ).fetchone()[0] == "pk_document_embedding"
+            assert connection.execute(
+                """
+                SELECT pg_catalog.pg_get_constraintdef(oid)
+                FROM pg_catalog.pg_constraint
+                WHERE conrelid = 'document.document_profile'::regclass
+                  AND conname = 'ck_document_profile_document_version'
+                """
+            ).fetchone()[0] == "CHECK ((btrim(document_version) <> ''::text))"
 
         with configured_alembic_target_only():
             command.downgrade(config, "0006")

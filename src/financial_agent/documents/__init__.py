@@ -9,6 +9,7 @@ from .models import (
     DocumentCoverageDraft,
     DocumentRole,
     PublisherRole,
+    SEARCHABLE_SECTION_TYPES,
     SectionType,
 )
 from .policy import (
@@ -28,6 +29,7 @@ __all__ = [
     "DocumentCoverageDraft",
     "DocumentRole",
     "PublisherRole",
+    "SEARCHABLE_SECTION_TYPES",
     "SectionType",
     "admit_document",
     "binding_roles_for_document_role",

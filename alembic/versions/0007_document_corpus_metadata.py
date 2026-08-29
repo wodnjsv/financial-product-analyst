@@ -110,7 +110,7 @@ def upgrade() -> None:
         sa.Column("record_hash", sa.CHAR(length=64), nullable=False),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.CheckConstraint(
-            "document_version <> ''",
+            "btrim(document_version) <> ''",
             name=op.f("ck_document_profile_document_version"),
         ),
         sa.CheckConstraint(

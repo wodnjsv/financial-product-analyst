@@ -526,6 +526,60 @@ def test_valid_corpus_passes_repository_validation() -> None:
     DocumentCorpusRepository.validate_corpus(_corpus())
 
 
+@pytest.mark.parametrize("document_version", (None, "", " \t "))
+def test_corpus_rejects_blank_document_version(
+    document_version: str | None,
+) -> None:
+    corpus = _corpus()
+
+    with pytest.raises(DocumentCorpusValidationError, match="document_version"):
+        DocumentCorpusRepository.validate_corpus(
+            replace(
+                corpus,
+                profile=replace(
+                    corpus.profile,
+                    document_version=document_version,
+                ),
+            )
+        )
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_corpus_preserves_surrounding_document_version_whitespace(
+    repository_engine: AsyncEngine,
+    migrated_database_url: str,
+) -> None:
+    dataset_version, entity_id = _prepare_context(migrated_database_url)
+    corpus = _corpus(dataset_version=dataset_version, entity_id=entity_id)
+    version = " 2026-08-01 "
+    corpus = replace(
+        corpus,
+        profile=replace(corpus.profile, document_version=version),
+    )
+
+    await DocumentCorpusRepository(repository_engine).append_corpus(corpus)
+
+    async with repository_engine.connect() as connection:
+        stored_version = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT document_version
+                    FROM document.document_profile
+                    WHERE dataset_version = :dataset_version
+                      AND document_id = :document_id
+                    """
+                ),
+                {
+                    "dataset_version": dataset_version,
+                    "document_id": corpus.document_id,
+                },
+            )
+        ).scalar_one()
+    assert stored_version == version
+
+
 def test_chunk_record_hash_must_match_authoritative_locators_and_text() -> None:
     corpus = _corpus()
     invalid = replace(

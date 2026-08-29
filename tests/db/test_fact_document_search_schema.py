@@ -305,6 +305,7 @@ def insert_document_profile(
     *,
     dataset_version: str,
     document_id: str = "document-one",
+    document_version: str = "v1",
     effective_from: str = "2026-01-01",
     effective_to: str | None = "2026-08-24",
 ) -> None:
@@ -315,12 +316,13 @@ def insert_document_profile(
             jurisdiction, original_language, effective_from, effective_to,
             amends_document_id, extraction_method, cutoff_eligible,
             record_hash, created_at
-        ) VALUES (%s, %s, 'v1', 'issuer', 'KR', 'ko', %s, %s, NULL,
+        ) VALUES (%s, %s, %s, 'issuer', 'KR', 'ko', %s, %s, NULL,
                   'text_layer', true, %s, %s)
         """,
         (
             dataset_version,
             document_id,
+            document_version,
             effective_from,
             effective_to,
             VALID_RECORD_HASH,
@@ -760,6 +762,46 @@ def test_document_profile_rejects_a_reversed_effective_range(
             effective_from="2026-08-24",
             effective_to="2026-01-01",
         )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("document_version", ("", "   "))
+def test_document_profile_rejects_whitespace_only_document_version(
+    connection: psycopg.Connection,
+    document_version: str,
+) -> None:
+    prepare_document_graph(connection)
+
+    with pytest.raises(psycopg.errors.CheckViolation) as caught:
+        insert_document_profile(
+            connection,
+            dataset_version="facts-v1",
+            document_version=document_version,
+        )
+
+    assert caught.value.diag.constraint_name == "ck_document_profile_document_version"
+
+
+@pytest.mark.postgres
+def test_document_profile_preserves_nonblank_version_verbatim(
+    connection: psycopg.Connection,
+) -> None:
+    prepare_document_graph(connection)
+    version = " v1 "
+    insert_document_profile(
+        connection,
+        dataset_version="facts-v1",
+        document_version=version,
+    )
+
+    assert connection.execute(
+        """
+        SELECT document_version
+        FROM document.document_profile
+        WHERE dataset_version = 'facts-v1'
+          AND document_id = 'document-one'
+        """
+    ).fetchone() == (version,)
 
 
 @pytest.mark.postgres

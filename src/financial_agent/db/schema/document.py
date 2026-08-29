@@ -127,7 +127,7 @@ document_profile = sa.Table(
     sa.PrimaryKeyConstraint(
         "dataset_version", "document_id", name="pk_document_profile"
     ),
-    sa.CheckConstraint("document_version <> ''", name="document_version"),
+    sa.CheckConstraint("btrim(document_version) <> ''", name="document_version"),
     sa.CheckConstraint("publisher_role <> ''", name="publisher_role"),
     sa.CheckConstraint("jurisdiction <> ''", name="jurisdiction"),
     sa.CheckConstraint("original_language <> ''", name="original_language"),

@@ -152,6 +152,27 @@ def test_rejects_unknown_version() -> None:
     assert decision.coverage_status is CoverageStatus.VERSION_UNKNOWN
 
 
+def test_rejects_whitespace_only_version_as_unknown() -> None:
+    decision = admit_document(
+        candidate("blank-version", document_version=" \t "),
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert decision.accepted is False
+    assert decision.coverage_status is CoverageStatus.VERSION_UNKNOWN
+
+
+def test_version_with_surrounding_whitespace_is_accepted_verbatim() -> None:
+    version = " 2026.1 "
+    decision = admit_document(
+        candidate("verbatim-version", document_version=version),
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert decision.accepted is True
+    assert decision.candidate.document_version == version
+
+
 def test_rejects_unreadable_text() -> None:
     decision = admit_document(
         candidate("unreadable", exact_text_available=False),

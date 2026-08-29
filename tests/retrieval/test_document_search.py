@@ -100,6 +100,22 @@ async def candidate_repository(
     await engine.dispose()
 
 
+@pytest_asyncio.fixture
+async def evaluation_candidate_repository(
+    migrated_database_url: str,
+) -> tuple[DocumentCandidateRepository, str]:
+    dataset_version = f"{DATASET_VERSION}-negatives-{uuid4().hex}"
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        insert_document_search_corpus(
+            connection,
+            dataset_version=dataset_version,
+            include_evaluation_fixtures=True,
+        )
+    engine = create_async_engine(migrated_database_url, pool_size=5, max_overflow=0)
+    yield DocumentCandidateRepository(engine), dataset_version
+    await engine.dispose()
+
+
 def test_request_is_immutable_and_rejects_ambiguous_scope() -> None:
     valid = DocumentSearchRequest(
         dataset_version="dataset-v1",
@@ -119,6 +135,7 @@ def test_request_is_immutable_and_rejects_ambiguous_scope() -> None:
         {"claim_type": ""},
         {"section_types": ()},
         {"section_types": (SectionType.RISK_FACTOR, SectionType.RISK_FACTOR)},
+        {"section_types": (SectionType.LEGACY_UNCLASSIFIED,)},
         {"top_k": 0},
         {"top_k": 51},
     ):
@@ -168,6 +185,30 @@ def test_request_accepts_each_supported_claim_family(claim_type: str) -> None:
     )
 
     assert request.claim_type == claim_type
+
+
+def test_metadata_sql_enforces_nonblank_version_and_searchable_sections() -> None:
+    request = DocumentSearchRequest(
+        dataset_version="dataset-v1",
+        entity_ids=("entity-a",),
+        claim_type="risk_factor",
+        section_types=(SectionType.RISK_FACTOR,),
+        cutoff_date=CUTOFF_DATE,
+    )
+    compiled = _metadata_candidates(request).select().compile(
+        dialect=postgresql.dialect()
+    )
+    sql = str(compiled)
+    values = {
+        item
+        for value in compiled.params.values()
+        for item in (value if isinstance(value, list) else [value])
+        if isinstance(item, str)
+    }
+
+    assert "btrim(document.document_profile.document_version)" in sql
+    assert sql.count("document.document_chunk.section_type IN") == 2
+    assert SectionType.LEGACY_UNCLASSIFIED.value not in values
 
 
 @pytest.mark.parametrize(
@@ -716,6 +757,62 @@ async def test_keyword_search_uses_the_same_authority_and_scope_filters(
     assert all(hit.entity_id == "selected-etf" for hit in hits)
     assert all(hit.section_type is SectionType.RISK_FACTOR for hit in hits)
     assert all(hit.keyword_rank is not None and hit.vector_rank is None for hit in hits)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("entity_ids", "claim_type", "section_types", "query_text", "query_embedding"),
+    (
+        (
+            ("policy-fund-one",),
+            "structure",
+            (SectionType.LEGAL_STRUCTURE,),
+            "policy fund structure",
+            (0.0, 0.0, 1.0),
+        ),
+        (
+            ("aerospace-index-one",),
+            "theme_relation_evidence_span",
+            (SectionType.THEME_DEFINITION, SectionType.CHANGE_HISTORY),
+            "aerospace theme",
+            (0.0, 1.0, 0.0),
+        ),
+        (
+            ("selected-etf",),
+            "product_risk_factor",
+            (SectionType.RISK_FACTOR,),
+            "generated summary risk",
+            (1.0, 0.0, 0.0),
+        ),
+    ),
+)
+async def test_generated_summary_is_absent_from_keyword_and_vector_candidates(
+    evaluation_candidate_repository: tuple[DocumentCandidateRepository, str],
+    entity_ids: tuple[str, ...],
+    claim_type: str,
+    section_types: tuple[SectionType, ...],
+    query_text: str,
+    query_embedding: tuple[float, ...],
+) -> None:
+    candidate_repository, dataset_version = evaluation_candidate_repository
+    request = DocumentSearchRequest(
+        dataset_version=dataset_version,
+        entity_ids=entity_ids,
+        claim_type=claim_type,
+        section_types=section_types,
+        cutoff_date=CUTOFF_DATE,
+        query_embedding=query_embedding,
+        model_id=MODEL_ID,
+        model_version=MODEL_VERSION,
+        top_k=10,
+    )
+
+    keyword_hits = await candidate_repository.search_keyword(request, query_text)
+    vector_hits = await candidate_repository.search_vector(request)
+
+    assert "generated-summary" not in {hit.chunk_id for hit in keyword_hits}
+    assert "generated-summary" not in {hit.chunk_id for hit in vector_hits}
 
 
 @pytest.mark.postgres

@@ -23,6 +23,7 @@ from financial_agent.db.schema.operations import dataset_version
 from financial_agent.db.schema.search import document_embedding, embedding_model
 from financial_agent.documents import (
     DocumentRole,
+    SEARCHABLE_SECTION_TYPES,
     SectionType,
     binding_roles_for_document_role,
     document_types_for_role,
@@ -165,6 +166,8 @@ class DocumentSearchRequest:
             not isinstance(value, SectionType) for value in self.section_types
         ):
             raise ValueError("section_types must contain approved SectionType values")
+        if any(value not in SEARCHABLE_SECTION_TYPES for value in self.section_types):
+            raise ValueError("section_types must contain searchable SectionType values")
         if len(set(self.section_types)) != len(self.section_types):
             raise ValueError("section_types must not contain duplicates")
         if isinstance(self.cutoff_date, datetime) or not isinstance(
@@ -483,6 +486,11 @@ def _metadata_candidates(request: DocumentSearchRequest) -> sa.Subquery:
             document_chunk.c.section_type.in_(
                 tuple(section.value for section in request.section_types)
             ),
+            document_chunk.c.section_type.in_(
+                tuple(
+                    sorted(section.value for section in SEARCHABLE_SECTION_TYPES)
+                )
+            ),
             authority,
             source_record.c.eligible_for_claim.is_(True),
             dataset_version.c.status.in_(_SEARCHABLE_DATASET_STATUSES),
@@ -500,6 +508,7 @@ def _metadata_candidates(request: DocumentSearchRequest) -> sa.Subquery:
             )
             <= cutoff_date,
             document_profile.c.effective_from <= cutoff_date,
+            sa.func.btrim(document_profile.c.document_version) != "",
             sa.or_(
                 document_profile.c.effective_to.is_(None),
                 document_profile.c.effective_to >= cutoff_date,

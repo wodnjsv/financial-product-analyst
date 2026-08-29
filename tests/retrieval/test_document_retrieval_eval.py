@@ -408,6 +408,54 @@ async def test_wrong_entity_negative_keeps_isolated_diagnostic_authority() -> No
 
 
 @pytest.mark.asyncio
+async def test_authoritative_auditor_treats_whitespace_version_as_unknown() -> None:
+    chunk_id = "whitespace-version"
+    document_id = f"document-{chunk_id}"
+    connection = _ScriptedConnection(
+        _QueryResult(
+            (
+                {
+                    **_authoritative_row(chunk_id, document_id),
+                    "document_version": " \t ",
+                },
+            )
+        ),
+        _QueryResult(
+            (
+                SimpleNamespace(
+                    entity_id="selected-etf",
+                    binding_role="subject_product",
+                ),
+            )
+        ),
+        _QueryResult(
+            (
+                SimpleNamespace(
+                    entity_id="selected-etf",
+                    required_document_role="product_summary",
+                    coverage_status="indexed",
+                    document_id=document_id,
+                ),
+            )
+        ),
+        _QueryResult(()),
+    )
+    request = DocumentSearchRequest(
+        dataset_version=DATASET_VERSION,
+        entity_ids=("selected-etf",),
+        claim_type="product_risk_factor",
+        section_types=(SectionType.RISK_FACTOR,),
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    gates = await PostgresSafetyAuditor(None)._metadata_gates(  # type: ignore[arg-type]
+        connection, request, chunk_id
+    )
+
+    assert gates == ("version",)
+
+
+@pytest.mark.asyncio
 async def test_superseder_cannot_borrow_authority_from_another_entity() -> None:
     superseder_id = "document-mixed-superseder"
     connection = _ScriptedConnection(

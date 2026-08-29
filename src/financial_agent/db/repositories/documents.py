@@ -243,6 +243,10 @@ class DocumentCorpusRepository:
             raise DocumentCorpusValidationError("profile dataset_version")
         if corpus.profile.document_id != corpus.document_id:
             raise DocumentCorpusValidationError("profile document_id")
+        if not isinstance(corpus.profile.document_version, str) or not (
+            corpus.profile.document_version.strip()
+        ):
+            raise DocumentCorpusValidationError("profile document_version")
         if not corpus.entity_bindings:
             raise DocumentCorpusValidationError("entity_bindings")
         if not corpus.chunks:
