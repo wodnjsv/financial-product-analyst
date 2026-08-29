@@ -17,7 +17,6 @@ _SEOUL = ZoneInfo("Asia/Seoul")
 _BINDING_ROLES = frozenset(
     {"subject_product", "subject_index", "subject_policy"}
 )
-_APPROVED_PUBLISHER_ROLES = frozenset(PublisherRole)
 _ROLE_DOCUMENT_TYPES = {
     DocumentRole.PRODUCT_SUMMARY: frozenset(
         {"summary_prospectus", "full_prospectus"}
@@ -26,6 +25,20 @@ _ROLE_DOCUMENT_TYPES = {
     DocumentRole.INDEX_METHODOLOGY: frozenset({"index_methodology"}),
     DocumentRole.OFFICIAL_UPDATE: frozenset({"official_update"}),
     DocumentRole.POLICY_BASE: frozenset({"policy_base"}),
+}
+_DOCUMENT_TYPE_ROLES = {
+    "summary_prospectus": DocumentRole.PRODUCT_SUMMARY,
+    "full_prospectus": DocumentRole.PRODUCT_FULL,
+    "index_methodology": DocumentRole.INDEX_METHODOLOGY,
+    "official_update": DocumentRole.OFFICIAL_UPDATE,
+    "policy_base": DocumentRole.POLICY_BASE,
+}
+_ROLE_BINDING_ROLES = {
+    DocumentRole.PRODUCT_SUMMARY: frozenset({"subject_product"}),
+    DocumentRole.PRODUCT_FULL: frozenset({"subject_product"}),
+    DocumentRole.INDEX_METHODOLOGY: frozenset({"subject_index"}),
+    DocumentRole.OFFICIAL_UPDATE: _BINDING_ROLES,
+    DocumentRole.POLICY_BASE: frozenset({"subject_policy"}),
 }
 _REQUIRED_CLAIM_TYPES = {
     DocumentRole.PRODUCT_SUMMARY: frozenset(
@@ -81,11 +94,16 @@ def _rejected(
     return AdmissionDecision(False, status, reason_code, candidate)
 
 
-def _binding_reason(candidate: DocumentCandidate) -> str | None:
+def _binding_reason(
+    candidate: DocumentCandidate,
+    required_role: DocumentRole,
+) -> str | None:
     if len(candidate.bound_entity_ids) != 1:
         return "exact_entity_binding_required"
     if candidate.binding_role not in _BINDING_ROLES:
         return "binding_role_not_approved"
+    if candidate.binding_role not in _ROLE_BINDING_ROLES[required_role]:
+        return "binding_role_incompatible_with_document_role"
     return None
 
 
@@ -98,11 +116,9 @@ def _is_aware(value: datetime | None) -> bool:
 
 
 def _publisher_roles_for(
-    required_role: DocumentRole | None,
+    required_role: DocumentRole,
     binding_role: str,
 ) -> frozenset[PublisherRole]:
-    if required_role is None:
-        return _APPROVED_PUBLISHER_ROLES
     if required_role is DocumentRole.OFFICIAL_UPDATE:
         return _OFFICIAL_UPDATE_PUBLISHERS[binding_role]
     return _ROLE_PUBLISHERS[required_role]
@@ -112,9 +128,9 @@ def _admit(
     candidate: DocumentCandidate,
     *,
     cutoff_date: date,
-    required_role: DocumentRole | None,
+    required_role: DocumentRole,
 ) -> AdmissionDecision:
-    binding_reason = _binding_reason(candidate)
+    binding_reason = _binding_reason(candidate, required_role)
     if binding_reason is not None:
         return _rejected(
             candidate,
@@ -180,7 +196,14 @@ def admit_document(
     cutoff_date: date,
 ) -> AdmissionDecision:
     """Admit a candidate only when its identity and official text are provable."""
-    return _admit(candidate, cutoff_date=cutoff_date, required_role=None)
+    required_role = _DOCUMENT_TYPE_ROLES.get(candidate.document_type)
+    if required_role is None:
+        return _rejected(
+            candidate,
+            CoverageStatus.PUBLISHER_NOT_APPROVED,
+            "document_type_not_approved",
+        )
+    return _admit(candidate, cutoff_date=cutoff_date, required_role=required_role)
 
 
 def _selection_key(candidate: DocumentCandidate, required_role: DocumentRole) -> tuple:
@@ -214,11 +237,12 @@ def _rejected_ids(
 
 def _binding_selection(
     candidates: tuple[DocumentCandidate, ...],
+    required_role: DocumentRole,
 ) -> CanonicalDocumentSelection | None:
     binding_failures = tuple(
         (reason, candidate.document_id)
         for candidate in candidates
-        if (reason := _binding_reason(candidate)) is not None
+        if (reason := _binding_reason(candidate, required_role)) is not None
     )
     if binding_failures:
         reason_code, _ = min(binding_failures)
@@ -283,7 +307,7 @@ def select_canonical_document(
             "no_candidate_for_required_role",
             (),
         )
-    binding_selection = _binding_selection(relevant_candidates)
+    binding_selection = _binding_selection(relevant_candidates, required_role)
     if binding_selection is not None:
         return binding_selection
     decisions = tuple(

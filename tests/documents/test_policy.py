@@ -380,3 +380,103 @@ def test_negative_coverage_requires_trimmed_scope_evidence_and_reason(
             reason_code=reason_code,
             record_hash="a" * 64,
         )
+
+
+@pytest.mark.parametrize(
+    ("document_type", "publisher_role", "binding_role"),
+    [
+        ("summary_prospectus", PublisherRole.POLICY_OPERATOR, "subject_product"),
+        ("index_methodology", PublisherRole.ISSUER, "subject_index"),
+        ("policy_base", PublisherRole.ISSUER, "subject_policy"),
+        ("official_update", PublisherRole.INDEX_PROVIDER, "subject_product"),
+        ("official_update", PublisherRole.ISSUER, "subject_index"),
+        ("official_update", PublisherRole.ASSET_MANAGER, "subject_policy"),
+    ],
+)
+def test_direct_admission_rejects_known_wrong_publisher_authority(
+    document_type: str,
+    publisher_role: PublisherRole,
+    binding_role: str,
+) -> None:
+    decision = admit_document(
+        candidate(
+            "wrong-authority",
+            document_type=document_type,
+            publisher_role=publisher_role,
+            binding_role=binding_role,
+        ),
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert decision.accepted is False
+    assert decision.coverage_status is CoverageStatus.PUBLISHER_NOT_APPROVED
+
+
+@pytest.mark.parametrize(
+    ("required_role", "document_type", "binding_role"),
+    [
+        (DocumentRole.PRODUCT_SUMMARY, "summary_prospectus", "subject_index"),
+        (DocumentRole.PRODUCT_FULL, "full_prospectus", "subject_policy"),
+        (DocumentRole.INDEX_METHODOLOGY, "index_methodology", "subject_product"),
+        (DocumentRole.POLICY_BASE, "policy_base", "subject_index"),
+    ],
+)
+def test_incompatible_binding_role_fails_closed_for_admission_and_selection(
+    required_role: DocumentRole,
+    document_type: str,
+    binding_role: str,
+) -> None:
+    document = candidate(
+        "wrong-binding",
+        document_type=document_type,
+        binding_role=binding_role,
+        claim_types={
+            "investment_strategy",
+            "risk_factor",
+            "index_methodology",
+            "selection_rules",
+            "rebalancing",
+            "legal_structure",
+        },
+    )
+
+    direct = admit_document(document, cutoff_date=date(2026, 8, 24))
+    selected = select_canonical_document(
+        (document,),
+        required_role=required_role,
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert direct.coverage_status is CoverageStatus.AMBIGUOUS_ENTITY_BINDING
+    assert selected.coverage_status is CoverageStatus.AMBIGUOUS_ENTITY_BINDING
+
+
+@pytest.mark.parametrize(
+    ("binding_role", "publisher_role"),
+    [
+        ("subject_product", PublisherRole.ASSET_MANAGER),
+        ("subject_index", PublisherRole.INDEX_PROVIDER),
+        ("subject_policy", PublisherRole.POLICY_AUTHORITY),
+    ],
+)
+def test_official_update_admits_every_approved_binding_context(
+    binding_role: str,
+    publisher_role: PublisherRole,
+) -> None:
+    document = candidate(
+        f"update-{binding_role}",
+        document_type="official_update",
+        publisher_role=publisher_role,
+        binding_role=binding_role,
+        claim_types={"official_update"},
+    )
+
+    direct = admit_document(document, cutoff_date=date(2026, 8, 24))
+    selected = select_canonical_document(
+        (document,),
+        required_role=DocumentRole.OFFICIAL_UPDATE,
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert direct.accepted
+    assert selected.document_id == document.document_id
