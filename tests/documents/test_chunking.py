@@ -9,18 +9,26 @@ from financial_agent.documents.chunking import (
     DocumentChunkContext,
     ExtractedSection,
     WhitespaceTokenCounter,
+    aggregate_chunking_results,
     chunk_document_sections,
     classify_section,
 )
 
 
-def context(document_id: str = "document-a") -> DocumentChunkContext:
+def context(
+    document_id: str = "document-a",
+    *,
+    budget_scope_id: str = "product-a",
+    requested_section_types: frozenset[SectionType] = frozenset(),
+) -> DocumentChunkContext:
     return DocumentChunkContext(
         dataset_version="2026-08-24",
         document_id=document_id,
         canonical_entity_name="Selected ETF",
         document_type="summary_prospectus",
         original_language="en",
+        budget_scope_id=budget_scope_id,
+        requested_section_types=requested_section_types,
     )
 
 
@@ -155,6 +163,8 @@ def test_keeps_an_oversized_risk_bullet_intact() -> None:
     )
 
     assert tuple(chunk.exact_text for chunk in result.chunks) == (bullet,)
+    assert result.coverage_status is CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET
+    assert result.reason_code == "indivisible_unit_over_target_max"
 
 
 def test_removes_duplicate_paragraphs_without_rewriting_original_evidence() -> None:
@@ -181,7 +191,7 @@ def test_exposes_section_and_document_budget_review_without_truncation() -> None
         (section(("Principal Risks",), required_risks),),
         counter=WhitespaceTokenCounter(),
         target_min=0,
-        target_max=1,
+        target_max=2,
         overlap=0,
         soft_limit=20,
     )
@@ -221,3 +231,218 @@ def test_is_deterministic_and_does_not_mix_document_contexts() -> None:
     assert {chunk.chunk_id for chunk in first.chunks}.isdisjoint(
         {chunk.chunk_id for chunk in other.chunks}
     )
+
+
+def words(count: int, prefix: str) -> str:
+    return " ".join(f"{prefix}{index}" for index in range(count))
+
+
+def test_splits_ordinary_long_prose_within_target_max() -> None:
+    prose = "one two three four five. six seven eight nine ten."
+    result = chunk_document_sections(
+        context(),
+        (section(("Principal Risks",), prose),),
+        counter=WhitespaceTokenCounter(),
+        target_min=0,
+        target_max=5,
+        overlap=0,
+    )
+
+    assert result.coverage_status is CoverageStatus.INDEXED
+    assert tuple(WhitespaceTokenCounter().count(chunk.exact_text) for chunk in result.chunks) == (5, 5)
+    assert "".join(chunk.exact_text for chunk in result.chunks) == prose
+
+
+def test_retains_an_unbroken_over_budget_unit_only_with_review_status() -> None:
+    class CharacterCounter:
+        def count(self, text: str) -> int:
+            return len(text)
+
+    text = "unbroken"
+    result = chunk_document_sections(
+        context(),
+        (section(("Principal Risks",), text),),
+        counter=CharacterCounter(),
+        target_min=0,
+        target_max=4,
+        overlap=0,
+    )
+
+    assert tuple(chunk.exact_text for chunk in result.chunks) == (text,)
+    assert result.coverage_status is CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET
+    assert result.reason_code == "indivisible_unit_over_target_max"
+
+
+@pytest.mark.parametrize(
+    ("heading", "expected"),
+    [
+        (("Principal   Risks",), SectionType.RISK_FACTOR),
+        (("Principal\nRisks",), SectionType.RISK_FACTOR),
+        (("투자 위험",), SectionType.RISK_FACTOR),
+        (("투자 목적\n및 투자 전략",), SectionType.INVESTMENT_STRATEGY),
+        (("통화 헤지",), SectionType.CURRENCY_HEDGE),
+        (("파생 상품 및 레버리지",), SectionType.DERIVATIVES_LEVERAGE),
+    ],
+)
+def test_normalizes_explicit_heading_aliases(
+    heading: tuple[str, ...], expected: SectionType
+) -> None:
+    assert classify_section(
+        section(heading), requested_section_types=frozenset({expected})
+    ) is expected
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        ("Research Methodology",),
+        ("Appendix: Principal Risks",),
+        ("부록: 투자위험",),
+    ],
+)
+def test_registry_rejects_false_positive_and_appendix_headings(
+    heading: tuple[str, ...],
+) -> None:
+    assert classify_section(section(heading)) is None
+
+
+def test_admits_conditional_sections_only_for_an_explicit_claim_context() -> None:
+    hedge = section(("Currency Hedge",), "hedge policy")
+
+    default_result = chunk_document_sections(
+        context(), (hedge,), counter=WhitespaceTokenCounter()
+    )
+    requested_result = chunk_document_sections(
+        context(requested_section_types=frozenset({SectionType.CURRENCY_HEDGE})),
+        (hedge,),
+        counter=WhitespaceTokenCounter(),
+    )
+
+    assert classify_section(hedge) is None
+    assert default_result.coverage_status is CoverageStatus.SECTION_MISSING
+    assert requested_result.chunks[0].section_type is SectionType.CURRENCY_HEDGE
+
+
+def test_aggregates_budget_across_documents_in_one_explicit_scope() -> None:
+    risks = "\n".join(f"- risk-{index}" for index in range(11))
+    first = chunk_document_sections(
+        context("document-a", budget_scope_id="product-a"),
+        (section(("Principal Risks",), risks),),
+        counter=WhitespaceTokenCounter(),
+        target_min=0,
+        target_max=2,
+        overlap=0,
+    )
+    second = chunk_document_sections(
+        context("document-b", budget_scope_id="product-a"),
+        (section(("Principal Risks",), risks.replace("risk-", "other-")),),
+        counter=WhitespaceTokenCounter(),
+        target_min=0,
+        target_max=2,
+        overlap=0,
+    )
+
+    aggregate = aggregate_chunking_results((second, first), soft_limit=20)
+
+    assert first.coverage_status is CoverageStatus.INDEXED
+    assert second.coverage_status is CoverageStatus.INDEXED
+    assert aggregate.budget_scope_id == "product-a"
+    assert aggregate.observed_chunk_count == 22
+    assert aggregate.coverage_status is CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET
+    assert tuple(chunk.document_id for chunk in aggregate.chunks[:11]) == (
+        "document-a",
+    ) * 11
+
+
+def test_refuses_to_aggregate_different_budget_scopes() -> None:
+    first = chunk_document_sections(
+        context("document-a", budget_scope_id="product-a"),
+        (section(("Principal Risks",), "risk-a"),),
+        counter=WhitespaceTokenCounter(),
+    )
+    second = chunk_document_sections(
+        context("document-b", budget_scope_id="product-b"),
+        (section(("Principal Risks",), "risk-b"),),
+        counter=WhitespaceTokenCounter(),
+    )
+
+    with pytest.raises(ValueError, match="one budget scope"):
+        aggregate_chunking_results((first, second), soft_limit=20)
+
+
+@pytest.mark.parametrize(
+    "invalid_section",
+    [
+        ExtractedSection(("Principal Risks",), "risk", -1, 1, 0, 4),
+        ExtractedSection(("Principal Risks",), "risk", 2, 1, 0, 4),
+        ExtractedSection(("Principal Risks",), "risk", 1, None, 0, 4),
+        ExtractedSection(("Principal Risks",), "risk", 1, 1, -1, 3),
+        ExtractedSection(("Principal Risks",), "risk", 1, 1, 0, 3),
+    ],
+)
+def test_rejects_invalid_authoritative_source_ranges(
+    invalid_section: ExtractedSection,
+) -> None:
+    with pytest.raises(ValueError, match="section"):
+        chunk_document_sections(
+            context(), (invalid_section,), counter=WhitespaceTokenCounter()
+        )
+
+
+def test_record_hash_changes_when_an_authoritative_page_locator_changes() -> None:
+    first = chunk_document_sections(
+        context(),
+        (section(("Principal Risks",), "risk", page_start=1, page_end=1),),
+        counter=WhitespaceTokenCounter(),
+    )
+    second = chunk_document_sections(
+        context(),
+        (section(("Principal Risks",), "risk", page_start=2, page_end=2),),
+        counter=WhitespaceTokenCounter(),
+    )
+
+    assert first.chunks[0].record_hash != second.chunks[0].record_hash
+
+
+def test_uses_target_min_to_rebalance_a_short_terminal_group() -> None:
+    paragraphs = "\n\n".join((words(500, "a"), words(250, "b"), words(250, "c")))
+    result = chunk_document_sections(
+        context(),
+        (section(("Principal Risks",), paragraphs),),
+        counter=WhitespaceTokenCounter(),
+        target_min=300,
+        target_max=800,
+        overlap=0,
+    )
+
+    assert tuple(WhitespaceTokenCounter().count(chunk.exact_text) for chunk in result.chunks) == (500, 500)
+
+
+def test_never_exceeds_overlap_token_budget() -> None:
+    paragraphs = "\n\n".join((words(500, "a"), words(200, "b"), words(200, "c")))
+    result = chunk_document_sections(
+        context(),
+        (section(("Principal Risks",), paragraphs),),
+        counter=WhitespaceTokenCounter(),
+        target_min=0,
+        target_max=800,
+        overlap=75,
+    )
+
+    assert len(result.chunks) == 2
+    assert result.chunks[1].exact_text.lstrip().startswith("c0")
+
+
+def test_uses_exact_heading_path_as_a_permutation_independent_tie_break() -> None:
+    upper = section(("Principal Risks",), "same risk")
+    lower = section(("principal risks",), "same risk")
+
+    first = chunk_document_sections(
+        context(), (lower, upper), counter=WhitespaceTokenCounter()
+    )
+    second = chunk_document_sections(
+        context(), (upper, lower), counter=WhitespaceTokenCounter()
+    )
+
+    assert first.chunks == second.chunks
+    assert first.chunks[0].section_path == "Principal Risks"
