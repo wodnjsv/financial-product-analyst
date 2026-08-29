@@ -765,8 +765,11 @@ def test_document_profile_rejects_a_reversed_effective_range(
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize("document_version", ("", "   "))
-def test_document_profile_rejects_whitespace_only_document_version(
+@pytest.mark.parametrize(
+    "document_version",
+    ("", "   ", "\t", "\n", "\r", "\f", "\v", " \t\n\r\f\v "),
+)
+def test_document_profile_rejects_ascii_whitespace_only_document_version(
     connection: psycopg.Connection,
     document_version: str,
 ) -> None:
@@ -787,7 +790,7 @@ def test_document_profile_preserves_nonblank_version_verbatim(
     connection: psycopg.Connection,
 ) -> None:
     prepare_document_graph(connection)
-    version = " v1 "
+    version = " \t\n v1 \r\f\v "
     insert_document_profile(
         connection,
         dataset_version="facts-v1",

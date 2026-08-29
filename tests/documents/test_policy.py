@@ -152,9 +152,15 @@ def test_rejects_unknown_version() -> None:
     assert decision.coverage_status is CoverageStatus.VERSION_UNKNOWN
 
 
-def test_rejects_whitespace_only_version_as_unknown() -> None:
+@pytest.mark.parametrize(
+    "document_version",
+    (" ", "\t", "\n", "\r", "\f", "\v", " \t\n\r\f\v "),
+)
+def test_rejects_whitespace_only_version_as_unknown(
+    document_version: str,
+) -> None:
     decision = admit_document(
-        candidate("blank-version", document_version=" \t "),
+        candidate("blank-version", document_version=document_version),
         cutoff_date=date(2026, 8, 24),
     )
 
@@ -163,7 +169,7 @@ def test_rejects_whitespace_only_version_as_unknown() -> None:
 
 
 def test_version_with_surrounding_whitespace_is_accepted_verbatim() -> None:
-    version = " 2026.1 "
+    version = " \t\n 2026.1 \r\f\v "
     decision = admit_document(
         candidate("verbatim-version", document_version=version),
         cutoff_date=date(2026, 8, 24),

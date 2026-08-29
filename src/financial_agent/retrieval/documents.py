@@ -508,7 +508,7 @@ def _metadata_candidates(request: DocumentSearchRequest) -> sa.Subquery:
             )
             <= cutoff_date,
             document_profile.c.effective_from <= cutoff_date,
-            sa.func.btrim(document_profile.c.document_version) != "",
+            document_profile.c.document_version.op("~")("[^[:space:]]"),
             sa.or_(
                 document_profile.c.effective_to.is_(None),
                 document_profile.c.effective_to >= cutoff_date,

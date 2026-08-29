@@ -796,7 +796,9 @@ def test_document_corpus_migration_backfills_blank_sections_and_reverses_core_ro
                 WHERE conrelid = 'document.document_profile'::regclass
                   AND conname = 'ck_document_profile_document_version'
                 """
-            ).fetchone()[0] == "CHECK ((btrim(document_version) <> ''::text))"
+            ).fetchone()[0] == (
+                "CHECK ((document_version ~ '[^[:space:]]'::text))"
+            )
 
         with configured_alembic_target_only():
             command.downgrade(config, "0006")

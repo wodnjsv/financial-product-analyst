@@ -526,7 +526,10 @@ def test_valid_corpus_passes_repository_validation() -> None:
     DocumentCorpusRepository.validate_corpus(_corpus())
 
 
-@pytest.mark.parametrize("document_version", (None, "", " \t "))
+@pytest.mark.parametrize(
+    "document_version",
+    (None, "", " ", "\t", "\n", "\r", "\f", "\v", " \t\n\r\f\v "),
+)
 def test_corpus_rejects_blank_document_version(
     document_version: str | None,
 ) -> None:
@@ -552,7 +555,7 @@ async def test_corpus_preserves_surrounding_document_version_whitespace(
 ) -> None:
     dataset_version, entity_id = _prepare_context(migrated_database_url)
     corpus = _corpus(dataset_version=dataset_version, entity_id=entity_id)
-    version = " 2026-08-01 "
+    version = " \t\n 2026-08-01 \r\f\v "
     corpus = replace(
         corpus,
         profile=replace(corpus.profile, document_version=version),

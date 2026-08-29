@@ -206,7 +206,8 @@ def test_metadata_sql_enforces_nonblank_version_and_searchable_sections() -> Non
         if isinstance(item, str)
     }
 
-    assert "btrim(document.document_profile.document_version)" in sql
+    assert "document.document_profile.document_version ~" in sql
+    assert "[^[:space:]]" in values
     assert sql.count("document.document_chunk.section_type IN") == 2
     assert SectionType.LEGACY_UNCLASSIFIED.value not in values
 
@@ -813,6 +814,61 @@ async def test_generated_summary_is_absent_from_keyword_and_vector_candidates(
 
     assert "generated-summary" not in {hit.chunk_id for hit in keyword_hits}
     assert "generated-summary" not in {hit.chunk_id for hit in vector_hits}
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_whitespace_only_version_is_absent_from_keyword_and_vector_candidates(
+    candidate_repository: DocumentCandidateRepository,
+    risk_request: DocumentSearchRequest,
+    migrated_database_url: str,
+) -> None:
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        connection.execute(
+            """
+            ALTER TABLE document.document_profile
+            DROP CONSTRAINT ck_document_profile_document_version
+            """
+        )
+        connection.execute(
+            """
+            UPDATE document.document_profile
+            SET document_version = %s
+            WHERE dataset_version = %s
+              AND document_id = 'document-risk'
+            """,
+            (" \t\n\r\f\v ", risk_request.dataset_version),
+        )
+        connection.execute(
+            """
+            ALTER TABLE document.document_profile
+            ADD CONSTRAINT ck_document_profile_document_version
+            CHECK (document_version ~ '[^[:space:]]') NOT VALID
+            """
+        )
+
+    try:
+        assert await candidate_repository.search_keyword(risk_request, "risk") == ()
+        assert await candidate_repository.search_vector(risk_request) == ()
+    finally:
+        with psycopg.connect(
+            normalize_psycopg_url(migrated_database_url)
+        ) as connection:
+            connection.execute(
+                """
+                UPDATE document.document_profile
+                SET document_version = '2026-08-01'
+                WHERE dataset_version = %s
+                  AND document_id = 'document-risk'
+                """,
+                (risk_request.dataset_version,),
+            )
+            connection.execute(
+                """
+                ALTER TABLE document.document_profile
+                VALIDATE CONSTRAINT ck_document_profile_document_version
+                """
+            )
 
 
 @pytest.mark.postgres
