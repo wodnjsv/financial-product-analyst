@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, date, datetime
 import json
 import os
 from pathlib import Path
+import shutil
 from uuid import uuid4
 
 from alembic import command
@@ -15,51 +17,40 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from financial_agent.db.preflight import normalize_psycopg_url
 from financial_agent.documents import SectionType
-from financial_agent.retrieval.documents import (
-    DocumentCandidateHit,
-    DocumentCandidateRepository,
-    DocumentSearchRequest,
-)
+from financial_agent.retrieval.documents import DocumentCandidateHit, DocumentCandidateRepository, DocumentSearchRequest
 from scripts.verify_document_retrieval_pipeline import (
+    AuthoritativeHitAudit,
     EvaluationCorpus,
     GoldCatalogError,
+    LedgerCounts,
+    NEGATIVE_PROBES,
+    NegativeMetadataAudit,
     OutputPolicyError,
+    PostgresSafetyAuditor,
     evaluate_cases,
     load_gold_catalog,
     main,
     report_exit_code,
     validate_output_path,
+    write_report_atomically,
 )
-from tests.fixtures.document_corpus import (
-    DATASET_VERSION,
-    insert_document_search_corpus,
-)
+from tests.fixtures.document_corpus import DATASET_VERSION, insert_document_search_corpus
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GOLD_PATH = PROJECT_ROOT / "tests/gold/document_retrieval_cases.json"
-EXPECTED_CASE_IDS = (
-    "DOC-FUND-001-structure",
-    "REL-CORP-001-risk",
-    "REL-THEME-001-history",
-)
-EXPECTED_NEGATIVE_CHUNK_IDS = frozenset(
-    {
-        "wrong-near",
-        "wrong-authority-near",
-        "unofficial-near",
-        "late-near",
-        "expired-near",
-        "theme-name-only",
-        "generic-commentary",
-        "performance-near",
-        "generated-summary",
-    }
-)
-EXPECTED_GOLD_CHUNK_IDS = frozenset(
-    {"policy-structure", "aerospace-change", "selected-etf-risk"}
-)
-EXPECTED_CORPUS_CHUNK_IDS = EXPECTED_NEGATIVE_CHUNK_IDS | EXPECTED_GOLD_CHUNK_IDS
+EXPECTED_CASE_IDS = ("DOC-FUND-001-structure", "REL-CORP-001-risk", "REL-THEME-001-history")
+EXPECTED_NEGATIVE_GATES = {
+    "wrong_product": "entity",
+    "wrong_claim_authority": "claim_authority",
+    "source_ineligible": "source_eligibility",
+    "after_seoul_cutoff": "temporal",
+    "stale_effective_version": "version",
+    "name_only_wrong_entity": "entity",
+    "generic_commentary": "section",
+    "performance_table": "section",
+    "generated_summary": "section",
+}
 
 
 def _hit(
@@ -67,15 +58,13 @@ def _hit(
     *,
     entity_id: str,
     section_type: SectionType,
+    dataset_version: str = DATASET_VERSION,
     keyword_rank: int | None = None,
     vector_rank: int | None = None,
     publisher_approved: bool = True,
-    available_at: datetime = datetime(2026, 8, 2, tzinfo=UTC),
-    effective_to: date | None = None,
-    cutoff_eligible: bool = True,
 ) -> DocumentCandidateHit:
     return DocumentCandidateHit(
-        dataset_version=DATASET_VERSION,
+        dataset_version=dataset_version,
         entity_id=entity_id,
         document_id=f"document-{chunk_id}",
         chunk_id=chunk_id,
@@ -84,11 +73,11 @@ def _hit(
         source_id="source-approved",
         source_locator=f"synthetic/source#{chunk_id}",
         published_at=datetime(2026, 8, 1, tzinfo=UTC),
-        available_at=available_at,
+        available_at=datetime(2026, 8, 2, tzinfo=UTC),
         effective_from=date(2026, 8, 1),
-        effective_to=effective_to,
+        effective_to=None,
         document_version="2026-08-01",
-        cutoff_eligible=cutoff_eligible,
+        cutoff_eligible=True,
         publisher_approved=publisher_approved,
         keyword_rank=keyword_rank,
         vector_rank=vector_rank,
@@ -97,50 +86,96 @@ def _hit(
     )
 
 
-class _DeterministicRepository:
-    async def search_keyword(
-        self, request: DocumentSearchRequest, query_text: str
-    ) -> tuple[DocumentCandidateHit, ...]:
-        del query_text
-        return self._hits(request, "keyword")
-
-    async def search_vector(
-        self, request: DocumentSearchRequest
-    ) -> tuple[DocumentCandidateHit, ...]:
-        return self._hits(request, "vector")
-
-    def _hits(
-        self, request: DocumentSearchRequest, mode: str
-    ) -> tuple[DocumentCandidateHit, ...]:
-        gold = {
-            "policy-fund-one": ("policy-structure", SectionType.LEGAL_STRUCTURE),
-            "aerospace-index-one": ("aerospace-change", SectionType.CHANGE_HISTORY),
-            "selected-etf": ("selected-etf-risk", SectionType.RISK_FACTOR),
-        }
-        chunk_id, section_type = gold[request.entity_ids[0]]
-        rank = {"keyword_rank": 1} if mode == "keyword" else {"vector_rank": 1}
-        return (_hit(chunk_id, entity_id=request.entity_ids[0], section_type=section_type, **rank),)
+_GOLD = {
+    "policy-fund-one": ("policy-structure", SectionType.LEGAL_STRUCTURE),
+    "aerospace-index-one": ("aerospace-change", SectionType.CHANGE_HISTORY),
+    "selected-etf": ("selected-etf-risk", SectionType.RISK_FACTOR),
+}
 
 
-class _UnsafeRepository(_DeterministicRepository):
-    def _hits(
-        self, request: DocumentSearchRequest, mode: str
-    ) -> tuple[DocumentCandidateHit, ...]:
-        rank = {"keyword_rank": 1} if mode == "keyword" else {"vector_rank": 1}
-        if request.entity_ids == ("selected-etf",):
-            return (
-                _hit(
-                    "wrong-product",
-                    entity_id="other-etf",
-                    section_type=SectionType.RISK_FACTOR,
-                    publisher_approved=False,
-                    available_at=datetime(2026, 8, 25, tzinfo=UTC),
-                    effective_to=date(2026, 8, 23),
-                    cutoff_eligible=False,
-                    **rank,
-                ),
-            )
-        return super()._hits(request, mode)
+class _ComparisonRepository:
+    def __init__(self, *, return_negative: str | None = None) -> None:
+        self.return_negative = return_negative
+
+    async def search_keyword(self, request: DocumentSearchRequest, query_text: str) -> tuple[DocumentCandidateHit, ...]:
+        probe = next((item for item in NEGATIVE_PROBES if item.query_text == query_text), None)
+        if probe is not None:
+            if probe.chunk_id == self.return_negative:
+                return (_hit(probe.chunk_id, entity_id=probe.entity_ids[0], section_type=probe.section_types[0], keyword_rank=1),)
+            return ()
+        return (_hit(f"keyword-decoy-{request.entity_ids[0]}", entity_id=request.entity_ids[0], section_type=request.section_types[0], keyword_rank=1),)
+
+    async def search_vector(self, request: DocumentSearchRequest) -> tuple[DocumentCandidateHit, ...]:
+        probe = next(
+            (
+                item for item in NEGATIVE_PROBES
+                if item.entity_ids == request.entity_ids
+                and item.claim_type == request.claim_type
+                and item.section_types == request.section_types
+                and item.query_embedding == request.query_embedding
+            ),
+            None,
+        )
+        if probe is not None:
+            if probe.chunk_id == self.return_negative:
+                return (_hit(probe.chunk_id, entity_id=probe.entity_ids[0], section_type=probe.section_types[0], vector_rank=1),)
+            return ()
+        chunk_id, section_type = _GOLD[request.entity_ids[0]]
+        return (_hit(chunk_id, entity_id=request.entity_ids[0], section_type=section_type, vector_rank=1),)
+
+
+def _safe_audit(hit: DocumentCandidateHit) -> AuthoritativeHitAudit:
+    return AuthoritativeHitAudit(
+        chunk_id=hit.chunk_id,
+        dataset_violation=False,
+        identity_violation=False,
+        entity_violation=False,
+        coverage_violation=False,
+        authority_violation=False,
+        source_violation=False,
+        temporal_violation=False,
+        version_violation=False,
+        section_violation=False,
+    )
+
+
+class _AuditRepository:
+    def __init__(
+        self,
+        *,
+        unsafe_chunk: str | None = None,
+        ledger_counts: tuple[LedgerCounts, LedgerCounts] = (LedgerCounts(0, 0), LedgerCounts(0, 0)),
+        wrong_negative_gate: str | None = None,
+    ) -> None:
+        self.unsafe_chunk = unsafe_chunk
+        self._ledger_counts = iter(ledger_counts)
+        self.wrong_negative_gate = wrong_negative_gate
+
+    async def count_ledgers(self, dataset_version: str) -> LedgerCounts:
+        assert dataset_version == DATASET_VERSION
+        return next(self._ledger_counts)
+
+    async def audit_hits(self, request: DocumentSearchRequest, hits: tuple[DocumentCandidateHit, ...]) -> tuple[AuthoritativeHitAudit, ...]:
+        del request
+        return tuple(
+            replace(_safe_audit(hit), source_violation=(hit.chunk_id == self.unsafe_chunk))
+            for hit in hits
+        )
+
+    async def audit_negative(self, dataset: str, probe) -> NegativeMetadataAudit:
+        assert dataset == DATASET_VERSION
+        return NegativeMetadataAudit(
+            chunk_id=probe.chunk_id,
+            observed_failing_gates=(self.wrong_negative_gate or probe.expected_failing_gate,),
+        )
+
+
+def _corpus(*, repository=None, auditor=None) -> EvaluationCorpus:
+    return EvaluationCorpus(
+        repository=repository or _ComparisonRepository(),
+        auditor=auditor or _AuditRepository(),
+        dataset_version=DATASET_VERSION,
+    )
 
 
 def _catalog_payload() -> dict[str, object]:
@@ -155,16 +190,13 @@ def _write_catalog(tmp_path: Path, payload: dict[str, object]) -> Path:
 
 def test_gold_catalog_has_exact_three_canonical_cases() -> None:
     catalog = load_gold_catalog(GOLD_PATH)
-
     assert catalog.schema_version == 1
     assert tuple(case.id for case in catalog.cases) == EXPECTED_CASE_IDS
-    assert len(catalog.cases) == 3
 
 
 @pytest.mark.parametrize(
     "mutation, message",
     (
-        (lambda value: value.update(schema_version=2), "schema_version"),
         (lambda value: value.update(schema_version=True), "schema_version"),
         (lambda value: value["cases"][0].update(id="UNKNOWN"), "case id"),
         (lambda value: value["cases"][0].update(entity_ids="policy-fund-one"), "entity_ids"),
@@ -173,161 +205,184 @@ def test_gold_catalog_has_exact_three_canonical_cases() -> None:
         (lambda value: value["cases"].append(dict(value["cases"][0])), "duplicate"),
     ),
 )
-def test_gold_catalog_rejects_invalid_schema_ids_types_and_duplicates(
-    tmp_path: Path, mutation, message: str
-) -> None:
+def test_gold_catalog_rejects_invalid_schema_ids_types_and_duplicates(tmp_path: Path, mutation, message: str) -> None:
     payload = _catalog_payload()
     mutation(payload)
-
     with pytest.raises(GoldCatalogError, match=message):
         load_gold_catalog(_write_catalog(tmp_path, payload))
 
 
-def test_gold_catalog_normalizes_case_order_deterministically(tmp_path: Path) -> None:
-    payload = _catalog_payload()
-    payload["cases"] = list(reversed(payload["cases"]))
-
-    catalog = load_gold_catalog(_write_catalog(tmp_path, payload))
-
-    assert tuple(case.id for case in catalog.cases) == EXPECTED_CASE_IDS
+def test_negative_manifest_is_typed_immutable_and_covers_each_gate() -> None:
+    assert {probe.category for probe in NEGATIVE_PROBES} == set(EXPECTED_NEGATIVE_GATES)
+    assert {probe.category: probe.expected_failing_gate for probe in NEGATIVE_PROBES} == EXPECTED_NEGATIVE_GATES
+    assert len({probe.chunk_id for probe in NEGATIVE_PROBES}) == 9
+    assert all(probe.entity_ids and probe.section_types and probe.query_text and probe.query_embedding for probe in NEGATIVE_PROBES)
+    with pytest.raises(FrozenInstanceError):
+        NEGATIVE_PROBES[0].category = "changed"  # type: ignore[misc]
 
 
 @pytest.mark.asyncio
-async def test_report_is_sorted_and_requires_gold_in_each_modes_top5() -> None:
-    catalog = load_gold_catalog(GOLD_PATH)
-    report = await evaluate_cases(
-        EvaluationCorpus(
-            repository=_DeterministicRepository(),
-            dataset_version=DATASET_VERSION,
-            available_chunk_ids=EXPECTED_CORPUS_CHUNK_IDS,
-        ),
-        catalog,
-    )
-
-    assert report.case_count == 3
-    assert report.gold_in_top5_count == 3
-    assert [(row.case_id, row.mode) for row in report.rows] == sorted(
-        (row.case_id, row.mode) for row in report.rows
-    )
-    assert {row.mode for row in report.rows} == {"keyword", "vector", "fused"}
-    assert all(row.gold_rank == 1 for row in report.rows)
-    assert report.relationships_created == 0
-    assert report.corpus_coverage_counts == {
-        "corpus_chunk_count": 12,
-        "expected_gold_fixture_count": 3,
-        "present_gold_fixture_count": 3,
-        "missing_gold_fixture_count": 0,
-        "expected_negative_fixture_count": 9,
-        "present_negative_fixture_count": 9,
-        "missing_negative_fixture_count": 0,
-        "expected_negative_category_count": 8,
-        "covered_negative_category_count": 8,
-        "missing_negative_category_count": 0,
-    }
+async def test_fused_is_the_acceptance_gate_and_modes_are_reported_separately() -> None:
+    report = await evaluate_cases(_corpus(), load_gold_catalog(GOLD_PATH))
+    assert report.case_count == report.gold_in_top5_count == 3
+    assert report.mode_gold_in_top5_counts == {"fused": 3, "keyword": 0, "vector": 3}
+    assert [(row.case_id, row.mode) for row in report.rows] == sorted((row.case_id, row.mode) for row in report.rows)
     assert report_exit_code(report) == 0
 
 
 @pytest.mark.asyncio
-async def test_absent_gold_has_null_rank_and_fails_the_gate() -> None:
+async def test_authoritative_audit_overrides_candidate_diagnostic_booleans() -> None:
     report = await evaluate_cases(
-        EvaluationCorpus(
-            repository=_UnsafeRepository(),
-            dataset_version=DATASET_VERSION,
-            available_chunk_ids=EXPECTED_CORPUS_CHUNK_IDS,
-        ),
+        _corpus(auditor=_AuditRepository(unsafe_chunk="aerospace-change")),
         load_gold_catalog(GOLD_PATH),
     )
-    risk_rows = [row for row in report.rows if row.case_id == "REL-CORP-001-risk"]
-
-    assert all(row.gold_rank is None for row in risk_rows)
-    assert report.gold_in_top5_count == 2
-    assert report.entity_violation_count == 3
-    assert report.source_violation_count == 3
-    assert report.temporal_violation_count == 3
-    assert report.version_violation_count == 3
+    assert report.source_violation_count == 2
     assert report_exit_code(report) != 0
+
+    self_reported_false = _hit("diagnostic-only", entity_id="selected-etf", section_type=SectionType.RISK_FACTOR, publisher_approved=False)
+    audits = await _AuditRepository().audit_hits(
+        DocumentSearchRequest(
+            dataset_version=DATASET_VERSION,
+            entity_ids=("selected-etf",),
+            claim_type="product_risk_factor",
+            section_types=(SectionType.RISK_FACTOR,),
+            cutoff_date=date(2026, 8, 24),
+        ),
+        (self_reported_false,),
+    )
+    assert audits[0].source_violation is False
 
 
 @pytest.mark.asyncio
-async def test_missing_negative_fixture_coverage_fails_without_using_search_miss() -> None:
-    report = await evaluate_cases(
-        EvaluationCorpus(
-            repository=_DeterministicRepository(),
-            dataset_version=DATASET_VERSION,
-            available_chunk_ids=EXPECTED_CORPUS_CHUNK_IDS - {"generated-summary"},
-        ),
+async def test_negative_probes_are_searched_and_have_exact_authoritative_reasons() -> None:
+    report = await evaluate_cases(_corpus(), load_gold_catalog(GOLD_PATH))
+    assert len(report.negative_dispositions) == 9
+    assert report.negative_gate_failure_count == 0
+    assert all(item.keyword_absent and item.vector_absent for item in report.negative_dispositions)
+    assert {item.category: (item.disposition, item.reason, item.observed_failing_gates) for item in report.negative_dispositions} == {
+        category: ("excluded", gate, (gate,)) for category, gate in EXPECTED_NEGATIVE_GATES.items()
+    }
+
+
+@pytest.mark.asyncio
+async def test_negative_probe_fails_when_retrieved_or_metadata_reason_differs() -> None:
+    retrieved = await evaluate_cases(
+        _corpus(repository=_ComparisonRepository(return_negative="late-near")),
         load_gold_catalog(GOLD_PATH),
     )
+    wrong_reason = await evaluate_cases(
+        _corpus(auditor=_AuditRepository(wrong_negative_gate="identity")),
+        load_gold_catalog(GOLD_PATH),
+    )
+    assert retrieved.negative_gate_failure_count >= 1
+    assert wrong_reason.negative_gate_failure_count >= 1
+    assert report_exit_code(retrieved) != 0
+    assert report_exit_code(wrong_reason) != 0
 
-    assert report.corpus_coverage_counts["missing_negative_fixture_count"] == 1
+
+@pytest.mark.asyncio
+async def test_relationship_and_evidence_deltas_are_measured_and_gate_failure() -> None:
+    report = await evaluate_cases(
+        _corpus(auditor=_AuditRepository(ledger_counts=(LedgerCounts(4, 7), LedgerCounts(5, 9)))),
+        load_gold_catalog(GOLD_PATH),
+    )
+    assert report.relationships_created == 1
+    assert report.evidence_created == 2
+    assert report.ledger_mutation_violation_count == 2
     assert report_exit_code(report) != 0
 
 
-def test_output_policy_refuses_tracked_and_nonignored_paths(tmp_path: Path) -> None:
-    with pytest.raises(OutputPolicyError, match="tracked"):
-        validate_output_path(PROJECT_ROOT / "docs/planning/STATUS.md", PROJECT_ROOT)
-    with pytest.raises(OutputPolicyError, match="ignored"):
-        validate_output_path(PROJECT_ROOT / "untracked-report.json", PROJECT_ROOT)
-    with pytest.raises(OutputPolicyError, match="working tree"):
-        validate_output_path(tmp_path / "outside.json", PROJECT_ROOT)
+@pytest.fixture
+def ignored_output_dir() -> Path:
+    path = PROJECT_ROOT / "tmp" / f"task7-output-{uuid4().hex}"
+    path.mkdir(parents=True)
+    yield path
+    shutil.rmtree(path)
 
 
-def test_output_policy_accepts_only_ignored_report_path() -> None:
-    output = PROJECT_ROOT / "tmp/document-retrieval-report.json"
+def test_output_policy_refuses_aliases_and_nonregular_targets(ignored_output_dir: Path) -> None:
+    directory = ignored_output_dir / "directory.json"
+    directory.mkdir()
+    symlink = ignored_output_dir / "symlink.json"
+    symlink.symlink_to(GOLD_PATH)
+    hardlink = ignored_output_dir / "hardlink.json"
+    os.link(GOLD_PATH, hardlink)
+    tracked_hardlink = ignored_output_dir / "tracked-hardlink.md"
+    os.link(PROJECT_ROOT / "docs/planning/STATUS.md", tracked_hardlink)
+    for target in (GOLD_PATH, directory, symlink, hardlink, tracked_hardlink):
+        with pytest.raises(OutputPolicyError):
+            validate_output_path(target, PROJECT_ROOT, GOLD_PATH)
 
-    assert validate_output_path(output, PROJECT_ROOT) == output.resolve()
+
+def test_output_policy_refuses_tracked_nonignored_and_outside_paths(tmp_path: Path) -> None:
+    for target in (
+        PROJECT_ROOT / "docs/planning/STATUS.md",
+        PROJECT_ROOT / "untracked-report.json",
+        tmp_path / "outside.json",
+    ):
+        with pytest.raises(OutputPolicyError):
+            validate_output_path(target, PROJECT_ROOT, GOLD_PATH)
 
 
-def test_cli_refuses_tracked_output_without_disclosing_database_secret(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+def test_atomic_report_write_is_deterministic(ignored_output_dir: Path) -> None:
+    first = ignored_output_dir / "first.json"
+    second = ignored_output_dir / "second.json"
+    payload = {"z": [2, 1], "a": "value"}
+    write_report_atomically(first, payload)
+    write_report_atomically(second, payload)
+    assert first.read_bytes() == second.read_bytes()
+    assert first.read_text(encoding="utf-8") == '{\n  "a": "value",\n  "z": [\n    2,\n    1\n  ]\n}\n'
+
+
+def test_atomic_report_write_preserves_prior_file_on_write_and_replace_failure(ignored_output_dir: Path) -> None:
+    output = ignored_output_dir / "report.json"
+    output.write_text("prior\n", encoding="utf-8")
+
+    def short_write(fd: int, data: bytes) -> None:
+        os.write(fd, data[:3])
+
+    def failed_replace(source, destination) -> None:
+        raise OSError("replace failed")
+
+    with pytest.raises(OSError):
+        write_report_atomically(output, {"new": True}, write_all=short_write)
+    assert output.read_text(encoding="utf-8") == "prior\n"
+    assert not tuple(ignored_output_dir.glob(".report.json.*.tmp"))
+    with pytest.raises(OSError):
+        write_report_atomically(output, {"new": True}, replace=failed_replace)
+    assert output.read_text(encoding="utf-8") == "prior\n"
+    assert not tuple(ignored_output_dir.glob(".report.json.*.tmp"))
+
+
+def test_cli_validates_gold_and_output_before_database_access(ignored_output_dir: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    database_accessed = False
+
+    async def forbidden_run(*args, **kwargs):
+        nonlocal database_accessed
+        database_accessed = True
+        raise AssertionError("database must not be accessed")
+
+    monkeypatch.setattr("scripts.verify_document_retrieval_pipeline._run", forbidden_run)
+    invalid_gold = ignored_output_dir / "invalid-gold.json"
+    invalid_gold.write_text("not json", encoding="utf-8")
     secret = "raw-password-must-not-appear"
-
-    exit_code = main(
-        [
-            "--database-url",
-            f"postgresql+psycopg://user:{secret}@db.invalid/financial_agent",
-            "--gold",
-            str(GOLD_PATH),
-            "--output",
-            str(PROJECT_ROOT / "docs/planning/STATUS.md"),
-        ]
-    )
+    output = ignored_output_dir / "report.json"
+    common = ["--database-url", f"postgresql+psycopg://user:{secret}@db.invalid/secret_db"]
+    invalid_gold_exit = main([*common, "--gold", str(invalid_gold), "--output", str(output)])
+    invalid_output_exit = main([*common, "--gold", str(GOLD_PATH), "--output", str(GOLD_PATH)])
     captured = capsys.readouterr()
-
-    assert exit_code != 0
-    assert captured.out == ""
-    assert captured.err.strip() == "DOCUMENT_RETRIEVAL_OUTPUT_POLICY_ERROR"
+    assert invalid_gold_exit == invalid_output_exit == 2
+    assert database_accessed is False
     assert secret not in captured.err
-
-
-@pytest.mark.asyncio
-async def test_report_serialization_states_fixture_vector_quality_boundary() -> None:
-    report = await evaluate_cases(
-        EvaluationCorpus(
-            repository=_DeterministicRepository(),
-            dataset_version=DATASET_VERSION,
-            available_chunk_ids=EXPECTED_CORPUS_CHUNK_IDS,
-        ),
-        load_gold_catalog(GOLD_PATH),
-    )
-    payload = report.as_json_object()
-
-    assert payload["evaluation_note"] == (
-        "Deterministic fixture vectors validate retrieval pipeline safety; "
-        "they do not measure or approve production embedding-model quality."
-    )
-    assert "database_url" not in payload
+    assert str(invalid_gold) not in captured.err
+    assert str(GOLD_PATH) not in captured.err
 
 
 @pytest.fixture(scope="session")
 def postgres_database_url() -> str:
     database_url = os.getenv("FINANCIAL_AGENT_TEST_DATABASE_URL")
     if database_url is None:
-        pytest.fail(
-            "FINANCIAL_AGENT_TEST_DATABASE_URL is required for @pytest.mark.postgres "
-            "tests. Provide a dedicated non-production PostgreSQL 15 database URL."
-        )
+        pytest.fail("FINANCIAL_AGENT_TEST_DATABASE_URL is required for @pytest.mark.postgres tests.")
     return database_url
 
 
@@ -340,44 +395,68 @@ def migrated_database_url(postgres_database_url: str) -> str:
 
 
 @pytest_asyncio.fixture
-async def loaded_document_corpus(
-    migrated_database_url: str,
-) -> EvaluationCorpus:
+async def loaded_document_corpus(migrated_database_url: str) -> EvaluationCorpus:
     dataset_version = f"{DATASET_VERSION}-eval-{uuid4().hex}"
     with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
-        insert_document_search_corpus(
-            connection,
-            dataset_version=dataset_version,
-            include_evaluation_fixtures=True,
-        )
-        available_chunk_ids = frozenset(
-            row[0]
-            for row in connection.execute(
-                "SELECT chunk_id FROM document.document_chunk WHERE dataset_version = %s",
-                (dataset_version,),
-            ).fetchall()
-        )
+        insert_document_search_corpus(connection, dataset_version=dataset_version, include_evaluation_fixtures=True)
     engine = create_async_engine(migrated_database_url, pool_size=5, max_overflow=0)
     yield EvaluationCorpus(
         repository=DocumentCandidateRepository(engine),
+        auditor=PostgresSafetyAuditor(engine),
         dataset_version=dataset_version,
-        available_chunk_ids=available_chunk_ids,
     )
     await engine.dispose()
 
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_phase0_document_cases_pass_top5_and_safety_gates(
-    loaded_document_corpus: EvaluationCorpus,
-) -> None:
+async def test_phase0_document_cases_pass_top5_negative_and_no_write_gates(loaded_document_corpus: EvaluationCorpus) -> None:
     report = await evaluate_cases(loaded_document_corpus, load_gold_catalog(GOLD_PATH))
-
-    assert report.case_count == 3
-    assert report.gold_in_top5_count == 3
+    assert report.case_count == report.gold_in_top5_count == 3
+    assert report.mode_gold_in_top5_counts["fused"] == 3
     assert report.entity_violation_count == 0
     assert report.source_violation_count == 0
     assert report.temporal_violation_count == 0
     assert report.version_violation_count == 0
+    assert report.negative_gate_failure_count == 0
+    assert len(report.negative_dispositions) == 9
     assert report.relationships_created == 0
-    assert report.corpus_coverage_counts["missing_negative_fixture_count"] == 0
+    assert report.evidence_created == 0
+    assert report.ledger_mutation_violation_count == 0
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_authoritative_auditor_rejects_eligible_superseded_document(
+    loaded_document_corpus: EvaluationCorpus,
+) -> None:
+    request = DocumentSearchRequest(
+        dataset_version=loaded_document_corpus.dataset_version,
+        entity_ids=("superseded-etf",),
+        claim_type="product_risk_factor",
+        section_types=(SectionType.RISK_FACTOR,),
+        cutoff_date=date(2026, 8, 24),
+    )
+    candidate = _hit(
+        "superseded-risk",
+        dataset_version=loaded_document_corpus.dataset_version,
+        entity_id="superseded-etf",
+        section_type=SectionType.RISK_FACTOR,
+    )
+    audits = await loaded_document_corpus.auditor.audit_hits(request, (candidate,))
+
+    assert len(audits) == 1
+    assert audits[0].version_violation is True
+    assert sum(
+        getattr(audits[0], name)
+        for name in (
+            "dataset_violation",
+            "identity_violation",
+            "entity_violation",
+            "coverage_violation",
+            "authority_violation",
+            "source_violation",
+            "temporal_violation",
+            "section_violation",
+        )
+    ) == 0

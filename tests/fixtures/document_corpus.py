@@ -89,6 +89,7 @@ def insert_document_search_corpus(
         ("policy-fund-one", "institution"),
         ("aerospace-index-one", "index"),
         ("aerospace-theme-name-only", "index"),
+        ("superseded-etf", "product"),
     ) if include_evaluation_fixtures else ()
     for entity_id, entity_type in (
         *evaluation_entities,
@@ -475,6 +476,42 @@ def insert_document_search_corpus(
                 ),
             ),
         )
+        _insert_document(
+            connection,
+            dataset_version=dataset_version,
+            document_id="document-superseded-risk",
+            entity_id="superseded-etf",
+            source_id="source-approved",
+            coverage_role="product_summary",
+            available_at=datetime(2026, 8, 2, tzinfo=UTC),
+            chunks=(
+                (
+                    "superseded-risk",
+                    "risk_factor",
+                    "superseded product risk",
+                    "[1,0,0]",
+                ),
+            ),
+        )
+        _insert_document(
+            connection,
+            dataset_version=dataset_version,
+            document_id="document-current-risk",
+            entity_id="superseded-etf",
+            source_id="source-approved",
+            coverage_role="product_full",
+            available_at=datetime(2026, 8, 3, tzinfo=UTC),
+            document_type="full_prospectus",
+            amends_document_id="document-superseded-risk",
+            chunks=(
+                (
+                    "current-risk",
+                    "risk_factor",
+                    "current product risk",
+                    "[0.99,0.01,0]",
+                ),
+            ),
+        )
     _insert_document(
         connection,
         dataset_version=dataset_version,
@@ -645,6 +682,7 @@ def _insert_document(
     publisher_role: str = "regulator_disclosure",
     effective_to: date | None = None,
     cutoff_eligible: bool = True,
+    amends_document_id: str | None = None,
 ) -> None:
     published_at = datetime(2026, 8, 1, tzinfo=UTC)
     connection.execute(
@@ -674,15 +712,17 @@ def _insert_document(
         INSERT INTO document.document_profile (
             dataset_version, document_id, document_version, publisher_role,
             jurisdiction, original_language, effective_from, effective_to,
-            extraction_method, cutoff_eligible, record_hash, created_at
+            amends_document_id, extraction_method, cutoff_eligible,
+            record_hash, created_at
         ) VALUES (%s, %s, '2026-08-01', %s, 'US', 'en',
-                  DATE '2026-08-01', %s, 'text_layer', %s, %s, %s)
+                  DATE '2026-08-01', %s, %s, 'text_layer', %s, %s, %s)
         """,
         (
             dataset_version,
             document_id,
             publisher_role,
             effective_to,
+            amends_document_id,
             cutoff_eligible,
             VALID_RECORD_HASH,
             CREATED_AT,

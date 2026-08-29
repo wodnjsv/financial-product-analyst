@@ -40,6 +40,9 @@ class _ClaimRule:
     binding_roles: frozenset[str] | None = None
 
 
+ClaimAuthorityRule = _ClaimRule
+
+
 _PRODUCT_DOCUMENT_RULES = (
     _ClaimRule(DocumentRole.PRODUCT_SUMMARY),
     _ClaimRule(DocumentRole.PRODUCT_FULL),
@@ -302,6 +305,15 @@ class DocumentCandidateRepository:
             _hit_from_row(row, vector_rank=rank)
             for rank, row in enumerate(rows, start=1)
         )
+
+
+def claim_authority_rules(claim_type: str) -> tuple[ClaimAuthorityRule, ...]:
+    """Return the immutable planner authority rules used by candidate search."""
+
+    try:
+        return _CLAIM_RULES[claim_type]
+    except KeyError as error:
+        raise ValueError(f"unsupported claim_type: {claim_type}") from error
 
 
 def reciprocal_rank_fusion(
