@@ -6,6 +6,17 @@ from .evidence import (
     RequestScope,
     RequestScopeMismatch,
 )
+from .documents import (
+    DocumentCorpusConflict,
+    DocumentCorpusError,
+    DocumentCorpusNotFound,
+    DocumentCorpusRecord,
+    DocumentCorpusRepository,
+    DocumentCorpusStateError,
+    DocumentCorpusValidationError,
+    DocumentEntityBindingRecord,
+    DocumentProfileRecord,
+)
 
 __all__ = [
     "EvidenceLedgerConflict",
@@ -14,4 +25,13 @@ __all__ = [
     "OriginReference",
     "RequestScope",
     "RequestScopeMismatch",
+    "DocumentCorpusConflict",
+    "DocumentCorpusError",
+    "DocumentCorpusNotFound",
+    "DocumentCorpusRecord",
+    "DocumentCorpusRepository",
+    "DocumentCorpusStateError",
+    "DocumentCorpusValidationError",
+    "DocumentEntityBindingRecord",
+    "DocumentProfileRecord",
 ]

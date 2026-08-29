@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 
 VALID_MANIFEST_HASH = "a" * 64
@@ -97,6 +98,41 @@ def insert_source(
             publisher,
             "c" * 64,
             eligible_for_claim,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+
+
+def insert_scope_evidence(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    evidence_id: str = "scope-one",
+    source_id: str = "source-one",
+    entity_id: str = "subject-one",
+) -> None:
+    tagged_value = {"type": "string", "value": "document coverage scope"}
+    connection.execute(
+        """
+        INSERT INTO evidence.evidence_record (
+            dataset_version, evidence_id, evidence_kind, source_id,
+            subject_id, predicate_id, value_or_object_id, normalized_value,
+            locator_type, locator_uri_or_object_key, parser_version,
+            mapping_version, cutoff_status, record_hash, scope_completeness,
+            created_at
+        ) VALUES (%s, %s, 'query_scope', %s, %s,
+                  'document_coverage_scope', %s, %s, 'tabular',
+                  'synthetic://document/coverage', 'parser.v1', 'mapping.v1',
+                  'eligible', %s, 'bounded_unknown', %s)
+        """,
+        (
+            dataset_version,
+            evidence_id,
+            source_id,
+            entity_id,
+            Jsonb(tagged_value),
+            Jsonb(tagged_value),
             VALID_RECORD_HASH,
             CREATED_AT,
         ),
