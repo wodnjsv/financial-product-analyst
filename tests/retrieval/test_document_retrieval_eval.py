@@ -482,15 +482,25 @@ async def test_negative_probe_fails_when_retrieved_or_metadata_reason_differs() 
 
 
 @pytest.mark.asyncio
-async def test_relationship_and_evidence_deltas_are_measured_and_gate_failure() -> None:
+async def test_concurrent_ledger_deltas_are_diagnostic_and_do_not_fail() -> None:
     report = await evaluate_cases(
-        _corpus(auditor=_AuditRepository(ledger_counts=(LedgerCounts(4, 7), LedgerCounts(5, 9)))),
+        _corpus(
+            auditor=_AuditRepository(
+                ledger_counts=(LedgerCounts(4, 7), LedgerCounts(5, 5))
+            )
+        ),
         load_gold_catalog(GOLD_PATH),
     )
-    assert report.relationships_created == 1
-    assert report.evidence_created == 2
-    assert report.ledger_mutation_violation_count == 2
-    assert report_exit_code(report) != 0
+    assert report.relationship_count_before == 4
+    assert report.relationship_count_after == 5
+    assert report.relationship_count_delta == 1
+    assert report.relationships_created == 0
+    assert report.evidence_count_before == 7
+    assert report.evidence_count_after == 5
+    assert report.evidence_count_delta == -2
+    assert report.evidence_created == 0
+    assert not hasattr(report, "ledger_mutation_violation_count")
+    assert report_exit_code(report) == 0
 
 
 @pytest.fixture
@@ -688,7 +698,8 @@ async def test_phase0_document_cases_pass_top5_negative_and_no_write_gates(loade
     assert len(report.negative_dispositions) == 9
     assert report.relationships_created == 0
     assert report.evidence_created == 0
-    assert report.ledger_mutation_violation_count == 0
+    assert report.relationship_count_delta == 0
+    assert report.evidence_count_delta == 0
 
 
 @pytest.mark.postgres

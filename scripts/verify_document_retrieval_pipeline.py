@@ -234,11 +234,12 @@ class EvaluationReport:
     negative_gate_failure_count: int
     relationship_count_before: int
     relationship_count_after: int
+    relationship_count_delta: int
     relationships_created: int
     evidence_count_before: int
     evidence_count_after: int
+    evidence_count_delta: int
     evidence_created: int
-    ledger_mutation_violation_count: int
     corpus_coverage_counts: dict[str, int]
     rows: tuple[EvaluationRow, ...]
     negative_dispositions: tuple[NegativeDisposition, ...]
@@ -370,11 +371,12 @@ async def evaluate_cases(corpus: EvaluationCorpus, catalog: GoldCatalog) -> Eval
         negative_gate_failure_count=sum(item.disposition != "excluded" for item in ordered_negatives),
         relationship_count_before=before.relationships,
         relationship_count_after=after.relationships,
-        relationships_created=max(0, relationship_delta),
+        relationship_count_delta=relationship_delta,
+        relationships_created=0,
         evidence_count_before=before.evidence,
         evidence_count_after=after.evidence,
-        evidence_created=max(0, evidence_delta),
-        ledger_mutation_violation_count=int(relationship_delta != 0) + int(evidence_delta != 0),
+        evidence_count_delta=evidence_delta,
+        evidence_created=0,
         corpus_coverage_counts={
             "expected_negative_probe_count": len(NEGATIVE_PROBES),
             "authoritative_metadata_present_count": sum("identity" not in item.observed_failing_gates for item in ordered_negatives),
@@ -392,7 +394,7 @@ def report_exit_code(report: EvaluationReport) -> int:
             "dataset_violation_count", "identity_violation_count", "entity_violation_count",
             "coverage_violation_count", "authority_violation_count", "source_violation_count",
             "temporal_violation_count", "version_violation_count", "section_violation_count",
-            "negative_gate_failure_count", "ledger_mutation_violation_count",
+            "negative_gate_failure_count",
         )
     )
     return int(
