@@ -105,7 +105,7 @@ class DocumentCoverageDraft:
     def __post_init__(self) -> None:
         if self.coverage_status is CoverageStatus.INDEXED:
             if (
-                self.document_id is None
+                not _has_text(self.document_id)
                 or self.scope_evidence_id is not None
                 or self.reason_code is not None
             ):
@@ -113,8 +113,8 @@ class DocumentCoverageDraft:
             return
         if (
             self.document_id is not None
-            or self.scope_evidence_id is None
-            or not self.reason_code
+            or not _has_text(self.scope_evidence_id)
+            or not _has_text(self.reason_code)
         ):
             raise ValueError("negative coverage requires scope evidence only")
 
@@ -136,3 +136,7 @@ class DocumentChunkDraft:
     embedding_text: str
     content_hash: str
     record_hash: str
+
+
+def _has_text(value: str | None) -> bool:
+    return value is not None and bool(value.strip())

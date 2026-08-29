@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -23,6 +24,7 @@ def candidate(
     effective_from: date | None = date(2026, 8, 1),
     effective_to: date | None = None,
     bound_entity_ids: tuple[str, ...] = ("product-a",),
+    binding_role: str = "subject_product",
     claim_types: set[str] | None = None,
     exact_text_available: bool = True,
     content_checksum: str | None = None,
@@ -40,7 +42,7 @@ def candidate(
         effective_from=effective_from,
         effective_to=effective_to,
         bound_entity_ids=bound_entity_ids,
-        binding_role="subject_product",
+        binding_role=binding_role,
         claim_types=frozenset(
             claim_types or {"investment_strategy", "risk_factor"}
         ),
@@ -170,5 +172,211 @@ def test_coverage_draft_rejects_document_on_negative_coverage() -> None:
             document_id="invented-document",
             scope_evidence_id="scope-a",
             reason_code="document_not_found",
+            record_hash="a" * 64,
+        )
+
+
+def test_cutoff_uses_seoul_calendar_day_for_utc_timestamps() -> None:
+    seoul = ZoneInfo("Asia/Seoul")
+    cutoff = date(2026, 8, 24)
+    last_kst = datetime(2026, 8, 24, 23, 59, 59, 999999, tzinfo=seoul)
+    equivalent_utc = datetime(2026, 8, 24, 14, 59, 59, 999999, tzinfo=UTC)
+    first_late = datetime(2026, 8, 24, 15, 0, tzinfo=UTC)
+
+    assert admit_document(
+        candidate("last-kst", published_at=last_kst, available_at=last_kst),
+        cutoff_date=cutoff,
+    ).accepted
+    assert admit_document(
+        candidate("last-utc", published_at=equivalent_utc, available_at=equivalent_utc),
+        cutoff_date=cutoff,
+    ).accepted
+    late = admit_document(
+        candidate("first-late", published_at=first_late, available_at=first_late),
+        cutoff_date=cutoff,
+    )
+    assert late.coverage_status is CoverageStatus.AFTER_CUTOFF_ONLY
+
+
+@pytest.mark.parametrize(
+    ("published_at", "available_at"),
+    [
+        (None, datetime(2026, 8, 1, tzinfo=UTC)),
+        (datetime(2026, 8, 1), datetime(2026, 8, 1, tzinfo=UTC)),
+    ],
+)
+def test_missing_or_naive_timing_is_version_unknown(
+    published_at: datetime | None,
+    available_at: datetime | None,
+) -> None:
+    decision = admit_document(
+        candidate(
+            "unverifiable-time",
+            published_at=published_at,
+            available_at=available_at,
+        ),
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert decision.coverage_status is CoverageStatus.VERSION_UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("required_role", "document_type", "publisher_role", "binding_role"),
+    [
+        (
+            DocumentRole.PRODUCT_SUMMARY,
+            "summary_prospectus",
+            PublisherRole.POLICY_OPERATOR,
+            "subject_product",
+        ),
+        (
+            DocumentRole.INDEX_METHODOLOGY,
+            "index_methodology",
+            PublisherRole.ISSUER,
+            "subject_index",
+        ),
+        (
+            DocumentRole.OFFICIAL_UPDATE,
+            "official_update",
+            PublisherRole.INDEX_PROVIDER,
+            "subject_product",
+        ),
+    ],
+)
+def test_known_but_wrong_publisher_role_is_rejected_for_selection(
+    required_role: DocumentRole,
+    document_type: str,
+    publisher_role: PublisherRole,
+    binding_role: str,
+) -> None:
+    selected = select_canonical_document(
+        (
+            candidate(
+                "wrong-authority",
+                document_type=document_type,
+                publisher_role=publisher_role,
+                binding_role=binding_role,
+                claim_types={
+                    "investment_strategy",
+                    "risk_factor",
+                    "index_methodology",
+                    "selection_rules",
+                    "rebalancing",
+                    "official_update",
+                },
+            ),
+        ),
+        required_role=required_role,
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert selected.document_id is None
+    assert selected.coverage_status is CoverageStatus.PUBLISHER_NOT_APPROVED
+
+
+def test_invalid_or_empty_binding_fails_closed() -> None:
+    invalid_role = admit_document(
+        candidate("invalid-role", binding_role="title_similarity"),
+        cutoff_date=date(2026, 8, 24),
+    )
+    empty_binding = admit_document(
+        candidate("empty-binding", bound_entity_ids=()),
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert invalid_role.coverage_status is CoverageStatus.AMBIGUOUS_ENTITY_BINDING
+    assert empty_binding.coverage_status is CoverageStatus.AMBIGUOUS_ENTITY_BINDING
+
+
+def test_candidates_for_one_role_must_share_an_exact_entity() -> None:
+    selected = select_canonical_document(
+        (
+            candidate("entity-a", bound_entity_ids=("entity-a",)),
+            candidate("entity-b", bound_entity_ids=("entity-b",)),
+        ),
+        required_role=DocumentRole.PRODUCT_SUMMARY,
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert selected.document_id is None
+    assert selected.coverage_status is CoverageStatus.AMBIGUOUS_ENTITY_BINDING
+
+
+def test_unrelated_rejected_documents_do_not_affect_required_role_coverage() -> None:
+    selected = select_canonical_document(
+        (
+            candidate(
+                "late-index",
+                document_type="index_methodology",
+                binding_role="subject_index",
+                available_at=datetime(2026, 8, 25, tzinfo=UTC),
+            ),
+        ),
+        required_role=DocumentRole.PRODUCT_SUMMARY,
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert selected.document_id is None
+    assert selected.coverage_status is CoverageStatus.DOCUMENT_NOT_FOUND
+
+
+def test_failure_selection_is_stable_and_prefers_unverifiable_timing() -> None:
+    candidates = (
+        candidate("unknown-time", published_at=None, available_at=None),
+        candidate("late", available_at=datetime(2026, 8, 25, tzinfo=UTC)),
+    )
+    first = select_canonical_document(
+        candidates,
+        required_role=DocumentRole.PRODUCT_SUMMARY,
+        cutoff_date=date(2026, 8, 24),
+    )
+    second = select_canonical_document(
+        tuple(reversed(candidates)),
+        required_role=DocumentRole.PRODUCT_SUMMARY,
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert first == second
+    assert first.coverage_status is CoverageStatus.VERSION_UNKNOWN
+    assert first.reason_code == "cutoff_timing_not_verified"
+
+
+@pytest.mark.parametrize("document_id", [None, "", "   "])
+def test_indexed_coverage_requires_trimmed_document_id(
+    document_id: str | None,
+) -> None:
+    with pytest.raises(ValueError, match="indexed coverage"):
+        DocumentCoverageDraft(
+            coverage_id="coverage-a",
+            dataset_version="dataset-20260824",
+            entity_id="product-a",
+            required_document_role=DocumentRole.PRODUCT_SUMMARY,
+            coverage_status=CoverageStatus.INDEXED,
+            document_id=document_id,
+            scope_evidence_id=None,
+            reason_code=None,
+            record_hash="a" * 64,
+        )
+
+
+@pytest.mark.parametrize(
+    ("scope_evidence_id", "reason_code"),
+    [(None, "missing"), ("", "missing"), ("  ", "missing"), ("scope-a", ""), ("scope-a", "  ")],
+)
+def test_negative_coverage_requires_trimmed_scope_evidence_and_reason(
+    scope_evidence_id: str | None,
+    reason_code: str | None,
+) -> None:
+    with pytest.raises(ValueError, match="negative coverage"):
+        DocumentCoverageDraft(
+            coverage_id="coverage-a",
+            dataset_version="dataset-20260824",
+            entity_id="product-a",
+            required_document_role=DocumentRole.PRODUCT_SUMMARY,
+            coverage_status=CoverageStatus.DOCUMENT_NOT_FOUND,
+            document_id=None,
+            scope_evidence_id=scope_evidence_id,
+            reason_code=reason_code,
             record_hash="a" * 64,
         )
