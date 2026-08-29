@@ -1620,7 +1620,7 @@
         {"name": "official_temporal_theme_relation_snapshot", "provenance": "authoritative_external", "status": "mandatory", "cutoff": "2026-08-24"},
         {"name": "official_index_and_product_document_corpus", "provenance": "authoritative_external", "status": "mandatory", "cutoff": "2026-08-24"}
       ],
-      "business_rules": ["WINDOW_END_2026_07_11", "SIX_CALENDAR_MONTH_WINDOW", "RELATION_REQUIRES_OFFICIAL_ASSERTION_OR_REPRODUCIBLE_CLASSIFICATION", "PUBLISHED_AND_AVAILABLE_BY_CUTOFF", "PRESERVE_VALID_FROM_AND_VALID_TO", "DO_NOT_USE_VECTOR_SIMILARITY_AS_RELATION_FACT"],
+      "business_rules": ["WINDOW_END_2026_08_24", "SIX_CALENDAR_MONTH_WINDOW", "RELATION_REQUIRES_OFFICIAL_ASSERTION_OR_REPRODUCIBLE_CLASSIFICATION", "PUBLISHED_AND_AVAILABLE_BY_CUTOFF", "PRESERVE_VALID_FROM_AND_VALID_TO", "DO_NOT_USE_VECTOR_SIMILARITY_AS_RELATION_FACT"],
       "reference_resolution": [{"mention": "우주항공 테마", "binds_to": "canonical_theme", "expected": "resolved_with_aliases"}],
       "similarity_basis": [],
       "support_level": "requires_additional_data",

@@ -1197,7 +1197,7 @@
 - 원천 필드: `pd_itm_no`, `pd_nm`, `cu_base_index`, `cu_strtegy`, `du_last_aum`, `du_upt_dt`
 - 승인 Relation: `associatedWithTheme`, `documentedBy`, `tracksIndex`
 - Document Claim: `theme_relation_evidence_span`
-- Control Check: `dataset_cutoff`, `organizer_missingness`, `WINDOW_END_2026_07_11`, `SIX_CALENDAR_MONTH_WINDOW`, `RELATION_REQUIRES_OFFICIAL_ASSERTION_OR_REPRODUCIBLE_CLASSIFICATION`, `PUBLISHED_AND_AVAILABLE_BY_CUTOFF`, `PRESERVE_VALID_FROM_AND_VALID_TO`, `DO_NOT_USE_VECTOR_SIMILARITY_AS_RELATION_FACT`, `THEME_ENTITY_TYPE`, `TEMPORAL_RELATION_HAS_SOURCE`, `RELATION_VALIDITY_INTERVAL`, `PRODUCT_TYPE_ETF`, `closed_world_coverage`
+- Control Check: `dataset_cutoff`, `organizer_missingness`, `WINDOW_END_2026_08_24`, `SIX_CALENDAR_MONTH_WINDOW`, `RELATION_REQUIRES_OFFICIAL_ASSERTION_OR_REPRODUCIBLE_CLASSIFICATION`, `PUBLISHED_AND_AVAILABLE_BY_CUTOFF`, `PRESERVE_VALID_FROM_AND_VALID_TO`, `DO_NOT_USE_VECTOR_SIMILARITY_AS_RELATION_FACT`, `THEME_ENTITY_TYPE`, `TEMPORAL_RELATION_HAS_SOURCE`, `RELATION_VALIDITY_INTERVAL`, `PRODUCT_TYPE_ETF`, `closed_world_coverage`
 - Capability: `resolve_aerospace_theme`, `calculate_six_month_window`, `retrieve_official_theme_relation_events`, `map_events_to_etfs`, `validate_event_and_document_dates`, `summarize_relation_history`
 - Retrieval: `federated` / 역할 `keyword`, `graph`, `rdb`, `vector`
 - Subtask route: `resolve_aerospace_theme→keyword`, `calculate_six_month_window→rdb`, `retrieve_official_theme_relation_events→graph`, `map_events_to_etfs→graph`, `validate_event_and_document_dates→vector`, `summarize_relation_history→rdb`

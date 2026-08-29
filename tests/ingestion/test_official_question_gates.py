@@ -110,6 +110,24 @@ def test_stage03_question_coverage_contract_is_complete() -> None:
     )
 
 
+def test_theme_relation_window_uses_current_dataset_cutoff() -> None:
+    catalog = json.loads(
+        (Path(__file__).parents[1] / "gold" / "core_questions.json").read_text(
+            "utf-8"
+        )
+    )
+    case = next(item for item in catalog["cases"] if item["id"] == "REL-THEME-001")
+
+    assert case["temporal_scope"] == {
+        "window_start": "2026-02-24",
+        "window_end": "2026-08-24",
+        "boundary": "inclusive",
+        "publication_cutoff": "2026-08-24",
+    }
+    assert "WINDOW_END_2026_08_24" in case["business_rules"]
+    assert "WINDOW_END_2026_07_11" not in case["business_rules"]
+
+
 def test_cross_family_samsung_question_keeps_public_fund_gap_visible() -> None:
     catalog = json.loads(
         (
