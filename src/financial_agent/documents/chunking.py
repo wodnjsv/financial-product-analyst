@@ -224,7 +224,7 @@ def aggregate_chunking_results(
         ):
             raise ValueError("chunk identities must match their document result")
     chunk_ids = [
-        (chunk.dataset_version, chunk.document_id, chunk.chunk_id)
+        (chunk.dataset_version, chunk.chunk_id)
         for result in results
         for chunk in result.chunks
     ]

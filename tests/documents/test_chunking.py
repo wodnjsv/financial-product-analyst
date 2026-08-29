@@ -578,6 +578,26 @@ def test_scope_budget_rejects_duplicate_chunk_identities() -> None:
         aggregate_chunking_results((duplicate_chunks,), soft_limit=20)
 
 
+def test_scope_budget_rejects_cross_document_persisted_chunk_collisions() -> None:
+    first = chunk_document_sections(
+        context("document-a"),
+        (section(("Principal Risks",), "risk-a"),),
+        counter=WhitespaceTokenCounter(),
+    )
+    second = chunk_document_sections(
+        context("document-b"),
+        (section(("Principal Risks",), "risk-b"),),
+        counter=WhitespaceTokenCounter(),
+    )
+    colliding_second = replace(
+        second,
+        chunks=(replace(second.chunks[0], chunk_id=first.chunks[0].chunk_id),),
+    )
+
+    with pytest.raises(ValueError, match="duplicate chunk"):
+        aggregate_chunking_results((first, colliding_second), soft_limit=20)
+
+
 def test_scope_budget_preserves_negative_member_statuses_without_coverage_result() -> None:
     indexed = chunk_document_sections(
         context("document-a"),
