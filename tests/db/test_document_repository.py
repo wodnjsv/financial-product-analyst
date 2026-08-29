@@ -5,6 +5,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
@@ -14,6 +15,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from financial_agent.db.preflight import normalize_psycopg_url
+from financial_agent.db.repositories import documents as document_repository
 from financial_agent.db.repositories.documents import (
     DocumentCorpusConflict,
     DocumentCorpusRecord,
@@ -383,12 +385,9 @@ async def test_foreign_dataset_entity_is_rejected(
     second_dataset, _ = _prepare_context(migrated_database_url)
     corpus = _corpus(dataset_version=second_dataset, entity_id=entity_id)
 
-    with pytest.raises(IntegrityError) as error:
+    with pytest.raises(DocumentCorpusValidationError, match="embedding context"):
         await DocumentCorpusRepository(repository_engine).append_corpus(corpus)
 
-    assert error.value.orig.diag.constraint_name == (
-        "fk_document_entity_binding_entity"
-    )
     assert first_dataset != second_dataset
 
 
@@ -523,6 +522,10 @@ def test_chunk_content_hash_must_match_exact_text() -> None:
         DocumentCorpusRepository.validate_corpus(invalid)
 
 
+def test_valid_corpus_passes_repository_validation() -> None:
+    DocumentCorpusRepository.validate_corpus(_corpus())
+
+
 def test_chunk_record_hash_must_match_authoritative_locators_and_text() -> None:
     corpus = _corpus()
     invalid = replace(
@@ -573,3 +576,144 @@ def test_corpus_children_must_match_the_exact_parent_and_binding(
 def test_append_coverage_accepts_only_documentless_negative_coverage() -> None:
     with pytest.raises(DocumentCorpusValidationError, match="negative"):
         DocumentCorpusRepository.validate_standalone_coverage(_corpus().coverage)
+
+
+def test_offset_equivalent_document_datetimes_have_one_canonical_identity() -> None:
+    seoul = ZoneInfo("Asia/Seoul")
+    seoul_corpus = replace(
+        _corpus(),
+        published_at=datetime(2026, 8, 1, 9, tzinfo=seoul),
+        available_at=datetime(2026, 8, 2, 9, tzinfo=seoul),
+    )
+    utc_corpus = replace(
+        seoul_corpus,
+        published_at=datetime(2026, 8, 1, tzinfo=UTC),
+        available_at=datetime(2026, 8, 2, tzinfo=UTC),
+    )
+
+    assert document_repository._corpus_bytes(
+        seoul_corpus
+    ) == document_repository._corpus_bytes(utc_corpus)
+
+
+@pytest.mark.parametrize("field_name", ("published_at", "available_at"))
+def test_corpus_rejects_naive_persisted_datetimes(field_name: str) -> None:
+    corpus = replace(_corpus(), **{field_name: datetime(2026, 8, 1)})
+
+    with pytest.raises(DocumentCorpusValidationError, match=field_name):
+        DocumentCorpusRepository.validate_corpus(corpus)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_asia_seoul_corpus_and_utc_equivalent_retry_converge(
+    repository_engine: AsyncEngine,
+    migrated_database_url: str,
+) -> None:
+    dataset_version, entity_id = _prepare_context(migrated_database_url)
+    seoul = ZoneInfo("Asia/Seoul")
+    seoul_corpus = replace(
+        _corpus(dataset_version=dataset_version, entity_id=entity_id),
+        published_at=datetime(2026, 8, 1, 9, tzinfo=seoul),
+        available_at=datetime(2026, 8, 2, 9, tzinfo=seoul),
+    )
+    utc_equivalent = replace(
+        seoul_corpus,
+        published_at=datetime(2026, 8, 1, tzinfo=UTC),
+        available_at=datetime(2026, 8, 2, tzinfo=UTC),
+    )
+    repository = DocumentCorpusRepository(repository_engine)
+
+    await repository.append_corpus(seoul_corpus)
+    await repository.append_corpus(seoul_corpus)
+    await repository.append_corpus(utc_equivalent)
+
+    async with repository_engine.connect() as connection:
+        count = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT count(*) FROM document.document_record
+                    WHERE dataset_version = :dataset_version
+                    """
+                ),
+                {"dataset_version": dataset_version},
+            )
+        ).scalar_one()
+    assert count == 1
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_multibinding_chunks_round_trip_with_the_covered_entity_context(
+    repository_engine: AsyncEngine,
+    migrated_database_url: str,
+) -> None:
+    dataset_version, covered_entity_id = _prepare_context(migrated_database_url)
+    earlier_binding_entity_id = f"index-{_token()}"
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        insert_entity(
+            connection,
+            dataset_version=dataset_version,
+            entity_id=earlier_binding_entity_id,
+            entity_type="index",
+        )
+    corpus = _corpus(
+        dataset_version=dataset_version,
+        entity_id=covered_entity_id,
+    )
+    earlier_binding = DocumentEntityBindingRecord(
+        dataset_version=dataset_version,
+        binding_id="a-index-binding",
+        document_id=corpus.document_id,
+        entity_id=earlier_binding_entity_id,
+        binding_role="subject_index",
+        record_hash="9" * 64,
+    )
+    covered_binding = replace(
+        corpus.entity_bindings[0],
+        binding_id="z-covered-product-binding",
+    )
+    corpus = replace(
+        corpus,
+        entity_bindings=(earlier_binding, covered_binding),
+    )
+    repository = DocumentCorpusRepository(repository_engine)
+
+    await repository.append_corpus(corpus)
+
+    assert await repository.list_chunks(
+        dataset_version,
+        corpus.document_id,
+    ) == corpus.chunks
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_incoherent_embedding_context_is_rejected_before_corpus_rows_commit(
+    repository_engine: AsyncEngine,
+    migrated_database_url: str,
+) -> None:
+    dataset_version, entity_id = _prepare_context(migrated_database_url)
+    corpus = _corpus(dataset_version=dataset_version, entity_id=entity_id)
+    incoherent = replace(
+        corpus,
+        chunks=(replace(corpus.chunks[0], embedding_text="wrong context"),),
+    )
+
+    with pytest.raises(DocumentCorpusValidationError, match="embedding_text"):
+        await DocumentCorpusRepository(repository_engine).append_corpus(incoherent)
+
+    async with repository_engine.connect() as connection:
+        count = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT count(*) FROM document.document_record
+                    WHERE dataset_version = :dataset_version
+                    """
+                ),
+                {"dataset_version": dataset_version},
+            )
+        ).scalar_one()
+    assert count == 0

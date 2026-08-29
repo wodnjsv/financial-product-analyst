@@ -111,10 +111,18 @@ def _is_sha256(value: str) -> bool:
     )
 
 
+def _utc_datetime(value: datetime, field_name: str = "datetime") -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise DocumentCorpusValidationError(field_name)
+    return value.astimezone(UTC)
+
+
 def _json_value(value: object) -> object:
     if isinstance(value, Enum):
         return value.value
-    if isinstance(value, (date, datetime)):
+    if isinstance(value, datetime):
+        return _utc_datetime(value).isoformat()
+    if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, (list, tuple)):
         return [_json_value(item) for item in value]
@@ -144,6 +152,12 @@ def _binding_payload(binding: DocumentEntityBindingRecord) -> dict[str, object]:
 def _chunk_payload(chunk: DocumentChunkDraft) -> dict[str, object]:
     payload = asdict(chunk)
     payload.pop("embedding_text")
+    return payload
+
+
+def _chunk_hash_payload(chunk: DocumentChunkDraft) -> dict[str, object]:
+    payload = _chunk_payload(chunk)
+    payload.pop("record_hash")
     return payload
 
 
@@ -219,6 +233,12 @@ class DocumentCorpusRepository:
                 raise DocumentCorpusValidationError(label)
         if not _is_sha256(corpus.content_checksum):
             raise DocumentCorpusValidationError("content_checksum")
+        for field_name, value in (
+            ("published_at", corpus.published_at),
+            ("available_at", corpus.available_at),
+        ):
+            if value is not None:
+                _utc_datetime(value, field_name)
         if corpus.profile.dataset_version != corpus.dataset_version:
             raise DocumentCorpusValidationError("profile dataset_version")
         if corpus.profile.document_id != corpus.document_id:
@@ -270,7 +290,7 @@ class DocumentCorpusRepository:
             if chunk.content_hash != _sha256(chunk.exact_text):
                 raise DocumentCorpusValidationError("chunk content_hash")
             expected_record_hash = hashlib.sha256(
-                _canonical_bytes(_chunk_payload(chunk))
+                _canonical_bytes(_chunk_hash_payload(chunk))
             ).hexdigest()
             if chunk.record_hash != expected_record_hash:
                 raise DocumentCorpusValidationError("chunk record_hash")
@@ -312,6 +332,7 @@ class DocumentCorpusRepository:
                     await self._require_building_dataset(
                         connection, corpus.dataset_version
                     )
+                    await self._validate_embedding_context(connection, corpus)
                     await connection.execute(
                         sa.insert(document_record).values(
                             dataset_version=corpus.dataset_version,
@@ -321,8 +342,16 @@ class DocumentCorpusRepository:
                             document_type=corpus.document_type,
                             object_key=corpus.object_key,
                             content_checksum=corpus.content_checksum,
-                            published_at=corpus.published_at,
-                            available_at=corpus.available_at,
+                            published_at=(
+                                _utc_datetime(corpus.published_at, "published_at")
+                                if corpus.published_at is not None
+                                else None
+                            ),
+                            available_at=(
+                                _utc_datetime(corpus.available_at, "available_at")
+                                if corpus.available_at is not None
+                                else None
+                            ),
                             record_hash=_document_record_hash(corpus),
                             created_at=created_at,
                         )
@@ -546,7 +575,17 @@ class DocumentCorpusRepository:
                     document_record.c.document_type,
                 )
                 .select_from(
-                    document_entity_binding.join(
+                    document_coverage.join(
+                        document_entity_binding,
+                        sa.and_(
+                            document_coverage.c.dataset_version
+                            == document_entity_binding.c.dataset_version,
+                            document_coverage.c.document_id
+                            == document_entity_binding.c.document_id,
+                            document_coverage.c.entity_id
+                            == document_entity_binding.c.entity_id,
+                        ),
+                    ).join(
                         entity,
                         sa.and_(
                             document_entity_binding.c.dataset_version
@@ -564,12 +603,12 @@ class DocumentCorpusRepository:
                     )
                 )
                 .where(
-                    document_entity_binding.c.dataset_version
-                    == dataset_version_value,
-                    document_entity_binding.c.document_id == document_id_value,
+                    document_coverage.c.dataset_version == dataset_version_value,
+                    document_coverage.c.document_id == document_id_value,
+                    document_coverage.c.coverage_status
+                    == CoverageStatus.INDEXED.value,
                 )
-                .order_by(document_entity_binding.c.binding_id)
-                .limit(1)
+                .distinct()
             )
         ).one_or_none()
         rows = (
@@ -627,6 +666,31 @@ class DocumentCorpusRepository:
             reason_code=row["reason_code"],
             record_hash=row["record_hash"],
         )
+
+    @staticmethod
+    async def _validate_embedding_context(
+        connection: AsyncConnection,
+        corpus: DocumentCorpusRecord,
+    ) -> None:
+        canonical_name = await connection.scalar(
+            sa.select(entity.c.canonical_name).where(
+                entity.c.dataset_version == corpus.dataset_version,
+                entity.c.entity_id == corpus.coverage.entity_id,
+            )
+        )
+        if canonical_name is None:
+            raise DocumentCorpusValidationError("embedding context entity")
+        for chunk in corpus.chunks:
+            expected = "\n".join(
+                (
+                    canonical_name,
+                    corpus.document_type,
+                    chunk.section_path,
+                    chunk.exact_text,
+                )
+            )
+            if chunk.embedding_text != expected:
+                raise DocumentCorpusValidationError("chunk embedding_text")
 
     @staticmethod
     async def _require_building_dataset(
