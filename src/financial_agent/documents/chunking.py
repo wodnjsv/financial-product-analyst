@@ -52,6 +52,20 @@ class ChunkingResult:
     reason_code: str | None
     observed_chunk_count: int
     budget_scope_id: str
+    dataset_version: str
+    document_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ScopeChunkBudgetResult:
+    """A scope-level budget decision that preserves document outcomes intact."""
+
+    budget_scope_id: str
+    dataset_version: str
+    member_results: tuple[ChunkingResult, ...]
+    observed_chunk_count: int
+    over_budget: bool
+    reason_code: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,10 +96,10 @@ _EXCLUDED_HEADINGS = frozenset(
     {
         "fees and expenses", "fees", "fee policy", "distributions and redemptions",
         "distribution and redemption", "taxation", "accounting policies",
-        "accounting policy", "legal notice", "legal disclaimer", "portfolio holdings",
+        "accounting policy", "legal notice", "general legal notice", "legal disclaimer", "portfolio holdings",
         "full holdings table", "historical performance", "historical performance table",
         "financial statements", "market commentary", "운용 보수", "수수료", "분배 및 환매",
-        "분배", "환매", "과세", "회계 정책", "회계", "법적 고지", "보유 종목", "보유종목",
+        "분배", "환매", "과세", "회계 정책", "회계", "법적 고지", "일반 법적 고지", "일반법적고지", "보유 종목", "보유종목",
         "성과", "재무제표", "시장 전망", "운용자 코멘터리",
     }
 )
@@ -109,6 +123,7 @@ _SECTION_ALIASES: tuple[tuple[SectionType, frozenset[str]], ...] = (
 _BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)]|[A-Za-z][.)])\s+")
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])(?=\s)")
 _WORD = re.compile(r"\S+\s*")
+_APPENDIX = re.compile(r"^(?:appendix|부록)(?:$|[\s:-]|\d|[ivxlcdm])")
 
 
 def classify_section(
@@ -121,11 +136,12 @@ def classify_section(
     headings = _normalized_heading_path(section.heading_path)
     if _is_excluded_heading(headings):
         return None
-    for section_type, aliases in _SECTION_ALIASES:
-        if section_type in _CONDITIONAL_SECTION_TYPES and section_type not in requested_section_types:
-            continue
-        if any(heading in aliases for heading in headings):
-            return section_type
+    for heading in reversed(headings):
+        for section_type, aliases in _SECTION_ALIASES:
+            if section_type in _CONDITIONAL_SECTION_TYPES and section_type not in requested_section_types:
+                continue
+            if heading in aliases:
+                return section_type
     return None
 
 
@@ -171,15 +187,17 @@ def chunk_document_sections(
         chunks.append(_draft(context=context, section=candidate.section, section_type=candidate.section_type, ordinal=len(chunks) + 1, start=candidate.start, end=candidate.end, exact_text=exact_text, content_hash=content_hash))
 
     if not chunks:
-        return _result(context.budget_scope_id, (), CoverageStatus.SECTION_MISSING, "approved_section_not_found")
+        return _result(context, (), CoverageStatus.SECTION_MISSING, "approved_section_not_found")
     if oversized_indivisible:
-        return _result(context.budget_scope_id, tuple(chunks), CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET, "indivisible_unit_over_target_max")
+        return _result(context, tuple(chunks), CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET, "indivisible_unit_over_target_max")
     if len(chunks) > soft_limit or any(count > soft_limit for count in section_chunk_counts.values()):
-        return _result(context.budget_scope_id, tuple(chunks), CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET, "soft_chunk_limit_exceeded")
-    return _result(context.budget_scope_id, tuple(chunks), CoverageStatus.INDEXED, None)
+        return _result(context, tuple(chunks), CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET, "soft_chunk_limit_exceeded")
+    return _result(context, tuple(chunks), CoverageStatus.INDEXED, None)
 
 
-def aggregate_chunking_results(results: tuple[ChunkingResult, ...], *, soft_limit: int) -> ChunkingResult:
+def aggregate_chunking_results(
+    results: tuple[ChunkingResult, ...], *, soft_limit: int
+) -> ScopeChunkBudgetResult:
     """Apply a product/index budget to independent canonical-document results."""
 
     if not results:
@@ -190,19 +208,55 @@ def aggregate_chunking_results(results: tuple[ChunkingResult, ...], *, soft_limi
     if len(scope_ids) != 1:
         raise ValueError("chunking results must belong to one budget scope")
     budget_scope_id = next(iter(scope_ids))
-    chunks = tuple(sorted((chunk for result in results for chunk in result.chunks), key=lambda chunk: (chunk.document_id, chunk.ordinal, chunk.chunk_id)))
-    review_reasons = sorted(result.reason_code for result in results if result.coverage_status is CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET and result.reason_code is not None)
-    if len(chunks) > soft_limit:
-        return _result(budget_scope_id, chunks, CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET, "soft_chunk_limit_exceeded")
-    if review_reasons:
-        return _result(budget_scope_id, chunks, CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET, review_reasons[0])
-    if chunks:
-        return _result(budget_scope_id, chunks, CoverageStatus.INDEXED, None)
-    return _result(budget_scope_id, (), CoverageStatus.SECTION_MISSING, "approved_section_not_found")
+    dataset_versions = {result.dataset_version for result in results}
+    if len(dataset_versions) != 1:
+        raise ValueError("chunking results must belong to one dataset version")
+    member_ids = {(result.dataset_version, result.document_id) for result in results}
+    if len(member_ids) != len(results):
+        raise ValueError("duplicate document results are not allowed")
+    for result in results:
+        if result.observed_chunk_count != len(result.chunks):
+            raise ValueError("chunking result count must match its chunks")
+        if any(
+            chunk.dataset_version != result.dataset_version
+            or chunk.document_id != result.document_id
+            for chunk in result.chunks
+        ):
+            raise ValueError("chunk identities must match their document result")
+    chunk_ids = [
+        (chunk.dataset_version, chunk.document_id, chunk.chunk_id)
+        for result in results
+        for chunk in result.chunks
+    ]
+    if len(set(chunk_ids)) != len(chunk_ids):
+        raise ValueError("duplicate chunk identities are not allowed")
+    members = tuple(sorted(results, key=lambda result: (result.document_id, result.budget_scope_id)))
+    observed_chunk_count = sum(result.observed_chunk_count for result in members)
+    return ScopeChunkBudgetResult(
+        budget_scope_id=budget_scope_id,
+        dataset_version=next(iter(dataset_versions)),
+        member_results=members,
+        observed_chunk_count=observed_chunk_count,
+        over_budget=observed_chunk_count > soft_limit,
+        reason_code=("soft_chunk_limit_exceeded" if observed_chunk_count > soft_limit else None),
+    )
 
 
-def _result(budget_scope_id: str, chunks: tuple[DocumentChunkDraft, ...], coverage_status: CoverageStatus, reason_code: str | None) -> ChunkingResult:
-    return ChunkingResult(chunks, coverage_status, reason_code, len(chunks), budget_scope_id)
+def _result(
+    context: DocumentChunkContext,
+    chunks: tuple[DocumentChunkDraft, ...],
+    coverage_status: CoverageStatus,
+    reason_code: str | None,
+) -> ChunkingResult:
+    return ChunkingResult(
+        chunks,
+        coverage_status,
+        reason_code,
+        len(chunks),
+        context.budget_scope_id,
+        context.dataset_version,
+        context.document_id,
+    )
 
 
 def _validate_budget(target_min: int, target_max: int, overlap: int, soft_limit: int) -> None:
@@ -215,8 +269,8 @@ def _validate_budget(target_min: int, target_max: int, overlap: int, soft_limit:
 def _validate_section(section: ExtractedSection) -> None:
     if (section.page_start is None) != (section.page_end is None):
         raise ValueError("section page range must be complete")
-    if section.page_start is not None and (section.page_start < 0 or section.page_end is None or section.page_end < section.page_start):
-        raise ValueError("section page range must be non-negative and ordered")
+    if section.page_start is not None and (section.page_start < 1 or section.page_end is None or section.page_end < section.page_start):
+        raise ValueError("section page range must be one-based and ordered")
     if section.character_start < 0 or section.character_end < section.character_start:
         raise ValueError("section character range must be non-negative and ordered")
     if section.character_end - section.character_start != len(section.exact_text):
@@ -231,9 +285,7 @@ def _is_excluded_heading(headings: tuple[str, ...]) -> bool:
     for heading in headings:
         if heading in _EXCLUDED_HEADINGS:
             return True
-        if heading == "appendix" or heading.startswith("appendix ") or heading.startswith("appendix:"):
-            return True
-        if heading == "부록" or heading.startswith("부록 ") or heading.startswith("부록:"):
+        if _APPENDIX.match(heading):
             return True
     return False
 
@@ -307,11 +359,15 @@ def _split_at_whitespace(text: str, unit: _Unit, counter: TokenCounter, target_m
         proposed = _Unit(current_start, word.end())
         if _count_units(text, [proposed], counter) <= target_max:
             continue
-        if current_start == word.start():
-            return [_Unit(unit.start, unit.end, indivisible=True)]
-        units.append(_Unit(current_start, word.start()))
+        if current_start < word.start():
+            units.append(_Unit(current_start, word.start()))
         current_start = word.start()
-    units.append(_Unit(current_start, unit.end))
+        lexical_unit = _Unit(word.start(), word.end())
+        if _count_units(text, [lexical_unit], counter) > target_max:
+            units.append(_Unit(word.start(), word.end(), indivisible=True))
+            current_start = word.end()
+    if current_start < unit.end:
+        units.append(_Unit(current_start, unit.end))
     return units
 
 

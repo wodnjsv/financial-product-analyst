@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 
 import pytest
@@ -18,11 +19,12 @@ from financial_agent.documents.chunking import (
 def context(
     document_id: str = "document-a",
     *,
+    dataset_version: str = "2026-08-24",
     budget_scope_id: str = "product-a",
     requested_section_types: frozenset[SectionType] = frozenset(),
 ) -> DocumentChunkContext:
     return DocumentChunkContext(
-        dataset_version="2026-08-24",
+        dataset_version=dataset_version,
         document_id=document_id,
         canonical_entity_name="Selected ETF",
         document_type="summary_prospectus",
@@ -348,10 +350,11 @@ def test_aggregates_budget_across_documents_in_one_explicit_scope() -> None:
     assert second.coverage_status is CoverageStatus.INDEXED
     assert aggregate.budget_scope_id == "product-a"
     assert aggregate.observed_chunk_count == 22
-    assert aggregate.coverage_status is CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET
-    assert tuple(chunk.document_id for chunk in aggregate.chunks[:11]) == (
+    assert aggregate.over_budget is True
+    assert tuple(result.document_id for result in aggregate.member_results) == (
         "document-a",
-    ) * 11
+        "document-b",
+    )
 
 
 def test_refuses_to_aggregate_different_budget_scopes() -> None:
@@ -374,6 +377,7 @@ def test_refuses_to_aggregate_different_budget_scopes() -> None:
     "invalid_section",
     [
         ExtractedSection(("Principal Risks",), "risk", -1, 1, 0, 4),
+        ExtractedSection(("Principal Risks",), "risk", 0, 0, 0, 4),
         ExtractedSection(("Principal Risks",), "risk", 2, 1, 0, 4),
         ExtractedSection(("Principal Risks",), "risk", 1, None, 0, 4),
         ExtractedSection(("Principal Risks",), "risk", 1, 1, -1, 3),
@@ -446,3 +450,150 @@ def test_uses_exact_heading_path_as_a_permutation_independent_tie_break() -> Non
 
     assert first.chunks == second.chunks
     assert first.chunks[0].section_path == "Principal Risks"
+
+
+def test_marks_a_late_indivisible_token_over_budget_for_review() -> None:
+    class CharacterCounter:
+        def count(self, text: str) -> int:
+            return len(text)
+
+    result = chunk_document_sections(
+        context(),
+        (section(("Principal Risks",), "aa LONGGGGG bb"),),
+        counter=CharacterCounter(),
+        target_min=0,
+        target_max=4,
+        overlap=0,
+    )
+
+    assert result.coverage_status is CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET
+    assert result.reason_code == "indivisible_unit_over_target_max"
+
+
+@pytest.mark.parametrize(
+    "counter",
+    [
+        WhitespaceTokenCounter(),
+        type("CharacterCounter", (), {"count": lambda self, text: len(text)})(),
+        type("DoubleCounter", (), {"count": lambda self, text: len(text.split()) * 2})(),
+    ],
+)
+def test_indexed_chunks_never_exceed_the_injected_maximum(counter: object) -> None:
+    result = chunk_document_sections(
+        context(),
+        (section(("Principal Risks",), "one two three. four five six."),),
+        counter=counter,  # type: ignore[arg-type]
+        target_min=0,
+        target_max=8,
+        overlap=0,
+    )
+
+    if result.coverage_status is CoverageStatus.INDEXED:
+        assert all(counter.count(chunk.exact_text) <= 8 for chunk in result.chunks)  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("heading", "requested", "expected"),
+    [
+        (
+            ("Principal Risks", "Currency Hedge"),
+            frozenset({SectionType.CURRENCY_HEDGE}),
+            SectionType.CURRENCY_HEDGE,
+        ),
+        (
+            ("Investment Strategy", "Governance"),
+            frozenset({SectionType.GOVERNANCE}),
+            SectionType.GOVERNANCE,
+        ),
+        (
+            ("Index Methodology", "Selection Rules"),
+            frozenset(),
+            SectionType.SELECTION_RULES,
+        ),
+        (
+            ("Official Update", "Change History"),
+            frozenset(),
+            SectionType.CHANGE_HISTORY,
+        ),
+    ],
+)
+def test_classifies_deepest_approved_heading_before_parent_fallback(
+    heading: tuple[str, ...],
+    requested: frozenset[SectionType],
+    expected: SectionType,
+) -> None:
+    assert classify_section(
+        section(heading), requested_section_types=requested
+    ) is expected
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        ("General Legal Notice", "Fund Structure"),
+        ("일반 법적 고지", "펀드 구조"),
+        ("Appendix-I", "Principal Risks"),
+        ("Appendix 1", "Principal Risks"),
+        ("부록-1", "투자위험"),
+        ("부록 IV", "투자위험"),
+    ],
+)
+def test_exclusion_in_any_heading_ancestor_rejects_the_whole_path(
+    heading: tuple[str, ...],
+) -> None:
+    assert classify_section(section(heading)) is None
+
+
+def test_scope_budget_rejects_mixed_dataset_versions_and_duplicate_documents() -> None:
+    first = chunk_document_sections(
+        context("document-a", dataset_version="v1"),
+        (section(("Principal Risks",), "risk-a"),),
+        counter=WhitespaceTokenCounter(),
+    )
+    different_version = chunk_document_sections(
+        context("document-b", dataset_version="v2"),
+        (section(("Principal Risks",), "risk-b"),),
+        counter=WhitespaceTokenCounter(),
+    )
+
+    with pytest.raises(ValueError, match="one dataset version"):
+        aggregate_chunking_results((first, different_version), soft_limit=20)
+    with pytest.raises(ValueError, match="duplicate document"):
+        aggregate_chunking_results((first, first), soft_limit=20)
+
+
+def test_scope_budget_rejects_duplicate_chunk_identities() -> None:
+    result = chunk_document_sections(
+        context("document-a"),
+        (section(("Principal Risks",), "risk-a"),),
+        counter=WhitespaceTokenCounter(),
+    )
+    duplicate_chunks = replace(
+        result,
+        chunks=(result.chunks[0], result.chunks[0]),
+        observed_chunk_count=2,
+    )
+
+    with pytest.raises(ValueError, match="duplicate chunk"):
+        aggregate_chunking_results((duplicate_chunks,), soft_limit=20)
+
+
+def test_scope_budget_preserves_negative_member_statuses_without_coverage_result() -> None:
+    indexed = chunk_document_sections(
+        context("document-a"),
+        (section(("Principal Risks",), "risk-a"),),
+        counter=WhitespaceTokenCounter(),
+    )
+    missing = chunk_document_sections(
+        context("document-b"),
+        (section(("Fees and Expenses",), "fee"),),
+        counter=WhitespaceTokenCounter(),
+    )
+
+    scope_budget = aggregate_chunking_results((indexed, missing), soft_limit=20)
+
+    assert not hasattr(scope_budget, "coverage_status")
+    assert {result.coverage_status for result in scope_budget.member_results} == {
+        CoverageStatus.INDEXED,
+        CoverageStatus.SECTION_MISSING,
+    }
