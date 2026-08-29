@@ -34,6 +34,17 @@ _MAX_TOP_K = 50
 _SEARCHABLE_DATASET_STATUSES = ("building", "validated", "active")
 
 
+class _CDBAdminVector(Vector):
+    """Render the managed pgvector type with its owning schema."""
+
+    cache_ok = True
+
+    def get_col_spec(self, **kw: object) -> str:
+        if self.dim is None:
+            return "cdb_admin.vector"
+        return f"cdb_admin.vector({self.dim})"
+
+
 @dataclass(frozen=True, slots=True)
 class _ClaimRule:
     required_role: DocumentRole
@@ -273,17 +284,26 @@ class DocumentCandidateRepository:
             raise ValueError("VECTOR_SEARCH_REQUIRES_MODEL")
 
         candidates = _vector_candidates(request)
-        query_vector = sa.bindparam("query_embedding", type_=Vector())
+        query_vector = sa.cast(
+            sa.bindparam("query_embedding", type_=_CDBAdminVector()),
+            _CDBAdminVector(),
+        )
         distance = sa.case(
             (
                 candidates.c.distance_metric == "cosine",
-                candidates.c.embedding.cosine_distance(query_vector),
+                candidates.c.embedding.op(
+                    "OPERATOR(cdb_admin.<=>)", return_type=sa.Float
+                )(query_vector),
             ),
             (
                 candidates.c.distance_metric == "inner_product",
-                candidates.c.embedding.max_inner_product(query_vector),
+                candidates.c.embedding.op(
+                    "OPERATOR(cdb_admin.<#>)", return_type=sa.Float
+                )(query_vector),
             ),
-            else_=candidates.c.embedding.l2_distance(query_vector),
+            else_=candidates.c.embedding.op(
+                "OPERATOR(cdb_admin.<->)", return_type=sa.Float
+            )(query_vector),
         ).label("retrieval_distance")
         statement = (
             sa.select(candidates, distance)

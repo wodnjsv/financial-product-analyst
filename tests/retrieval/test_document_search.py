@@ -306,6 +306,54 @@ def test_request_does_not_normalize_a_mutable_query_vector() -> None:
 
 
 @pytest.mark.asyncio
+async def test_vector_search_casts_boundary_list_to_postgresql_vector(
+    risk_request: DocumentSearchRequest,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class EmptyResult:
+        def mappings(self) -> EmptyResult:
+            return self
+
+        def all(self) -> list[object]:
+            return []
+
+    class CapturingConnection:
+        async def execute(
+            self, statement: object, parameters: dict[str, object]
+        ) -> EmptyResult:
+            captured["statement"] = statement
+            captured["parameters"] = parameters
+            return EmptyResult()
+
+    class ConnectionContext:
+        async def __aenter__(self) -> CapturingConnection:
+            return CapturingConnection()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    class CapturingEngine:
+        def connect(self) -> ConnectionContext:
+            return ConnectionContext()
+
+    original_vector = risk_request.query_embedding
+    repository = DocumentCandidateRepository(CapturingEngine())  # type: ignore[arg-type]
+
+    assert await repository.search_vector(risk_request) == ()
+
+    compiled = captured["statement"].compile(dialect=postgresql.dialect())  # type: ignore[union-attr]
+    assert (
+        str(compiled).count("CAST(%(query_embedding)s AS cdb_admin.vector)")
+        == 3
+    )
+    for operator in ("<=>", "<#>", "<->"):
+        assert f"OPERATOR(cdb_admin.{operator})" in str(compiled)
+    assert captured["parameters"] == {"query_embedding": [1.0, 0.0, 0.0]}
+    assert risk_request.query_embedding is original_vector
+
+
+@pytest.mark.asyncio
 async def test_vector_search_requires_a_vector_request() -> None:
     request = DocumentSearchRequest(
         dataset_version="dataset-v1",
