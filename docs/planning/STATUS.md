@@ -114,11 +114,11 @@
 
 ### Stage 03C 공식 문서 Phase 0
 
-**상태: 결정론적 합성 코퍼스와 검색 안전성 파이프라인 계약 검증 통과; 현재 PostgreSQL 실행과 운영 준비는 미완료**
+**상태: 결정론적 합성 코퍼스의 PostgreSQL 검색 안전성 Phase 0 게이트 통과; 운영 준비는 미완료**
 
-- Phase 0 합성 코퍼스와 Keyword·Vector·평가 전용 fused Top-5 검색 안전성 파이프라인의 데이터베이스 독립 계약 검증은 통과했다. 이 결과는 결정론적 fixture Vector가 파이프라인 안전성을 검증했다는 뜻일 뿐, 임베딩 모델 품질이나 실제 문서 검색 품질을 입증하지 않는다.
+- 승인된 폐기 가능 로컬 PostgreSQL 15에서 Phase 0 합성 코퍼스와 Keyword·Vector·평가 전용 fused Top-5 검색 안전성 파이프라인을 실행했다. 세 합성 문서군의 gold span은 세 모드 모두 Top 5에 포함됐고 Entity·source·time·version 위반과 9개 negative gate 실패는 0이었다. 검증 연결은 read-only였고 Relation·Evidence 생성도 0이었다. 이 결과는 결정론적 fixture Vector가 파이프라인 안전성을 검증했다는 뜻일 뿐, 임베딩 모델 품질이나 실제 문서 검색 품질을 입증하지 않는다.
 - 운영 임베딩 모델은 승인되지 않았고 공식 문서 코퍼스 적재도 완료되지 않았다. 공식 문서, 운영 embedding, dataset 활성화, Graph 관계는 생성하지 않았다.
-- 이 환경에는 승인된 테스트 PostgreSQL URL이 없어 전체 Phase 0 report 실행은 `current_db_execution=not_run`이다. 데이터베이스 실행 결과나 3개 실제 질문의 지원 상태를 추정하지 않는다.
+- PostgreSQL report는 커밋된 합성 fixture만 평가했으므로 아래 3개 실제 질문의 데이터베이스 실행이나 지원 상태를 바꾸지 않는다. 공식 source와 운영 embedding을 사용한 실제 질문 실행은 여전히 `current_db_execution=not_run`이다.
 
 | 질문 | 상태 | current_db_execution |
 | --- | --- | --- |
