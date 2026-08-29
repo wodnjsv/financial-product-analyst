@@ -116,6 +116,9 @@ def test_request_is_immutable_and_rejects_ambiguous_scope() -> None:
         with pytest.raises(ValueError):
             replace(valid, **changes)
 
+    with pytest.raises(ValueError, match="unsupported claim_type"):
+        replace(valid, claim_type="unknown_document_claim")
+
     with pytest.raises(ValueError, match="tuple"):
         DocumentSearchRequest(
             dataset_version="dataset-v1",
@@ -124,6 +127,37 @@ def test_request_is_immutable_and_rejects_ambiguous_scope() -> None:
             section_types=(SectionType.RISK_FACTOR,),
             cutoff_date=CUTOFF_DATE,
         )
+
+
+@pytest.mark.parametrize(
+    "claim_type",
+    (
+        "product_investment_strategy",
+        "product_risk_factor",
+        "concentration_risk",
+        "index_methodology",
+        "theme_definition",
+        "selection_rules",
+        "weighting_and_rebalancing",
+        "relation_history",
+        "structure",
+        "official_update",
+        "official_trend_or_update",
+        "product_official_update",
+        "index_official_update",
+        "policy_official_update",
+    ),
+)
+def test_request_accepts_each_supported_claim_family(claim_type: str) -> None:
+    request = DocumentSearchRequest(
+        dataset_version="dataset-v1",
+        entity_ids=("entity-a",),
+        claim_type=claim_type,
+        section_types=(SectionType.RISK_FACTOR,),
+        cutoff_date=CUTOFF_DATE,
+    )
+
+    assert request.claim_type == claim_type
 
 
 @pytest.mark.parametrize(
@@ -226,6 +260,27 @@ def test_rrf_validates_bounds_and_keeps_input_hits_unchanged() -> None:
     assert original[0].fused_score is None
 
 
+@pytest.mark.parametrize("rank", (1.5, float("nan"), float("inf"), True))
+def test_candidate_rank_must_be_a_positive_integer(rank: object) -> None:
+    with pytest.raises(ValueError, match="positive integers"):
+        replace(keyword_hits()[0], keyword_rank=rank)  # type: ignore[arg-type]
+
+
+def test_rrf_with_explicit_ranks_is_input_order_invariant() -> None:
+    keyword = (
+        replace(keyword_hits()[0], keyword_rank=2),
+        replace(keyword_hits()[1], keyword_rank=1),
+    )
+    vector = vector_hits()
+
+    direct = reciprocal_rank_fusion(keyword, vector, top_k=5)
+    permuted = reciprocal_rank_fusion(
+        tuple(reversed(keyword)), tuple(reversed(vector)), top_k=5
+    )
+
+    assert direct == permuted
+
+
 @pytest.mark.postgres
 @pytest.mark.asyncio
 async def test_vector_search_filters_before_distance_ranking(
@@ -249,6 +304,157 @@ async def test_vector_search_filters_before_distance_ranking(
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
+async def test_claim_authority_selects_product_index_and_policy_documents(
+    candidate_repository: DocumentCandidateRepository,
+    risk_request: DocumentSearchRequest,
+) -> None:
+    product_hits = await candidate_repository.search_vector(risk_request)
+    index_hits = await candidate_repository.search_vector(
+        replace(
+            risk_request,
+            entity_ids=("selected-index",),
+            claim_type="theme_relation_evidence_span",
+            section_types=(SectionType.INDEX_METHODOLOGY,),
+            query_embedding=(0.0, 1.0, 0.0),
+        )
+    )
+    policy_hits = await candidate_repository.search_vector(
+        replace(
+            risk_request,
+            entity_ids=("selected-policy",),
+            claim_type="structure",
+            section_types=(SectionType.LEGAL_STRUCTURE,),
+            query_embedding=(0.0, 0.0, 1.0),
+        )
+    )
+
+    assert [hit.chunk_id for hit in product_hits] == [
+        "risk-specific",
+        "risk-index",
+        "risk-currency",
+    ]
+    assert [hit.chunk_id for hit in index_hits] == ["index-method"]
+    assert [hit.chunk_id for hit in policy_hits] == ["policy-structure"]
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("claim_type", "entity_ids", "query_embedding", "expected_chunk"),
+    (
+        (
+            "product_official_update",
+            ("product-update", "product-update-wrong"),
+            (1.0, 0.0, 0.0),
+            "product-update-chunk",
+        ),
+        (
+            "index_official_update",
+            ("index-update", "index-update-wrong"),
+            (0.0, 1.0, 0.0),
+            "index-update-chunk",
+        ),
+        (
+            "policy_official_update",
+            ("policy-update", "policy-update-wrong"),
+            (0.0, 0.0, 1.0),
+            "policy-update-chunk",
+        ),
+    ),
+)
+async def test_official_update_authority_is_binding_context_specific(
+    candidate_repository: DocumentCandidateRepository,
+    risk_request: DocumentSearchRequest,
+    claim_type: str,
+    entity_ids: tuple[str, ...],
+    query_embedding: tuple[float, ...],
+    expected_chunk: str,
+) -> None:
+    hits = await candidate_repository.search_vector(
+        replace(
+            risk_request,
+            claim_type=claim_type,
+            entity_ids=entity_ids,
+            section_types=(SectionType.OFFICIAL_UPDATE,),
+            query_embedding=query_embedding,
+        )
+    )
+
+    assert [hit.chunk_id for hit in hits] == [expected_chunk]
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_generic_official_update_uses_each_binding_publisher_matrix(
+    candidate_repository: DocumentCandidateRepository,
+    risk_request: DocumentSearchRequest,
+) -> None:
+    hits = await candidate_repository.search_vector(
+        replace(
+            risk_request,
+            claim_type="official_update",
+            entity_ids=(
+                "product-update",
+                "product-update-wrong",
+                "index-update",
+                "index-update-wrong",
+                "policy-update",
+                "policy-update-wrong",
+            ),
+            section_types=(SectionType.OFFICIAL_UPDATE,),
+            top_k=10,
+        )
+    )
+
+    assert {hit.chunk_id for hit in hits} == {
+        "product-update-chunk",
+        "index-update-chunk",
+        "policy-update-chunk",
+    }
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_shared_entities_and_duplicate_authority_rows_do_not_multiply_hits(
+    candidate_repository: DocumentCandidateRepository,
+    risk_request: DocumentSearchRequest,
+) -> None:
+    hits = await candidate_repository.search_vector(
+        replace(
+            risk_request,
+            entity_ids=("selected-etf", "shared-etf"),
+            top_k=10,
+        )
+    )
+    identities = [
+        (hit.entity_id, hit.document_id, hit.chunk_id) for hit in hits
+    ]
+
+    assert len(identities) == len(set(identities)) == 6
+    assert {identity[0] for identity in identities} == {
+        "selected-etf",
+        "shared-etf",
+    }
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_duplicate_same_model_embedding_fails_closed_without_using_top_k(
+    candidate_repository: DocumentCandidateRepository,
+    risk_request: DocumentSearchRequest,
+) -> None:
+    hits = await candidate_repository.search_vector(
+        replace(risk_request, top_k=10)
+    )
+
+    assert "ambiguous-vector" not in {hit.chunk_id for hit in hits}
+    assert len({(hit.entity_id, hit.document_id, hit.chunk_id) for hit in hits}) == len(
+        hits
+    )
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
 async def test_keyword_search_uses_the_same_authority_and_scope_filters(
     candidate_repository: DocumentCandidateRepository,
     risk_request: DocumentSearchRequest,
@@ -260,6 +466,7 @@ async def test_keyword_search_uses_the_same_authority_and_scope_filters(
         "risk-specific",
         "risk-index",
         "risk-currency",
+        "ambiguous-vector",
     }
     assert all(hit.entity_id == "selected-etf" for hit in hits)
     assert all(hit.section_type is SectionType.RISK_FACTOR for hit in hits)

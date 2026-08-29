@@ -10,7 +10,13 @@ from financial_agent.documents.models import (
     DocumentRole,
     PublisherRole,
 )
-from financial_agent.documents.policy import admit_document, select_canonical_document
+from financial_agent.documents.policy import (
+    admit_document,
+    binding_roles_for_document_role,
+    document_types_for_role,
+    publisher_roles_for_document_role,
+    select_canonical_document,
+)
 
 
 def candidate(
@@ -51,6 +57,36 @@ def candidate(
         exact_text_available=exact_text_available,
         source_locator=f"https://example.test/{document_id}",
     )
+
+
+def test_authority_helpers_expose_the_same_read_only_policy_matrices() -> None:
+    assert document_types_for_role(DocumentRole.PRODUCT_SUMMARY) == frozenset(
+        {"summary_prospectus", "full_prospectus"}
+    )
+    assert binding_roles_for_document_role(
+        DocumentRole.INDEX_METHODOLOGY
+    ) == frozenset({"subject_index"})
+    assert publisher_roles_for_document_role(
+        DocumentRole.OFFICIAL_UPDATE, "subject_policy"
+    ) == frozenset(
+        {PublisherRole.POLICY_AUTHORITY, PublisherRole.POLICY_OPERATOR}
+    )
+    assert publisher_roles_for_document_role(
+        DocumentRole.OFFICIAL_UPDATE, "subject_product"
+    ) == frozenset(
+        {
+            PublisherRole.REGULATOR_DISCLOSURE,
+            PublisherRole.ASSET_MANAGER,
+            PublisherRole.ISSUER,
+        }
+    )
+    assert publisher_roles_for_document_role(
+        DocumentRole.OFFICIAL_UPDATE, "subject_index"
+    ) == frozenset({PublisherRole.INDEX_PROVIDER})
+    with pytest.raises(ValueError, match="binding role"):
+        publisher_roles_for_document_role(
+            DocumentRole.OFFICIAL_UPDATE, "unsupported_binding"
+        )
 
 
 def test_summary_wins_when_it_covers_all_required_claims() -> None:

@@ -78,18 +78,36 @@ def insert_document_search_corpus(
     _insert_entity(connection, dataset_version, "publisher-approved", "institution")
     _insert_entity(connection, dataset_version, "publisher-unofficial", "institution")
     _insert_entity(connection, dataset_version, "selected-etf", "product")
+    _insert_entity(connection, dataset_version, "shared-etf", "product")
     _insert_entity(connection, dataset_version, "wrong-etf", "product")
     _insert_entity(connection, dataset_version, "selected-index", "index")
     _insert_entity(connection, dataset_version, "selected-policy", "institution")
+    for entity_id, entity_type in (
+        ("product-update", "product"),
+        ("product-update-wrong", "product"),
+        ("index-update", "index"),
+        ("index-update-wrong", "index"),
+        ("policy-update", "institution"),
+        ("policy-update-wrong", "institution"),
+    ):
+        _insert_entity(connection, dataset_version, entity_id, entity_type)
     connection.execute(
         """
         INSERT INTO catalog.institution (dataset_version, entity_id, institution_kind)
         VALUES
           (%s, 'publisher-approved', 'regulator'),
           (%s, 'publisher-unofficial', 'media'),
-          (%s, 'selected-policy', 'policy_authority')
+          (%s, 'selected-policy', 'policy_authority'),
+          (%s, 'policy-update', 'policy_authority'),
+          (%s, 'policy-update-wrong', 'policy_authority')
         """,
-        (dataset_version, dataset_version, dataset_version),
+        (
+            dataset_version,
+            dataset_version,
+            dataset_version,
+            dataset_version,
+            dataset_version,
+        ),
     )
     _insert_source(
         connection, dataset_version, "source-approved", "publisher-approved", True
@@ -124,9 +142,67 @@ def insert_document_search_corpus(
             ("risk-specific", "risk_factor", "specific risk", "[0.98,0.02,0]"),
             ("risk-index", "risk_factor", "index risk", "[0.95,0.05,0]"),
             ("risk-currency", "risk_factor", "currency risk", "[0.90,0.10,0]"),
+            ("ambiguous-vector", "risk_factor", "ambiguous risk", "[1,0,0]"),
             ("performance-near", "historical_performance_table", "performance risk", "[1,0,0]"),
             ("holdings-near", "full_holdings_table", "holdings risk", "[1,0,0]"),
         ),
+    )
+    connection.execute(
+        """
+        INSERT INTO document.document_entity_binding (
+            dataset_version, binding_id, document_id, entity_id, binding_role,
+            record_hash, created_at
+        ) VALUES
+          (%s, 'binding-risk-duplicate-role', 'document-risk', 'selected-etf',
+           'subject_index', %s, %s),
+          (%s, 'binding-risk-shared-entity', 'document-risk', 'shared-etf',
+           'subject_product', %s, %s)
+        """,
+        (
+            dataset_version,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+            dataset_version,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO document.document_coverage (
+            dataset_version, coverage_id, entity_id, required_document_role,
+            coverage_status, document_id, record_hash, created_at
+        ) VALUES
+          (%s, 'coverage-risk-second-role', 'selected-etf', 'product_full',
+           'indexed', 'document-risk', %s, %s),
+          (%s, 'coverage-risk-shared-entity', 'shared-etf', 'product_summary',
+           'indexed', 'document-risk', %s, %s)
+        """,
+        (
+            dataset_version,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+            dataset_version,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO search.document_embedding (
+            dataset_version, embedding_id, document_id, chunk_id,
+            chunk_content_hash, model_id, model_version, dimension,
+            embedding, created_at
+        )
+        SELECT dataset_version, 'embedding-ambiguous-vector-duplicate',
+               document_id, chunk_id, chunk_content_hash, model_id,
+               model_version, dimension, '[0.99,0.01,0]'::cdb_admin.vector,
+               created_at
+        FROM search.document_embedding
+        WHERE dataset_version = %s
+          AND embedding_id = 'embedding-ambiguous-vector'
+        """,
+        (dataset_version,),
     )
     _insert_document(
         connection,
@@ -144,7 +220,7 @@ def insert_document_search_corpus(
         document_id="document-late",
         entity_id="selected-etf",
         source_id="source-approved",
-        coverage_role="product_full",
+        coverage_role="product_summary",
         # Still 2026-08-24 in UTC, but 2026-08-25 at the approved Seoul boundary.
         available_at=datetime(2026, 8, 24, 15, 30, tzinfo=UTC),
         chunks=(("late-near", "risk_factor", "late risk", "[1,0,0]"),),
@@ -152,10 +228,21 @@ def insert_document_search_corpus(
     _insert_document(
         connection,
         dataset_version=dataset_version,
+        document_id="document-product-wrong-publisher",
+        entity_id="selected-etf",
+        source_id="source-approved",
+        coverage_role="product_summary",
+        available_at=datetime(2026, 8, 2, tzinfo=UTC),
+        publisher_role="policy_operator",
+        chunks=(("wrong-authority-near", "risk_factor", "wrong authority risk", "[1,0,0]"),),
+    )
+    _insert_document(
+        connection,
+        dataset_version=dataset_version,
         document_id="document-unofficial",
         entity_id="selected-etf",
         source_id="source-unofficial",
-        coverage_role="official_update",
+        coverage_role="product_summary",
         available_at=datetime(2026, 8, 2, tzinfo=UTC),
         chunks=(("unofficial-near", "risk_factor", "unofficial risk", "[1,0,0]"),),
     )
@@ -165,7 +252,7 @@ def insert_document_search_corpus(
         document_id="document-expired",
         entity_id="selected-etf",
         source_id="source-approved",
-        coverage_role="index_methodology",
+        coverage_role="product_summary",
         available_at=datetime(2026, 8, 2, tzinfo=UTC),
         effective_to=date(2026, 8, 23),
         chunks=(("expired-near", "risk_factor", "expired risk", "[1,0,0]"),),
@@ -176,7 +263,7 @@ def insert_document_search_corpus(
         document_id="document-ineligible",
         entity_id="selected-etf",
         source_id="source-approved",
-        coverage_role="policy_base",
+        coverage_role="product_summary",
         available_at=datetime(2026, 8, 2, tzinfo=UTC),
         cutoff_eligible=False,
         chunks=(("ineligible-near", "risk_factor", "ineligible risk", "[1,0,0]"),),
@@ -189,8 +276,23 @@ def insert_document_search_corpus(
         source_id="source-approved",
         coverage_role="index_methodology",
         available_at=datetime(2026, 8, 2, tzinfo=UTC),
+        document_type="index_methodology",
+        publisher_role="index_provider",
         binding_role="subject_index",
         chunks=(("index-method", "index_methodology", "index selection rules", "[0,1,0]"),),
+    )
+    _insert_document(
+        connection,
+        dataset_version=dataset_version,
+        document_id="document-index-wrong-publisher",
+        entity_id="selected-index",
+        source_id="source-approved",
+        coverage_role="index_methodology",
+        available_at=datetime(2026, 8, 2, tzinfo=UTC),
+        document_type="index_methodology",
+        publisher_role="issuer",
+        binding_role="subject_index",
+        chunks=(("index-method-wrong", "index_methodology", "index selection rules", "[0,1,0]"),),
     )
     _insert_document(
         connection,
@@ -200,9 +302,96 @@ def insert_document_search_corpus(
         source_id="source-approved",
         coverage_role="policy_base",
         available_at=datetime(2026, 8, 2, tzinfo=UTC),
+        document_type="policy_base",
+        publisher_role="policy_authority",
         binding_role="subject_policy",
         chunks=(("policy-structure", "legal_structure", "policy fund structure", "[0,0,1]"),),
     )
+    _insert_document(
+        connection,
+        dataset_version=dataset_version,
+        document_id="document-policy-wrong-publisher",
+        entity_id="selected-policy",
+        source_id="source-approved",
+        coverage_role="policy_base",
+        available_at=datetime(2026, 8, 2, tzinfo=UTC),
+        document_type="policy_base",
+        publisher_role="issuer",
+        binding_role="subject_policy",
+        chunks=(("policy-structure-wrong", "legal_structure", "policy fund structure", "[0,0,1]"),),
+    )
+    for (
+        document_id,
+        entity_id,
+        binding_role,
+        publisher_role,
+        chunk_id,
+        vector,
+    ) in (
+        (
+            "document-product-update",
+            "product-update",
+            "subject_product",
+            "issuer",
+            "product-update-chunk",
+            "[1,0,0]",
+        ),
+        (
+            "document-product-update-wrong",
+            "product-update-wrong",
+            "subject_product",
+            "index_provider",
+            "product-update-wrong-chunk",
+            "[1,0,0]",
+        ),
+        (
+            "document-index-update",
+            "index-update",
+            "subject_index",
+            "index_provider",
+            "index-update-chunk",
+            "[0,1,0]",
+        ),
+        (
+            "document-index-update-wrong",
+            "index-update-wrong",
+            "subject_index",
+            "issuer",
+            "index-update-wrong-chunk",
+            "[0,1,0]",
+        ),
+        (
+            "document-policy-update",
+            "policy-update",
+            "subject_policy",
+            "policy_authority",
+            "policy-update-chunk",
+            "[0,0,1]",
+        ),
+        (
+            "document-policy-update-wrong",
+            "policy-update-wrong",
+            "subject_policy",
+            "asset_manager",
+            "policy-update-wrong-chunk",
+            "[0,0,1]",
+        ),
+    ):
+        _insert_document(
+            connection,
+            dataset_version=dataset_version,
+            document_id=document_id,
+            entity_id=entity_id,
+            source_id="source-approved",
+            coverage_role="official_update",
+            available_at=datetime(2026, 8, 2, tzinfo=UTC),
+            document_type="official_update",
+            publisher_role=publisher_role,
+            binding_role=binding_role,
+            chunks=(
+                (chunk_id, "official_update", f"{entity_id} update", vector),
+            ),
+        )
     connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
 
@@ -284,6 +473,8 @@ def _insert_document(
     available_at: datetime,
     chunks: tuple[tuple[str, str, str, str], ...],
     binding_role: str = "subject_product",
+    document_type: str = "summary_prospectus",
+    publisher_role: str = "regulator_disclosure",
     effective_to: date | None = None,
     cutoff_eligible: bool = True,
 ) -> None:
@@ -294,13 +485,14 @@ def _insert_document(
             dataset_version, document_id, source_id, document_title,
             document_type, object_key, content_checksum, published_at,
             available_at, record_hash, created_at
-        ) VALUES (%s, %s, %s, %s, 'summary_prospectus', %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
             dataset_version,
             document_id,
             source_id,
             f"Synthetic {document_id}",
+            document_type,
             f"synthetic/{document_id}.pdf",
             "e" * 64,
             published_at,
@@ -315,12 +507,13 @@ def _insert_document(
             dataset_version, document_id, document_version, publisher_role,
             jurisdiction, original_language, effective_from, effective_to,
             extraction_method, cutoff_eligible, record_hash, created_at
-        ) VALUES (%s, %s, '2026-08-01', 'regulator_disclosure', 'US', 'en',
+        ) VALUES (%s, %s, '2026-08-01', %s, 'US', 'en',
                   DATE '2026-08-01', %s, 'text_layer', %s, %s, %s)
         """,
         (
             dataset_version,
             document_id,
+            publisher_role,
             effective_to,
             cutoff_eligible,
             VALID_RECORD_HASH,

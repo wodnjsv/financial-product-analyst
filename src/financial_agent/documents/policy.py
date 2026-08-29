@@ -102,7 +102,7 @@ def _binding_reason(
         return "exact_entity_binding_required"
     if candidate.binding_role not in _BINDING_ROLES:
         return "binding_role_not_approved"
-    if candidate.binding_role not in _ROLE_BINDING_ROLES[required_role]:
+    if candidate.binding_role not in binding_roles_for_document_role(required_role):
         return "binding_role_incompatible_with_document_role"
     return None
 
@@ -115,10 +115,28 @@ def _is_aware(value: datetime | None) -> bool:
     )
 
 
-def _publisher_roles_for(
+def document_types_for_role(required_role: DocumentRole) -> frozenset[str]:
+    """Return the immutable document-type authority for a document role."""
+
+    return _ROLE_DOCUMENT_TYPES[required_role]
+
+
+def binding_roles_for_document_role(
+    required_role: DocumentRole,
+) -> frozenset[str]:
+    """Return the immutable Entity-binding authority for a document role."""
+
+    return _ROLE_BINDING_ROLES[required_role]
+
+
+def publisher_roles_for_document_role(
     required_role: DocumentRole,
     binding_role: str,
 ) -> frozenset[PublisherRole]:
+    """Return publishers approved for one exact document/binding context."""
+
+    if binding_role not in _ROLE_BINDING_ROLES[required_role]:
+        raise ValueError("binding role is not approved for document role")
     if required_role is DocumentRole.OFFICIAL_UPDATE:
         return _OFFICIAL_UPDATE_PUBLISHERS[binding_role]
     return _ROLE_PUBLISHERS[required_role]
@@ -137,7 +155,7 @@ def _admit(
             CoverageStatus.AMBIGUOUS_ENTITY_BINDING,
             binding_reason,
         )
-    if candidate.publisher_role not in _publisher_roles_for(
+    if candidate.publisher_role not in publisher_roles_for_document_role(
         required_role, candidate.binding_role
     ):
         return _rejected(
@@ -298,7 +316,7 @@ def select_canonical_document(
     relevant_candidates = tuple(
         candidate
         for candidate in candidates
-        if candidate.document_type in _ROLE_DOCUMENT_TYPES[required_role]
+        if candidate.document_type in document_types_for_role(required_role)
     )
     if not relevant_candidates:
         return CanonicalDocumentSelection(

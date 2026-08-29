@@ -11,7 +11,13 @@ from .models import (
     PublisherRole,
     SectionType,
 )
-from .policy import admit_document, select_canonical_document
+from .policy import (
+    admit_document,
+    binding_roles_for_document_role,
+    document_types_for_role,
+    publisher_roles_for_document_role,
+    select_canonical_document,
+)
 
 __all__ = [
     "AdmissionDecision",
@@ -24,5 +30,8 @@ __all__ = [
     "PublisherRole",
     "SectionType",
     "admit_document",
+    "binding_roles_for_document_role",
+    "document_types_for_role",
+    "publisher_roles_for_document_role",
     "select_canonical_document",
 ]
