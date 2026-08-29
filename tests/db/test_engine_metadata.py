@@ -24,6 +24,32 @@ async def test_database_engine_uses_psycopg_and_the_bounded_pool() -> None:
         await engine.dispose()
 
 
+def test_read_only_database_engine_sets_postgres_startup_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    sentinel = object()
+
+    def capture_engine(url: str, **kwargs: object) -> object:
+        captured.update(url=url, **kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        "financial_agent.db.engine.create_async_engine", capture_engine
+    )
+
+    engine = create_database_engine(
+        DatabaseConfig(
+            url="postgresql://db_user:db_password@db.invalid/financial_agent"
+        ),
+        read_only=True,
+    )
+
+    assert engine is sentinel
+    options = captured["connect_args"]["options"]  # type: ignore[index]
+    assert "-c default_transaction_read_only=on" in options
+
+
 def test_database_metadata_uses_deterministic_constraint_names() -> None:
     assert metadata.naming_convention == {
         "ix": "ix_%(table_name)s_%(column_0_name)s",

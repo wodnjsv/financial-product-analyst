@@ -5,7 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from .config import DatabaseConfig
 
 
-def create_database_engine(config: DatabaseConfig) -> AsyncEngine:
+def create_database_engine(
+    config: DatabaseConfig,
+    *,
+    read_only: bool = False,
+) -> AsyncEngine:
     url = config.url
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
@@ -16,6 +20,8 @@ def create_database_engine(config: DatabaseConfig) -> AsyncEngine:
         f"-c statement_timeout={config.statement_timeout_ms} "
         f"-c search_path={compact_search_path}"
     )
+    if read_only:
+        options += " -c default_transaction_read_only=on"
     return create_async_engine(
         url,
         pool_size=config.pool_size,

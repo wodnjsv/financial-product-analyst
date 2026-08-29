@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 from uuid import uuid4
 
 from alembic import command
@@ -13,20 +14,26 @@ from alembic.config import Config
 import psycopg
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import create_async_engine
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from financial_agent.db.preflight import normalize_psycopg_url
+from financial_agent.db.config import DatabaseConfig
+from financial_agent.db.engine import create_database_engine
 from financial_agent.documents import SectionType
 from financial_agent.retrieval.documents import DocumentCandidateHit, DocumentCandidateRepository, DocumentSearchRequest
 from scripts.verify_document_retrieval_pipeline import (
     AuthoritativeHitAudit,
     EvaluationCorpus,
+    EvaluationConfigurationError,
     GoldCatalogError,
     LedgerCounts,
     NEGATIVE_PROBES,
     NegativeMetadataAudit,
     OutputPolicyError,
     PostgresSafetyAuditor,
+    _has_eligible_superseder,
+    _run,
     evaluate_cases,
     load_gold_catalog,
     main,
@@ -84,6 +91,50 @@ def _hit(
         fused_score=None,
         evidence_id=None,
     )
+
+
+class _QueryResult:
+    def __init__(self, rows) -> None:
+        self._rows = rows
+
+    def mappings(self):
+        return self
+
+    def one_or_none(self):
+        assert len(self._rows) <= 1
+        return self._rows[0] if self._rows else None
+
+    def all(self):
+        return self._rows
+
+
+class _ScriptedConnection:
+    def __init__(self, *results: _QueryResult) -> None:
+        self._results = iter(results)
+
+    async def execute(self, statement):
+        del statement
+        return next(self._results)
+
+
+def _authoritative_row(chunk_id: str, document_id: str) -> dict[str, object]:
+    return {
+        "chunk_id": chunk_id,
+        "document_id": document_id,
+        "section_type": "risk_factor",
+        "source_id": "source-approved",
+        "document_type": "full_prospectus",
+        "published_at": datetime(2026, 8, 1, tzinfo=UTC),
+        "available_at": datetime(2026, 8, 2, tzinfo=UTC),
+        "document_version": "2026-08-01",
+        "publisher_role": "regulator_disclosure",
+        "effective_from": date(2026, 8, 1),
+        "effective_to": None,
+        "cutoff_eligible": True,
+        "eligible_for_claim": True,
+        "dataset_status": "building",
+        "dataset_cutoff": date(2026, 8, 24),
+    }
 
 
 _GOLD = {
@@ -146,10 +197,15 @@ class _AuditRepository:
         unsafe_chunk: str | None = None,
         ledger_counts: tuple[LedgerCounts, LedgerCounts] = (LedgerCounts(0, 0), LedgerCounts(0, 0)),
         wrong_negative_gate: str | None = None,
+        read_only_enforced: bool = True,
     ) -> None:
         self.unsafe_chunk = unsafe_chunk
         self._ledger_counts = iter(ledger_counts)
         self.wrong_negative_gate = wrong_negative_gate
+        self.read_only_enforced = read_only_enforced
+
+    async def verify_read_only(self) -> bool:
+        return self.read_only_enforced
 
     async def count_ledgers(self, dataset_version: str) -> LedgerCounts:
         assert dataset_version == DATASET_VERSION
@@ -224,10 +280,24 @@ def test_negative_manifest_is_typed_immutable_and_covers_each_gate() -> None:
 @pytest.mark.asyncio
 async def test_fused_is_the_acceptance_gate_and_modes_are_reported_separately() -> None:
     report = await evaluate_cases(_corpus(), load_gold_catalog(GOLD_PATH))
+    assert report.database_read_only_enforced is True
+    assert "ledger count deltas are diagnostics" in report.evaluation_note
     assert report.case_count == report.gold_in_top5_count == 3
     assert report.mode_gold_in_top5_counts == {"fused": 3, "keyword": 0, "vector": 3}
     assert [(row.case_id, row.mode) for row in report.rows] == sorted((row.case_id, row.mode) for row in report.rows)
     assert report_exit_code(report) == 0
+    assert report_exit_code(
+        replace(report, database_read_only_enforced=False)
+    ) != 0
+
+
+@pytest.mark.asyncio
+async def test_evaluation_refuses_writable_database_boundary_before_search() -> None:
+    with pytest.raises(EvaluationConfigurationError, match="read-only"):
+        await evaluate_cases(
+            _corpus(auditor=_AuditRepository(read_only_enforced=False)),
+            load_gold_catalog(GOLD_PATH),
+        )
 
 
 @pytest.mark.asyncio
@@ -251,6 +321,137 @@ async def test_authoritative_audit_overrides_candidate_diagnostic_booleans() -> 
         (self_reported_false,),
     )
     assert audits[0].source_violation is False
+
+
+@pytest.mark.asyncio
+async def test_returned_hit_cannot_borrow_authority_from_another_entity() -> None:
+    chunk_id = "mixed-authority"
+    document_id = f"document-{chunk_id}"
+    connection = _ScriptedConnection(
+        _QueryResult((_authoritative_row(chunk_id, document_id),)),
+        _QueryResult(
+            (
+                SimpleNamespace(entity_id="selected-etf", binding_role="subject_index"),
+                SimpleNamespace(entity_id="other-etf", binding_role="subject_product"),
+            )
+        ),
+        _QueryResult(
+            (
+                SimpleNamespace(
+                    entity_id="other-etf",
+                    required_document_role="product_full",
+                    coverage_status="indexed",
+                    document_id=document_id,
+                ),
+            )
+        ),
+        _QueryResult(()),
+    )
+    request = DocumentSearchRequest(
+        dataset_version=DATASET_VERSION,
+        entity_ids=("selected-etf", "other-etf"),
+        claim_type="product_risk_factor",
+        section_types=(SectionType.RISK_FACTOR,),
+        cutoff_date=date(2026, 8, 24),
+    )
+    candidate = _hit(
+        chunk_id,
+        entity_id="selected-etf",
+        section_type=SectionType.RISK_FACTOR,
+    )
+
+    audit = await PostgresSafetyAuditor(None)._audit_hit(  # type: ignore[arg-type]
+        connection, request, candidate
+    )
+
+    assert audit.entity_violation is False
+    assert audit.coverage_violation is True
+    assert audit.authority_violation is True
+
+
+@pytest.mark.asyncio
+async def test_wrong_entity_negative_keeps_isolated_diagnostic_authority() -> None:
+    chunk_id = "wrong-entity-diagnostic"
+    document_id = f"document-{chunk_id}"
+    connection = _ScriptedConnection(
+        _QueryResult((_authoritative_row(chunk_id, document_id),)),
+        _QueryResult(
+            (
+                SimpleNamespace(entity_id="other-etf", binding_role="subject_product"),
+            )
+        ),
+        _QueryResult(
+            (
+                SimpleNamespace(
+                    entity_id="other-etf",
+                    required_document_role="product_full",
+                    coverage_status="indexed",
+                    document_id=document_id,
+                ),
+            )
+        ),
+        _QueryResult(()),
+    )
+    request = DocumentSearchRequest(
+        dataset_version=DATASET_VERSION,
+        entity_ids=("selected-etf",),
+        claim_type="product_risk_factor",
+        section_types=(SectionType.RISK_FACTOR,),
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    gates = await PostgresSafetyAuditor(None)._metadata_gates(  # type: ignore[arg-type]
+        connection, request, chunk_id
+    )
+
+    assert gates == ("entity",)
+
+
+@pytest.mark.asyncio
+async def test_superseder_cannot_borrow_authority_from_another_entity() -> None:
+    superseder_id = "document-mixed-superseder"
+    connection = _ScriptedConnection(
+        _QueryResult(
+            (
+                {
+                    **_authoritative_row("unused", superseder_id),
+                    "document_id": superseder_id,
+                },
+            )
+        ),
+        _QueryResult(
+            (
+                SimpleNamespace(entity_id="selected-etf", binding_role="subject_index"),
+                SimpleNamespace(entity_id="other-etf", binding_role="subject_product"),
+            )
+        ),
+        _QueryResult(
+            (
+                SimpleNamespace(
+                    entity_id="other-etf",
+                    required_document_role="product_full",
+                    coverage_status="indexed",
+                    document_id=superseder_id,
+                ),
+            )
+        ),
+    )
+    request = DocumentSearchRequest(
+        dataset_version=DATASET_VERSION,
+        entity_ids=("selected-etf", "other-etf"),
+        claim_type="product_risk_factor",
+        section_types=(SectionType.RISK_FACTOR,),
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    superseded = await _has_eligible_superseder(
+        connection,
+        request,
+        "document-original",
+        frozenset({"selected-etf"}),
+    )
+
+    assert superseded is False
 
 
 @pytest.mark.asyncio
@@ -378,6 +579,30 @@ def test_cli_validates_gold_and_output_before_database_access(ignored_output_dir
     assert str(GOLD_PATH) not in captured.err
 
 
+@pytest.mark.asyncio
+async def test_run_constructs_a_read_only_verifier_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def reject_engine_creation(config: DatabaseConfig, **kwargs: object):
+        captured.update(config=config, **kwargs)
+        raise RuntimeError("stop after engine construction contract")
+
+    monkeypatch.setattr(
+        "scripts.verify_document_retrieval_pipeline.create_database_engine",
+        reject_engine_creation,
+    )
+
+    with pytest.raises(RuntimeError, match="engine construction contract"):
+        await _run(
+            "postgresql+psycopg://user:password@db.invalid/test",
+            load_gold_catalog(GOLD_PATH),
+        )
+
+    assert captured["read_only"] is True
+
+
 @pytest.fixture(scope="session")
 def postgres_database_url() -> str:
     database_url = os.getenv("FINANCIAL_AGENT_TEST_DATABASE_URL")
@@ -395,23 +620,64 @@ def migrated_database_url(postgres_database_url: str) -> str:
 
 
 @pytest_asyncio.fixture
-async def loaded_document_corpus(migrated_database_url: str) -> EvaluationCorpus:
+async def read_only_evaluation_engine(
+    migrated_database_url: str,
+) -> AsyncEngine:
+    engine = create_database_engine(
+        DatabaseConfig(
+            url=migrated_database_url,
+            application_name="document-retrieval-evaluation-test",
+        ),
+        read_only=True,
+    )
+    yield engine
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def loaded_document_corpus(
+    migrated_database_url: str,
+    read_only_evaluation_engine: AsyncEngine,
+) -> EvaluationCorpus:
     dataset_version = f"{DATASET_VERSION}-eval-{uuid4().hex}"
     with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
         insert_document_search_corpus(connection, dataset_version=dataset_version, include_evaluation_fixtures=True)
-    engine = create_async_engine(migrated_database_url, pool_size=5, max_overflow=0)
     yield EvaluationCorpus(
-        repository=DocumentCandidateRepository(engine),
-        auditor=PostgresSafetyAuditor(engine),
+        repository=DocumentCandidateRepository(read_only_evaluation_engine),
+        auditor=PostgresSafetyAuditor(read_only_evaluation_engine),
         dataset_version=dataset_version,
     )
-    await engine.dispose()
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "INSERT INTO relation.relation_record (dataset_version) VALUES ('read-only-probe')",
+        "UPDATE relation.relation_record SET predicate_id = predicate_id WHERE FALSE",
+        "DELETE FROM evidence.evidence_record WHERE FALSE",
+    ),
+)
+async def test_evaluation_engine_rejects_insert_update_and_delete(
+    read_only_evaluation_engine: AsyncEngine,
+    statement: str,
+) -> None:
+    assert await PostgresSafetyAuditor(
+        read_only_evaluation_engine
+    ).verify_read_only()
+    async with read_only_evaluation_engine.connect() as connection:
+        with pytest.raises(sa.exc.DBAPIError) as caught:
+            await connection.execute(sa.text(statement))
+
+    assert getattr(caught.value.orig, "sqlstate", None) == "25006"
 
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
 async def test_phase0_document_cases_pass_top5_negative_and_no_write_gates(loaded_document_corpus: EvaluationCorpus) -> None:
     report = await evaluate_cases(loaded_document_corpus, load_gold_catalog(GOLD_PATH))
+    assert report.database_read_only_enforced is True
     assert report.case_count == report.gold_in_top5_count == 3
     assert report.mode_gold_in_top5_counts["fused"] == 3
     assert report.entity_violation_count == 0

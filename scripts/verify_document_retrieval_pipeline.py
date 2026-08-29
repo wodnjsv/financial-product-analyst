@@ -54,7 +54,9 @@ CUTOFF_DATE = date(2026, 8, 24)
 TOP_K = 5
 EVALUATION_NOTE = (
     "Deterministic fixture vectors validate retrieval pipeline safety; "
-    "they do not measure or approve production embedding-model quality."
+    "they do not measure or approve production embedding-model quality. "
+    "Database-enforced read-only connections are the no-write invariant; "
+    "ledger count deltas are diagnostics."
 )
 _SEOUL = ZoneInfo("Asia/Seoul")
 _SEARCHABLE_DATASET_STATUSES = frozenset({"building", "validated", "active"})
@@ -216,6 +218,7 @@ class EvaluationReport:
     schema_version: int
     dataset_version: str
     evaluation_note: str
+    database_read_only_enforced: bool
     case_count: int
     gold_in_top5_count: int
     mode_gold_in_top5_counts: dict[str, int]
@@ -250,6 +253,7 @@ class CandidateRepository(Protocol):
 
 
 class SafetyAuditor(Protocol):
+    async def verify_read_only(self) -> bool: ...
     async def count_ledgers(self, dataset: str) -> LedgerCounts: ...
     async def audit_hits(self, request: DocumentSearchRequest, hits: tuple[DocumentCandidateHit, ...]) -> tuple[AuthoritativeHitAudit, ...]: ...
     async def audit_negative(self, dataset: str, probe: NegativeProbe) -> NegativeMetadataAudit: ...
@@ -306,6 +310,11 @@ def load_gold_catalog(path: Path) -> GoldCatalog:
 
 
 async def evaluate_cases(corpus: EvaluationCorpus, catalog: GoldCatalog) -> EvaluationReport:
+    read_only_enforced = await corpus.auditor.verify_read_only()
+    if not read_only_enforced:
+        raise EvaluationConfigurationError(
+            "evaluation database boundary must be read-only"
+        )
     before = await corpus.auditor.count_ledgers(corpus.dataset_version)
     rows: list[EvaluationRow] = []
     mode_counts = {"keyword": 0, "vector": 0, "fused": 0}
@@ -345,6 +354,7 @@ async def evaluate_cases(corpus: EvaluationCorpus, catalog: GoldCatalog) -> Eval
         schema_version=SCHEMA_VERSION,
         dataset_version=corpus.dataset_version,
         evaluation_note=EVALUATION_NOTE,
+        database_read_only_enforced=read_only_enforced,
         case_count=len(catalog.cases),
         gold_in_top5_count=mode_counts["fused"],
         mode_gold_in_top5_counts=dict(sorted(mode_counts.items())),
@@ -385,12 +395,26 @@ def report_exit_code(report: EvaluationReport) -> int:
             "negative_gate_failure_count", "ledger_mutation_violation_count",
         )
     )
-    return int(report.gold_in_top5_count != report.case_count or violations != 0)
+    return int(
+        report.gold_in_top5_count != report.case_count
+        or not report.database_read_only_enforced
+        or violations != 0
+    )
 
 
 class PostgresSafetyAuditor:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
+
+    async def verify_read_only(self) -> bool:
+        async with self._engine.connect() as connection:
+            transaction_read_only = await connection.scalar(
+                sa.text("SHOW transaction_read_only")
+            )
+            default_read_only = await connection.scalar(
+                sa.text("SHOW default_transaction_read_only")
+            )
+        return transaction_read_only == "on" and default_read_only == "on"
 
     async def count_ledgers(self, dataset: str) -> LedgerCounts:
         async with self._engine.connect() as connection:
@@ -449,7 +473,22 @@ class PostgresSafetyAuditor:
             gates.add("entity")
         if row["section_type"] not in {section.value for section in request.section_types}:
             gates.add("section")
-        authority, coverage = _authority_and_coverage(row, bindings, coverages, request.claim_type)
+        if hit is None:
+            authority_entities = frozenset(requested_entities or raw_entities)
+            superseder_entities = frozenset(requested_entities)
+        elif hit.entity_id in requested_entities:
+            authority_entities = frozenset({hit.entity_id})
+            superseder_entities = authority_entities
+        else:
+            authority_entities = frozenset()
+            superseder_entities = frozenset()
+        authority, coverage = _authority_and_coverage(
+            row,
+            bindings,
+            coverages,
+            request.claim_type,
+            authority_entities,
+        )
         if not coverage:
             gates.add("coverage")
         if not authority:
@@ -465,7 +504,10 @@ class PostgresSafetyAuditor:
                 and row["effective_to"] < request.cutoff_date
             )
             or await _has_eligible_superseder(
-                connection, request, row["document_id"]
+                connection,
+                request,
+                row["document_id"],
+                superseder_entities,
             )
         ):
             gates.add("version")
@@ -531,7 +573,13 @@ def write_report_atomically(
 
 
 async def _run(database_url: str, catalog: GoldCatalog) -> EvaluationReport:
-    engine = create_database_engine(DatabaseConfig(url=database_url, application_name="document-retrieval-verifier"))
+    engine = create_database_engine(
+        DatabaseConfig(
+            url=database_url,
+            application_name="document-retrieval-verifier",
+        ),
+        read_only=True,
+    )
     try:
         dataset = await _select_synthetic_corpus(engine)
         return await evaluate_cases(EvaluationCorpus(DocumentCandidateRepository(engine), PostgresSafetyAuditor(engine), dataset), catalog)
@@ -592,12 +640,20 @@ def _chunk_metadata_statement(dataset: str, chunk_id: str) -> sa.Select:
     ).where(document_chunk.c.dataset_version == dataset, document_chunk.c.chunk_id == chunk_id)
 
 
-def _authority_and_coverage(row, bindings, coverages, claim_type: str) -> tuple[bool, bool]:
+def _authority_and_coverage(
+    row,
+    bindings,
+    coverages,
+    claim_type: str,
+    entity_ids: frozenset[str],
+) -> tuple[bool, bool]:
     coverage_ok = False
     authority_ok = False
     for rule in claim_authority_rules(claim_type):
         allowed_bindings = rule.binding_roles or binding_roles_for_document_role(rule.required_role)
         for binding in bindings:
+            if binding.entity_id not in entity_ids:
+                continue
             if binding.binding_role not in allowed_bindings:
                 continue
             role_coverage = [
@@ -625,7 +681,12 @@ def _metadata_temporal_violation(row, cutoff: date) -> bool:
     )
 
 
-async def _has_eligible_superseder(connection: AsyncConnection, request: DocumentSearchRequest, document_id: str) -> bool:
+async def _has_eligible_superseder(
+    connection: AsyncConnection,
+    request: DocumentSearchRequest,
+    document_id: str,
+    entity_ids: frozenset[str],
+) -> bool:
     rows = (await connection.execute(
         sa.select(
             document_profile.c.document_id,
@@ -666,7 +727,10 @@ async def _has_eligible_superseder(connection: AsyncConnection, request: Documen
                 )
             )
         ).all()
-        if not {binding.entity_id for binding in bindings}.intersection(request.entity_ids):
+        requested_entities = {
+            binding.entity_id for binding in bindings
+        }.intersection(entity_ids, request.entity_ids)
+        if not requested_entities:
             continue
         coverages = (
             await connection.execute(
@@ -682,7 +746,11 @@ async def _has_eligible_superseder(connection: AsyncConnection, request: Documen
             )
         ).all()
         authority, coverage = _authority_and_coverage(
-            row, bindings, coverages, request.claim_type
+            row,
+            bindings,
+            coverages,
+            request.claim_type,
+            frozenset(requested_entities),
         )
         if authority and coverage:
             return True
