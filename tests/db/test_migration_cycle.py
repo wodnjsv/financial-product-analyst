@@ -611,7 +611,7 @@ def test_disposable_database_runs_base_head_base_head_cycle(
 
 
 @pytest.mark.postgres
-def test_document_corpus_migration_backfills_and_reverses_without_losing_core_rows(
+def test_document_corpus_migration_backfills_blank_sections_and_reverses_core_rows(
     postgres_database_url: str,
 ) -> None:
     with disposable_migration_database(postgres_database_url) as database_url:
@@ -688,6 +688,16 @@ def test_document_corpus_migration_backfills_and_reverses_without_losing_core_ro
                     'legacy-document-v1', 'chunk-one', 'document-one', 0,
                     NULL, 'legacy text', 'legacy text', repeat('c', 64),
                     repeat('b', 64), TIMESTAMPTZ '2026-08-18 00:00:00+00'
+                ), (
+                    'legacy-document-v1', 'chunk-blank', 'document-one', 1,
+                    '', 'blank legacy text', 'blank legacy text',
+                    repeat('d', 64), repeat('e', 64),
+                    TIMESTAMPTZ '2026-08-18 00:00:01+00'
+                ), (
+                    'legacy-document-v1', 'chunk-named', 'document-one', 2,
+                    'Risk factors', 'named legacy text', 'named legacy text',
+                    repeat('e', 64), repeat('f', 64),
+                    TIMESTAMPTZ '2026-08-18 00:00:02+00'
                 )
                 """
             )
@@ -718,23 +728,51 @@ def test_document_corpus_migration_backfills_and_reverses_without_losing_core_ro
             )
             connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
 
+        expected_upgraded_chunks = [
+            (
+                "chunk-blank",
+                "",
+                "blank legacy text",
+                "blank legacy text",
+                "legacy_unclassified",
+                "Legacy Document",
+                0,
+                17,
+            ),
+            (
+                "chunk-named",
+                "Risk factors",
+                "named legacy text",
+                "named legacy text",
+                "legacy_unclassified",
+                "Risk factors",
+                0,
+                17,
+            ),
+            (
+                "chunk-one",
+                None,
+                "legacy text",
+                "legacy text",
+                "legacy_unclassified",
+                "Legacy Document",
+                0,
+                11,
+            ),
+        ]
         with configured_alembic_target_only():
             command.upgrade(config, "head")
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 """
-                SELECT section_type, section_path, character_start,
+                SELECT chunk_id, section, exact_text, normalized_search_text,
+                       section_type, section_path, character_start,
                        character_end
                 FROM document.document_chunk
                 WHERE dataset_version = 'legacy-document-v1'
-                  AND chunk_id = 'chunk-one'
+                ORDER BY chunk_id
                 """
-            ).fetchone() == (
-                "legacy_unclassified",
-                "Legacy Document",
-                0,
-                11,
-            )
+            ).fetchall() == expected_upgraded_chunks
             assert connection.execute(
                 """
                 SELECT conname
@@ -783,25 +821,43 @@ def test_document_corpus_migration_backfills_and_reverses_without_losing_core_ro
                     (SELECT count(*) FROM document.document_chunk),
                     (SELECT count(*) FROM search.document_embedding)
                 """
-            ).fetchone() == (1, 1, 1)
+            ).fetchone() == (1, 3, 1)
+            assert connection.execute(
+                """
+                SELECT chunk_id, section, exact_text, normalized_search_text
+                FROM document.document_chunk
+                WHERE dataset_version = 'legacy-document-v1'
+                ORDER BY chunk_id
+                """
+            ).fetchall() == [
+                (
+                    "chunk-blank",
+                    "",
+                    "blank legacy text",
+                    "blank legacy text",
+                ),
+                (
+                    "chunk-named",
+                    "Risk factors",
+                    "named legacy text",
+                    "named legacy text",
+                ),
+                ("chunk-one", None, "legacy text", "legacy text"),
+            ]
 
         with configured_alembic_target_only():
             command.upgrade(config, "head")
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 """
-                SELECT section_type, section_path, character_start,
+                SELECT chunk_id, section, exact_text, normalized_search_text,
+                       section_type, section_path, character_start,
                        character_end
                 FROM document.document_chunk
                 WHERE dataset_version = 'legacy-document-v1'
-                  AND chunk_id = 'chunk-one'
+                ORDER BY chunk_id
                 """
-            ).fetchone() == (
-                "legacy_unclassified",
-                "Legacy Document",
-                0,
-                11,
-            )
+            ).fetchall() == expected_upgraded_chunks
 
 
 @pytest.mark.postgres

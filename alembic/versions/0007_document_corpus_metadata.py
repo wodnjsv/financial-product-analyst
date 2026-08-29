@@ -42,7 +42,9 @@ def upgrade() -> None:
         """
         UPDATE document.document_chunk AS chunk
            SET section_type = 'legacy_unclassified',
-               section_path = COALESCE(chunk.section, record.document_title),
+               section_path = COALESCE(
+                   NULLIF(chunk.section, ''), record.document_title
+               ),
                character_start = 0,
                character_end = pg_catalog.length(chunk.exact_text)
           FROM document.document_record AS record
