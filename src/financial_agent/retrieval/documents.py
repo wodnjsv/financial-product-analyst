@@ -46,6 +46,20 @@ _PRODUCT_DOCUMENT_RULES = (
 )
 _INDEX_DOCUMENT_RULES = (_ClaimRule(DocumentRole.INDEX_METHODOLOGY),)
 _POLICY_DOCUMENT_RULES = (_ClaimRule(DocumentRole.POLICY_BASE),)
+_FUND_DOCUMENT_RULES = (
+    *_PRODUCT_DOCUMENT_RULES,
+    *_POLICY_DOCUMENT_RULES,
+)
+_FUND_UPDATE_RULES = (
+    _ClaimRule(
+        DocumentRole.OFFICIAL_UPDATE,
+        frozenset({"subject_product"}),
+    ),
+    _ClaimRule(
+        DocumentRole.OFFICIAL_UPDATE,
+        frozenset({"subject_policy"}),
+    ),
+)
 _INDEX_RELATION_RULES = (
     *_INDEX_DOCUMENT_RULES,
     _ClaimRule(
@@ -57,10 +71,7 @@ _CLAIM_RULES = MappingProxyType(
     {
         "product_investment_strategy": _PRODUCT_DOCUMENT_RULES,
         "product_strategy": _PRODUCT_DOCUMENT_RULES,
-        "investment_strategy": (
-            *_PRODUCT_DOCUMENT_RULES,
-            *_POLICY_DOCUMENT_RULES,
-        ),
+        "investment_strategy": _FUND_DOCUMENT_RULES,
         "product_risk_factor": _PRODUCT_DOCUMENT_RULES,
         "risk_factor": _PRODUCT_DOCUMENT_RULES,
         "concentration_risk": _PRODUCT_DOCUMENT_RULES,
@@ -75,16 +86,12 @@ _CLAIM_RULES = MappingProxyType(
         "weighting_and_rebalancing": _INDEX_DOCUMENT_RULES,
         "relation_history": _INDEX_RELATION_RULES,
         "theme_relation_evidence_span": _INDEX_RELATION_RULES,
-        "structure": _POLICY_DOCUMENT_RULES,
+        "structure": _FUND_DOCUMENT_RULES,
         "policy_structure": _POLICY_DOCUMENT_RULES,
         "policy_investment_strategy": _POLICY_DOCUMENT_RULES,
+        "publisher_provenance": _FUND_DOCUMENT_RULES,
         "official_update": (_ClaimRule(DocumentRole.OFFICIAL_UPDATE),),
-        "official_trend_or_update": (
-            _ClaimRule(
-                DocumentRole.OFFICIAL_UPDATE,
-                frozenset({"subject_policy"}),
-            ),
-        ),
+        "official_trend_or_update": _FUND_UPDATE_RULES,
         "policy_update": (
             _ClaimRule(
                 DocumentRole.OFFICIAL_UPDATE,

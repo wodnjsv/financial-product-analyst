@@ -12,6 +12,7 @@ import pytest_asyncio
 from alembic import command
 from alembic.config import Config
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from financial_agent.contracts import EvidenceRecord
@@ -20,6 +21,7 @@ from financial_agent.documents import SectionType
 from financial_agent.retrieval.documents import (
     DocumentCandidateRepository,
     DocumentSearchRequest,
+    _metadata_candidates,
     reciprocal_rank_fusion,
 )
 from tests.fixtures.document_corpus import (
@@ -66,7 +68,14 @@ def corpus_dataset_version() -> str:
 def risk_request(corpus_dataset_version: str) -> DocumentSearchRequest:
     return DocumentSearchRequest(
         dataset_version=corpus_dataset_version,
-        entity_ids=("selected-etf",),
+        entity_ids=(
+            "selected-etf",
+            "late-etf",
+            "wrong-publisher-etf",
+            "unofficial-etf",
+            "expired-etf",
+            "ineligible-etf",
+        ),
         claim_type="product_risk_factor",
         section_types=(SectionType.RISK_FACTOR,),
         cutoff_date=CUTOFF_DATE,
@@ -143,6 +152,7 @@ def test_request_is_immutable_and_rejects_ambiguous_scope() -> None:
         "structure",
         "official_update",
         "official_trend_or_update",
+        "publisher_provenance",
         "product_official_update",
         "index_official_update",
         "policy_official_update",
@@ -158,6 +168,94 @@ def test_request_accepts_each_supported_claim_family(claim_type: str) -> None:
     )
 
     assert request.claim_type == claim_type
+
+
+@pytest.mark.parametrize(
+    (
+        "claim_type",
+        "expected_roles",
+        "expected_document_types",
+        "expected_bindings",
+        "expected_publishers",
+        "excluded_values",
+    ),
+    (
+        (
+            "structure",
+            {"product_summary", "product_full", "policy_base"},
+            {"summary_prospectus", "full_prospectus", "policy_base"},
+            {"subject_product", "subject_policy"},
+            {
+                "regulator_disclosure",
+                "asset_manager",
+                "issuer",
+                "policy_authority",
+                "policy_operator",
+            },
+            {"subject_index", "index_provider"},
+        ),
+        (
+            "official_trend_or_update",
+            {"official_update"},
+            {"official_update"},
+            {"subject_product", "subject_policy"},
+            {
+                "regulator_disclosure",
+                "asset_manager",
+                "issuer",
+                "policy_authority",
+                "policy_operator",
+            },
+            {"subject_index", "index_provider"},
+        ),
+        (
+            "publisher_provenance",
+            {"product_summary", "product_full", "policy_base"},
+            {"summary_prospectus", "full_prospectus", "policy_base"},
+            {"subject_product", "subject_policy"},
+            {
+                "regulator_disclosure",
+                "asset_manager",
+                "issuer",
+                "policy_authority",
+                "policy_operator",
+            },
+            {"subject_index", "index_provider"},
+        ),
+    ),
+)
+def test_canonical_fund_claims_compile_product_and_policy_authority(
+    claim_type: str,
+    expected_roles: set[str],
+    expected_document_types: set[str],
+    expected_bindings: set[str],
+    expected_publishers: set[str],
+    excluded_values: set[str],
+) -> None:
+    request = DocumentSearchRequest(
+        dataset_version="dataset-v1",
+        entity_ids=("public-fund", "policy-fund"),
+        claim_type=claim_type,
+        section_types=(SectionType.LEGAL_STRUCTURE,),
+        cutoff_date=CUTOFF_DATE,
+    )
+    compiled = _metadata_candidates(request).select().compile(
+        dialect=postgresql.dialect()
+    )
+    values = {
+        item
+        for value in compiled.params.values()
+        for item in (value if isinstance(value, list) else [value])
+        if isinstance(item, str)
+    }
+
+    assert "SELECT DISTINCT" in str(compiled)
+    assert str(compiled).count("EXISTS") >= len(expected_bindings) * 2
+    assert expected_roles <= values
+    assert expected_document_types <= values
+    assert expected_bindings <= values
+    assert expected_publishers <= values
+    assert not excluded_values & values
 
 
 @pytest.mark.parametrize(
@@ -312,7 +410,7 @@ async def test_claim_authority_selects_product_index_and_policy_documents(
     index_hits = await candidate_repository.search_vector(
         replace(
             risk_request,
-            entity_ids=("selected-index",),
+            entity_ids=("selected-index", "selected-index-wrong-publisher"),
             claim_type="theme_relation_evidence_span",
             section_types=(SectionType.INDEX_METHODOLOGY,),
             query_embedding=(0.0, 1.0, 0.0),
@@ -321,7 +419,7 @@ async def test_claim_authority_selects_product_index_and_policy_documents(
     policy_hits = await candidate_repository.search_vector(
         replace(
             risk_request,
-            entity_ids=("selected-policy",),
+            entity_ids=("selected-policy", "selected-policy-wrong-publisher"),
             claim_type="structure",
             section_types=(SectionType.LEGAL_STRUCTURE,),
             query_embedding=(0.0, 0.0, 1.0),
@@ -335,6 +433,105 @@ async def test_claim_authority_selects_product_index_and_policy_documents(
     ]
     assert [hit.chunk_id for hit in index_hits] == ["index-method"]
     assert [hit.chunk_id for hit in policy_hits] == ["policy-structure"]
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_canonical_structure_covers_public_fund_and_policy_entities(
+    candidate_repository: DocumentCandidateRepository,
+    risk_request: DocumentSearchRequest,
+) -> None:
+    public_fund_hits = await candidate_repository.search_vector(
+        replace(
+            risk_request,
+            entity_ids=(
+                "public-fund",
+                "public-fund-wrong-publisher",
+                "public-fund-wrong-binding",
+            ),
+            claim_type="structure",
+            section_types=(SectionType.LEGAL_STRUCTURE,),
+            query_embedding=(0.0, 0.0, 1.0),
+        )
+    )
+    policy_hits = await candidate_repository.search_vector(
+        replace(
+            risk_request,
+            entity_ids=("selected-policy", "selected-policy-wrong-publisher"),
+            claim_type="structure",
+            section_types=(SectionType.LEGAL_STRUCTURE,),
+            query_embedding=(0.0, 0.0, 1.0),
+        )
+    )
+
+    assert [hit.chunk_id for hit in public_fund_hits] == ["public-fund-structure"]
+    assert [hit.chunk_id for hit in policy_hits] == ["policy-structure"]
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_canonical_official_trend_covers_product_and_policy_not_index(
+    candidate_repository: DocumentCandidateRepository,
+    risk_request: DocumentSearchRequest,
+) -> None:
+    hits = await candidate_repository.search_vector(
+        replace(
+            risk_request,
+            claim_type="official_trend_or_update",
+            entity_ids=(
+                "product-update",
+                "product-update-wrong",
+                "policy-update",
+                "policy-update-wrong",
+                "index-update",
+            ),
+            section_types=(SectionType.OFFICIAL_UPDATE,),
+            top_k=10,
+        )
+    )
+
+    assert {hit.chunk_id for hit in hits} == {
+        "product-update-chunk",
+        "policy-update-chunk",
+    }
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_canonical_publisher_provenance_obeys_section_and_fund_authority(
+    candidate_repository: DocumentCandidateRepository,
+    risk_request: DocumentSearchRequest,
+) -> None:
+    public_fund_hits = await candidate_repository.search_vector(
+        replace(
+            risk_request,
+            entity_ids=(
+                "public-fund",
+                "public-fund-wrong-publisher",
+                "public-fund-wrong-binding",
+            ),
+            claim_type="publisher_provenance",
+            section_types=(SectionType.LEGAL_STRUCTURE,),
+            query_embedding=(0.0, 0.0, 1.0),
+        )
+    )
+    policy_hits = await candidate_repository.search_vector(
+        replace(
+            risk_request,
+            entity_ids=("selected-policy", "selected-policy-wrong-publisher"),
+            claim_type="publisher_provenance",
+            section_types=(SectionType.LEGAL_STRUCTURE,),
+            query_embedding=(0.0, 0.0, 1.0),
+        )
+    )
+
+    assert [hit.chunk_id for hit in public_fund_hits] == ["public-fund-structure"]
+    assert [hit.chunk_id for hit in policy_hits] == ["policy-structure"]
+    assert all(
+        hit.source_id == "source-approved"
+        for hit in (*public_fund_hits, *policy_hits)
+    )
+    assert all(hit.publisher_approved for hit in (*public_fund_hits, *policy_hits))
 
 
 @pytest.mark.postgres
