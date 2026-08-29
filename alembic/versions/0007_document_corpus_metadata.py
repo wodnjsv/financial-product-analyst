@@ -440,7 +440,7 @@ def downgrade() -> None:
         "ck_document_chunk_section_type",
     ):
         op.drop_constraint(
-            constraint_name,
+            op.f(constraint_name),
             "document_chunk",
             schema="document",
             type_="check",
