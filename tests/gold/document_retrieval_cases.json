@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "DOC-FUND-001-structure",
+      "entity_ids": ["policy-fund-one"],
+      "claim_type": "structure",
+      "section_types": ["legal_structure"],
+      "gold_chunk_ids": ["policy-structure"]
+    },
+    {
+      "id": "REL-THEME-001-history",
+      "entity_ids": ["aerospace-index-one"],
+      "claim_type": "theme_relation_evidence_span",
+      "section_types": ["theme_definition", "change_history"],
+      "gold_chunk_ids": ["aerospace-change"]
+    },
+    {
+      "id": "REL-CORP-001-risk",
+      "entity_ids": ["selected-etf"],
+      "claim_type": "product_risk_factor",
+      "section_types": ["risk_factor"],
+      "gold_chunk_ids": ["selected-etf-risk"]
+    }
+  ]
+}

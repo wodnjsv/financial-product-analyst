@@ -1,6 +1,6 @@
 # Financial Product Agent 계획·구현 현황
 
-**Updated:** 2026-08-27
+**Updated:** 2026-08-29
 
 이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.
 
@@ -111,6 +111,22 @@
 - Task 9 로컬 캡처는 7개 공식 소스의 1,135개 객체, 약 454 MB를 컷오프 이하 불변 manifest로 고정했다. SEC N-PORT의 게시일은 2026-06-30, 공식 데이터 라이브러리 available date는 2026-07-09로 분리했다. 실제 SEC Series/Class 43,121행, N-PORT 공식 5개 TSV와 주최 측 해외 ETF 5,646개 binding을 전부 검증했다.
 - 첫 전체 N-PORT 측정은 Python 내 연결표가 약 4.6 GB를 사용해 중단했다. 선택 행을 폐기 가능한 SQLite keyed join으로 spill하고 250 holdings·10만 생성 레코드 상한을 적용한 뒤, 9,672개 출력 묶음에서 구성종목 1,299,751개와 관측값 7,798,506개를 약 33분 42초·최대 0.26 GB로 처리했다. 공식 `N/A`·공란 파생상품 817행은 추가 검증 후 관계를 보존하고 `unknown` Observation으로 정규화했다.
 - Task 9 일반 계약·ingestion 회귀는 `511 passed, 15 deselected`, 로컬 공식 캡처 재검증은 `1 passed`였다. NCP Object Storage 왕복, Linux/amd64 이미지, 실제 PostgreSQL 결합 재현은 로컬에 자격증명·Docker·DB URL이 없어 실행하지 않았다. 예상 N-PORT 논리 payload와 인덱스·두 재현 빌드를 고려하면 현재 10 GB NCP DB는 부족하므로 실제 적재 전에 최소 50 GB, 권장 100 GB로 확장해야 한다.
+
+### Stage 03C 공식 문서 Phase 0
+
+**상태: 결정론적 합성 코퍼스와 검색 안전성 파이프라인 계약 검증 통과; 현재 PostgreSQL 실행과 운영 준비는 미완료**
+
+- Phase 0 합성 코퍼스와 Keyword·Vector·평가 전용 fused Top-5 검색 안전성 파이프라인의 데이터베이스 독립 계약 검증은 통과했다. 이 결과는 결정론적 fixture Vector가 파이프라인 안전성을 검증했다는 뜻일 뿐, 임베딩 모델 품질이나 실제 문서 검색 품질을 입증하지 않는다.
+- 운영 임베딩 모델은 승인되지 않았고 공식 문서 코퍼스 적재도 완료되지 않았다. 공식 문서, 운영 embedding, dataset 활성화, Graph 관계는 생성하지 않았다.
+- 이 환경에는 승인된 테스트 PostgreSQL URL이 없어 전체 Phase 0 report 실행은 `current_db_execution=not_run`이다. 데이터베이스 실행 결과나 3개 실제 질문의 지원 상태를 추정하지 않는다.
+
+| 질문 | 상태 | current_db_execution |
+| --- | --- | --- |
+| `DOC-FUND-001` | `requires_additional_data` | `not_run` |
+| `REL-THEME-001` | `requires_additional_data` | `not_run` |
+| `REL-CORP-001` | `requires_additional_data` | `not_run` |
+
+다음 필수 결정은 공식 source 수집 범위와 embedding 후보를 실제 평가셋으로 비교하는 benchmark 계획이다.
 
 ## 3. 현재 실행하면 안 되는 계획
 

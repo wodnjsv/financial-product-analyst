@@ -72,7 +72,10 @@ def tied_keyword_hits() -> tuple[DocumentCandidateHit, ...]:
 
 
 def insert_document_search_corpus(
-    connection: psycopg.Connection, *, dataset_version: str = DATASET_VERSION
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str = DATASET_VERSION,
+    include_evaluation_fixtures: bool = False,
 ) -> None:
     _insert_dataset(connection, dataset_version, status="building")
     _insert_entity(connection, dataset_version, "publisher-approved", "institution")
@@ -82,7 +85,13 @@ def insert_document_search_corpus(
     _insert_entity(connection, dataset_version, "wrong-etf", "product")
     _insert_entity(connection, dataset_version, "selected-index", "index")
     _insert_entity(connection, dataset_version, "selected-policy", "institution")
+    evaluation_entities = (
+        ("policy-fund-one", "institution"),
+        ("aerospace-index-one", "index"),
+        ("aerospace-theme-name-only", "index"),
+    ) if include_evaluation_fixtures else ()
     for entity_id, entity_type in (
+        *evaluation_entities,
         ("late-etf", "product"),
         ("wrong-publisher-etf", "product"),
         ("unofficial-etf", "product"),
@@ -142,6 +151,30 @@ def insert_document_search_corpus(
         (MODEL_ID, MODEL_VERSION, CREATED_AT, "d" * 64),
     )
 
+    risk_chunks = (
+        ("risk-specific", "risk_factor", "specific risk", "[0.98,0.02,0]"),
+        ("risk-index", "risk_factor", "index risk", "[0.95,0.05,0]"),
+        ("risk-currency", "risk_factor", "currency risk", "[0.90,0.10,0]"),
+        ("ambiguous-vector", "risk_factor", "ambiguous risk", "[1,0,0]"),
+        ("performance-near", "historical_performance_table", "performance risk", "[1,0,0]"),
+        ("holdings-near", "full_holdings_table", "holdings risk", "[1,0,0]"),
+    )
+    if include_evaluation_fixtures:
+        risk_chunks = (
+            (
+                "selected-etf-risk",
+                "risk_factor",
+                "selected etf product risk factor",
+                "[1,0,0]",
+            ),
+            *risk_chunks,
+            (
+                "generated-summary",
+                "legacy_unclassified",
+                "generated summary risk",
+                "[1,0,0]",
+            ),
+        )
     _insert_document(
         connection,
         dataset_version=dataset_version,
@@ -150,14 +183,7 @@ def insert_document_search_corpus(
         source_id="source-approved",
         coverage_role="product_summary",
         available_at=datetime(2026, 8, 2, tzinfo=UTC),
-        chunks=(
-            ("risk-specific", "risk_factor", "specific risk", "[0.98,0.02,0]"),
-            ("risk-index", "risk_factor", "index risk", "[0.95,0.05,0]"),
-            ("risk-currency", "risk_factor", "currency risk", "[0.90,0.10,0]"),
-            ("ambiguous-vector", "risk_factor", "ambiguous risk", "[1,0,0]"),
-            ("performance-near", "historical_performance_table", "performance risk", "[1,0,0]"),
-            ("holdings-near", "full_holdings_table", "holdings risk", "[1,0,0]"),
-        ),
+        chunks=risk_chunks,
     )
     connection.execute(
         """
@@ -372,6 +398,83 @@ def insert_document_search_corpus(
         binding_role="subject_policy",
         chunks=(("policy-structure", "legal_structure", "policy fund structure", "[0,0,1]"),),
     )
+    if include_evaluation_fixtures:
+        connection.execute(
+            """
+            INSERT INTO document.document_entity_binding (
+                dataset_version, binding_id, document_id, entity_id, binding_role,
+                record_hash, created_at
+            ) VALUES (
+                %s, 'binding-policy-fund-one', 'document-policy',
+                'policy-fund-one', 'subject_policy', %s, %s
+            )
+            """,
+            (dataset_version, VALID_RECORD_HASH, CREATED_AT),
+        )
+        connection.execute(
+            """
+            INSERT INTO document.document_coverage (
+                dataset_version, coverage_id, entity_id, required_document_role,
+                coverage_status, document_id, record_hash, created_at
+            ) VALUES (
+                %s, 'coverage-policy-fund-one', 'policy-fund-one', 'policy_base',
+                'indexed', 'document-policy', %s, %s
+            )
+            """,
+            (dataset_version, VALID_RECORD_HASH, CREATED_AT),
+        )
+        _insert_document(
+            connection,
+            dataset_version=dataset_version,
+            document_id="document-aerospace-history",
+            entity_id="aerospace-index-one",
+            source_id="source-approved",
+            coverage_role="official_update",
+            available_at=datetime(2026, 8, 2, tzinfo=UTC),
+            document_type="official_update",
+            publisher_role="index_provider",
+            binding_role="subject_index",
+            chunks=(
+                (
+                    "aerospace-definition",
+                    "theme_definition",
+                    "aerospace theme definition",
+                    "[0,0.98,0.02]",
+                ),
+                (
+                    "aerospace-change",
+                    "change_history",
+                    "aerospace theme change",
+                    "[0,1,0]",
+                ),
+                (
+                    "generic-commentary",
+                    "legacy_unclassified",
+                    "generic aerospace market commentary",
+                    "[0,1,0]",
+                ),
+            ),
+        )
+        _insert_document(
+            connection,
+            dataset_version=dataset_version,
+            document_id="document-theme-name-only",
+            entity_id="aerospace-theme-name-only",
+            source_id="source-approved",
+            coverage_role="index_methodology",
+            available_at=datetime(2026, 8, 2, tzinfo=UTC),
+            document_type="index_methodology",
+            publisher_role="index_provider",
+            binding_role="subject_index",
+            chunks=(
+                (
+                    "theme-name-only",
+                    "theme_definition",
+                    "aerospace name only theme match",
+                    "[0,1,0]",
+                ),
+            ),
+        )
     _insert_document(
         connection,
         dataset_version=dataset_version,
