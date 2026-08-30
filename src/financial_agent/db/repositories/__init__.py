@@ -16,6 +16,7 @@ from .documents import (
     DocumentCorpusValidationError,
     DocumentEntityBindingRecord,
     DocumentProfileRecord,
+    DocumentSourceArtifactRecord,
 )
 from .document_targets import DocumentTargetRepository
 
@@ -35,5 +36,6 @@ __all__ = [
     "DocumentCorpusValidationError",
     "DocumentEntityBindingRecord",
     "DocumentProfileRecord",
+    "DocumentSourceArtifactRecord",
     "DocumentTargetRepository",
 ]

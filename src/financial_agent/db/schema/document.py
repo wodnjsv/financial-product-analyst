@@ -30,6 +30,13 @@ COVERAGE_STATUSES = (
 
 BINDING_ROLES = ("subject_product", "subject_index", "subject_policy")
 
+SOURCE_ARTIFACT_RETENTION_DISPOSITIONS = (
+    "pending_delete",
+    "delete_authorized",
+    "metadata_only_deleted",
+    "quarantined",
+)
+
 
 def _sql_values(values: tuple[str, ...]) -> str:
     return ",".join(f"'{value}'" for value in values)
@@ -57,7 +64,10 @@ document_record = sa.Table(
     ),
     sa.ForeignKeyConstraint(
         ["dataset_version", "source_id"],
-        ["evidence.source_record.dataset_version", "evidence.source_record.source_id"],
+        [
+            "evidence.source_record.dataset_version",
+            "evidence.source_record.source_id",
+        ],
         name="fk_document_record_source",
         ondelete="RESTRICT",
     ),
@@ -81,6 +91,105 @@ sa.Index(
     "ix_document_record_source",
     document_record.c.dataset_version,
     document_record.c.source_id,
+)
+
+
+document_source_artifact = sa.Table(
+    "document_source_artifact",
+    metadata,
+    sa.Column("dataset_version", sa.Text, nullable=False),
+    sa.Column("source_artifact_id", sa.Text, nullable=False),
+    sa.Column("source_id", sa.Text, nullable=False),
+    sa.Column("document_id", sa.Text, nullable=False),
+    sa.Column("receipt_id", sa.CHAR(14), nullable=False),
+    sa.Column("original_filename", sa.Text, nullable=False),
+    sa.Column("filing_locator", sa.Text, nullable=False),
+    sa.Column("attachment_locator", sa.Text, nullable=False),
+    sa.Column("media_type", sa.Text, nullable=False),
+    sa.Column("byte_count", sa.BigInteger, nullable=False),
+    sa.Column("source_checksum", sa.CHAR(64), nullable=False),
+    sa.Column("text_checksum", sa.CHAR(64), nullable=False),
+    sa.Column("page_count", sa.Integer, nullable=False),
+    sa.Column("extraction_version", sa.Text, nullable=False),
+    sa.Column("retention_disposition", sa.Text, nullable=False),
+    sa.Column("downloaded_at", sa.TIMESTAMP(timezone=True), nullable=False),
+    sa.Column("persisted_at", sa.TIMESTAMP(timezone=True), nullable=False),
+    sa.Column("verified_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("discarded_at", sa.TIMESTAMP(timezone=True)),
+    sa.Column("record_hash", sa.CHAR(64), nullable=False),
+    sa.Column("created_at", sa.TIMESTAMP(timezone=True), nullable=False),
+    sa.ForeignKeyConstraint(
+        ["dataset_version", "document_id"],
+        [
+            "document.document_record.dataset_version",
+            "document.document_record.document_id",
+        ],
+        name="fk_document_source_artifact_document",
+        ondelete="RESTRICT",
+    ),
+    sa.ForeignKeyConstraint(
+        ["dataset_version", "source_id"],
+        ["evidence.source_record.dataset_version", "evidence.source_record.source_id"],
+        name="fk_document_source_artifact_source",
+        ondelete="RESTRICT",
+    ),
+    sa.PrimaryKeyConstraint(
+        "dataset_version", "document_id", name="pk_document_source_artifact"
+    ),
+    sa.UniqueConstraint(
+        "dataset_version",
+        "source_artifact_id",
+        name="uq_document_source_artifact_identity",
+    ),
+    sa.CheckConstraint("receipt_id ~ '^[0-9]{14}$'", name="receipt_id"),
+    sa.CheckConstraint("original_filename <> ''", name="original_filename"),
+    sa.CheckConstraint(
+        "filing_locator ~ '^https://dart[.]fss[.]or[.]kr/' "
+        "AND pg_catalog.strpos(filing_locator, 'rcpNo=' || receipt_id) > 0",
+        name="filing_locator",
+    ),
+    sa.CheckConstraint(
+        "attachment_locator ~ '^https://dart[.]fss[.]or[.]kr/' "
+        "AND pg_catalog.strpos(attachment_locator, "
+        "'rcp_no=' || receipt_id) > 0",
+        name="attachment_locator",
+    ),
+    sa.CheckConstraint("media_type = 'application/pdf'", name="media_type"),
+    sa.CheckConstraint("byte_count > 0", name="byte_count"),
+    sa.CheckConstraint(
+        f"source_checksum ~ '{SHA256_PATTERN}'", name="source_checksum"
+    ),
+    sa.CheckConstraint(
+        f"text_checksum ~ '{SHA256_PATTERN}'", name="text_checksum"
+    ),
+    sa.CheckConstraint("page_count > 0", name="page_count"),
+    sa.CheckConstraint("extraction_version <> ''", name="extraction_version"),
+    sa.CheckConstraint(
+        "retention_disposition IN "
+        f"({_sql_values(SOURCE_ARTIFACT_RETENTION_DISPOSITIONS)})",
+        name="retention_disposition",
+    ),
+    sa.CheckConstraint("persisted_at >= downloaded_at", name="persisted_at"),
+    sa.CheckConstraint(
+        "verified_at IS NULL OR verified_at >= persisted_at", name="verified_at"
+    ),
+    sa.CheckConstraint(
+        "discarded_at IS NULL OR "
+        "(verified_at IS NOT NULL AND discarded_at >= verified_at)",
+        name="discarded_at",
+    ),
+    sa.CheckConstraint(
+        "(retention_disposition = 'pending_delete' "
+        "AND verified_at IS NULL AND discarded_at IS NULL) OR "
+        "(retention_disposition = 'delete_authorized' "
+        "AND verified_at IS NOT NULL AND discarded_at IS NULL) OR "
+        "(retention_disposition = 'metadata_only_deleted' "
+        "AND verified_at IS NOT NULL AND discarded_at IS NOT NULL) OR "
+        "(retention_disposition = 'quarantined' AND discarded_at IS NULL)",
+        name="retention_state",
+    ),
+    sa.CheckConstraint(f"record_hash ~ '{SHA256_PATTERN}'", name="record_hash"),
+    schema="document",
 )
 
 

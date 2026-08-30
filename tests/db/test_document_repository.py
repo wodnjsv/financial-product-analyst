@@ -24,6 +24,7 @@ from financial_agent.db.repositories.documents import (
     DocumentCorpusValidationError,
     DocumentEntityBindingRecord,
     DocumentProfileRecord,
+    DocumentSourceArtifactRecord,
 )
 from financial_agent.documents import (
     CoverageStatus,
@@ -157,6 +158,45 @@ def _corpus(
         chunks=(chunk,),
         required_document_role=DocumentRole.PRODUCT_SUMMARY,
         coverage=coverage,
+    )
+
+
+def _source_artifact(
+    *,
+    retention_disposition: str = "pending_delete",
+    verified_at: datetime | None = None,
+    discarded_at: datetime | None = None,
+) -> DocumentSourceArtifactRecord:
+    record = DocumentSourceArtifactRecord(
+        dataset_version="documents-2026-08-24-building-v1",
+        source_artifact_id="artifact:dart:20260716000161",
+        source_id="source:dart:20260716000161",
+        document_id="dart:20260716000161:full-prospectus",
+        receipt_id="20260716000161",
+        original_filename="KODEX 200 투자설명서.pdf",
+        filing_locator=(
+            "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260716000161"
+        ),
+        attachment_locator=(
+            "https://dart.fss.or.kr/pdf/download/file.do?"
+            "rcp_no=20260716000161&dcm_no=1&fl_nm=1"
+        ),
+        media_type="application/pdf",
+        byte_count=918714,
+        source_checksum="c" * 64,
+        text_checksum="b" * 64,
+        page_count=68,
+        extraction_version="pdfplumber-layout-v1",
+        retention_disposition=retention_disposition,
+        downloaded_at=datetime(2026, 8, 31, tzinfo=UTC),
+        persisted_at=datetime(2026, 8, 31, 0, 1, tzinfo=UTC),
+        verified_at=verified_at,
+        discarded_at=discarded_at,
+        record_hash="0" * 64,
+    )
+    return replace(
+        record,
+        record_hash=document_repository._source_artifact_record_hash(record),
     )
 
 
@@ -659,6 +699,88 @@ def test_corpus_rejects_naive_persisted_datetimes(field_name: str) -> None:
 
     with pytest.raises(DocumentCorpusValidationError, match=field_name):
         DocumentCorpusRepository.validate_corpus(corpus)
+
+
+def test_valid_pending_source_artifact_passes_validation() -> None:
+    DocumentCorpusRepository.validate_source_artifact(_source_artifact())
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    (
+        ("receipt_id", "2026071600016"),
+        ("receipt_id", "2026071600016x"),
+        ("filing_locator", "https://example.com/main.do?rcpNo=20260716000161"),
+        (
+            "attachment_locator",
+            "https://evil.example/pdf/download/file.do?rcp_no=20260716000161",
+        ),
+        ("media_type", "text/plain"),
+        ("byte_count", 0),
+        ("page_count", 0),
+        ("source_checksum", "C" * 64),
+        ("text_checksum", "b" * 63),
+    ),
+)
+def test_source_artifact_rejects_invalid_file_provenance(
+    field_name: str,
+    invalid_value: str | int,
+) -> None:
+    artifact = replace(_source_artifact(), **{field_name: invalid_value})
+
+    with pytest.raises(DocumentCorpusValidationError, match=field_name):
+        DocumentCorpusRepository.validate_source_artifact(artifact)
+
+
+@pytest.mark.parametrize("field_name", ("downloaded_at", "persisted_at"))
+def test_source_artifact_rejects_naive_required_timestamps(
+    field_name: str,
+) -> None:
+    artifact = replace(
+        _source_artifact(), **{field_name: datetime(2026, 8, 31)}
+    )
+
+    with pytest.raises(DocumentCorpusValidationError, match=field_name):
+        DocumentCorpusRepository.validate_source_artifact(artifact)
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    (
+        _source_artifact(
+            retention_disposition="metadata_only_deleted",
+            verified_at=None,
+            discarded_at=datetime(2026, 8, 31, 0, 3, tzinfo=UTC),
+        ),
+        _source_artifact(
+            retention_disposition="metadata_only_deleted",
+            verified_at=datetime(2026, 8, 31, 0, 2, tzinfo=UTC),
+            discarded_at=None,
+        ),
+        _source_artifact(
+            retention_disposition="pending_delete",
+            verified_at=datetime(2026, 8, 31, 0, 2, tzinfo=UTC),
+        ),
+        _source_artifact(
+            retention_disposition="delete_authorized",
+            verified_at=None,
+        ),
+    ),
+)
+def test_source_artifact_rejects_incoherent_retention_state(
+    artifact: DocumentSourceArtifactRecord,
+) -> None:
+    with pytest.raises(DocumentCorpusValidationError, match="retention"):
+        DocumentCorpusRepository.validate_source_artifact(artifact)
+
+
+def test_source_artifact_record_hash_covers_file_identity() -> None:
+    artifact = _source_artifact()
+
+    with pytest.raises(DocumentCorpusValidationError, match="record_hash"):
+        DocumentCorpusRepository.validate_source_artifact(
+            replace(artifact, original_filename="different.pdf")
+        )
 
 
 @pytest.mark.postgres

@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 from enum import Enum
 from typing import Literal
+from urllib.parse import parse_qs, urlsplit
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
@@ -31,6 +32,12 @@ from financial_agent.documents import (
 
 
 BindingRole = Literal["subject_product", "subject_index", "subject_policy"]
+SourceArtifactRetentionDisposition = Literal[
+    "pending_delete",
+    "delete_authorized",
+    "metadata_only_deleted",
+    "quarantined",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +63,30 @@ class DocumentEntityBindingRecord:
     document_id: str
     entity_id: str
     binding_role: BindingRole
+    record_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentSourceArtifactRecord:
+    dataset_version: str
+    source_artifact_id: str
+    source_id: str
+    document_id: str
+    receipt_id: str
+    original_filename: str
+    filing_locator: str
+    attachment_locator: str
+    media_type: str
+    byte_count: int
+    source_checksum: str
+    text_checksum: str
+    page_count: int
+    extraction_version: str
+    retention_disposition: SourceArtifactRetentionDisposition
+    downloaded_at: datetime
+    persisted_at: datetime
+    verified_at: datetime | None
+    discarded_at: datetime | None
     record_hash: str
 
 
@@ -163,6 +194,20 @@ def _chunk_hash_payload(chunk: DocumentChunkDraft) -> dict[str, object]:
 
 def _coverage_payload(coverage: DocumentCoverageDraft) -> dict[str, object]:
     return asdict(coverage)
+
+
+def _source_artifact_payload(
+    artifact: DocumentSourceArtifactRecord,
+) -> dict[str, object]:
+    return asdict(artifact)
+
+
+def _source_artifact_record_hash(
+    artifact: DocumentSourceArtifactRecord,
+) -> str:
+    payload = _source_artifact_payload(artifact)
+    payload.pop("record_hash")
+    return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
 
 
 def _corpus_payload(corpus: DocumentCorpusRecord) -> dict[str, object]:
@@ -315,6 +360,90 @@ class DocumentCorpusRepository:
             raise DocumentCorpusValidationError("profile record_hash")
         if not _is_sha256(coverage.record_hash):
             raise DocumentCorpusValidationError("coverage record_hash")
+
+    @staticmethod
+    def validate_source_artifact(artifact: DocumentSourceArtifactRecord) -> None:
+        for label, value in (
+            ("dataset_version", artifact.dataset_version),
+            ("source_artifact_id", artifact.source_artifact_id),
+            ("source_id", artifact.source_id),
+            ("document_id", artifact.document_id),
+            ("original_filename", artifact.original_filename),
+            ("extraction_version", artifact.extraction_version),
+        ):
+            if not value.strip():
+                raise DocumentCorpusValidationError(label)
+        if len(artifact.receipt_id) != 14 or not artifact.receipt_id.isdigit():
+            raise DocumentCorpusValidationError("receipt_id")
+        for field_name, locator, receipt_parameter in (
+            ("filing_locator", artifact.filing_locator, "rcpNo"),
+            ("attachment_locator", artifact.attachment_locator, "rcp_no"),
+        ):
+            parsed = urlsplit(locator)
+            if (
+                parsed.scheme != "https"
+                or parsed.hostname != "dart.fss.or.kr"
+                or parsed.port is not None
+                or parsed.username is not None
+                or parsed.password is not None
+                or parse_qs(parsed.query).get(receipt_parameter)
+                != [artifact.receipt_id]
+            ):
+                raise DocumentCorpusValidationError(field_name)
+        if artifact.media_type != "application/pdf":
+            raise DocumentCorpusValidationError("media_type")
+        for field_name, value in (
+            ("byte_count", artifact.byte_count),
+            ("page_count", artifact.page_count),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise DocumentCorpusValidationError(field_name)
+        for field_name, value in (
+            ("source_checksum", artifact.source_checksum),
+            ("text_checksum", artifact.text_checksum),
+        ):
+            if not _is_sha256(value):
+                raise DocumentCorpusValidationError(field_name)
+        downloaded_at = _utc_datetime(artifact.downloaded_at, "downloaded_at")
+        persisted_at = _utc_datetime(artifact.persisted_at, "persisted_at")
+        verified_at = (
+            _utc_datetime(artifact.verified_at, "verified_at")
+            if artifact.verified_at is not None
+            else None
+        )
+        discarded_at = (
+            _utc_datetime(artifact.discarded_at, "discarded_at")
+            if artifact.discarded_at is not None
+            else None
+        )
+        if persisted_at < downloaded_at:
+            raise DocumentCorpusValidationError("persisted_at")
+        if verified_at is not None and verified_at < persisted_at:
+            raise DocumentCorpusValidationError("verified_at")
+        valid_state = (
+            artifact.retention_disposition == "pending_delete"
+            and verified_at is None
+            and discarded_at is None
+        ) or (
+            artifact.retention_disposition == "delete_authorized"
+            and verified_at is not None
+            and discarded_at is None
+        ) or (
+            artifact.retention_disposition == "metadata_only_deleted"
+            and verified_at is not None
+            and discarded_at is not None
+        ) or (
+            artifact.retention_disposition == "quarantined"
+            and discarded_at is None
+        )
+        if not valid_state:
+            raise DocumentCorpusValidationError("retention state")
+        if discarded_at is not None:
+            assert verified_at is not None
+            if discarded_at < verified_at:
+                raise DocumentCorpusValidationError("discarded_at")
+        if artifact.record_hash != _source_artifact_record_hash(artifact):
+            raise DocumentCorpusValidationError("record_hash")
 
     @staticmethod
     def validate_standalone_coverage(coverage: DocumentCoverageDraft) -> None:

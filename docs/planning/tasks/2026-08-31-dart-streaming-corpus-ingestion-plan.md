@@ -56,7 +56,7 @@ pdfplumber, standard-library urllib/XML/ZIP/hashlib/tempfile, pytest 8.
 - States are exactly `pending_delete`, `delete_authorized`,
   `metadata_only_deleted`, and `quarantined`.
 
-- [ ] **Step 1: Write failing schema and repository contract tests**
+- [x] **Step 1: Write failing schema and repository contract tests**
 
 Define this public record shape in the test:
 
@@ -89,7 +89,7 @@ Assert DART host, receipt, checksums, positive counts, aware timestamps,
 immutable identity, and legal state transitions. `metadata_only_deleted`
 requires both `verified_at` and `discarded_at`.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ~~~bash
 .venv/bin/python -m pytest \
@@ -100,7 +100,7 @@ requires both `verified_at` and `discarded_at`.
 
 Expected: failure because the table and record do not exist.
 
-- [ ] **Step 3: Implement migration `0008` and the frozen record**
+- [x] **Step 3: Implement migration `0008` and the frozen record**
 
 Create a one-to-one table keyed by `(dataset_version, document_id)` with a
 unique `(dataset_version, source_artifact_id)` key and foreign keys to
@@ -111,7 +111,7 @@ Keep `document_record.object_key` as the logical key
 `documents/dart/<receipt>/full-prospectus.pdf`. Availability is determined only
 from `retention_disposition`.
 
-- [ ] **Step 4: Verify migration and repository tests**
+- [x] **Step 4: Verify migration and repository tests**
 
 ~~~bash
 .venv/bin/python -m pytest \
@@ -122,7 +122,7 @@ from `retention_disposition`.
 
 Require `0007 → 0008 → 0007 → 0008` and legacy-row preservation.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 ~~~bash
 git add alembic/versions/0008_document_source_artifact.py \

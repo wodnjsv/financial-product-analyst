@@ -75,7 +75,7 @@ def test_installed_preflight_uses_explicit_project_root(tmp_path: Path) -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout == "0007\n"
+    assert completed.stdout == "0008\n"
 
 
 def _pre_migration_snapshot() -> PreflightSnapshot:

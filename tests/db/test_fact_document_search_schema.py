@@ -30,6 +30,7 @@ def test_document_corpus_metadata_is_registered() -> None:
         document_coverage,
         document_entity_binding,
         document_profile,
+        document_source_artifact,
     )
 
     assert DOCUMENT_ROLES == (
@@ -98,6 +99,29 @@ def test_document_corpus_metadata_is_registered() -> None:
         "character_start",
         "character_end",
     } <= set(document_chunk.c.keys())
+    assert {
+        "dataset_version",
+        "source_artifact_id",
+        "source_id",
+        "document_id",
+        "receipt_id",
+        "original_filename",
+        "filing_locator",
+        "attachment_locator",
+        "media_type",
+        "byte_count",
+        "source_checksum",
+        "text_checksum",
+        "page_count",
+        "extraction_version",
+        "retention_disposition",
+        "downloaded_at",
+        "persisted_at",
+        "verified_at",
+        "discarded_at",
+        "record_hash",
+        "created_at",
+    } == set(document_source_artifact.c.keys())
 
 
 @pytest.fixture

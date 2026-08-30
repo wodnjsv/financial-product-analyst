@@ -314,6 +314,12 @@
       "definition": "CREATE TRIGGER reject_document_record_nonbuilding_mutation BEFORE INSERT OR DELETE OR UPDATE ON document.document_record FOR EACH ROW EXECUTE FUNCTION operations.reject_nonbuilding_dataset_mutation()"
     },
     {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "reject_document_source_artifact_nonbuilding_mutation",
+      "definition": "CREATE TRIGGER reject_document_source_artifact_nonbuilding_mutation BEFORE INSERT OR DELETE OR UPDATE ON document.document_source_artifact FOR EACH ROW EXECUTE FUNCTION operations.reject_nonbuilding_dataset_mutation()"
+    },
+    {
       "schema": "evidence",
       "table": "atomic_claim",
       "name": "reject_atomic_claim_mutation",
@@ -872,6 +878,102 @@
       "table": "document_record",
       "name": "ck_document_record_record_hash",
       "definition": "CHECK (record_hash ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_attachment_locator",
+      "definition": "CHECK (attachment_locator ~ '^https://dart[.]fss[.]or[.]kr/'::text AND strpos(attachment_locator, 'rcp_no='::text || receipt_id::text) > 0)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_byte_count",
+      "definition": "CHECK (byte_count > 0)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_discarded_at",
+      "definition": "CHECK (discarded_at IS NULL OR verified_at IS NOT NULL AND discarded_at >= verified_at)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_extraction_version",
+      "definition": "CHECK (extraction_version <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_filing_locator",
+      "definition": "CHECK (filing_locator ~ '^https://dart[.]fss[.]or[.]kr/'::text AND strpos(filing_locator, 'rcpNo='::text || receipt_id::text) > 0)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_media_type",
+      "definition": "CHECK (media_type = 'application/pdf'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_original_filename",
+      "definition": "CHECK (original_filename <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_page_count",
+      "definition": "CHECK (page_count > 0)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_persisted_at",
+      "definition": "CHECK (persisted_at >= downloaded_at)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_receipt_id",
+      "definition": "CHECK (receipt_id ~ '^[0-9]{14}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_record_hash",
+      "definition": "CHECK (record_hash ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_retention_disposition",
+      "definition": "CHECK (retention_disposition = ANY (ARRAY['pending_delete'::text, 'delete_authorized'::text, 'metadata_only_deleted'::text, 'quarantined'::text]))"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_retention_state",
+      "definition": "CHECK (retention_disposition = 'pending_delete'::text AND verified_at IS NULL AND discarded_at IS NULL OR retention_disposition = 'delete_authorized'::text AND verified_at IS NOT NULL AND discarded_at IS NULL OR retention_disposition = 'metadata_only_deleted'::text AND verified_at IS NOT NULL AND discarded_at IS NOT NULL OR retention_disposition = 'quarantined'::text AND discarded_at IS NULL)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_source_checksum",
+      "definition": "CHECK (source_checksum ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_text_checksum",
+      "definition": "CHECK (text_checksum ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_verified_at",
+      "definition": "CHECK (verified_at IS NULL OR verified_at >= persisted_at)"
     },
     {
       "schema": "evidence",
@@ -1689,6 +1791,12 @@
       "object_type": "table",
       "schema": "document",
       "name": "document_record",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "table",
+      "schema": "document",
+      "name": "document_source_artifact",
       "owner": "fa_migration"
     },
     {
@@ -2811,6 +2919,90 @@
     {
       "schema": "document",
       "name": "document_record",
+      "grantee": "fa_runtime",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_build",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_build",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_build",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_build",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "REFERENCES",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "TRIGGER",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "TRUNCATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
       "grantee": "fa_runtime",
       "privilege": "SELECT",
       "grantable": false
