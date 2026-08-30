@@ -6,14 +6,33 @@ import os
 import sys
 import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 import boto3
+import sqlalchemy as sa
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
+from financial_agent.db.config import DatabaseConfig, DatabaseConfigurationError
+from financial_agent.db.engine import create_database_engine
 from financial_agent.db.preflight import normalize_psycopg_url
+from financial_agent.db.repositories.document_targets import DocumentTargetRepository
+from financial_agent.db.schema.catalog import entity
+from financial_agent.db.schema.operations import (
+    dataset_version as dataset_version_table,
+)
+from financial_agent.documents import (
+    DocumentRole,
+    DocumentSourceAuditReport,
+    DocumentSourceTarget,
+    SourceAuditStatus,
+)
+from financial_agent.documents.source_manifest import write_document_source_report
 from financial_agent.ingestion.capacity_probe import (
     CapacityProbeError,
     measure_database_acceptance,
@@ -39,6 +58,18 @@ from financial_agent.ingestion.official.capture import (
     capture_approved_official_sources,
     load_capture_configuration,
 )
+from financial_agent.ingestion.document_sources.audit import (
+    audit_document_sources,
+    document_source_audit_passed,
+)
+from financial_agent.ingestion.document_sources.base import DocumentDiscoveryContext
+from financial_agent.ingestion.document_sources.dart import DartDocumentSourceAdapter
+from financial_agent.ingestion.document_sources.registered import (
+    RegisteredDocumentSourceAdapter,
+    ReviewedAuthorityContext,
+    _load_locator_registry,
+)
+from financial_agent.ingestion.document_sources.sec import SecDocumentSourceAdapter
 from financial_agent.ingestion.sources import (
     SourceVerificationError,
     download_verified_object,
@@ -86,6 +117,76 @@ class _SanitizedArgumentParser(argparse.ArgumentParser):
         raise IngestionArgumentError() from None
 
 
+_DOCUMENT_SOURCE_CUTOFF = date(2026, 8, 24)
+_DOCUMENT_AUTHORITY_REGISTRY = (
+    Path(__file__).resolve().parents[3]
+    / "config"
+    / "official-document-authorities.json"
+)
+_AUDIT_STATUS_ORDER = (
+    SourceAuditStatus.DOCUMENT_NOT_FOUND,
+    SourceAuditStatus.IDENTIFIER_MISSING,
+    SourceAuditStatus.CREDENTIALS_MISSING,
+    SourceAuditStatus.ACCESS_DENIED,
+    SourceAuditStatus.RATE_LIMITED,
+    SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
+    SourceAuditStatus.TERMS_REVIEW_REQUIRED,
+    SourceAuditStatus.AFTER_CUTOFF_ONLY,
+    SourceAuditStatus.VERSION_UNKNOWN,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentSourceAuditConfiguration:
+    database_url: str
+    dataset_version: str
+    output_root: Path
+    dart_api_key: str | None
+    sec_user_agent: str | None
+    locator_registry_path: Path | None
+
+
+@dataclass(frozen=True, slots=True)
+class _DocumentSourceAuditExecution:
+    report: DocumentSourceAuditReport
+    registered_authorities: ReviewedAuthorityContext | None
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        request: Request,
+        file_pointer: object,
+        code: int,
+        message: str,
+        headers: object,
+        new_url: str,
+    ) -> None:
+        del request, file_pointer, code, message, headers, new_url
+        return None
+
+
+class _NoRedirectHttpOpener:
+    def __init__(self) -> None:
+        self._opener = build_opener(_NoRedirectHandler())
+
+    def open_no_redirect(
+        self,
+        url: str,
+        *,
+        method: str,
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> object:
+        request = Request(url, headers=dict(headers), method=method)
+        try:
+            return self._opener.open(request, timeout=timeout)
+        except HTTPError as error:
+            if 300 <= error.code < 400:
+                return error
+            raise
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = _SanitizedArgumentParser(prog="financial-agent-ingestion")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -96,11 +197,76 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("validate-official")
     commands.add_parser("load-stage03b")
     commands.add_parser("verify-official-object-storage")
+    commands.add_parser("audit-document-sources")
     capacity = commands.add_parser("measure-stage03b-capacity")
     capacity.add_argument("--full-holdings", required=True, type=int)
     capacity.add_argument("--sample-products", default=100, type=int)
     capacity.add_argument("--current-storage-gib", default=20, type=int)
     return parser
+
+
+def _optional_nonblank_env(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    if not value.strip():
+        raise IngestionConfigurationError()
+    return value.strip()
+
+
+def _validated_output_root(value: str) -> Path:
+    root = Path(value)
+    if not root.is_absolute() or root.is_symlink():
+        raise IngestionArgumentError()
+    if root.exists() and not root.is_dir():
+        raise IngestionArgumentError()
+    destination = root / "document-source-audit.json"
+    if destination.is_symlink() or (
+        destination.exists() and not destination.is_file()
+    ):
+        raise IngestionArgumentError()
+    return root
+
+
+def _validated_registry_path(value: str | None) -> Path | None:
+    if value is None:
+        return None
+    path = Path(value)
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+    ):
+        raise IngestionArgumentError()
+    return path
+
+
+def _load_document_source_audit_configuration(
+) -> _DocumentSourceAuditConfiguration:
+    database_url = _required_env(
+        "FINANCIAL_AGENT_DOCUMENT_AUDIT_DATABASE_URL"
+    ).strip()
+    dataset_version = _required_env("FINANCIAL_AGENT_DATASET_VERSION").strip()
+    output_root = _validated_output_root(
+        _required_env("FINANCIAL_AGENT_DOCUMENT_AUDIT_OUTPUT_ROOT").strip()
+    )
+    locator_registry_path = _validated_registry_path(
+        _optional_nonblank_env("FINANCIAL_AGENT_DOCUMENT_LOCATOR_REGISTRY")
+    )
+    try:
+        DatabaseConfig(url=database_url)
+    except DatabaseConfigurationError:
+        raise IngestionArgumentError() from None
+    return _DocumentSourceAuditConfiguration(
+        database_url=database_url,
+        dataset_version=dataset_version,
+        output_root=output_root,
+        dart_api_key=_optional_nonblank_env("FINANCIAL_AGENT_DART_API_KEY"),
+        sec_user_agent=_optional_nonblank_env(
+            "FINANCIAL_AGENT_SEC_USER_AGENT"
+        ),
+        locator_registry_path=locator_registry_path,
+    )
 
 
 def _required_env(name: str) -> str:
@@ -399,6 +565,220 @@ async def _capacity_probe_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+async def _load_document_audit_scope(
+    connection: AsyncConnection,
+    dataset_version: str,
+) -> tuple[date, datetime]:
+    result = await connection.execute(
+        sa.select(
+            dataset_version_table.c.cutoff_date,
+            dataset_version_table.c.created_at,
+        ).where(dataset_version_table.c.dataset_version == dataset_version)
+    )
+    rows = result.mappings().all()
+    if len(rows) != 1:
+        raise IngestionArgumentError()
+    cutoff_date = rows[0].get("cutoff_date")
+    generated_at = rows[0].get("created_at")
+    if cutoff_date != _DOCUMENT_SOURCE_CUTOFF:
+        raise IngestionArgumentError()
+    if (
+        not isinstance(generated_at, datetime)
+        or generated_at.tzinfo is None
+        or generated_at.utcoffset() is None
+    ):
+        raise IngestionArgumentError()
+    return cutoff_date, generated_at
+
+
+async def _list_exact_policy_targets(
+    connection: AsyncConnection,
+    *,
+    dataset_version: str,
+    cutoff_date: date,
+    locator_registry_path: Path,
+) -> tuple[DocumentSourceTarget, ...]:
+    try:
+        locators = _load_locator_registry(locator_registry_path)
+    except Exception:
+        raise IngestionArgumentError() from None
+    policy_locators = tuple(
+        locator
+        for locator in locators.values()
+        if locator.entity_type == "policy"
+        and locator.required_role
+        in {DocumentRole.POLICY_BASE, DocumentRole.OFFICIAL_UPDATE}
+        and locator.binding_role == "subject_policy"
+    )
+    if not policy_locators:
+        return ()
+
+    entity_ids = tuple(sorted({locator.entity_id for locator in policy_locators}))
+    result = await connection.execute(
+        sa.select(entity.c.entity_id, entity.c.canonical_name).where(
+            entity.c.dataset_version == dataset_version,
+            entity.c.entity_id.in_(entity_ids),
+        )
+    )
+    names: dict[str, str] = {}
+    for row in result.mappings().all():
+        entity_id = row.get("entity_id")
+        canonical_name = row.get("canonical_name")
+        if (
+            not isinstance(entity_id, str)
+            or not entity_id.strip()
+            or not isinstance(canonical_name, str)
+            or not canonical_name.strip()
+            or entity_id in names
+        ):
+            raise IngestionArgumentError()
+        names[entity_id] = canonical_name
+
+    return tuple(
+        sorted(
+            (
+                DocumentSourceTarget(
+                    dataset_version=dataset_version,
+                    entity_id=locator.entity_id,
+                    entity_type=locator.entity_type,
+                    canonical_name=names[locator.entity_id],
+                    product_family=None,
+                    required_role=locator.required_role,
+                    binding_role=locator.binding_role,
+                    identifiers=(),
+                    cutoff_date=cutoff_date,
+                )
+                for locator in policy_locators
+                if locator.entity_id in names
+            ),
+            key=lambda target: (target.entity_id, target.required_role.value),
+        )
+    )
+
+
+def _audit_document_targets(
+    targets: tuple[DocumentSourceTarget, ...],
+    *,
+    configuration: _DocumentSourceAuditConfiguration,
+    opener: object,
+    generated_at: datetime,
+) -> _DocumentSourceAuditExecution:
+    registered_adapter = RegisteredDocumentSourceAdapter(
+        opener,
+        _DOCUMENT_AUTHORITY_REGISTRY,
+    )
+    report = audit_document_sources(
+        targets,
+        (
+            DartDocumentSourceAdapter(opener),
+            SecDocumentSourceAdapter(opener),
+            registered_adapter,
+        ),
+        DocumentDiscoveryContext(
+            cutoff_date=_DOCUMENT_SOURCE_CUTOFF,
+            dart_api_key=configuration.dart_api_key,
+            sec_user_agent=configuration.sec_user_agent,
+            locator_registry_path=configuration.locator_registry_path,
+        ),
+        generated_at,
+    )
+    return _DocumentSourceAuditExecution(
+        report=report,
+        registered_authorities=registered_adapter.reviewed_authorities,
+    )
+
+
+async def _run_document_source_audit(
+    configuration: _DocumentSourceAuditConfiguration,
+) -> _DocumentSourceAuditExecution:
+    engine = create_database_engine(
+        DatabaseConfig(url=configuration.database_url),
+        read_only=True,
+    )
+    try:
+        async with engine.begin() as connection:
+            cutoff_date, generated_at = await _load_document_audit_scope(
+                connection,
+                configuration.dataset_version,
+            )
+            targets = await DocumentTargetRepository(connection).list_targets(
+                configuration.dataset_version,
+                cutoff_date=cutoff_date,
+            )
+            policy_targets: tuple[DocumentSourceTarget, ...] = ()
+            if configuration.locator_registry_path is not None:
+                policy_targets = await _list_exact_policy_targets(
+                    connection,
+                    dataset_version=configuration.dataset_version,
+                    cutoff_date=cutoff_date,
+                    locator_registry_path=configuration.locator_registry_path,
+                )
+    finally:
+        await engine.dispose()
+
+    return _audit_document_targets(
+        (*targets, *policy_targets),
+        configuration=configuration,
+        opener=_NoRedirectHttpOpener(),
+        generated_at=generated_at,
+    )
+
+
+def _audit_status_count(
+    report: DocumentSourceAuditReport,
+    status: SourceAuditStatus,
+) -> int:
+    return sum(entry.status is status for entry in report.entries)
+
+
+def _document_source_audit_summary(
+    execution: _DocumentSourceAuditExecution,
+    report_hash: str,
+) -> tuple[bool, str]:
+    report = execution.report
+    passed = document_source_audit_passed(
+        report,
+        registered_authorities=execution.registered_authorities,
+    )
+    target_count = len(report.entries)
+    eligible_count = _audit_status_count(report, SourceAuditStatus.ELIGIBLE)
+    not_applicable_count = _audit_status_count(
+        report,
+        SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE,
+    )
+    if passed:
+        return (
+            True,
+            f"DOCUMENT_SOURCE_AUDIT_OK targets={target_count} "
+            f"eligible={eligible_count} not_applicable={not_applicable_count} "
+            f"report_hash={report_hash}",
+        )
+
+    unavailable_count = target_count - eligible_count - not_applicable_count
+    counts = " ".join(
+        f"{status.value}={_audit_status_count(report, status)}"
+        for status in _AUDIT_STATUS_ORDER
+    )
+    return (
+        False,
+        f"DOCUMENT_SOURCE_AUDIT_INCOMPLETE targets={target_count} "
+        f"eligible={eligible_count} unavailable={unavailable_count} "
+        f"{counts} report_hash={report_hash}",
+    )
+
+
+async def _document_source_audit_command() -> int:
+    configuration = _load_document_source_audit_configuration()
+    execution = await _run_document_source_audit(configuration)
+    report_hash = write_document_source_report(
+        execution.report,
+        configuration.output_root / "document-source-audit.json",
+    )
+    passed, summary = _document_source_audit_summary(execution, report_hash)
+    print(summary, file=sys.stdout if passed else sys.stderr)
+    return 0 if passed else 2
+
+
 async def _official_object_storage_command() -> int:
     manifests, _ = _official_inputs()
     bucket = _required_env("FINANCIAL_AGENT_OBJECT_STORAGE_BUCKET")
@@ -452,12 +832,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = asyncio.run(_load_stage03b_command())
         elif arguments.command == "measure-stage03b-capacity":
             result = asyncio.run(_capacity_probe_command(arguments))
+        elif arguments.command == "audit-document-sources":
+            result = asyncio.run(_document_source_audit_command())
         else:
             result = asyncio.run(_official_object_storage_command())
         return 0 if result is None else result
     except (
         IngestionArgumentError,
         IngestionConfigurationError,
+        DatabaseConfigurationError,
         CapacityProbeError,
         ObjectStorageEndpointError,
         OfficialSourceConfigurationError,
