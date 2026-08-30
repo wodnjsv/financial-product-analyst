@@ -1,0 +1,25 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:wrongSubject a fp:Theme .
+  fp:wrongObject a fp:Theme .
+  fp:evidence a fp:EvidenceRecord ; fp:sourceRecord fp:source .
+  fp:source a fp:SourceRecord .
+
+  fp:wrongSubject fp:managedBy fp:wrongObject ; fp:issuedBy fp:wrongObject ; fp:tracksIndex fp:wrongObject ; fp:holdsSecurity fp:wrongObject ; fp:containsSecurity fp:wrongObject ; fp:securityOfCompany fp:wrongObject ; fp:controlsCompany fp:wrongObject ; fp:listedOn fp:wrongObject ; fp:classifiedAsIndustry fp:wrongObject ; fp:associatedWithTheme fp:wrongObject ; fp:hasShareClass fp:wrongObject ; fp:documentedBy fp:wrongObject ; fp:hasRiskFactor fp:wrongObject .
+
+  fp:invalid-managedBy a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:managedBy ; fp:object fp:wrongObject ; fp:relationId "invalid-managedBy" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-issuedBy a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:issuedBy ; fp:object fp:wrongObject ; fp:relationId "invalid-issuedBy" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-tracksIndex a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:tracksIndex ; fp:object fp:wrongObject ; fp:relationId "invalid-tracksIndex" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-holdsSecurity a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:holdsSecurity ; fp:object fp:wrongObject ; fp:relationId "invalid-holdsSecurity" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence ; fp:holdingWeightPercentage "1.0"^^xsd:decimal .
+  fp:invalid-containsSecurity a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:containsSecurity ; fp:object fp:wrongObject ; fp:relationId "invalid-containsSecurity" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-securityOfCompany a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:securityOfCompany ; fp:object fp:wrongObject ; fp:relationId "invalid-securityOfCompany" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-controlsCompany a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:controlsCompany ; fp:object fp:wrongObject ; fp:relationId "invalid-controlsCompany" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-listedOn a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:listedOn ; fp:object fp:wrongObject ; fp:relationId "invalid-listedOn" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-classifiedAsIndustry a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:classifiedAsIndustry ; fp:object fp:wrongObject ; fp:relationId "invalid-classifiedAsIndustry" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-associatedWithTheme a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:associatedWithTheme ; fp:object fp:wrongObject ; fp:relationId "invalid-associatedWithTheme" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-hasShareClass a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:hasShareClass ; fp:object fp:wrongObject ; fp:relationId "invalid-hasShareClass" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-documentedBy a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:documentedBy ; fp:object fp:wrongObject ; fp:relationId "invalid-documentedBy" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:invalid-hasRiskFactor a fp:RelationAssertion ; fp:subject fp:wrongSubject ; fp:predicate fp:hasRiskFactor ; fp:object fp:wrongObject ; fp:relationId "invalid-hasRiskFactor" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+}

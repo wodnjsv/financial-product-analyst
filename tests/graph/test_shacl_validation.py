@@ -54,6 +54,33 @@ def test_multi_role_product_keeps_one_canonical_identity_conformant() -> None:
     assert result.conforms is True
 
 
+def test_cutoff_day_datetimes_accept_seoul_and_equivalent_utc_instants() -> None:
+    """Catches lexical cutoff comparison that rejects valid cutoff-day dateTimes."""
+    result = validate_fixture("valid_cutoff_day_datetime.trig")
+
+    assert result.conforms is True
+
+
+def test_cutoff_datetime_rejects_the_exclusive_seoul_next_day_boundary() -> None:
+    """Catches a cutoff check that accepts the first instant after the Seoul cutoff day."""
+    result = validate_fixture("invalid_after_cutoff_datetime.trig")
+
+    assert result.conforms is False
+    assert "SPARQLConstraintComponent" in result.report_text
+
+
+@pytest.mark.parametrize("predicate", sorted(APPROVED_PREDICATES))
+def test_domain_range_requires_explicit_types_before_relation_entailment(
+    predicate: str,
+) -> None:
+    """Catches a relation that infers its own required type through RDFS domain/range."""
+    result = validate_fixture("invalid_domain_range.trig")
+
+    assert result.conforms is False
+    assert "ClassConstraintComponent" in result.report_text
+    assert f"invalid-{predicate}" in result.report_text
+
+
 @pytest.mark.parametrize(
     ("fixture", "expected_component"),
     [

@@ -33,14 +33,38 @@ fp:RelationAssertionShape a sh:NodeShape ;
     sh:select """
       SELECT $this ?value WHERE {
         <urn:validation:financial-product:context> <urn:validation:financial-product#cutoffDate> ?cutoff .
-        $this ?dateProperty ?value .
-        FILTER(
-          ?dateProperty = <urn:ontology:financial-product:v1#validFrom> ||
-          ?dateProperty = <urn:ontology:financial-product:v1#validTo> ||
-          ?dateProperty = <urn:ontology:financial-product:v1#publishedAt> ||
-          ?dateProperty = <urn:ontology:financial-product:v1#availableAt>
-        )
-        FILTER(STR(?value) > STR(?cutoff))
+        $this <urn:ontology:financial-product:v1#validFrom> ?value .
+        FILTER(DATATYPE(?value) = <http://www.w3.org/2001/XMLSchema#date> && ?value > ?cutoff)
+      }
+    """
+  ] ;
+  sh:sparql [
+    sh:message "Relation dates must not be later than the validation cutoff." ;
+    sh:select """
+      SELECT $this ?value WHERE {
+        <urn:validation:financial-product:context> <urn:validation:financial-product#cutoffDate> ?cutoff .
+        $this <urn:ontology:financial-product:v1#validTo> ?value .
+        FILTER(DATATYPE(?value) = <http://www.w3.org/2001/XMLSchema#date> && ?value > ?cutoff)
+      }
+    """
+  ] ;
+  sh:sparql [
+    sh:message "Relation timestamps require a timezone and must precede Seoul midnight after the cutoff." ;
+    sh:select """
+      SELECT $this ?value WHERE {
+        <urn:validation:financial-product:context> <urn:validation:financial-product#cutoffEndExclusive> ?cutoffEnd .
+        $this <urn:ontology:financial-product:v1#publishedAt> ?value .
+        FILTER(!REGEX(STR(?value), "(Z|[+-][0-9]{2}:[0-9]{2})$") || ?value >= ?cutoffEnd)
+      }
+    """
+  ] ;
+  sh:sparql [
+    sh:message "Relation timestamps require a timezone and must precede Seoul midnight after the cutoff." ;
+    sh:select """
+      SELECT $this ?value WHERE {
+        <urn:validation:financial-product:context> <urn:validation:financial-product#cutoffEndExclusive> ?cutoffEnd .
+        $this <urn:ontology:financial-product:v1#availableAt> ?value .
+        FILTER(!REGEX(STR(?value), "(Z|[+-][0-9]{2}:[0-9]{2})$") || ?value >= ?cutoffEnd)
       }
     """
   ] .
