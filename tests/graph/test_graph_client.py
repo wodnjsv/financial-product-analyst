@@ -215,6 +215,24 @@ def test_select_rejects_duplicate_projection_before_http(
         )
 
 
+def test_select_rejects_duplicate_response_head_variables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches duplicate response variables for an otherwise unique SELECT projection."""
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda request, *, timeout: _Response(_results_json([], ["item", "item"])),
+    )
+
+    with pytest.raises(GraphQueryError, match="malformed_result"):
+        FusekiGraphClient("http://graph.test/query").select(
+            query_id="duplicate-response-head",
+            sparql=SELECT_QUERY,
+            dataset_version="dataset-version",
+            coverage_status="covered",
+        )
+
+
 def test_select_wraps_http_and_transport_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     """Catches leaking urllib exceptions through the read-only boundary."""
     failures = (
