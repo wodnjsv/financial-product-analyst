@@ -561,24 +561,24 @@ def _select_current_filings(
     cutoff_date: date,
 ) -> tuple[_Filing, ...]:
     prospectuses = tuple(filing for filing in filings if filing.document_type)
-    if binding.mode == "publisher" and any(
-        filing.product_name is None for filing in prospectuses
-    ):
-        raise _DartResponseError(
-            SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
-            "dart_product_metadata_ambiguous",
-        )
     exact = tuple(
         filing
         for filing in prospectuses
-        if _normalize_whitespace(
+        if _normalize_product_identity(
             filing.corp_name
             if binding.mode == "product"
             else filing.product_name or ""
         )
-        == _normalize_whitespace(target_name)
+        == _normalize_product_identity(target_name)
     )
     if not exact:
+        if binding.mode == "publisher" and any(
+            filing.product_name is None for filing in prospectuses
+        ):
+            raise _DartResponseError(
+                SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
+                "dart_product_metadata_ambiguous",
+            )
         if prospectuses:
             raise _DartResponseError(
                 SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
@@ -693,6 +693,10 @@ def _publisher_product_name(report_identity: str) -> str | None:
 
 def _normalize_whitespace(value: str) -> str:
     return " ".join(value.split())
+
+
+def _normalize_product_identity(value: str) -> str:
+    return "".join(value.split())
 
 
 def _url(endpoint: str, **parameters: str) -> str:

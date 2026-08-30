@@ -539,7 +539,7 @@ git commit -m "feat: add document source adapter boundary"
 - Consumes: the Task 4 adapter protocol; exact `DART_CORP_CODE` or approved publisher binding; domestic ETF/public-fund targets; `FINANCIAL_AGENT_DART_API_KEY` supplied through context.
 - Produces: `DartDocumentSourceAdapter(opener)` returning regulator-served prospectus candidates or an exact unavailable status.
 
-- [ ] **Step 1: Write failing synthetic OpenDART tests**
+- [x] **Step 1: Write failing synthetic OpenDART tests**
 
 Create fixed JSON/ZIP response fixtures in the test file, not captured live files. Test:
 
@@ -557,7 +557,7 @@ def test_dart_selects_latest_effective_collective_investment_prospectus() -> Non
 
 Add tests for: missing API key, absent `DART_CORP_CODE`, two publisher corp codes, exact product-name mismatch, only post-cutoff filings, original plus correction chain selecting the latest effective correction, non-prospectus filings ignored, pagination, OpenDART error status, malformed schema, and API key absence from every result and exception string.
 
-- [ ] **Step 2: Run and confirm the DART adapter is missing**
+- [x] **Step 2: Run and confirm the DART adapter is missing**
 
 Run:
 
@@ -567,7 +567,7 @@ env PYTHONPATH=src .venv/bin/python -m pytest tests/ingestion/document_sources/t
 
 Expected: import failure for `document_sources.dart`.
 
-- [ ] **Step 3: Implement bounded DART discovery**
+- [x] **Step 3: Implement bounded DART discovery**
 
 Use only official OpenDART endpoints documented under the disclosure-information API group:
 
@@ -581,11 +581,11 @@ Never place `crtfc_key` in a stored locator. The stored source locator is the pu
 f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt_no}"
 ```
 
-Search only through an exact approved publisher corp code, `bgn_de <= cutoff`, `end_de == cutoff`, and filing categories that can contain collective-investment prospectuses. Normalize whitespace only for the secondary exact product-name comparison. Do not use substring/fuzzy name binding when two products could match. Select correction chains by original report identity and receipt chronology, but return all exact current candidates to the central canonical selector rather than choosing by similarity.
+Search only through an exact approved publisher corp code, bounded periods ending at the cutoff, and filing categories that can contain collective-investment prospectuses. Ignore whitespace presence only for the secondary exact product-name comparison. Do not use substring/fuzzy name binding when two products could match. An exact target match is not blocked by unparseable metadata on an unrelated product filing. Select correction chains by original report identity and receipt chronology, but return all exact current candidates to the central canonical selector rather than choosing by similarity. The central selector retains one eligible document per required role, choosing the latest effective and then latest published candidate at or before the cutoff.
 
 Map missing/ambiguous identifiers before any network call. A missing API key returns `credentials_missing`; it does not raise a generic configuration failure that hides which targets were blocked.
 
-- [ ] **Step 4: Run all synthetic DART tests**
+- [x] **Step 4: Run all synthetic DART tests**
 
 Run:
 
@@ -595,7 +595,7 @@ env PYTHONPATH=src .venv/bin/python -m pytest tests/ingestion/document_sources/t
 
 Expected: all exact-binding, cutoff, correction, and secret-safety tests pass.
 
-- [ ] **Step 5: Commit DART discovery**
+- [x] **Step 5: Commit DART discovery**
 
 ```bash
 git add src/financial_agent/ingestion/document_sources/dart.py tests/ingestion/document_sources/test_dart.py

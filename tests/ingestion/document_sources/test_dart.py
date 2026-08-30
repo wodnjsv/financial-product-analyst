@@ -510,6 +510,57 @@ def test_dart_publisher_binding_rejects_ambiguous_report_product_metadata() -> N
     assert result.candidates == ()
 
 
+def test_dart_ignores_unparseable_other_product_when_exact_product_exists() -> None:
+    adapter, _ = _adapter(
+        [
+            _filing(
+                "20260820000123",
+                "20260820",
+                corp_name="한빛자산운용",
+                report_name="투자설명서(집합투자증권) [한빛 성장 ETF]",
+            ),
+            _filing(
+                "20260819000123",
+                "20260819",
+                corp_name="한빛자산운용",
+                report_name="투자설명서(집합투자증권)",
+            ),
+        ]
+    )
+
+    result = adapter.discover(_publisher_target(), _context())
+
+    assert result.status is SourceAuditStatus.ELIGIBLE
+    assert [item.accession_or_receipt_id for item in result.candidates] == [
+        "20260820000123"
+    ]
+
+
+def test_dart_product_identity_allows_whitespace_presence_only_difference() -> None:
+    target_name = "삼성 KODEX 모멘텀PLUS증권상장지수투자신탁[주식]"
+    adapter, _ = _adapter(
+        [
+            _filing(
+                "20260805000047",
+                "20260805",
+                corp_name="한빛자산운용",
+                report_name=(
+                    "투자설명서(집합투자증권)"
+                    "(삼성KODEX모멘텀PLUS증권상장지수투자신탁[주식])"
+                ),
+            )
+        ]
+    )
+
+    result = adapter.discover(
+        _publisher_target(canonical_name=target_name),
+        _context(),
+    )
+
+    assert result.status is SourceAuditStatus.ELIGIBLE
+    assert result.candidates[0].accession_or_receipt_id == "20260805000047"
+
+
 def test_dart_publisher_binding_requires_exact_approved_publisher_name() -> None:
     adapter, _ = _adapter(
         [
