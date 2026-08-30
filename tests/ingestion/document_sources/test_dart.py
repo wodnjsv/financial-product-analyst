@@ -233,7 +233,7 @@ def test_dart_selects_latest_effective_collective_investment_prospectus() -> Non
         "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260820000123"
     )
     assert candidate.discovery_locator == (
-        "https://opendart.fss.or.kr/api/document.xml"
+        "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260820000123"
     )
     assert candidate.document_type == "full_prospectus"
     assert candidate.target_entity_id == "product-1"

@@ -32,7 +32,6 @@ from .base import (
 
 
 _LIST_ENDPOINT = "https://opendart.fss.or.kr/api/list.json"
-_DOCUMENT_ENDPOINT = "https://opendart.fss.or.kr/api/document.xml"
 _VIEWER_ENDPOINT = "https://dart.fss.or.kr/dsaf001/main.do"
 _DART_HOST = "opendart.fss.or.kr"
 _SEOUL = ZoneInfo("Asia/Seoul")
@@ -639,10 +638,6 @@ def _candidate(
         f"{_VIEWER_ENDPOINT}?rcpNo={filing.receipt_no}",
         allowed_hosts=frozenset({"dart.fss.or.kr"}),
     )
-    discovery_locator = sanitize_public_locator(
-        _DOCUMENT_ENDPOINT,
-        allowed_hosts=frozenset({_DART_HOST}),
-    )
     return DocumentSourceCandidate(
         document_id=f"dart-rcept:{filing.receipt_no}",
         source_code="DART",
@@ -652,7 +647,7 @@ def _candidate(
         document_type=filing.document_type,
         document_version=filing.receipt_no,
         source_locator=source_locator,
-        discovery_locator=discovery_locator,
+        discovery_locator=source_locator,
         jurisdiction="KR",
         original_language="ko",
         published_at=published_at,
