@@ -215,7 +215,7 @@ git commit -m "feat: atomically persist captured document corpora"
 - Inventory includes only existing `domestic_etf` and `public_fund` entities
   and records its canonical SHA-256.
 
-- [ ] **Step 1: Write failing inventory tests**
+- [x] **Step 1: Write failing inventory tests**
 
 Prove that the inventory excludes bonds, overseas ETFs, indexes, and DART-only
 candidates; carries organizer entity, family, name, identifiers,
@@ -223,7 +223,7 @@ representative-fund relation, and `managedBy` institution; groups share classes
 only through an exact organizer relation; rejects duplicates and unaccounted
 keys; and hashes identically across database row order.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 ~~~bash
 .venv/bin/python -m pytest \
@@ -231,27 +231,33 @@ keys; and hashes identically across database row order.
   tests/ingestion/document_sources/test_dart_targets.py -q
 ~~~
 
-- [ ] **Step 3: Add a DART-only target query**
+- [x] **Step 3: Add a DART-only target query**
 
 Join organizer-created products to exact identifiers, `managedBy`, manager
 institution, and representative share-class relation. Return no target lacking
 an organizer product row. Keep the general source-audit query unchanged.
 
-- [ ] **Step 4: Reconcile the real organizer inventory read-only**
+- [x] **Step 4: Reconcile the real organizer inventory read-only**
 
 Against a disposable PostgreSQL 15 `building` dataset, require:
 
 ~~~text
-domestic ETF rows: 1,780
-nonblank public-fund representative identifiers: 6,885 unique
-public-fund rows without representative identifier: 120
+domestic ETP rows: 1,780 (1,235 ETF + 545 ETN)
+valid public-fund representative identifiers: 6,878 unique
+public-fund rows without a usable representative identifier: 7,082
+exact domestic-ETP/public-fund overlaps: 217
+canonical organizer products: 25,239
+frozen DART targets: 15,569 (1,780 ETP + 13,789 public fund)
 ~~~
 
 A lower database count is permitted only through documented exact overlap or
-invalid-identifier dispositions. Store only aggregate counts and inventory hash
-outside Git.
+invalid-identifier dispositions. The 7,082 unusable representative values are
+120 blanks plus 5,309 `KR0000000000` and 1,653 all-zero sentinels. The all-zero
+set includes 1,645 exact `000000000000` values and eight cells read with fewer
+digits after Excel numeric formatting loss; none may form a shared group.
+Store only aggregate counts and inventory hash outside Git.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ~~~bash
 git add src/financial_agent/db/repositories/document_targets.py \

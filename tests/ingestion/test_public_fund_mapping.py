@@ -330,13 +330,15 @@ def test_representative_fund_relation_uses_canonical_target_and_sentinels_do_not
         "product", "PRFD01N001", "SYN-FUND-001"
     )
 
-    sentinel = _map(
-        synthetic_public_fund_row() | {"rptt_ksd_itm_no": "000000000000"}
-    )
-    assert not relations(sentinel, "hasShareClass")
-    assert observation(sentinel, "representative_fund_id_raw")[
-        "value_status"
-    ] == "placeholder"
+    for sentinel_value in ("000000000000", "0", "00", "00000", "0000000"):
+        sentinel = _map(
+            synthetic_public_fund_row()
+            | {"rptt_ksd_itm_no": sentinel_value}
+        )
+        assert not relations(sentinel, "hasShareClass")
+        assert observation(sentinel, "representative_fund_id_raw")[
+            "value_status"
+        ] == "placeholder"
 
 
 def test_representative_self_reference_and_cycles_are_suppressed() -> None:

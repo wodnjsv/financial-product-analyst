@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from financial_agent.db.schema.catalog import entity, identifier, product
 from financial_agent.db.schema.relation import relation_record
 from financial_agent.documents import DocumentRole, DocumentSourceTarget
+from financial_agent.ingestion.document_sources.dart_targets import (
+    OrganizerDartProductRow,
+)
 
 
 _CUTOFF_DATE = date(2026, 8, 24)
@@ -69,6 +72,39 @@ class DocumentTargetRepository:
             _product_targets_statement(dataset_version),
             _index_targets_statement(dataset_version),
         )
+
+    async def list_organizer_dart_rows(
+        self,
+        dataset_version: str,
+        cutoff_date: date,
+    ) -> tuple[OrganizerDartProductRow, ...]:
+        _validate_scope(dataset_version, cutoff_date)
+        result = await self._connection.execute(
+            _organizer_dart_statement(dataset_version)
+        )
+        return tuple(
+            OrganizerDartProductRow(
+                entity_id=_required_row_text(row, "entity_id"),
+                canonical_name=_required_row_text(row, "canonical_name"),
+                product_family=_required_row_text(row, "product_family"),
+                identifier_scheme=_required_row_text(row, "identifier_scheme"),
+                identifier_value=_required_row_text(row, "identifier_value"),
+                representative_entity_id=_optional_row_text(
+                    row, "representative_entity_id"
+                ),
+                representative_name=_optional_row_text(
+                    row, "representative_name"
+                ),
+                manager_entity_id=_optional_row_text(row, "manager_entity_id"),
+                manager_name=_optional_row_text(row, "manager_name"),
+            )
+            for row in result.mappings().all()
+        )
+
+    @staticmethod
+    def organizer_dart_statement(dataset_version: str) -> sa.Select[object]:
+        _validate_dataset_version(dataset_version)
+        return _organizer_dart_statement(dataset_version)
 
 
 def _validate_scope(dataset_version: str, cutoff_date: date) -> None:
@@ -159,6 +195,163 @@ def _index_targets_statement(dataset_version: str) -> sa.Select[object]:
     )
 
 
+def _organizer_dart_statement(dataset_version: str) -> sa.Select[object]:
+    organizer_identifier = identifier.alias("organizer_identifier")
+    marker_identifier = identifier.alias("organizer_row_marker")
+    manager_relation = relation_record.alias("manager_relation")
+    manager_entity = entity.alias("manager_entity")
+    representative_relation = relation_record.alias("representative_relation")
+    representative_entity = entity.alias("representative_entity")
+    is_representative_product = sa.exists(
+        sa.select(sa.literal(1)).where(
+            relation_record.c.dataset_version == product.c.dataset_version,
+            relation_record.c.subject_id == product.c.entity_id,
+            relation_record.c.predicate_id == "hasShareClass",
+        )
+    )
+    representative_entity_id = sa.case(
+        (
+            sa.and_(
+                product.c.product_family == "public_fund",
+                representative_entity.c.entity_id.is_not(None),
+            ),
+            representative_entity.c.entity_id,
+        ),
+        (
+            sa.and_(
+                product.c.product_family == "public_fund",
+                is_representative_product,
+            ),
+            product.c.entity_id,
+        ),
+    )
+    representative_name = sa.case(
+        (
+            sa.and_(
+                product.c.product_family == "public_fund",
+                representative_entity.c.entity_id.is_not(None),
+            ),
+            representative_entity.c.canonical_name,
+        ),
+        (
+            sa.and_(
+                product.c.product_family == "public_fund",
+                is_representative_product,
+            ),
+            entity.c.canonical_name,
+        ),
+    )
+    organizer_marker_exists = sa.exists(
+        sa.select(sa.literal(1)).where(
+            marker_identifier.c.dataset_version == product.c.dataset_version,
+            marker_identifier.c.entity_id == product.c.entity_id,
+            sa.or_(
+                sa.and_(
+                    product.c.product_family == "domestic_etf",
+                    marker_identifier.c.scheme == "PREF01_PD_ITM_NO",
+                ),
+                sa.and_(
+                    product.c.product_family == "public_fund",
+                    marker_identifier.c.scheme == "PRFD_ITM_NO",
+                ),
+            ),
+        )
+    )
+    return (
+        sa.select(
+            entity.c.entity_id,
+            entity.c.canonical_name,
+            product.c.product_family,
+            organizer_identifier.c.scheme.label("identifier_scheme"),
+            organizer_identifier.c.identifier_value,
+            representative_entity_id.label("representative_entity_id"),
+            representative_name.label("representative_name"),
+            manager_entity.c.entity_id.label("manager_entity_id"),
+            manager_entity.c.canonical_name.label("manager_name"),
+        )
+        .select_from(
+            product.join(
+                entity,
+                sa.and_(
+                    product.c.dataset_version == entity.c.dataset_version,
+                    product.c.entity_id == entity.c.entity_id,
+                ),
+            )
+            .join(
+                organizer_identifier,
+                sa.and_(
+                    organizer_identifier.c.dataset_version
+                    == product.c.dataset_version,
+                    organizer_identifier.c.entity_id == product.c.entity_id,
+                    sa.or_(
+                        sa.and_(
+                            product.c.product_family == "domestic_etf",
+                            organizer_identifier.c.scheme.in_(
+                                ("PREF01_PD_ITM_NO", "ISIN")
+                            ),
+                        ),
+                        sa.and_(
+                            product.c.product_family == "public_fund",
+                            organizer_identifier.c.scheme.in_(
+                                ("PRFD_ITM_NO", "KSD_PRODUCT", "ISIN")
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            .outerjoin(
+                manager_relation,
+                sa.and_(
+                    manager_relation.c.dataset_version
+                    == product.c.dataset_version,
+                    manager_relation.c.subject_id == product.c.entity_id,
+                    manager_relation.c.predicate_id == "managedBy",
+                ),
+            )
+            .outerjoin(
+                manager_entity,
+                sa.and_(
+                    manager_entity.c.dataset_version
+                    == manager_relation.c.dataset_version,
+                    manager_entity.c.entity_id == manager_relation.c.object_id,
+                    manager_entity.c.entity_type == "institution",
+                ),
+            )
+            .outerjoin(
+                representative_relation,
+                sa.and_(
+                    representative_relation.c.dataset_version
+                    == product.c.dataset_version,
+                    representative_relation.c.object_id == product.c.entity_id,
+                    representative_relation.c.predicate_id == "hasShareClass",
+                    product.c.product_family == "public_fund",
+                ),
+            )
+            .outerjoin(
+                representative_entity,
+                sa.and_(
+                    representative_entity.c.dataset_version
+                    == representative_relation.c.dataset_version,
+                    representative_entity.c.entity_id
+                    == representative_relation.c.subject_id,
+                ),
+            )
+        )
+        .where(
+            product.c.dataset_version == dataset_version,
+            product.c.product_family.in_(("domestic_etf", "public_fund")),
+            organizer_marker_exists,
+        )
+        .order_by(
+            entity.c.entity_id,
+            organizer_identifier.c.scheme,
+            organizer_identifier.c.identifier_value,
+            manager_entity.c.entity_id,
+            representative_entity.c.entity_id,
+        )
+    )
+
+
 def _targets_from_rows(
     rows: list[Mapping[str, object]],
     *,
@@ -214,6 +407,17 @@ def _targets_from_rows(
 
 def _required_row_text(row: Mapping[str, object], field_name: str) -> str:
     value = row.get(field_name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must not be blank")
+    return value
+
+
+def _optional_row_text(
+    row: Mapping[str, object], field_name: str
+) -> str | None:
+    value = row.get(field_name)
+    if value is None:
+        return None
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must not be blank")
     return value

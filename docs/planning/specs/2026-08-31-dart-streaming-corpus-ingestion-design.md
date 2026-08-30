@@ -4,7 +4,8 @@
 
 **Status:** Approved direction; implementation plan pending review
 
-**Decision:** [ADR-0023](../decisions/ADR-0023-discard-dart-pdfs-after-verified-corpus-ingestion.md)
+**Decisions:** [ADR-0023](../decisions/ADR-0023-discard-dart-pdfs-after-verified-corpus-ingestion.md),
+[ADR-0024](../decisions/ADR-0024-correct-organizer-dart-target-inventory.md)
 
 ## 1. Outcome
 
@@ -33,10 +34,16 @@ unaccounted target and no extra DART product.
 
 ### Included
 
-- All 1,780 domestic ETF rows in the current organizer workbook.
-- Public funds grouped first by the 6,885 nonblank representative KSD
-  identifiers; the 120 rows without that identifier remain explicit targets
-  requiring exact alternate binding or a bounded failure disposition.
+- All 1,780 domestic ETP rows in the current organizer workbook: 1,235 ETF and
+  545 ETN. DART applicability is resolved later without removing them from the
+  organizer inventory.
+- Public funds grouped only by the 6,878 valid representative KSD identifiers.
+  The 120 blank rows and 6,962 sentinel rows remain explicit targets requiring
+  exact alternate binding or a bounded failure disposition.
+- The 217 exact domestic-ETP/public-fund overlaps follow canonical ETP
+  ownership and cannot create duplicate downloads. The reconciled inventory is
+  25,239 canonical products and 15,569 targets: 1,780 domestic ETP and 13,789
+  public fund.
 - DART tier-1 full prospectuses effective and available no later than
   `2026-08-24`.
 - The approved Claim selection and KODEX 200 PDF extraction behavior.

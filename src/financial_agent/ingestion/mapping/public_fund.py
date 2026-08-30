@@ -351,6 +351,12 @@ def _normalized_token(value: object) -> str:
     return normalize_name(str(value))
 
 
+def _representative_is_placeholder(value: str) -> bool:
+    return value in _REPRESENTATIVE_SENTINELS or (
+        bool(value) and set(value) == {"0"}
+    )
+
+
 def _identifier_value(column: str, value: object) -> str | None:
     token = _normalized_token(value).upper()
     if token in {"", "NULL"} or token in _IDENTIFIER_SENTINELS.get(
@@ -388,7 +394,9 @@ def analyze_public_fund_rows(
         if ksd is not None:
             ksd_owners[ksd].add(item)
         representative = _normalized_token(row.get("rptt_ksd_itm_no")).upper()
-        if representative not in {"", "NULL"} | _REPRESENTATIVE_SENTINELS:
+        if representative not in {"", "NULL"} and not _representative_is_placeholder(
+            representative
+        ):
             references[item] = representative
 
     graph: dict[str, str] = {}
@@ -496,8 +504,11 @@ def _text_result(
 ) -> tuple[str, object | None, str | None]:
     text = raw if isinstance(raw, str) or raw is None else str(raw)
     placeholders = _IDENTIFIER_SENTINELS.get(column, frozenset())
-    if column == "rptt_ksd_itm_no":
-        placeholders = _REPRESENTATIVE_SENTINELS
+    normalized_text = _normalized_token(text)
+    if column == "rptt_ksd_itm_no" and _representative_is_placeholder(
+        normalized_text.upper()
+    ):
+        placeholders = frozenset({normalized_text})
     status, normalized, reason = classify_value(
         text,
         missing_values=_MISSING_VALUES,

@@ -15,6 +15,7 @@ from tests.fixtures.db.synthetic_dataset import (
     insert_building_dataset,
     insert_entity,
     insert_identifier,
+    insert_institution,
     insert_product,
     insert_relation,
 )
@@ -40,6 +41,21 @@ def test_compiled_queries_join_each_dataset_scoped_table_by_dataset_version() ->
     assert "relation.relation_record.dataset_version = catalog.product.dataset_version" in compiled_sql
     assert "relation.relation_record.dataset_version = index_entity.dataset_version" in compiled_sql
     assert "index_identifier.dataset_version = index_entity.dataset_version" in compiled_sql
+
+
+def test_organizer_dart_query_is_product_gated_and_relation_exact() -> None:
+    statement = DocumentTargetRepository.organizer_dart_statement("facts-v1")
+    compiled_sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+
+    assert statement.is_select
+    assert "domestic_etf" in compiled_sql
+    assert "public_fund" in compiled_sql
+    assert "PRFD_ITM_NO" in compiled_sql
+    assert "PREF01_PD_ITM_NO" in compiled_sql
+    assert "managedBy" in compiled_sql
+    assert "hasShareClass" in compiled_sql
+    assert "domestic_bond" not in compiled_sql
+    assert "overseas_etf" not in compiled_sql
 
 
 @pytest.mark.asyncio
@@ -230,3 +246,108 @@ async def test_lists_all_product_and_unique_index_targets(
     assert sum(item.entity_id == "index-space" for item in targets) == 1
     assert targets[1].identifiers == (("ISIN", "KR-domestic-etf-1"),)
     assert all(("ISIN", "FOREIGN-ONLY") not in item.identifiers for item in targets)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_organizer_dart_rows_exclude_nonorganizer_and_out_of_scope_products(
+    repository_engine: AsyncEngine,
+    migrated_database_url: str,
+) -> None:
+    dataset_version = f"dart-targets-{_token()}"
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        insert_building_dataset(connection, dataset_version)
+        insert_institution(
+            connection,
+            dataset_version=dataset_version,
+            entity_id="manager-one",
+        )
+        for entity_id, family, scheme in (
+            ("etf-one", "domestic_etf", "PREF01_PD_ITM_NO"),
+            ("fund-one", "public_fund", "PRFD_ITM_NO"),
+            ("overseas-one", "overseas_etf", "ISIN"),
+            ("bond-one", "domestic_bond", "ISIN"),
+            ("dart-only", "domestic_etf", "DART_PRODUCT"),
+        ):
+            insert_entity(
+                connection,
+                dataset_version=dataset_version,
+                entity_id=entity_id,
+            )
+            insert_product(
+                connection,
+                dataset_version=dataset_version,
+                entity_id=entity_id,
+                product_family=family,
+            )
+            insert_identifier(
+                connection,
+                dataset_version=dataset_version,
+                identifier_id=f"id-{entity_id}",
+                entity_id=entity_id,
+                scheme=scheme,
+                identifier_value=f"value-{entity_id}",
+            )
+        insert_entity(
+            connection,
+            dataset_version=dataset_version,
+            entity_id="fund-representative",
+        )
+        insert_product(
+            connection,
+            dataset_version=dataset_version,
+            entity_id="fund-representative",
+            product_family="public_fund",
+        )
+        for entity_id in ("etf-one", "fund-one"):
+            insert_relation(
+                connection,
+                dataset_version=dataset_version,
+                relation_id=f"manager-{entity_id}",
+                subject_id=entity_id,
+                predicate_id="managedBy",
+                object_id="manager-one",
+            )
+        insert_relation(
+            connection,
+            dataset_version=dataset_version,
+            relation_id="fund-group",
+            subject_id="fund-representative",
+            predicate_id="hasShareClass",
+            object_id="fund-one",
+        )
+        insert_identifier(
+            connection,
+            dataset_version=dataset_version,
+            identifier_id="id-fund-representative-marker",
+            entity_id="fund-representative",
+            scheme="PRFD_ITM_NO",
+            identifier_value="value-fund-representative",
+        )
+        insert_identifier(
+            connection,
+            dataset_version=dataset_version,
+            identifier_id="id-fund-one-fss",
+            entity_id="fund-one",
+            scheme="FSS_FUND",
+            identifier_value="fss-fund-one",
+        )
+
+    async with repository_engine.connect() as connection:
+        rows = await DocumentTargetRepository(connection).list_organizer_dart_rows(
+            dataset_version, CUTOFF
+        )
+
+    assert {row.entity_id for row in rows} == {
+        "etf-one",
+        "fund-one",
+        "fund-representative",
+    }
+    fund = next(row for row in rows if row.entity_id == "fund-one")
+    assert fund.representative_entity_id == "fund-representative"
+    assert fund.manager_entity_id == "manager-one"
+    assert all(row.identifier_scheme != "FSS_FUND" for row in rows)
+    representative = next(
+        row for row in rows if row.entity_id == "fund-representative"
+    )
+    assert representative.representative_entity_id == "fund-representative"

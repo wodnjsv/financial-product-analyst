@@ -19,6 +19,12 @@ from .dart_pipeline import (
     assemble_captured_corpus,
     process_dart_prospectus,
 )
+from .dart_targets import (
+    OrganizerDartInventory,
+    OrganizerDartProductRow,
+    OrganizerDartTarget,
+    build_organizer_dart_inventory,
+)
 
 __all__ = [
     "DocumentDiscoveryContext",
@@ -28,7 +34,11 @@ __all__ = [
     "DartProspectusContext",
     "DartProspectusProcessingResult",
     "DartProspectusQualityReport",
+    "OrganizerDartInventory",
+    "OrganizerDartProductRow",
+    "OrganizerDartTarget",
     "assemble_captured_corpus",
+    "build_organizer_dart_inventory",
     "process_dart_prospectus",
     "HttpStatusError",
     "MissingRequiredEnvironmentError",

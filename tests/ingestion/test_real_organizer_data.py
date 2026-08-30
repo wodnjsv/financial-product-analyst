@@ -53,7 +53,8 @@ def test_real_organizer_workbooks_match_the_approved_safe_aggregates() -> None:
     product_types: dict[str, Counter[str]] = {}
     public_items: set[str] = set()
     representatives: set[str] = set()
-    representative_sentinels = {"", "NULL", "KR0000000000", "000000000000"}
+    representative_values: Counter[str] = Counter()
+    representative_sentinels = {"", "NULL", "KR0000000000"}
 
     for source_code in sorted(SOURCE_SPECS):
         spec = SOURCE_SPECS[source_code]
@@ -72,8 +73,11 @@ def test_real_organizer_workbooks_match_the_approved_safe_aggregates() -> None:
                     public_items.add(item)
                 representative = str(
                     row.get("rptt_ksd_itm_no") or ""
-                ).strip()
-                if representative not in representative_sentinels:
+                ).strip().upper()
+                representative_values[representative] += 1
+                if representative not in representative_sentinels and not (
+                    representative and set(representative) == {"0"}
+                ):
                     representatives.add(representative)
         rows_by_source[source_code] = count
         product_types[source_code] = types
@@ -87,12 +91,20 @@ def test_real_organizer_workbooks_match_the_approved_safe_aggregates() -> None:
     assert product_types["PREF01N001"] == Counter({"ETF": 1_235, "ETN": 545})
     assert product_types["PREF02N001"] == Counter({"ETF": 5_972, "ETN": 65})
     assert len(public_items) == 23_676
-    assert len(representatives) == 6_883
+    assert len(representatives) == 6_878
+    assert representative_values[""] == 120
+    assert representative_values["KR0000000000"] == 5_309
+    assert representative_values["000000000000"] == 1_645
+    assert sum(
+        count
+        for value, count in representative_values.items()
+        if value and set(value) == {"0"}
+    ) == 1_653
 
     print("PRBD01N001 rows=21882 fields=58")
     print("PREF01N001 rows=1780 fields=98 etf=1235 etn=545")
     print("PREF02N001 rows=6037 fields=49 etf=5972 etn=65")
-    print("PRFD01N001 rows=23676 fields=75 items=23676 representatives=6883")
+    print("PRFD01N001 rows=23676 fields=75 items=23676 representatives=6878")
     print("TOTAL rows=53375")
 
 
