@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from types import MappingProxyType
 from typing import Iterable
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 from rdflib import Literal, RDF, URIRef, XSD
 from rdflib.term import Identifier
@@ -22,7 +24,7 @@ from financial_agent.graph.contract import (
 
 
 Quad = tuple[Identifier, Identifier, Identifier, URIRef]
-_SEOUL = timezone(timedelta(hours=9))
+_SEOUL = ZoneInfo("Asia/Seoul")
 
 
 class GraphProjectionError(ValueError):
@@ -87,8 +89,8 @@ def _validate_datetime(
         return
     if value.tzinfo is None or value.utcoffset() is None:
         _fail("invalid_datetime", f"{label} must include a timezone")
-    cutoff_end = datetime.combine(cutoff_date, time(23, 59, 59), _SEOUL)
-    if value.astimezone(_SEOUL) > cutoff_end:
+    cutoff_end = datetime.combine(cutoff_date + timedelta(days=1), time.min, _SEOUL)
+    if value.astimezone(_SEOUL) >= cutoff_end:
         _fail("after_cutoff", f"{label} is after {cutoff_date.isoformat()} in Asia/Seoul")
 
 
@@ -99,6 +101,14 @@ def _validate_interval(
 ) -> None:
     if valid_from is not None and valid_to is not None and valid_from > valid_to:
         _fail("invalid_date_order", f"{label} valid_from is after valid_to")
+
+
+def _validate_unique_ids(values: Iterable[str], label: str) -> None:
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            _fail("duplicate_id", f"{label}: {value}")
+        seen.add(value)
 
 
 def _validate_relation(
@@ -128,6 +138,14 @@ def _validate_relation(
             _fail("relation_metric_mismatch", metric.metric_id)
         if metric.metric_id not in RELATION_METRIC_PROPERTY_BY_ID:
             _fail("unknown_metric", metric.metric_id)
+        if not isinstance(metric.numeric_value, Decimal) or not metric.numeric_value.is_finite():
+            _fail("invalid_metric_value", metric.metric_id)
+        if (
+            RELATION_METRIC_PROPERTY_BY_ID[metric.metric_id]
+            == "holdingWeightPercentage"
+            and metric.unit != "percentage_point"
+        ):
+            _fail("invalid_metric_unit", metric.metric_id)
         _validate_identifier(metric.metric_id, "metric.metric_id")
         _validate_date(
             metric.applicable_date,
@@ -144,6 +162,17 @@ def _validate_batch(batch: GraphProjectionBatch) -> None:
         if record.dataset_version != batch.dataset_version:
             _fail("dataset_version_mismatch", type(record).__name__)
 
+    _validate_unique_ids((entity.entity_id for entity in batch.entities), "entity")
+    _validate_unique_ids((source.source_id for source in batch.sources), "source")
+    _validate_unique_ids(
+        (evidence.evidence_id for evidence in batch.evidences),
+        "evidence",
+    )
+    _validate_unique_ids(
+        (relation.relation_id for relation in batch.relations),
+        "relation",
+    )
+
     entity_ids = frozenset(entity.entity_id for entity in batch.entities)
     source_ids = frozenset(source.source_id for source in batch.sources)
     evidence_ids = frozenset(evidence.evidence_id for evidence in batch.evidences)
@@ -156,6 +185,8 @@ def _validate_batch(batch: GraphProjectionBatch) -> None:
     for source in batch.sources:
         _validate_identifier(source.source_id, "source.source_id")
         _validate_identifier(source.publisher_id, "source.publisher_id")
+        if source.publisher_id not in entity_ids:
+            _fail("missing_entity", source.publisher_id)
 
     for evidence in batch.evidences:
         _validate_identifier(evidence.evidence_id, "evidence.evidence_id")

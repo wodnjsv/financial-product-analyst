@@ -54,6 +54,8 @@ def valid_batch() -> GraphProjectionBatch:
         entities=(
             EntityProjection(VERSION, "product/상품", ("ETF", "DomesticETF")),
             EntityProjection(VERSION, "security/1", ("Security",)),
+            EntityProjection(VERSION, "publisher/1", ("Organization",)),
+            EntityProjection(VERSION, "publisher/2", ("Organization",)),
         ),
         sources=(
             SourceProjection(VERSION, "source/1", "publisher/1"),
@@ -148,7 +150,12 @@ def test_export_emits_direct_edge_assertion_evidence_sources_and_metric() -> Non
 
     assert (subject, FP.entityId, Literal("product/상품")) in data_graph
     assert (object_, FP.entityId, Literal("security/1")) in data_graph
-    assert artifacts.entity_type_counts == {"DomesticETF": 1, "ETF": 1, "Security": 1}
+    assert artifacts.entity_type_counts == {
+        "DomesticETF": 1,
+        "ETF": 1,
+        "Organization": 2,
+        "Security": 1,
+    }
     assert artifacts.predicate_counts == {"holdsSecurity": 1}
 
 
@@ -325,6 +332,131 @@ def test_exporter_rejects_unapproved_typed_records(mutation, code: str) -> None:
     """Catches projection of vocabulary or Evidence outside the approved boundary."""
     with pytest.raises(GraphProjectionError, match=code):
         build_graph_artifacts(mutation(valid_batch()))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda batch: replace(
+            batch,
+            entities=(
+                *batch.entities,
+                replace(batch.entities[0], rdf_types=("FinancialProduct",)),
+            ),
+        ),
+        lambda batch: replace(
+            batch,
+            sources=(
+                *batch.sources,
+                replace(batch.sources[0], publisher_id="publisher/2"),
+            ),
+        ),
+        lambda batch: replace(
+            batch,
+            evidences=(
+                *batch.evidences,
+                replace(batch.evidences[0], source_id="source/2"),
+            ),
+        ),
+        lambda batch: replace(
+            batch,
+            relations=(
+                *batch.relations,
+                replace(batch.relations[0], object_id="product/상품"),
+            ),
+        ),
+    ],
+    ids=["entity", "source", "evidence", "relation"],
+)
+def test_duplicate_projection_ids_fail_before_serialization(mutation) -> None:
+    """Catches distinct records silently coalescing under one opaque IRI."""
+    with pytest.raises(GraphProjectionError, match="duplicate_id"):
+        build_graph_artifacts(mutation(valid_batch()))
+
+
+def test_source_publisher_must_resolve_to_a_projected_entity() -> None:
+    """Catches accepting an unresolved publisher identity at the Source boundary."""
+    batch = valid_batch()
+    batch = replace(
+        batch,
+        sources=(
+            replace(batch.sources[0], publisher_id="publisher/missing"),
+            *batch.sources[1:],
+        ),
+    )
+
+    with pytest.raises(GraphProjectionError, match="missing_entity"):
+        build_graph_artifacts(batch)
+
+
+@pytest.mark.parametrize(
+    "numeric_value",
+    ["27.40", Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")],
+    ids=["string", "nan", "positive-infinity", "negative-infinity"],
+)
+def test_relation_metric_requires_a_finite_decimal(numeric_value) -> None:
+    """Catches RDF emission of non-decimal or non-finite relation weights."""
+    batch = valid_batch()
+    metric = replace(batch.relations[0].metrics[0], numeric_value=numeric_value)
+    batch = replace(
+        batch,
+        relations=(replace(batch.relations[0], metrics=(metric,)),),
+    )
+
+    with pytest.raises(GraphProjectionError, match="invalid_metric_value"):
+        build_graph_artifacts(batch)
+
+
+@pytest.mark.parametrize("unit", [None, "percent", "ratio"])
+def test_holding_weight_metric_requires_percentage_point_unit(unit: str | None) -> None:
+    """Catches projecting a numerically valid weight with incompatible units."""
+    batch = valid_batch()
+    metric = replace(batch.relations[0].metrics[0], unit=unit)
+    batch = replace(
+        batch,
+        relations=(replace(batch.relations[0], metrics=(metric,)),),
+    )
+
+    with pytest.raises(GraphProjectionError, match="invalid_metric_unit"):
+        build_graph_artifacts(batch)
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        datetime(2026, 8, 24, 23, 59, 59, 999999, tzinfo=SEOUL),
+        datetime(2026, 8, 24, 14, 59, 59, 999999, tzinfo=timezone.utc),
+        datetime(
+            2026,
+            8,
+            24,
+            15,
+            59,
+            59,
+            999999,
+            tzinfo=timezone(timedelta(hours=1)),
+        ),
+    ],
+    ids=["seoul", "utc", "positive-one-offset"],
+)
+def test_cutoff_day_microseconds_before_seoul_midnight_are_eligible(
+    timestamp: datetime,
+) -> None:
+    """Catches treating 23:59:59 as inclusive end instead of next midnight as exclusive."""
+    batch = valid_batch()
+    batch = replace(
+        batch,
+        evidences=(
+            replace(
+                batch.evidences[0],
+                published_at=timestamp,
+                available_at=timestamp,
+            ),
+            *batch.evidences[1:],
+        ),
+    )
+
+    build_graph_artifacts(batch)
 
 
 @pytest.mark.parametrize(
