@@ -51,6 +51,79 @@ def insert_entity(
     )
 
 
+def insert_product(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    entity_id: str,
+    product_family: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO catalog.product (
+            dataset_version, entity_id, product_family
+        ) VALUES (%s, %s, %s)
+        """,
+        (dataset_version, entity_id, product_family),
+    )
+
+
+def insert_identifier(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    identifier_id: str,
+    entity_id: str,
+    scheme: str,
+    identifier_value: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO catalog.identifier (
+            dataset_version, identifier_id, entity_id, scheme,
+            identifier_value, record_hash, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            dataset_version,
+            identifier_id,
+            entity_id,
+            scheme,
+            identifier_value,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+
+
+def insert_relation(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    relation_id: str,
+    subject_id: str,
+    predicate_id: str,
+    object_id: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO relation.relation_record (
+            dataset_version, relation_id, subject_id, predicate_id, object_id,
+            record_hash, created_at
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            dataset_version,
+            relation_id,
+            subject_id,
+            predicate_id,
+            object_id,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+
+
 def insert_institution(
     connection: psycopg.Connection,
     *,

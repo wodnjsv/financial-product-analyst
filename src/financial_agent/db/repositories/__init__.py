@@ -17,6 +17,7 @@ from .documents import (
     DocumentEntityBindingRecord,
     DocumentProfileRecord,
 )
+from .document_targets import DocumentTargetRepository
 
 __all__ = [
     "EvidenceLedgerConflict",
@@ -34,4 +35,5 @@ __all__ = [
     "DocumentCorpusValidationError",
     "DocumentEntityBindingRecord",
     "DocumentProfileRecord",
+    "DocumentTargetRepository",
 ]
