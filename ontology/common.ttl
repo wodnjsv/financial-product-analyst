@@ -1,0 +1,67 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:ontology:financial-product:v1> a owl:Ontology .
+
+fp:DomainPredicate a owl:Class .
+fp:FinancialProduct a owl:Class .
+fp:ExchangeTradedProduct a owl:Class ; rdfs:subClassOf fp:FinancialProduct .
+fp:ETF a owl:Class ; rdfs:subClassOf fp:ExchangeTradedProduct ; owl:disjointWith fp:ETN .
+fp:ETN a owl:Class ; rdfs:subClassOf fp:ExchangeTradedProduct .
+fp:Bond a owl:Class ; rdfs:subClassOf fp:FinancialProduct .
+fp:PublicFund a owl:Class ; rdfs:subClassOf fp:FinancialProduct .
+fp:RepresentativeFund a owl:Class ; rdfs:subClassOf fp:PublicFund .
+fp:FundShareClass a owl:Class ; rdfs:subClassOf fp:PublicFund .
+fp:Organization a owl:Class .
+fp:AssetManager a owl:Class ; rdfs:subClassOf fp:Organization .
+fp:Issuer a owl:Class ; rdfs:subClassOf fp:Organization .
+fp:Company a owl:Class ; rdfs:subClassOf fp:Organization .
+fp:Security a owl:Class .
+fp:EquitySecurity a owl:Class ; rdfs:subClassOf fp:Security .
+fp:DebtSecurity a owl:Class ; rdfs:subClassOf fp:Security .
+fp:Index a owl:Class .
+fp:Theme a owl:Class .
+fp:Industry a owl:Class .
+fp:Market a owl:Class .
+fp:Region a owl:Class .
+fp:AssetClass a owl:Class .
+fp:ProductRiskGrade a owl:Class .
+fp:CreditGrade a owl:Class .
+fp:PolicyProgram a owl:Class .
+fp:OfficialDocument a owl:Class .
+fp:DocumentChunk a owl:Class .
+fp:RiskFactor a owl:Class .
+fp:RelationAssertion a owl:Class .
+fp:EvidenceRecord a owl:Class .
+fp:SourceRecord a owl:Class .
+
+fp:managedBy a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain fp:FinancialProduct ; rdfs:range fp:AssetManager .
+fp:issuedBy a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:FinancialProduct fp:Security ) ] ; rdfs:range fp:Issuer .
+fp:tracksIndex a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:ETF fp:PublicFund ) ] ; rdfs:range fp:Index .
+fp:holdsSecurity a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:ETF fp:PublicFund ) ] ; rdfs:range fp:Security .
+fp:containsSecurity a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain fp:Index ; rdfs:range fp:Security .
+fp:securityOfCompany a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain fp:EquitySecurity ; rdfs:range fp:Company .
+fp:controlsCompany a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain fp:Company ; rdfs:range fp:Company .
+fp:listedOn a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain fp:Security ; rdfs:range fp:Market .
+fp:classifiedAsIndustry a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:Company fp:Security ) ] ; rdfs:range fp:Industry .
+fp:associatedWithTheme a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:FinancialProduct fp:Index fp:Company ) ] ; rdfs:range fp:Theme .
+fp:hasShareClass a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain fp:RepresentativeFund ; rdfs:range fp:FundShareClass .
+fp:documentedBy a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:FinancialProduct fp:Organization fp:PolicyProgram ) ] ; rdfs:range fp:OfficialDocument .
+fp:hasRiskFactor a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain fp:FinancialProduct ; rdfs:range fp:RiskFactor .
+
+fp:subject a owl:ObjectProperty ; rdfs:domain fp:RelationAssertion .
+fp:predicate a owl:ObjectProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range fp:DomainPredicate .
+fp:object a owl:ObjectProperty ; rdfs:domain fp:RelationAssertion .
+fp:supportedBy a owl:ObjectProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range fp:EvidenceRecord .
+fp:sourceRecord a owl:ObjectProperty ; rdfs:domain fp:EvidenceRecord ; rdfs:range fp:SourceRecord .
+fp:documentChunk a owl:ObjectProperty ; rdfs:domain fp:RiskFactor ; rdfs:range fp:DocumentChunk .
+fp:relationId a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:string .
+fp:datasetVersion a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:string .
+fp:validFrom a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:date .
+fp:validTo a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:date .
+fp:publishedAt a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:dateTime .
+fp:availableAt a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:dateTime .
+fp:holdingWeightPercentage a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:decimal .
