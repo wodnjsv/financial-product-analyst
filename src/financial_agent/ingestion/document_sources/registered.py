@@ -117,6 +117,75 @@ _PUBLISHER_DOCUMENT_ROLES = {
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewedAuthority:
+    """Authority identity and scope loaded from the reviewed registry."""
+
+    source_code: str
+    publisher_code: str
+    authority_tier: SourceAuthorityTier
+    publisher_role: PublisherRole
+    jurisdiction: str
+    allowed_document_roles: frozenset[DocumentRole]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.source_code, str)
+            or _SOURCE_CODE.fullmatch(self.source_code) is None
+            or self.publisher_code != self.source_code
+        ):
+            raise ValueError("reviewed authority source identity is invalid")
+        if self.authority_tier not in _TIER_PUBLISHERS:
+            raise ValueError("reviewed authority tier is invalid")
+        if self.publisher_role not in _TIER_PUBLISHERS[self.authority_tier]:
+            raise ValueError("reviewed authority publisher is invalid")
+        if (
+            not isinstance(self.jurisdiction, str)
+            or _JURISDICTION.fullmatch(self.jurisdiction) is None
+        ):
+            raise ValueError("reviewed authority jurisdiction is invalid")
+        if (
+            not isinstance(self.allowed_document_roles, frozenset)
+            or not self.allowed_document_roles
+            or not all(
+                isinstance(role, DocumentRole)
+                for role in self.allowed_document_roles
+            )
+            or not self.allowed_document_roles.issubset(
+                _PUBLISHER_DOCUMENT_ROLES[self.publisher_role]
+            )
+        ):
+            raise ValueError("reviewed authority document roles are invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewedAuthorityContext:
+    """Immutable authority snapshot supplied with registered audit evidence."""
+
+    authorities: tuple[ReviewedAuthority, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.authorities, tuple) or not self.authorities:
+            raise ValueError("reviewed authority context must be nonempty")
+        if not all(isinstance(item, ReviewedAuthority) for item in self.authorities):
+            raise ValueError("reviewed authority context contains an invalid authority")
+        source_codes = tuple(item.source_code for item in self.authorities)
+        if len(source_codes) != len(set(source_codes)):
+            raise ValueError("reviewed authority context source_code is duplicated")
+        if source_codes != tuple(sorted(source_codes)):
+            raise ValueError("reviewed authority context must be canonical")
+
+    def authority_for(self, source_code: str) -> ReviewedAuthority | None:
+        return next(
+            (
+                authority
+                for authority in self.authorities
+                if authority.source_code == source_code
+            ),
+            None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class _AuthorityRule:
     source_code: str
     authority_tier: SourceAuthorityTier
@@ -175,6 +244,7 @@ class RegisteredDocumentSourceAdapter:
     def __init__(self, opener: object, authority_registry: Path) -> None:
         self._opener = opener
         self._authorities = _load_authority_registry(authority_registry)
+        self.reviewed_authorities = _reviewed_authority_context(self._authorities)
 
     def supports(self, target: DocumentSourceTarget) -> bool:
         if target.required_role not in {
@@ -300,6 +370,24 @@ def _load_authority_registry(path: Path) -> dict[str, _AuthorityRule]:
             raise ValueError("authority_registry source_code is duplicated")
         authorities[rule.source_code] = rule
     return authorities
+
+
+def _reviewed_authority_context(
+    authorities: dict[str, _AuthorityRule],
+) -> ReviewedAuthorityContext:
+    return ReviewedAuthorityContext(
+        tuple(
+            ReviewedAuthority(
+                source_code=rule.source_code,
+                publisher_code=rule.source_code,
+                authority_tier=rule.authority_tier,
+                publisher_role=rule.publisher_role,
+                jurisdiction=rule.jurisdiction,
+                allowed_document_roles=rule.allowed_document_roles,
+            )
+            for rule in sorted(authorities.values(), key=lambda item: item.source_code)
+        )
+    )
 
 
 def _parse_authority_rule(value: object) -> _AuthorityRule:

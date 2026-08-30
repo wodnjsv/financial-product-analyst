@@ -225,6 +225,23 @@ def _adapter(
     return adapter, actual_opener
 
 
+def test_adapter_exposes_immutable_context_from_reviewed_authority_registry() -> None:
+    adapter, _ = _adapter()
+
+    assert adapter.reviewed_authorities.authorities == (
+        adapter.reviewed_authorities.authority_for("SYNTHETIC_INDEX_PROVIDER"),
+    )
+    authority = adapter.reviewed_authorities.authorities[0]
+    assert authority.source_code == "SYNTHETIC_INDEX_PROVIDER"
+    assert authority.publisher_code == "SYNTHETIC_INDEX_PROVIDER"
+    assert authority.authority_tier is SourceAuthorityTier.TIER_2_CLAIM_OWNER
+    assert authority.publisher_role is PublisherRole.INDEX_PROVIDER
+    assert authority.jurisdiction == "ZZ"
+    assert authority.allowed_document_roles == frozenset(
+        {DocumentRole.INDEX_METHODOLOGY, DocumentRole.OFFICIAL_UPDATE}
+    )
+
+
 @pytest.mark.parametrize(
     ("status", "content_length"),
     ((200, None), (206, "1")),

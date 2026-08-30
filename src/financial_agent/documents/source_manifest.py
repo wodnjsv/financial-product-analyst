@@ -93,38 +93,46 @@ class DocumentSourceCandidate:
     accession_or_receipt_id: str | None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.authority_tier, SourceAuthorityTier):
-            raise ValueError(
-                "authority_tier must be an approved source authority tier"
-            )
-        if not isinstance(self.publisher_role, PublisherRole):
-            raise ValueError("publisher_role must be an approved publisher role")
-        for value, name in (
-            (self.document_id, "document_id"),
-            (self.source_code, "source_code"),
-            (self.publisher_code, "publisher_code"),
-            (self.document_type, "document_type"),
-            (self.jurisdiction, "jurisdiction"),
-            (self.original_language, "original_language"),
-        ):
+        validate_document_source_candidate(self)
+
+
+def validate_document_source_candidate(candidate: DocumentSourceCandidate) -> None:
+    """Deep-validate typed source metadata, including untrusted adapter output."""
+
+    if not isinstance(candidate, DocumentSourceCandidate):
+        raise ValueError("source candidate type is invalid")
+    if not isinstance(candidate.authority_tier, SourceAuthorityTier):
+        raise ValueError("authority_tier must be an approved source authority tier")
+    if not isinstance(candidate.publisher_role, PublisherRole):
+        raise ValueError("publisher_role must be an approved publisher role")
+    for value, name in (
+        (candidate.document_id, "document_id"),
+        (candidate.source_code, "source_code"),
+        (candidate.publisher_code, "publisher_code"),
+        (candidate.document_type, "document_type"),
+        (candidate.jurisdiction, "jurisdiction"),
+        (candidate.original_language, "original_language"),
+    ):
+        _require_text(value, name)
+    for value, name in (
+        (candidate.document_version, "document_version"),
+        (candidate.media_type, "media_type"),
+        (candidate.accession_or_receipt_id, "accession_or_receipt_id"),
+    ):
+        if value is not None:
             _require_text(value, name)
-        for value, name in (
-            (self.document_version, "document_version"),
-            (self.media_type, "media_type"),
-            (self.accession_or_receipt_id, "accession_or_receipt_id"),
-        ):
-            if value is not None:
-                _require_text(value, name)
-        _validate_locator(self.source_locator)
-        _validate_locator(self.discovery_locator)
-        _validate_timestamp(self.published_at)
-        _validate_timestamp(self.available_at)
-        if (
-            self.effective_from is not None
-            and self.effective_to is not None
-            and self.effective_to < self.effective_from
-        ):
-            raise ValueError("effective_to precedes effective_from")
+    _validate_locator(candidate.source_locator)
+    _validate_locator(candidate.discovery_locator)
+    _validate_timestamp(candidate.published_at, "published_at")
+    _validate_timestamp(candidate.available_at, "available_at")
+    _validate_date(candidate.effective_from, "effective_from")
+    _validate_date(candidate.effective_to, "effective_to")
+    if (
+        candidate.effective_from is not None
+        and candidate.effective_to is not None
+        and candidate.effective_to < candidate.effective_from
+    ):
+        raise ValueError("effective_to precedes effective_from")
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,9 +329,18 @@ def _validate_identifiers(identifiers: tuple[tuple[str, str], ...]) -> None:
         normalized.add((scheme, value))
 
 
-def _validate_timestamp(value: datetime | None) -> None:
+def _validate_timestamp(value: datetime | None, field_name: str = "timestamp") -> None:
+    if value is not None and not isinstance(value, datetime):
+        raise ValueError(f"{field_name} must be a datetime")
     if value is not None and (value.tzinfo is None or value.utcoffset() is None):
         raise ValueError("timestamp must include a timezone")
+
+
+def _validate_date(value: date | None, field_name: str) -> None:
+    if value is not None and (
+        not isinstance(value, date) or isinstance(value, datetime)
+    ):
+        raise ValueError(f"{field_name} must be a date")
 
 
 def _validate_locator(locator: str) -> None:
@@ -362,6 +379,7 @@ def _validate_eligible_candidate(
 ) -> None:
     if candidate is None:
         raise ValueError("eligible audit entry requires a candidate")
+    validate_document_source_candidate(candidate)
     if target.binding_role not in binding_roles_for_document_role(
         target.required_role
     ):

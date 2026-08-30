@@ -23,6 +23,7 @@ from financial_agent.documents import (
 )
 from financial_agent.documents.source_manifest import (
     source_timestamp_is_after_cutoff,
+    validate_document_source_candidate,
 )
 
 from .base import (
@@ -32,6 +33,7 @@ from .base import (
     classify_access_error,
 )
 from .sec import has_complete_sec_identity
+from .registered import ReviewedAuthorityContext
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,16 +44,6 @@ _REGISTERED_ROLES = frozenset(
         DocumentRole.OFFICIAL_UPDATE,
         DocumentRole.POLICY_BASE,
     }
-)
-_TIER_2_PUBLISHERS = frozenset(
-    {
-        PublisherRole.INDEX_PROVIDER,
-        PublisherRole.POLICY_AUTHORITY,
-        PublisherRole.POLICY_OPERATOR,
-    }
-)
-_TIER_3_PUBLISHERS = frozenset(
-    {PublisherRole.EXCHANGE, PublisherRole.INDUSTRY_ASSOCIATION}
 )
 _COMPLETE_STATUSES = frozenset(
     {
@@ -114,9 +106,17 @@ def audit_document_sources(
     return report
 
 
-def document_source_audit_passed(report: DocumentSourceAuditReport) -> bool:
+def document_source_audit_passed(
+    report: DocumentSourceAuditReport,
+    *,
+    registered_authorities: ReviewedAuthorityContext | None = None,
+) -> bool:
     """Return whether all entries are valid source-metadata dispositions."""
 
+    if registered_authorities is not None and not isinstance(
+        registered_authorities, ReviewedAuthorityContext
+    ):
+        return False
     try:
         validate_document_source_report(report)
     except (TypeError, ValueError):
@@ -136,6 +136,7 @@ def document_source_audit_passed(report: DocumentSourceAuditReport) -> bool:
                     candidate,
                     target=entry.target,
                     route_key=route_key,
+                    registered_authorities=registered_authorities,
                 )
                 is not None
             ):
@@ -200,6 +201,16 @@ def _audit_target(
         )
 
     adapter = route_adapters[0]
+    registered_authorities: ReviewedAuthorityContext | None = None
+    if route_key == "REGISTERED":
+        value = getattr(adapter, "reviewed_authorities", None)
+        if not isinstance(value, ReviewedAuthorityContext):
+            return _unavailable_entry(
+                target,
+                SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
+                "registered_authority_context_missing",
+            )
+        registered_authorities = value
     try:
         if adapter.supports(target) is not True:
             return _unavailable_entry(
@@ -215,7 +226,12 @@ def _audit_target(
             status,
             f"{route_key.lower()}_{status.value}",
         )
-    return _entry_from_result(target, result, route_key=route_key)
+    return _entry_from_result(
+        target,
+        result,
+        route_key=route_key,
+        registered_authorities=registered_authorities,
+    )
 
 
 def _entry_from_result(
@@ -223,6 +239,7 @@ def _entry_from_result(
     result: object,
     *,
     route_key: str,
+    registered_authorities: ReviewedAuthorityContext | None,
 ) -> DocumentSourceAuditEntry:
     if not _adapter_result_is_valid(result):
         return _unavailable_entry(
@@ -257,6 +274,7 @@ def _entry_from_result(
                 candidate,
                 target=target,
                 route_key=route_key,
+                registered_authorities=registered_authorities,
             )
         )
         is not None
@@ -382,6 +400,7 @@ def _candidate_provenance_reason(
     *,
     target: DocumentSourceTarget,
     route_key: str,
+    registered_authorities: ReviewedAuthorityContext | None,
 ) -> str | None:
     try:
         approved_publishers = publisher_roles_for_document_role(
@@ -405,18 +424,23 @@ def _candidate_provenance_reason(
         return None
 
     if route_key == "REGISTERED":
+        if registered_authorities is None:
+            return "registered_authority_context_missing"
+        authority = registered_authorities.authority_for(candidate.source_code)
         if (
-            candidate.authority_tier is SourceAuthorityTier.TIER_2_CLAIM_OWNER
-            and candidate.publisher_role in _TIER_2_PUBLISHERS
+            authority is None
+            or candidate.publisher_code != authority.publisher_code
         ):
-            return None
+            return "registered_candidate_authority_unreviewed"
         if (
-            candidate.authority_tier
-            is SourceAuthorityTier.TIER_3_EXCHANGE_ASSOCIATION
-            and candidate.publisher_role in _TIER_3_PUBLISHERS
+            candidate.authority_tier is not authority.authority_tier
+            or candidate.publisher_role is not authority.publisher_role
+            or candidate.jurisdiction != authority.jurisdiction
         ):
-            return None
-        return "registered_candidate_authority_mismatch"
+            return "registered_candidate_authority_mismatch"
+        if target.required_role not in authority.allowed_document_roles:
+            return "registered_candidate_role_not_reviewed"
+        return None
     return "candidate_source_owner_unverified"
 
 
@@ -447,10 +471,12 @@ def _adapter_result_is_valid(result: object) -> bool:
         return False
     if not isinstance(result.status, SourceAuditStatus):
         return False
-    if not isinstance(result.candidates, tuple) or not all(
-        isinstance(candidate, DocumentSourceCandidate)
-        for candidate in result.candidates
-    ):
+    if not isinstance(result.candidates, tuple):
+        return False
+    try:
+        for candidate in result.candidates:
+            validate_document_source_candidate(candidate)
+    except (AttributeError, TypeError, ValueError):
         return False
     reason_is_stable = (
         isinstance(result.reason_code, str)

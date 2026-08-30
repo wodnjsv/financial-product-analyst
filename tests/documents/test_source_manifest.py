@@ -209,6 +209,24 @@ def test_candidate_rejects_unapproved_publisher_role_type() -> None:
         replace(candidate(), publisher_role="regulator_disclosure")  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("field_name", "malformed_value", "message"),
+    (
+        ("published_at", "2026-08-24T12:00:00Z", "published_at"),
+        ("available_at", CUTOFF, "available_at"),
+        ("effective_from", "2026-08-24", "effective_from"),
+        ("effective_to", NOW, "effective_to"),
+    ),
+)
+def test_candidate_rejects_malformed_typed_temporal_fields(
+    field_name: str,
+    malformed_value: object,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(candidate(), **{field_name: malformed_value})
+
+
 def test_audit_entry_rejects_non_enum_status() -> None:
     with pytest.raises(ValueError, match="status"):
         DocumentSourceAuditEntry(

@@ -23,6 +23,10 @@ from financial_agent.ingestion.document_sources.audit import (
     audit_document_sources,
     document_source_audit_passed,
 )
+from financial_agent.ingestion.document_sources.registered import (
+    ReviewedAuthority,
+    ReviewedAuthorityContext,
+)
 
 
 _CUTOFF = date(2026, 8, 24)
@@ -32,6 +36,17 @@ _SEC_IDENTIFIERS = (
     ("SEC_SERIES_ID", "S000000001"),
     ("SEC_CLASS_ID", "C000000001"),
 )
+_REGISTERED_AUTHORITY = ReviewedAuthority(
+    source_code="OFFICIAL_INDEX",
+    publisher_code="OFFICIAL_INDEX",
+    authority_tier=SourceAuthorityTier.TIER_2_CLAIM_OWNER,
+    publisher_role=PublisherRole.INDEX_PROVIDER,
+    jurisdiction="KR",
+    allowed_document_roles=frozenset(
+        {DocumentRole.INDEX_METHODOLOGY, DocumentRole.OFFICIAL_UPDATE}
+    ),
+)
+_REGISTERED_AUTHORITIES = ReviewedAuthorityContext((_REGISTERED_AUTHORITY,))
 
 
 def _target(
@@ -66,6 +81,7 @@ def _source_candidate(
     effective_from: date | None = date(2026, 8, 1),
     jurisdiction: str = "KR",
     authority_tier: SourceAuthorityTier | None = None,
+    publisher_code: str | None = None,
 ) -> DocumentSourceCandidate:
     return DocumentSourceCandidate(
         document_id=document_id,
@@ -75,7 +91,7 @@ def _source_candidate(
             if source_code in {"DART", "SEC"}
             else SourceAuthorityTier.TIER_2_CLAIM_OWNER
         ),
-        publisher_code=f"{source_code}-PUBLISHER",
+        publisher_code=publisher_code or f"{source_code}-PUBLISHER",
         publisher_role=publisher_role,
         document_type=document_type,
         document_version=document_version,
@@ -109,6 +125,7 @@ class _StubAdapter:
     supports_result: bool = True
     supports_calls: list[DocumentSourceTarget] = field(default_factory=list)
     calls: list[DocumentSourceTarget] = field(default_factory=list)
+    reviewed_authorities: ReviewedAuthorityContext | None = None
 
     def supports(self, target: DocumentSourceTarget) -> bool:
         self.supports_calls.append(target)
@@ -136,6 +153,9 @@ def _unavailable_adapter(
             reason_code=f"{source_code.lower()}_{status.value}",
             candidates=(),
         ),
+        reviewed_authorities=(
+            _REGISTERED_AUTHORITIES if source_code == "REGISTERED" else None
+        ),
     )
 
 
@@ -149,6 +169,9 @@ def _eligible_adapter(
             status=SourceAuditStatus.ELIGIBLE,
             reason_code=None,
             candidates=tuple(candidates),
+        ),
+        reviewed_authorities=(
+            _REGISTERED_AUTHORITIES if source_code == "REGISTERED" else None
         ),
     )
 
@@ -615,17 +638,90 @@ def test_registered_candidate_provenance_mismatch_fails_before_selection(
     assert report.entries[0].candidate is None
 
 
+@pytest.mark.parametrize(
+    "candidate",
+    (
+        _source_candidate(
+            "unreviewed-source",
+            source_code="UNREVIEWED",
+            publisher_code="UNREVIEWED",
+            document_type="index_methodology",
+            publisher_role=PublisherRole.INDEX_PROVIDER,
+        ),
+        _source_candidate(
+            "wrong-publisher-code",
+            source_code="OFFICIAL_INDEX",
+            publisher_code="UNREVIEWED",
+            document_type="index_methodology",
+            publisher_role=PublisherRole.INDEX_PROVIDER,
+        ),
+    ),
+)
+def test_registered_candidate_must_match_selected_adapter_reviewed_authority(
+    candidate: DocumentSourceCandidate,
+) -> None:
+    target = _target(
+        "index-1",
+        entity_type="index",
+        product_family=None,
+        required_role=DocumentRole.INDEX_METHODOLOGY,
+        binding_role="subject_index",
+    )
+
+    report = audit_document_sources(
+        targets=(target,),
+        adapters=(_eligible_adapter("REGISTERED", candidate),),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].reason_code == "registered_candidate_authority_unreviewed"
+    assert report.entries[0].candidate is None
+
+
+def test_registered_adapter_without_reviewed_authority_context_fails_closed() -> None:
+    candidate = _source_candidate(
+        "official-index",
+        source_code="OFFICIAL_INDEX",
+        publisher_code="OFFICIAL_INDEX",
+        document_type="index_methodology",
+        publisher_role=PublisherRole.INDEX_PROVIDER,
+    )
+    adapter = _eligible_adapter("REGISTERED", candidate)
+    adapter.reviewed_authorities = None
+    target = _target(
+        "index-1",
+        entity_type="index",
+        product_family=None,
+        required_role=DocumentRole.INDEX_METHODOLOGY,
+        binding_role="subject_index",
+    )
+
+    report = audit_document_sources(
+        targets=(target,),
+        adapters=(adapter,),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert adapter.calls == []
+    assert report.entries[0].reason_code == "registered_authority_context_missing"
+
+
 def test_canonical_selection_returns_only_the_latest_role_candidate() -> None:
     older = _source_candidate(
         "older",
-        source_code="REGISTERED",
+        source_code="OFFICIAL_INDEX",
+        publisher_code="OFFICIAL_INDEX",
         document_type="index_methodology",
         publisher_role=PublisherRole.INDEX_PROVIDER,
         effective_from=date(2026, 7, 1),
     )
     latest = _source_candidate(
         "latest",
-        source_code="REGISTERED",
+        source_code="OFFICIAL_INDEX",
+        publisher_code="OFFICIAL_INDEX",
         document_type="index_methodology",
         publisher_role=PublisherRole.INDEX_PROVIDER,
         effective_from=date(2026, 8, 1),
@@ -647,7 +743,9 @@ def test_canonical_selection_returns_only_the_latest_role_candidate() -> None:
 
     assert report.entries[0].status is SourceAuditStatus.ELIGIBLE
     assert report.entries[0].candidate == latest
-    assert document_source_audit_passed(report) is True
+    assert document_source_audit_passed(
+        report, registered_authorities=_REGISTERED_AUTHORITIES
+    ) is True
 
 
 def test_report_is_identical_when_targets_adapters_and_candidates_are_reordered() -> None:
@@ -661,14 +759,16 @@ def test_report_is_identical_when_targets_adapters_and_candidates_are_reordered(
     )
     first = _source_candidate(
         "first",
-        source_code="REGISTERED",
+        source_code="OFFICIAL_INDEX",
+        publisher_code="OFFICIAL_INDEX",
         document_type="index_methodology",
         publisher_role=PublisherRole.INDEX_PROVIDER,
         effective_from=date(2026, 7, 1),
     )
     second = _source_candidate(
         "second",
-        source_code="REGISTERED",
+        source_code="OFFICIAL_INDEX",
+        publisher_code="OFFICIAL_INDEX",
         document_type="index_methodology",
         publisher_role=PublisherRole.INDEX_PROVIDER,
         effective_from=date(2026, 8, 1),
@@ -739,6 +839,34 @@ def test_malformed_adapter_result_normalizes_to_stable_unverified(
 
 
 @pytest.mark.parametrize(
+    ("field_name", "malformed_value"),
+    (
+        ("effective_from", "not-a-date"),
+        ("published_at", "not-a-datetime"),
+        ("authority_tier", "tier_1_regulatory"),
+    ),
+)
+def test_malformed_candidate_field_normalizes_before_sorting(
+    field_name: str,
+    malformed_value: object,
+) -> None:
+    candidate = _source_candidate("malformed-candidate")
+    object.__setattr__(candidate, field_name, malformed_value)
+
+    report = audit_document_sources(
+        targets=(_target("domestic-etf"),),
+        adapters=(_eligible_adapter("DART", candidate),),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    entry = report.entries[0]
+    assert entry.status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert entry.reason_code == "dart_adapter_result_invalid"
+    assert entry.candidate is None
+
+
+@pytest.mark.parametrize(
     "candidate",
     (
         replace(
@@ -778,3 +906,59 @@ def test_forged_eligible_report_cannot_pass(
     )
 
     assert document_source_audit_passed(report) is False
+
+
+def _registered_report(candidate: DocumentSourceCandidate) -> DocumentSourceAuditReport:
+    return DocumentSourceAuditReport(
+        schema_version="1.0",
+        generated_at=_NOW,
+        cutoff_date=_CUTOFF,
+        dataset_version="2026-08-24",
+        entries=(
+            DocumentSourceAuditEntry(
+                target=_target(
+                    "index-1",
+                    entity_type="index",
+                    product_family=None,
+                    required_role=DocumentRole.INDEX_METHODOLOGY,
+                    binding_role="subject_index",
+                ),
+                status=SourceAuditStatus.ELIGIBLE,
+                reason_code=None,
+                candidate=candidate,
+            ),
+        ),
+    )
+
+
+def test_registered_eligible_report_requires_explicit_authority_context() -> None:
+    report = _registered_report(
+        _source_candidate(
+            "official-index",
+            source_code="OFFICIAL_INDEX",
+            publisher_code="OFFICIAL_INDEX",
+            document_type="index_methodology",
+            publisher_role=PublisherRole.INDEX_PROVIDER,
+        )
+    )
+
+    assert document_source_audit_passed(report) is False
+    assert document_source_audit_passed(
+        report, registered_authorities=_REGISTERED_AUTHORITIES
+    ) is True
+
+
+def test_forged_unreviewed_registered_eligible_report_cannot_pass() -> None:
+    report = _registered_report(
+        _source_candidate(
+            "unreviewed",
+            source_code="UNREVIEWED",
+            publisher_code="UNREVIEWED",
+            document_type="index_methodology",
+            publisher_role=PublisherRole.INDEX_PROVIDER,
+        )
+    )
+
+    assert document_source_audit_passed(
+        report, registered_authorities=_REGISTERED_AUTHORITIES
+    ) is False
