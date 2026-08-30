@@ -133,10 +133,13 @@ assembler, Fuseki log, and TDB2 database. It terminates Fuseki in `finally` and
 removes the enclosing temporary directory whether the gate passes or fails.
 It does not modify either extracted binary home.
 
-The caller's resolved temporary parent must be outside the repository,
-`JENA_HOME`, and `FUSEKI_HOME`. The runner rejects an unsafe `TMPDIR` before it
-creates runtime state, then directs Jena spill files and all verifier state to
-the validated temporary tree.
+The runner resolves raw `TMPDIR`, `TEMP`, and `TMP` candidates and rejects any
+candidate inside the repository, `JENA_HOME`, or `FUSEKI_HOME` before any
+file-creation probe. The selector never calls `tempfile.gettempdir()`. Missing
+or unusable environment candidates fall back to a standard temporary parent
+only after the same protected-root check. The runner then passes that validated
+parent to `TemporaryDirectory(dir=...)` and directs Jena spill files and all
+verifier state to the resulting temporary tree.
 
 The external archive directory is intentionally caller-owned so it can be
 reused for later exact-runtime verification. Remove that directory manually

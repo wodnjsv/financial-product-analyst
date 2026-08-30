@@ -56,9 +56,12 @@ RUNTIME_CUSTOMIZATION_VARIABLES = (
     "JAVA_TOOL_OPTIONS",
     "_JAVA_OPTIONS",
     "JDK_JAVA_OPTIONS",
+    "TEMP",
     "TMP",
     "TMPDIR",
 )
+TEMP_ENVIRONMENT_VARIABLES = ("TMPDIR", "TEMP", "TMP")
+STANDARD_TEMP_PARENTS = (Path("/tmp"), Path("/var/tmp"), Path("/usr/tmp"))
 
 
 class VerificationFailure(RuntimeError):
@@ -151,21 +154,65 @@ def _verified_java(environment: Mapping[str, str]) -> tuple[Path, int]:
 
 
 def _validated_temp_parent(*, jena_home: Path, fuseki_home: Path) -> Path:
-    temporary_parent = Path(tempfile.gettempdir()).resolve()
     protected_roots = (
         ("PROJECT_ROOT", PROJECT_ROOT.resolve()),
         ("JENA_HOME", jena_home),
         ("FUSEKI_HOME", fuseki_home),
     )
-    for label, protected_root in protected_roots:
-        if temporary_parent == protected_root or temporary_parent.is_relative_to(
-            protected_root
-        ):
+
+    def protected_label(candidate: Path) -> str | None:
+        for label, protected_root in protected_roots:
+            if candidate == protected_root or candidate.is_relative_to(protected_root):
+                return label
+        return None
+
+    environment_candidates: list[Path] = []
+    for variable in TEMP_ENVIRONMENT_VARIABLES:
+        raw_candidate = os.environ.get(variable)
+        if not raw_candidate:
+            continue
+        try:
+            lexical_candidate = Path(raw_candidate).expanduser().absolute()
+        except (OSError, RuntimeError):
+            continue
+        label = protected_label(lexical_candidate)
+        if label is not None:
             raise VerificationFailure(
                 "temporary_state",
-                f"temporary parent must be outside {label}: {temporary_parent}",
+                f"{variable} must be outside {label}: {lexical_candidate}",
             )
-    return temporary_parent
+        try:
+            resolved_candidate = lexical_candidate.resolve()
+        except (OSError, RuntimeError):
+            continue
+        label = protected_label(resolved_candidate)
+        if label is not None:
+            raise VerificationFailure(
+                "temporary_state",
+                f"{variable} must be outside {label}: {resolved_candidate}",
+            )
+        environment_candidates.append(resolved_candidate)
+
+    for candidate in environment_candidates:
+        if candidate.is_dir() and os.access(candidate, os.W_OK | os.X_OK):
+            return candidate
+
+    for fallback in STANDARD_TEMP_PARENTS:
+        lexical_candidate = fallback.absolute()
+        if protected_label(lexical_candidate) is not None:
+            continue
+        try:
+            resolved_candidate = lexical_candidate.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if protected_label(resolved_candidate) is not None:
+            continue
+        if resolved_candidate.is_dir() and os.access(
+            resolved_candidate, os.W_OK | os.X_OK
+        ):
+            return resolved_candidate
+
+    raise VerificationFailure("temporary_state", "no safe temporary parent is available")
 
 
 def _runtime_environment(

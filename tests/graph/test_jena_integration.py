@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import os
 from datetime import date
@@ -8,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from unittest.mock import Mock
 
 import pytest
 
@@ -247,22 +249,64 @@ def test_ambient_launcher_overrides_cannot_change_the_verified_runtime(
 
 @pytest.mark.jena_integration
 @pytest.mark.parametrize("forbidden_location", ("project", "jena", "fuseki"))
+@pytest.mark.parametrize("environment_variable", ("TMPDIR", "TEMP", "TMP"))
 def test_temporary_parent_rejects_repository_and_binary_homes(
+    environment_variable: str,
     forbidden_location: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Catches caller TMPDIR placing verifier state in protected roots."""
+    """Catches caller temp variables placing verifier state in protected roots."""
     jena_home, fuseki_home = _require_exact_runtime()
     forbidden_parent = {
         "project": PROJECT_ROOT,
         "jena": jena_home,
         "fuseki": fuseki_home,
     }[forbidden_location]
-    monkeypatch.setenv("TMPDIR", str(forbidden_parent))
+    for variable in ("TMPDIR", "TEMP", "TMP"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv(environment_variable, str(forbidden_parent))
     monkeypatch.setattr(tempfile, "tempdir", None)
+    gettempdir = Mock(side_effect=AssertionError("gettempdir must not be called"))
+    mkstemp = Mock(side_effect=AssertionError("mkstemp must not be called"))
+    builtin_open = Mock(side_effect=AssertionError("open must not be called"))
+    os_open = Mock(side_effect=AssertionError("os.open must not be called"))
+    monkeypatch.setattr(verify_jena.tempfile, "gettempdir", gettempdir)
+    monkeypatch.setattr(verify_jena.tempfile, "mkstemp", mkstemp)
+    monkeypatch.setattr(builtins, "open", builtin_open)
+    monkeypatch.setattr(verify_jena.os, "open", os_open)
 
     with pytest.raises(verify_jena.VerificationFailure, match="temporary_state"):
         verify_jena._validated_temp_parent(
             jena_home=jena_home.resolve(),
             fuseki_home=fuseki_home.resolve(),
         )
+
+    assert gettempdir.call_count == 0
+    assert mkstemp.call_count == 0
+    assert builtin_open.call_count == 0
+    assert os_open.call_count == 0
+
+
+@pytest.mark.jena_integration
+@pytest.mark.parametrize("invalid_environment_candidate", (False, True))
+def test_temporary_parent_uses_standard_fallback_without_gettempdir(
+    invalid_environment_candidate: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Catches tempfile usability probes before a safe fallback is selected."""
+    jena_home, fuseki_home = _require_exact_runtime()
+    for variable in ("TMPDIR", "TEMP", "TMP"):
+        monkeypatch.delenv(variable, raising=False)
+    if invalid_environment_candidate:
+        monkeypatch.setenv("TMPDIR", str(tmp_path / "missing"))
+    gettempdir = Mock(side_effect=AssertionError("gettempdir must not be called"))
+    monkeypatch.setattr(verify_jena.tempfile, "gettempdir", gettempdir)
+
+    temporary_parent = verify_jena._validated_temp_parent(
+        jena_home=jena_home.resolve(),
+        fuseki_home=fuseki_home.resolve(),
+    )
+
+    assert temporary_parent == Path("/tmp").resolve()
+    assert gettempdir.call_count == 0
