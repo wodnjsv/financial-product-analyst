@@ -54,6 +54,13 @@ def test_multi_role_product_keeps_one_canonical_identity_conformant() -> None:
     assert result.conforms is True
 
 
+def test_explicit_snapshot_preserves_domestic_etf_subclass_closure() -> None:
+    """Catches removal of RDFS subclass closure from the explicit domain-type pass."""
+    result = validate_fixture("valid_domestic_etf_subclass.trig")
+
+    assert result.conforms is True
+
+
 def test_cutoff_day_datetimes_accept_seoul_and_equivalent_utc_instants() -> None:
     """Catches lexical cutoff comparison that rejects valid cutoff-day dateTimes."""
     result = validate_fixture("valid_cutoff_day_datetime.trig")
