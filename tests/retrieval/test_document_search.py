@@ -229,12 +229,10 @@ def test_metadata_sql_enforces_nonblank_version_and_searchable_sections() -> Non
             {"subject_product", "subject_policy"},
             {
                 "regulator_disclosure",
-                "asset_manager",
-                "issuer",
                 "policy_authority",
                 "policy_operator",
             },
-            {"subject_index", "index_provider"},
+            {"asset_manager", "issuer", "subject_index", "index_provider"},
         ),
         (
             "official_trend_or_update",
@@ -243,12 +241,12 @@ def test_metadata_sql_enforces_nonblank_version_and_searchable_sections() -> Non
             {"subject_product", "subject_policy"},
             {
                 "regulator_disclosure",
-                "asset_manager",
-                "issuer",
+                "exchange",
+                "industry_association",
                 "policy_authority",
                 "policy_operator",
             },
-            {"subject_index", "index_provider"},
+            {"asset_manager", "issuer", "subject_index", "index_provider"},
         ),
         (
             "publisher_provenance",
@@ -257,12 +255,10 @@ def test_metadata_sql_enforces_nonblank_version_and_searchable_sections() -> Non
             {"subject_product", "subject_policy"},
             {
                 "regulator_disclosure",
-                "asset_manager",
-                "issuer",
                 "policy_authority",
                 "policy_operator",
             },
-            {"subject_index", "index_provider"},
+            {"asset_manager", "issuer", "subject_index", "index_provider"},
         ),
     ),
 )
