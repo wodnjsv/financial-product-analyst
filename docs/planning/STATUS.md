@@ -1,6 +1,6 @@
 # Financial Product Agent 계획·구현 현황
 
-**Updated:** 2026-08-27
+**Updated:** 2026-08-30
 
 이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.
 
@@ -9,12 +9,12 @@
 | 구분 | 현재 상태 | 기준 문서 |
 | --- | --- | --- |
 | 전체 대회 Stage 로드맵 | Stage 01~09 확정; 종점은 제출과 공식 평가 운영 기간 종료 | [Competition Stage Roadmap](ROADMAP.md), [ADR-0012](decisions/ADR-0012-use-nine-stage-competition-delivery-roadmap.md) |
-| Task 1 요구사항·평가 질문·추가 데이터 | 내부 52개 회귀 질문은 유지; 새 공식 35문항 유형과 `2026-08-24` 데이터 공지로 재베이스 진행 중 | [Official Data Notice](../reference/official-data-notice-2026-08-24.md), [Rebaseline Design](specs/2026-08-24-stage-03-organizer-rebaseline-design.md) |
+| Task 1 요구사항·평가 질문·추가 데이터 | 내부 52개 회귀 질문의 지원 상태를 유지하고 schema `1.3` 여섯 요구사항 그룹·명시적 Capability route로 정규화 완료; 실제 DB 실행 검증은 `not_run`으로 분리 | [Core Evaluation Set](specs/core-evaluation-set.md), [Question Contract Normalization](specs/2026-08-29-question-capability-contract-normalization-design.md) |
 | Task 2 상위 아키텍처 | 확정; 2개 제한 LLM 역할 + 결정론적 Orchestrator·Capability·Verifier | [Planning Harness](HARNESS.md), [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) |
 | 실패·판정·시간 예산 | 확정 기본안; 55초 내부 마감은 NCP 벤치마크 후 단계별 재배분 가능 | [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md), [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) |
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
-| 온톨로지 논리 구조 | 최소 클래스·13개 관계 유지, canonical 다중 역할·SourceRecord 경계·2026-08-24 ABox 제약 승인; TTL·SHACL 구현 대기 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md) |
+| 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute와 문서 provenance 경계 승인; TTL·SHACL·ABox·Fuseki 구현 대기 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 | Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
 
@@ -174,7 +174,8 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 34. ~~두 로컬 PostgreSQL에서 current organizer 비활성 결정성 검증~~ — 2026-08-26 완료
 35. ~~current KRX ETF holdings 1,161개 exact binding·로컬 비활성 적재·대표 질의 검증~~ — 2026-08-27 완료
 36. 나머지 current 공식 외부 source 동결과 Stage 03 로컬 완료 게이트 — [구현 계획](tasks/2026-08-27-stage-03-local-completion-plan.md) 승인, Task 1~6 완료; 52개 질문 커버리지를 `supported` 16, `limited` 18, `requires_additional_data` 11, `unsupported` 7로 동결
-37. 최소 TBox·SHACL·Evidence-bound ABox 구현부터 로컬 평가 API까지 Stage 04~07 순차 구현
-38. Stage 08에서 최종 NCP 비활성 적재·Graph/Vector·권한·성능·복구·공개 API acceptance
+37. ~~52개 질문 계약 schema `1.3` 정규화와 온톨로지 논리 보정 승인~~ — 2026-08-30 완료; 지원 상태 수량 유지, 실제 DB 실행은 전건 `not_run`
+38. 최소 TBox·SHACL·Evidence-bound ABox 구현부터 로컬 평가 API까지 Stage 04~07 순차 구현
+39. Stage 08에서 최종 NCP 비활성 적재·Graph/Vector·권한·성능·복구·공개 API acceptance
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.
