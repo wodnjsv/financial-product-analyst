@@ -268,6 +268,10 @@ class GraphValidationResult:
     report_text: str
     report_ntriples: bytes
     report_hash: str
+    validated_data_hash: str
+    validated_evidence_hash: str | None
+    validated_cutoff_date: str
+    contract_hashes: Mapping[str, str]
 
 
 def validate_graph(
@@ -279,9 +283,13 @@ def validate_graph(
 ```
 
 `report_hash` is SHA-256 over canonical, sorted report N-Triples, not pySHACL's
-human-readable text or transient blank-node labels. The function returns a
-result for semantic non-conformance and raises only for unreadable or
-syntactically invalid input.
+human-readable text or transient blank-node labels. The result also binds the
+exact data/Evidence bytes, cutoff, and five TBox plus two SHACL contract hashes
+that were validated. The function returns a result for semantic
+non-conformance and raises only for unreadable or syntactically invalid input.
+An additional domain-shape pass retains subclass closure but removes TBox
+domain/range entailment so assertion, Evidence, Source, document, publisher,
+risk and chunk trust types must be explicit in the validated artifacts.
 
 - [x] **Step 1: Write parameterized positive and negative tests**
 
@@ -420,6 +428,7 @@ class EvidenceProjection:
 @dataclass(frozen=True, slots=True)
 class RelationMetricProjection:
     dataset_version: str
+    observation_id: str
     relation_id: str
     metric_id: str
     numeric_value: Decimal
@@ -465,12 +474,16 @@ def entity_iri(entity_id: str) -> URIRef: ...
 def relation_iri(dataset_version: str, relation_id: str) -> URIRef: ...
 def evidence_iri(dataset_version: str, evidence_id: str) -> URIRef: ...
 def source_iri(dataset_version: str, source_id: str) -> URIRef: ...
+def holding_weight_observation_iri(
+    dataset_version: str,
+    observation_id: str,
+) -> URIRef: ...
 def build_graph_artifacts(batch: GraphProjectionBatch) -> GraphArtifacts: ...
 ```
 
 - [x] **Step 1: Write failing contract and exporter tests**
 
-Cover reversible UTF-8 percent encoding, empty/NUL identifier rejection,
+Cover reversible UTF-8 percent encoding, empty/whitespace-only/NUL identifier rejection,
 stable entity IRIs across versions, versioned assertion/Evidence/Source IRIs,
 approved RDF-type rejection, direct edge plus assertion emission, multiple
 Evidence links, weight metric emission, source locator absence, and exact
@@ -622,14 +635,18 @@ relation-scoped weight observation through existing tables. Assert exact typed
 output and stable sorting.
 
 Add a SQL statement listener and assert every statement executed by `load` is
-`SELECT` or `SET TRANSACTION READ ONLY`; assert `operations.dataset_readiness`
-and `operations.active_dataset` remain unchanged.
+`SELECT` or `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`;
+assert `operations.dataset_readiness` and `operations.active_dataset` remain
+unchanged. A two-connection PostgreSQL 15 test commits a relation/Evidence pair
+between repository `SELECT`s and proves the returned batch sees one snapshot,
+not a mixed pre/post-commit state.
 
 - [x] **Step 2: Write the manifest unit tests**
 
 Assert sorted canonical JSON, stable SHA-256, order-independent input path
-handling, changed hash when any ontology/data/evidence/report byte changes, and
-exact entity/predicate counts.
+handling, the exact five TBox plus two SHACL tracked path set, changed hash when
+any ontology/data/evidence/report byte changes, validation binding to the exact
+artifacts/contracts/cutoff, and batch-derived entity/predicate counts.
 
 - [x] **Step 3: Run tests and confirm RED**
 
@@ -650,8 +667,8 @@ PYTHONPATH=src FINANCIAL_AGENT_TEST_DATABASE_URL="$FINANCIAL_AGENT_TEST_DATABASE
 - [x] **Step 4: Implement the read-only repository**
 
 Open one async connection and transaction, execute
-`SET TRANSACTION READ ONLY`, fetch `operations.dataset_version.cutoff_date`,
-then fetch and sort:
+`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY` before the first
+`SELECT`, fetch `operations.dataset_version.cutoff_date`, then fetch and sort:
 
 1. `catalog.entity` left-joined to `catalog.product`, `catalog.security`, and
    `catalog.institution`;
@@ -667,8 +684,12 @@ For Phase 1 the approved relation metrics are the exact keys in
 `RELATION_METRIC_PROPERTY_BY_ID`:
 `krx_etf_holding_weight_pct` and `official_holding_weight_pct`. Join the exact
 metric definition version referenced by each observation and require numeric
-`present` or `zero` values with `percentage_point` units. Do not infer Graph
-eligibility from a metric-name substring or broad semantic family.
+`present` or `zero` values with `percentage_point` units, an observation ID and
+an applicable date at or before cutoff. Preserve multiple observations as
+separate nodes; reject weights on non-`holdsSecurity` relations, duplicate
+observation IDs, and more than one weight for the same relation/applicable-date
+pair. Do not infer Graph eligibility from a metric-name substring or broad
+semantic family.
 Derive `EntityProjection.rdf_types` deterministically from those stored facts:
 
 - generic entity type supplies the base class;
@@ -700,9 +721,11 @@ json.dumps(
 ).encode("utf-8")
 ```
 
-Hash the bytes of each tracked TBox/SHACL input, both N-Quads artifacts, and
-the normalized validation report. The manifest function is pure and performs
-no database or filesystem write.
+Require exactly the five tracked TBox and two tracked SHACL paths. Hash their
+bytes, both N-Quads artifacts, and the normalized validation report. Require
+the validation result's artifact, cutoff and contract bindings to match, then
+rebuild artifacts from the batch and require exact bytes and counts. The
+manifest function is pure and performs no database or filesystem write.
 
 - [x] **Step 6: Run unit, Graph, and PostgreSQL tests GREEN**
 

@@ -116,8 +116,8 @@
 
 **상태: Graph Phase 1 core 로컬 완료; Stage 04 미완료**
 
-- 13개 승인 predicate의 TBox·SHACL, PostgreSQL 읽기 전용 투영, 결정론적 N-Quads·Graph component manifest, Evidence-bound SPARQL 읽기 경로와 읽기 전용 Fuseki 적합성 게이트를 구현했다.
-- 2026-08-30 최종 로컬 검증은 외부 서비스 없는 Graph gate `141 passed, 13 deselected in 7.82s`, 기존 non-live 회귀 `840 passed, 357 deselected in 10.93s`, 전용 폐기 가능 PostgreSQL `15.19` 투영 gate `8 passed in 0.47s`, Apache Jena/Fuseki `6.0.0`·Java `24` exact-runtime gate `13 passed in 21.69s`를 모두 통과했다.
+- 13개 승인 predicate의 TBox·SHACL, 명시적 문서·위험요인 provenance, 날짜별 holding-weight observation, PostgreSQL 반복 가능 읽기 전용 투영, 결정론적 N-Quads·검증 산출물에 결합된 Graph component manifest, Evidence-bound SPARQL 읽기 경로와 읽기 전용 Fuseki 적합성 게이트를 구현했다. 실제 문서 ABox는 만들지 않고 합성 fixture만 사용했다.
+- 2026-08-30 최종 로컬 검증은 외부 서비스 없는 Graph gate `197 passed, 13 deselected in 21.26s`, 기존 non-live 회귀 `896 passed, 361 deselected in 22.60s`, 전용 폐기 가능 PostgreSQL `15.19` 투영 gate `12 passed in 0.45s`, Apache Jena/Fuseki `6.0.0`·Java `24` exact-runtime gate `13 passed in 21.78s`를 모두 통과했다. PostgreSQL gate는 두 연결 사이 커밋을 사용해 relation/Evidence를 섞어 읽지 않는 단일 `REPEATABLE READ, READ ONLY` snapshot도 검증했다.
 - Graph 모듈은 `record_dataset_readiness`, `activate_dataset`, `active_dataset` 또는 SQL 변경 경로를 두지 않는다. 정적 스캔의 유일한 `INSERT` 문구는 없는 `/update` endpoint가 HTTP 404/405로 거부함을 검증하는 음성 probe이다.
 - 관리형 sandbox에서 PostgreSQL shared memory와 임시 loopback port bind는 승인된 로컬 실행을 필요로 했다. 모든 gate는 완료됐고 PostgreSQL 클러스터, Fuseki JVM, TDB2·N-Quads·검증 임시 디렉터리는 종료·삭제했다. 체크섬을 검증한 Jena/Fuseki 외부 binary home은 저장소 밖에만 유지한다.
 - 이 결과는 후속 Graph Phase 2 범위나 Stage 04 완료를 의미하지 않는다. Vector, 실제 관계·문서 데이터, PostgreSQL·Graph·Vector·Evidence 간 manifest 동일성, readiness·activation, NCP 배포, Graph 경로가 필요한 23개 질문의 dataset-relative 커버리지는 후속 Phase 2·최종 Stage 작업으로 남아 있다.

@@ -141,12 +141,13 @@ entity:             urn:financial-agent:entity:{percent_encoded_entity_id}
 relation assertion: urn:financial-agent:relation:{dataset_version}:{percent_encoded_relation_id}
 evidence:           urn:financial-agent:evidence:{dataset_version}:{percent_encoded_evidence_id}
 source:             urn:financial-agent:source:{dataset_version}:{percent_encoded_source_id}
+holding observation: urn:financial-agent:holding-weight:{dataset_version}:{percent_encoded_observation_id}
 ```
 
 canonical entity IRI에는 dataset version을 넣지 않는다. typing과 edge는 named
-graph가 버전화한다. Relation, Evidence와 Source는 버전별 불변 record이므로 IRI에
-dataset version을 포함한다. 모든 동적 ID segment는 UTF-8 percent encoding을
-사용하며 역변환 가능해야 한다.
+graph가 버전화한다. Relation, Evidence, Source와 holding weight observation은
+버전별 불변 record이므로 IRI에 dataset version을 포함한다. 모든 동적 ID segment는
+UTF-8 percent encoding을 사용하며 역변환 가능해야 한다.
 
 ### 4.3 Direct edge와 RelationAssertion
 
@@ -188,15 +189,22 @@ PostgreSQL read-only snapshot
   → optional local read-only Fuseki smoke test
 ```
 
-PostgreSQL 조회는 하나의 `dataset_version`을 명시하고 read-only transaction에서
-실행한다. exporter는 승인된 13개 predicate allowlist 밖의 relation을 만나면
-해당 edge를 생략하지 않고 전체 빌드를 실패시킨다. subject·object entity,
-relation Evidence, source 또는 dataset version이 일치하지 않아도 실패한다.
+PostgreSQL 조회는 하나의 `dataset_version`을 명시하고 첫 `SELECT` 전에
+`REPEATABLE READ, READ ONLY` transaction을 시작해 한 스냅샷에서 실행한다.
+exporter는 승인된 13개 predicate allowlist 밖의 relation을 만나면 해당 edge를
+생략하지 않고 전체 빌드를 실패시킨다. subject·object entity, relation Evidence,
+source 또는 dataset version이 일치하지 않아도 실패한다. `holdsSecurity`의 보유
+비중은 relation assertion에 연결된 독립 observation node로 투영하고, observation
+ID·decimal percentage-point 값·적용일을 한 노드에 묶는다. 같은 relation과 적용일의
+복수 observation은 값·날짜 대응이 모호하므로 실패한다.
 
 N-Quads는 normalized IRI와 literal을 lexical order로 정렬하고 LF newline로
-끝낸다. manifest는 다음 입력의 SHA-256을 포함한다.
+끝낸다. manifest는 정확히 5개 TBox와 2개 SHACL tracked path만 허용하고 다음
+입력의 SHA-256을 포함한다. Validation 결과는 검증한 data·Evidence artifact,
+cutoff와 7개 contract hash를 함께 고정하며, manifest 생성 시 batch를 다시
+export해 artifact byte와 count가 같은지도 확인한다.
 
-- ontology와 SHACL 파일별 hash
+- 정확한 5개 ontology와 2개 SHACL 파일별 hash
 - data N-Quads hash
 - evidence N-Quads hash
 - exporter version
@@ -216,10 +224,15 @@ Phase 1은 manifest를 계산하고 검증하지만 `record_dataset_readiness`�
 - 13개 predicate의 domain과 range
 - 모든 assertion의 subject·predicate·object·relation ID·dataset version
 - assertion마다 하나 이상의 Evidence 연결
+- assertion·Evidence·Source 및 문서 provenance node의 신뢰 타입은 명시적이어야
+  하며 property domain/range 추론만으로 충족할 수 없음
+- direct edge와 Evidence-backed assertion의 양방향 일치
 - `valid_to >= valid_from`
 - dataset cutoff 이후의 적용·유효·게시·가용 날짜 금지
-- `documentedBy` domain은 `FinancialProduct`, `Organization`, `PolicyProgram`
-- `hasRiskFactor`는 DocumentChunk span Evidence 없이는 최종 적격으로 보지 않음
+- `documentedBy` domain은 `FinancialProduct`, `Organization`, `PolicyProgram`이며
+  publisher·게시/효력/가용 시각·문서 버전·source object identity를 모두 요구
+- `hasRiskFactor`는 명시적으로 typed된 RiskFactor와 page·section·source span 및
+  Evidence가 있는 DocumentChunk 없이는 최종 적격으로 보지 않음
 
 도메인 shape는 다음을 검증한다.
 
@@ -227,7 +240,8 @@ Phase 1은 manifest를 계산하고 검증하지만 `record_dataset_readiness`�
 - 공식 exact identity가 있는 `DomesticETF`와 `FundShareClass` 복수 typing 허용
 - `ProductRiskGrade`와 `CreditGrade` 스킴 분리
 - 신용등급 순서 값은 `credit_grade_v1`에만 허용
-- 보유비중 요구 relation은 적용일과 weight observation 연결 필요
+- 보유비중 요구 relation은 적용일과 decimal percentage-point observation 연결
+  필요; relation별 동일 적용일 중복과 전역 observation ID 중복은 실패
 
 문서와 위험요인 shape는 Phase 1에 정의하지만, 실제 문서 ABox가 없는 fixture
 외에는 적재하지 않는다. 이를 통해 Vector 완료 후 vocabulary 변경 없이 같은
