@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "authorities": [
+    {
+      "source_code": "SYNTHETIC_INDEX_PROVIDER",
+      "authority_tier": "tier_2_claim_owner",
+      "publisher_role": "index_provider",
+      "jurisdiction": "ZZ",
+      "allowed_hosts": [
+        "index.example.invalid"
+      ],
+      "allowed_document_roles": [
+        "index_methodology",
+        "official_update"
+      ]
+    }
+  ]
+}

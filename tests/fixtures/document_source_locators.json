@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "locators": [
+    {
+      "entity_id": "index-1",
+      "entity_type": "index",
+      "required_role": "index_methodology",
+      "binding_role": "subject_index",
+      "document_id": "document-index-1-methodology",
+      "source_code": "SYNTHETIC_INDEX_PROVIDER",
+      "authority_tier": "tier_2_claim_owner",
+      "publisher_code": "SYNTHETIC_INDEX_PROVIDER",
+      "publisher_role": "index_provider",
+      "source_locator": "https://index.example.invalid/methodology.pdf",
+      "discovery_locator": "https://index.example.invalid/documents",
+      "document_type": "index_methodology",
+      "document_version": "2026.1",
+      "published_at": "2026-08-20T01:00:00Z",
+      "available_at": "2026-08-20T01:05:00Z",
+      "effective_from": "2026-08-20",
+      "effective_to": null,
+      "original_language": "en",
+      "jurisdiction": "ZZ",
+      "media_type": "application/pdf",
+      "accession_or_receipt_id": null
+    }
+  ]
+}
