@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from calendar import monthrange
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import json
 import re
 from typing import BinaryIO
@@ -51,6 +52,8 @@ _PAGE_COUNT = 100
 _MAX_JSON_BYTES = 2 * 1024 * 1024
 _REQUEST_TIMEOUT_SECONDS = 15.0
 _MAX_REDIRECTS = 3
+_SEARCH_WINDOW_MONTHS = 6
+_MAX_SEARCH_WINDOWS = 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,13 +132,8 @@ class DartDocumentSourceAdapter:
             )
 
         try:
-            filings = self._list_filings(
+            selected = self._search_current_filings(
                 api_key=api_key,
-                binding=binding,
-                cutoff_date=context.cutoff_date,
-            )
-            selected = _select_current_filings(
-                filings,
                 binding=binding,
                 target_name=target.canonical_name,
                 cutoff_date=context.cutoff_date,
@@ -161,12 +159,57 @@ class DartDocumentSourceAdapter:
             candidates=candidates,
         )
 
+    def _search_current_filings(
+        self,
+        *,
+        api_key: str,
+        binding: _Binding,
+        target_name: str,
+        cutoff_date: date,
+    ) -> tuple[_Filing, ...]:
+        window_end = cutoff_date
+        saw_prospectus = False
+        for _ in range(_MAX_SEARCH_WINDOWS):
+            window_start = _subtract_months(window_end, _SEARCH_WINDOW_MONTHS)
+            filings = self._list_filings(
+                api_key=api_key,
+                binding=binding,
+                begin_date=window_start,
+                end_date=window_end,
+            )
+            saw_prospectus = saw_prospectus or any(
+                filing.document_type for filing in filings
+            )
+            try:
+                return _select_current_filings(
+                    filings,
+                    binding=binding,
+                    target_name=target_name,
+                    cutoff_date=cutoff_date,
+                )
+            except _DartResponseError as error:
+                if error.reason_code not in {
+                    "dart_product_name_mismatch",
+                    "dart_prospectus_not_found",
+                }:
+                    raise
+            window_end = window_start - timedelta(days=1)
+        raise _DartResponseError(
+            SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING
+            if saw_prospectus
+            else SourceAuditStatus.DOCUMENT_NOT_FOUND,
+            "dart_product_name_mismatch"
+            if saw_prospectus
+            else "dart_prospectus_not_found",
+        )
+
     def _list_filings(
         self,
         *,
         api_key: str,
         binding: _Binding,
-        cutoff_date: date,
+        begin_date: date,
+        end_date: date,
     ) -> tuple[_Filing, ...]:
         filings: list[_Filing] = []
         page_number = 1
@@ -177,8 +220,8 @@ class DartDocumentSourceAdapter:
                 _LIST_ENDPOINT,
                 crtfc_key=api_key,
                 corp_code=binding.corp_code,
-                bgn_de="19000101",
-                end_de=cutoff_date.strftime("%Y%m%d"),
+                bgn_de=begin_date.strftime("%Y%m%d"),
+                end_de=end_date.strftime("%Y%m%d"),
                 pblntf_ty="G",
                 page_no=str(page_number),
                 page_count=str(_PAGE_COUNT),
@@ -249,6 +292,13 @@ class DartDocumentSourceAdapter:
             SourceAuditStatus.ACCESS_DENIED,
             "dart_redirect_limit_exceeded",
         )
+
+
+def _subtract_months(value: date, months: int) -> date:
+    month_index = value.year * 12 + value.month - 1 - months
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    return date(year, month, min(value.day, monthrange(year, month)[1]))
 
 
 def _open_no_redirect(opener: NoRedirectHttpOpener, url: str) -> BinaryIO:

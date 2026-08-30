@@ -562,6 +562,48 @@ def test_dart_accepts_whitespace_only_exact_product_name() -> None:
     assert result.status is SourceAuditStatus.ELIGIBLE
 
 
+def test_dart_searches_project_window_then_previous_window_until_match() -> None:
+    filing = _filing("20260205000123", "20260205")
+
+    class WindowedOpener:
+        def __init__(self) -> None:
+            self.windows: list[tuple[str, str]] = []
+
+        def open_no_redirect(
+            self,
+            url: str,
+            *,
+            method: str,
+            headers: Mapping[str, str],
+            timeout: float,
+        ) -> _Response:
+            del method, headers, timeout
+            query = parse_qs(urlparse(url).query)
+            window = (query["bgn_de"][0], query["end_de"][0])
+            self.windows.append(window)
+            if window == ("20260224", "20260824"):
+                return _Response(
+                    json.dumps(
+                        {"status": "013", "message": "조회된 데이타가 없습니다."}
+                    ).encode()
+                )
+            if window == ("20250823", "20260223"):
+                return _Response(json.dumps(_list_response([filing])).encode())
+            raise AssertionError(f"unexpected search window: {window}")
+
+    opener = WindowedOpener()
+    result = DartDocumentSourceAdapter(opener).discover(_target(), _context())
+
+    assert result.status is SourceAuditStatus.ELIGIBLE
+    assert [item.accession_or_receipt_id for item in result.candidates] == [
+        "20260205000123"
+    ]
+    assert opener.windows == [
+        ("20260224", "20260824"),
+        ("20250823", "20260223"),
+    ]
+
+
 def test_dart_reports_only_post_cutoff_prospectuses() -> None:
     adapter, opener = _adapter([_filing("20260825000123", "20260825")])
 
@@ -588,7 +630,7 @@ def test_dart_ignores_non_prospectus_filings() -> None:
 
     assert result.status is SourceAuditStatus.DOCUMENT_NOT_FOUND
     assert result.reason_code == "dart_prospectus_not_found"
-    assert len(opener.calls) == 1
+    assert opener.calls
 
 
 def test_dart_follows_list_pagination_and_uses_bounded_fund_search() -> None:
@@ -616,7 +658,7 @@ def test_dart_follows_list_pagination_and_uses_bounded_fund_search() -> None:
     assert len(list_calls) == 2
     first_query = parse_qs(urlparse(list_calls[0]).query)
     assert first_query["corp_code"] == ["00123456"]
-    assert first_query["bgn_de"] == ["19000101"]
+    assert first_query["bgn_de"] == ["20260224"]
     assert first_query["end_de"] == ["20260824"]
     assert first_query["pblntf_ty"] == ["G"]
     assert first_query["page_count"] == ["100"]
