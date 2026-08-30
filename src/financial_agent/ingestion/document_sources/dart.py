@@ -80,6 +80,18 @@ class _ListPage:
     total_pages: int
 
 
+@dataclass(frozen=True, slots=True)
+class DartRejectedFiling:
+    receipt_id: str
+    reason_code: str
+
+
+@dataclass(frozen=True, slots=True)
+class DartPublisherDiscoveryResult:
+    target_results: tuple[tuple[str, SourceAdapterResult], ...]
+    rejected_filings: tuple[DartRejectedFiling, ...]
+
+
 class _DartResponseError(Exception):
     def __init__(self, status: SourceAuditStatus, reason_code: str) -> None:
         self.status = status
@@ -156,6 +168,148 @@ class DartDocumentSourceAdapter:
             status=SourceAuditStatus.ELIGIBLE,
             reason_code=None,
             candidates=candidates,
+        )
+
+    def discover_publisher_targets(
+        self,
+        *,
+        corp_code: str,
+        publisher_name: str,
+        targets: tuple[tuple[str, str, str], ...],
+        context: DocumentDiscoveryContext,
+    ) -> DartPublisherDiscoveryResult:
+        """Fetch each publisher filing page once and select exact targets."""
+
+        if not targets or len({item[0] for item in targets}) != len(targets):
+            raise ValueError("publisher targets must be nonempty and unique")
+        _validate_corp_code(corp_code)
+        binding = _Binding("publisher", corp_code, publisher_name)
+        if context.dart_api_key is None or not context.dart_api_key.strip():
+            unavailable = _unavailable(
+                SourceAuditStatus.CREDENTIALS_MISSING,
+                "dart_api_key_missing",
+            )
+            return DartPublisherDiscoveryResult(
+                target_results=tuple(
+                    (target_key, unavailable) for target_key, _, _ in targets
+                ),
+                rejected_filings=(),
+            )
+
+        unresolved = {target_key for target_key, _, _ in targets}
+        results: dict[str, SourceAdapterResult] = {}
+        filings: list[_Filing] = []
+        window_end = context.cutoff_date
+        try:
+            for _ in range(_MAX_SEARCH_WINDOWS):
+                window_start = _subtract_months(window_end, _SEARCH_WINDOW_MONTHS)
+                filings.extend(
+                    self._list_filings(
+                        api_key=context.dart_api_key,
+                        binding=binding,
+                        begin_date=window_start,
+                        end_date=window_end,
+                    )
+                )
+                for target_key, target_name, target_entity_id in targets:
+                    if target_key not in unresolved:
+                        continue
+                    try:
+                        selected = _select_current_filings(
+                            tuple(filings),
+                            binding=binding,
+                            target_name=target_name,
+                            cutoff_date=context.cutoff_date,
+                        )
+                    except _DartResponseError as error:
+                        if error.reason_code in {
+                            "dart_product_name_mismatch",
+                            "dart_prospectus_not_found",
+                        }:
+                            continue
+                        results[target_key] = _unavailable(
+                            error.status, error.reason_code
+                        )
+                        unresolved.remove(target_key)
+                        continue
+                    results[target_key] = SourceAdapterResult(
+                        status=SourceAuditStatus.ELIGIBLE,
+                        reason_code=None,
+                        candidates=tuple(
+                            _candidate(
+                                filing,
+                                target_entity_id=target_entity_id,
+                            )
+                            for filing in selected
+                        ),
+                    )
+                    unresolved.remove(target_key)
+                if not unresolved:
+                    break
+                window_end = window_start - timedelta(days=1)
+        except _DartResponseError as error:
+            for target_key in unresolved:
+                results[target_key] = _unavailable(error.status, error.reason_code)
+        except _DartMalformedResponse:
+            for target_key in unresolved:
+                results[target_key] = _unavailable(
+                    SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
+                    "dart_response_malformed",
+                )
+        except Exception as error:
+            status = classify_access_error(error)
+            for target_key in unresolved:
+                results[target_key] = _unavailable(
+                    status, f"dart_{status.value}"
+                )
+
+        for target_key, target_name, _ in targets:
+            if target_key in results:
+                continue
+            try:
+                _select_current_filings(
+                    tuple(filings),
+                    binding=binding,
+                    target_name=target_name,
+                    cutoff_date=context.cutoff_date,
+                )
+            except _DartResponseError as error:
+                results[target_key] = _unavailable(error.status, error.reason_code)
+            else:
+                raise RuntimeError("resolved publisher target was not recorded")
+        target_results = tuple(
+            (target_key, results[target_key]) for target_key, _, _ in targets
+        )
+        selected_receipts = {
+            candidate.accession_or_receipt_id
+            for _, result in target_results
+            for candidate in result.candidates
+        }
+        organizer_names = {
+            _normalize_product_identity(target_name) for _, target_name, _ in targets
+        }
+        rejected_filings = tuple(
+            sorted(
+                {
+                    DartRejectedFiling(
+                        receipt_id=filing.receipt_no,
+                        reason_code=(
+                            "dart_version_not_selected"
+                            if _normalize_product_identity(filing.product_name or "")
+                            in organizer_names
+                            else "dart_filing_not_in_organizer_inventory"
+                        ),
+                    )
+                    for filing in filings
+                    if filing.document_type
+                    and filing.receipt_no not in selected_receipts
+                },
+                key=lambda item: (item.receipt_id, item.reason_code),
+            )
+        )
+        return DartPublisherDiscoveryResult(
+            target_results=target_results,
+            rejected_filings=rejected_filings,
         )
 
     def _search_current_filings(

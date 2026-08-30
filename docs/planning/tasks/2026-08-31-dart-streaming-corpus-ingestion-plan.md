@@ -283,7 +283,7 @@ git commit -m "feat: freeze organizer DART target inventory"
 - Produces `DartPublisherBinding`, `DartPublisherReconciliation`, and
   `discover_dart_candidates_by_publisher(...)`.
 
-- [ ] **Step 1: Write failing corporation-code reconciliation tests**
+- [x] **Step 1: Write failing corporation-code reconciliation tests**
 
 Use synthetic `corpCode.xml` ZIP data. Accept only exact organizer institution
 identifier equality, exact normalized official company-name equality, or an
@@ -295,7 +295,7 @@ The public-fund `or_co_xtn_itt_cd` values are organizer external-institution
 codes, not DART corporation codes. They must pass an explicit official or
 reviewed mapping; equal length is not evidence of identity.
 
-- [ ] **Step 2: Write failing publisher-batch discovery tests**
+- [x] **Step 2: Write failing publisher-batch discovery tests**
 
 One publisher filing page must be fetched once for many products. Reuse current
 correction and cutoff rules. Reject unmatched filings before attachment access.
@@ -307,7 +307,7 @@ set(indexed_ids) & set(failed_ids) == set()
 set(downloaded_ids) <= set(inventory.target_ids)
 ~~~
 
-- [ ] **Step 3: Run tests and verify RED**
+- [x] **Step 3: Run tests and verify RED**
 
 ~~~bash
 .venv/bin/python -m pytest \
@@ -315,7 +315,7 @@ set(downloaded_ids) <= set(inventory.target_ids)
   tests/ingestion/document_sources/test_dart_batch.py -q
 ~~~
 
-- [ ] **Step 4: Implement bounded publisher discovery**
+- [x] **Step 4: Implement bounded publisher discovery**
 
 Fetch `corpCode.xml` once, validate its official host and bounded ZIP/XML shape,
 then create exact publisher groups. Reuse the existing filing decoder and
@@ -323,7 +323,7 @@ selector. Unmatched filings become rejected discovery results and are never
 downloaded. Reports contain identifiers and reason codes but no source prose or
 key.
 
-- [ ] **Step 5: Run all DART tests and commit**
+- [x] **Step 5: Run all DART tests and commit**
 
 ~~~bash
 .venv/bin/python -m pytest \
