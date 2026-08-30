@@ -1,0 +1,5 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:riskGrade a fp:ProductRiskGrade ; fp:gradeScheme "credit_grade_v1" .
+}

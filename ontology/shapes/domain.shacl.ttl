@@ -1,0 +1,81 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+fp:ETFShape a sh:NodeShape ;
+  sh:targetClass fp:ETF ;
+  sh:not [ sh:class fp:ETN ] .
+
+fp:ProductRiskGradeShape a sh:NodeShape ;
+  sh:targetClass fp:ProductRiskGrade ;
+  sh:property [ sh:path fp:gradeScheme ; sh:minCount 1 ; sh:in ( "product_risk_grade_v1" ) ] .
+
+fp:CreditGradeShape a sh:NodeShape ;
+  sh:targetClass fp:CreditGrade ;
+  sh:property [ sh:path fp:gradeScheme ; sh:minCount 1 ; sh:in ( "credit_grade_v1" ) ] .
+
+fp:ManagedByAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#managedBy> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:class fp:FinancialProduct ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:AssetManager ] .
+
+fp:IssuedByAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#issuedBy> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:or ( [ sh:class fp:FinancialProduct ] [ sh:class fp:Security ] ) ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:Issuer ] .
+
+fp:TracksIndexAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#tracksIndex> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:or ( [ sh:class fp:ETF ] [ sh:class fp:PublicFund ] ) ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:Index ] .
+
+fp:HoldsSecurityAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#holdsSecurity> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:or ( [ sh:class fp:ETF ] [ sh:class fp:PublicFund ] ) ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:Security ] ;
+  sh:property [ sh:path fp:holdingWeightPercentage ; sh:minCount 1 ; sh:datatype xsd:decimal ; sh:minInclusive 0 ; sh:maxInclusive 100 ] .
+
+fp:ContainsSecurityAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#containsSecurity> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:class fp:Index ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:Security ] .
+
+fp:SecurityOfCompanyAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#securityOfCompany> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:class fp:EquitySecurity ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:Company ] .
+
+fp:ControlsCompanyAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#controlsCompany> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:class fp:Company ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:Company ] .
+
+fp:ListedOnAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#listedOn> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:class fp:Security ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:Market ] .
+
+fp:ClassifiedAsIndustryAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#classifiedAsIndustry> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:or ( [ sh:class fp:Company ] [ sh:class fp:Security ] ) ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:Industry ] .
+
+fp:AssociatedWithThemeAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#associatedWithTheme> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:or ( [ sh:class fp:FinancialProduct ] [ sh:class fp:Index ] [ sh:class fp:Company ] ) ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:Theme ] .
+
+fp:HasShareClassAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#hasShareClass> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:class fp:RepresentativeFund ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:FundShareClass ] .
+
+fp:DocumentedByAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#documentedBy> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:or ( [ sh:class fp:FinancialProduct ] [ sh:class fp:Organization ] [ sh:class fp:PolicyProgram ] ) ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:OfficialDocument ] .
+
+fp:HasRiskFactorAssertionShape a sh:NodeShape ;
+  sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#hasRiskFactor> . }" ] ;
+  sh:property [ sh:path fp:subject ; sh:class fp:FinancialProduct ] ;
+  sh:property [ sh:path fp:object ; sh:class fp:RiskFactor ] .

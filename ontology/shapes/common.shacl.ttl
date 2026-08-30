@@ -1,0 +1,50 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix v: <urn:validation:financial-product#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+fp:RelationAssertionShape a sh:NodeShape ;
+  sh:targetClass fp:RelationAssertion ;
+  sh:property [ sh:path fp:subject ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [
+    sh:path fp:predicate ; sh:minCount 1 ; sh:maxCount 1 ;
+    sh:in ( fp:managedBy fp:issuedBy fp:tracksIndex fp:holdsSecurity fp:containsSecurity fp:securityOfCompany fp:controlsCompany fp:listedOn fp:classifiedAsIndustry fp:associatedWithTheme fp:hasShareClass fp:documentedBy fp:hasRiskFactor )
+  ] ;
+  sh:property [ sh:path fp:object ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path fp:relationId ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path fp:datasetVersion ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
+  sh:property [ sh:path fp:supportedBy ; sh:minCount 1 ; sh:class fp:EvidenceRecord ] ;
+  sh:property [ sh:path fp:validFrom ; sh:datatype xsd:date ] ;
+  sh:property [ sh:path fp:validTo ; sh:datatype xsd:date ] ;
+  sh:property [ sh:path fp:publishedAt ; sh:datatype xsd:dateTime ] ;
+  sh:property [ sh:path fp:availableAt ; sh:datatype xsd:dateTime ] ;
+  sh:sparql [
+    sh:message "validFrom must not be later than validTo." ;
+    sh:select """
+      SELECT $this WHERE {
+        $this <urn:ontology:financial-product:v1#validFrom> ?validFrom ;
+              <urn:ontology:financial-product:v1#validTo> ?validTo .
+        FILTER(?validFrom > ?validTo)
+      }
+    """
+  ] ;
+  sh:sparql [
+    sh:message "Relation dates must not be later than the validation cutoff." ;
+    sh:select """
+      SELECT $this ?value WHERE {
+        <urn:validation:financial-product:context> <urn:validation:financial-product#cutoffDate> ?cutoff .
+        $this ?dateProperty ?value .
+        FILTER(
+          ?dateProperty = <urn:ontology:financial-product:v1#validFrom> ||
+          ?dateProperty = <urn:ontology:financial-product:v1#validTo> ||
+          ?dateProperty = <urn:ontology:financial-product:v1#publishedAt> ||
+          ?dateProperty = <urn:ontology:financial-product:v1#availableAt>
+        )
+        FILTER(STR(?value) > STR(?cutoff))
+      }
+    """
+  ] .
+
+fp:EvidenceRecordShape a sh:NodeShape ;
+  sh:targetClass fp:EvidenceRecord ;
+  sh:property [ sh:path fp:sourceRecord ; sh:minCount 1 ; sh:class fp:SourceRecord ] .

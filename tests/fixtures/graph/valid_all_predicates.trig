@@ -1,0 +1,41 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:product a fp:FinancialProduct, fp:ETF, fp:DomesticETF, fp:FundShareClass .
+  fp:representativeFund a fp:RepresentativeFund .
+  fp:manager a fp:AssetManager .
+  fp:issuer a fp:Issuer .
+  fp:security a fp:Security, fp:EquitySecurity .
+  fp:index a fp:Index .
+  fp:company a fp:Company .
+  fp:parentCompany a fp:Company .
+  fp:market a fp:Market .
+  fp:industry a fp:Industry .
+  fp:theme a fp:Theme .
+  fp:document a fp:OfficialDocument .
+  fp:chunk a fp:DocumentChunk .
+  fp:risk a fp:RiskFactor ; fp:documentChunk fp:chunk .
+  fp:evidence a fp:EvidenceRecord ; fp:sourceRecord fp:source .
+  fp:source a fp:SourceRecord .
+
+  fp:product fp:managedBy fp:manager ; fp:issuedBy fp:issuer ; fp:tracksIndex fp:index ; fp:holdsSecurity fp:security ; fp:associatedWithTheme fp:theme ; fp:documentedBy fp:document ; fp:hasRiskFactor fp:risk .
+  fp:representativeFund fp:hasShareClass fp:product .
+  fp:index fp:containsSecurity fp:security .
+  fp:security fp:securityOfCompany fp:company ; fp:listedOn fp:market ; fp:classifiedAsIndustry fp:industry .
+  fp:parentCompany fp:controlsCompany fp:company .
+
+  fp:ra-managed a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:managedBy ; fp:object fp:manager ; fp:relationId "relation-managed" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:ra-issued a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:issuedBy ; fp:object fp:issuer ; fp:relationId "relation-issued" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:ra-tracks a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:tracksIndex ; fp:object fp:index ; fp:relationId "relation-tracks" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:ra-holds a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:holdsSecurity ; fp:object fp:security ; fp:relationId "relation-holds" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence ; fp:holdingWeightPercentage "27.4"^^xsd:decimal .
+  fp:ra-contains a fp:RelationAssertion ; fp:subject fp:index ; fp:predicate fp:containsSecurity ; fp:object fp:security ; fp:relationId "relation-contains" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:ra-security-company a fp:RelationAssertion ; fp:subject fp:security ; fp:predicate fp:securityOfCompany ; fp:object fp:company ; fp:relationId "relation-security-company" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:ra-controls a fp:RelationAssertion ; fp:subject fp:parentCompany ; fp:predicate fp:controlsCompany ; fp:object fp:company ; fp:relationId "relation-controls" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:ra-listed a fp:RelationAssertion ; fp:subject fp:security ; fp:predicate fp:listedOn ; fp:object fp:market ; fp:relationId "relation-listed" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:ra-industry a fp:RelationAssertion ; fp:subject fp:security ; fp:predicate fp:classifiedAsIndustry ; fp:object fp:industry ; fp:relationId "relation-industry" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:ra-theme a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:associatedWithTheme ; fp:object fp:theme ; fp:relationId "relation-theme" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence ; fp:validFrom "2026-08-01"^^xsd:date ; fp:validTo "2026-08-24"^^xsd:date ; fp:publishedAt "2026-08-20T00:00:00Z"^^xsd:dateTime ; fp:availableAt "2026-08-20T00:00:00Z"^^xsd:dateTime .
+  fp:ra-share a fp:RelationAssertion ; fp:subject fp:representativeFund ; fp:predicate fp:hasShareClass ; fp:object fp:product ; fp:relationId "relation-share" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:ra-document a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:documentedBy ; fp:object fp:document ; fp:relationId "relation-document" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+  fp:ra-risk a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:hasRiskFactor ; fp:object fp:risk ; fp:relationId "relation-risk" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+}

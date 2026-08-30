@@ -1,0 +1,10 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:product a fp:FinancialProduct .
+  fp:manager a fp:AssetManager .
+  fp:evidence a fp:EvidenceRecord ; fp:sourceRecord fp:source .
+  fp:source a fp:SourceRecord .
+  fp:relation a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:managedBy ; fp:object fp:manager ; fp:relationId "date-order" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence ; fp:validFrom "2026-08-24"^^xsd:date ; fp:validTo "2026-08-01"^^xsd:date .
+}
