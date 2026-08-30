@@ -57,8 +57,9 @@ capture begins only after the KODEX 200 report passes and is reviewed.
 
 - OCR, scanned-document recovery, generated summaries, or LLM section parsing;
 - SEC HTML, 497K, index-methodology, or policy-document parsing;
-- embeddings, pgvector population, retrieval benchmarking, Graph projection,
-  Evidence promotion, or dataset activation;
+- production embeddings, real-corpus pgvector population, retrieval quality
+  benchmarking, Graph projection, request-time Evidence promotion, or dataset
+  activation; deterministic synthetic linkage tests remain in scope;
 - extracting fees, AUM, NAV, returns, complete holdings, financial statements,
   or other quantitative tables into Vector chunks;
 - inferring product identity from PDF text; or
@@ -191,6 +192,110 @@ overall pass boolean. The generated real report stays outside Git.
 The existing `chunking.py` continues to own classification and chunk assembly;
 the DART capture module continues to own only official-object capture.
 
+### 6.1 Cross-store traceability contract
+
+The Vector projection does not need to duplicate every authoritative field in
+one physical row. It must carry enough exact keys to reconstruct and verify the
+complete record through deterministic PostgreSQL joins.
+
+| Required concept | Authoritative representation |
+| --- | --- |
+| searchable text | `document.document_chunk.exact_text` and `normalized_search_text` |
+| embedding | `search.document_embedding.embedding` |
+| product identity | `document_entity_binding.entity_id`; current catalog uses the product's canonical `entity_id` rather than a second `product_id` |
+| external product identifiers | `catalog.identifier`, joined through the same `entity_id` and `dataset_version` |
+| document identity and type | `document_record.document_id` and `document_type` |
+| document version and validity | `document_profile.document_version`, `effective_from`, and `effective_to` |
+| chunk identity and order | `document_chunk.chunk_id` and `ordinal` |
+| source span | `page_start`, `page_end`, `section_path`, `character_start`, and `character_end` |
+| publisher | `source_record.publisher` plus `document_profile.publisher_role` |
+| source identity | `document_record.source_id` |
+| source object identity | `document_record.object_key` plus `content_checksum`; this is the current equivalent of a conceptual `source_object_id` |
+| publication and availability | `document_record.published_at` and `available_at` |
+| content version guard | `document_chunk.content_hash` plus `dataset_version` |
+| Evidence identity | created during verified Evidence promotion, then linked by `evidence_document_origin.evidence_id -> chunk_id` |
+
+The exact Vector identity is therefore:
+
+```text
+dataset_version
+document_id
+chunk_id
+chunk_content_hash
+model_id
+model_version
+```
+
+The five cross-store identities important to the answer path remain
+`entity_id`, `document_id`, `chunk_id`, `evidence_id`, and `dataset_version`,
+but they do not all exist at the same lifecycle stage. `entity_id`,
+`document_id`, `chunk_id`, and `dataset_version` exist before indexing;
+`evidence_id` is added only after a retrieved source span passes authority,
+entity, time, version, and locator verification.
+
+### 6.2 Metadata envelope and lineage tests
+
+The KODEX 200 gate must test the following stages independently and then as one
+lineage chain:
+
+1. **Extraction:** every section and chunk has exact text, page range, section
+   path, character range, content hash, document ID, and dataset version.
+2. **Document binding:** the document joins to exactly one approved KODEX 200
+   entity binding and one approved source record. No title or Vector similarity
+   may establish this binding.
+3. **Document metadata:** document type, document version, publisher ID and
+   role, source ID, object key, published/available time, effective range, and
+   cutoff eligibility are all recoverable for every chunk.
+4. **Vector projection:** a deterministic test embedding row references the
+   exact `(dataset_version, document_id, chunk_id, content_hash)` and fails on
+   any mismatched field. This proves metadata linkage only; it does not approve
+   an embedding model or claim real semantic-search quality.
+5. **Filtered retrieval:** a KODEX 200 risk query is restricted by entity,
+   document, dataset, publisher, effective time, and `risk_factor` before
+   ranking. A nearer chunk from another product, version, authority, or dataset
+   must be rejected.
+6. **Evidence promotion:** each accepted hit creates one document-span
+   `evidence_id` whose `evidence_document_origin` points to the exact chunk and
+   whose locator reproduces the source page, section, and span.
+7. **Graph projection boundary:** any later `hasRiskFactor` or `documentedBy`
+   edge must reference the same entity, document or chunk, Evidence, and
+   dataset identities. Vector similarity alone must create zero Graph edges.
+
+The lineage assertion is:
+
+```text
+source object
+  -> source_id
+  -> document_id
+  -> entity_id
+  -> chunk_id + content_hash
+  -> deterministic test embedding
+  -> verified evidence_id
+```
+
+Every arrow must be enforced by an existing foreign key or by a focused
+validation test. The quality report records a boolean and stable failure reason
+for each stage rather than one undifferentiated pass flag.
+
+### 6.3 Correct question execution order
+
+For “KODEX 200의 주요 위험요인을 알려줘”, the safe path is:
+
+1. PostgreSQL exact identity, optionally aided by an already-approved Graph
+   product relation, resolves KODEX 200 and its eligible current document.
+2. The query fixes `entity_id`, `document_id`, `dataset_version`, publisher,
+   effective-time, and `risk_factor` filters.
+3. Keyword and Vector retrieval rank chunks only inside that bounded set.
+4. The returned chunk and content hash are checked against the PostgreSQL
+   document ledger and original source span.
+5. Verified document-span Evidence is created and connected to the chunk.
+6. Only an approved predicate backed by that Evidence may later be projected
+   as a Graph risk relation and supplied to the answer Claim.
+
+Graph may narrow a search using relations already proven from the PostgreSQL
+ledger. It must not assert a risk factor first and then use its own unverified
+assertion to validate the Vector result.
+
 ## 7. Failure handling
 
 | Condition | Result |
@@ -227,7 +332,16 @@ The sample passes only when all of the following are true:
 9. total selected chunks are within the 8-15 target, or the report explains why
    the accepted evidence requires up to the soft limit of 20; and
 10. rerunning from identical PDF bytes and extraction version produces the same
-    canonical text hash, section identities, chunk identities, and report.
+    canonical text hash, section identities, chunk identities, and report;
+11. every chunk reconstructs its entity, document, source, publisher, version,
+    validity, object key, and dataset metadata through the approved joins;
+12. a deterministic test embedding accepts only the exact chunk identity and
+    content hash;
+13. accepted document-span Evidence round-trips from `evidence_id` to the exact
+    KODEX 200 chunk and source locator; and
+14. wrong-product, wrong-document, wrong-version, wrong-source,
+    wrong-effective-time, wrong-dataset, and wrong-content-hash candidates are
+    all rejected before answer release.
 
 The quality report is necessary but not sufficient: representative objective,
 strategy, and risk chunks must also be visually compared with their source PDF
@@ -242,6 +356,9 @@ pages before rollout approval.
   page numbers, hashes, and counts. Do not commit source prose or PDF bytes.
 - Run the existing 63 chunking tests unchanged, then add focused extraction and
   coordinator tests.
+- Reuse the existing PostgreSQL document, embedding, and Evidence foreign-key
+  tests, adding one KODEX-shaped synthetic lineage case and one mismatch case
+  for each identity boundary.
 - Run the real KODEX 200 gate only behind an explicit local-data marker and
   ignored PDF path.
 - Render and visually inspect the pages supporting representative selected
