@@ -12,12 +12,22 @@ from .base import (
     classify_access_error,
     sanitize_public_locator,
 )
+from .dart_pipeline import (
+    DartProspectusContext,
+    DartProspectusProcessingResult,
+    DartProspectusQualityReport,
+    process_dart_prospectus,
+)
 
 __all__ = [
     "DocumentDiscoveryContext",
     "DocumentSourceAccessError",
     "DocumentSourceAccessErrorCode",
     "DocumentSourceAdapter",
+    "DartProspectusContext",
+    "DartProspectusProcessingResult",
+    "DartProspectusQualityReport",
+    "process_dart_prospectus",
     "HttpStatusError",
     "MissingRequiredEnvironmentError",
     "NoRedirectHttpOpener",

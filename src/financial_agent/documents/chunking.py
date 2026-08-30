@@ -106,7 +106,7 @@ _EXCLUDED_HEADINGS = frozenset(
 
 _SECTION_ALIASES: tuple[tuple[SectionType, frozenset[str]], ...] = (
     (SectionType.REBALANCING, frozenset({"rebalancing", "reconstitution", "리밸런싱", "정기 변경", "정기변경"})),
-    (SectionType.RISK_FACTOR, frozenset({"principal risks", "principal risk", "risk factors", "investment risks", "투자 위험", "투자위험", "주요투자 위험", "주요 투자위험", "집합투자기구의 투자위험", "위험 요인", "위험요인"})),
+    (SectionType.RISK_FACTOR, frozenset({"principal risks", "principal risk", "risk factors", "investment risks", "투자 위험", "투자위험", "주요투자위험", "주요투자 위험", "주요 투자위험", "집합투자기구의 투자위험", "위험 요인", "위험요인"})),
     (SectionType.INVESTMENT_STRATEGY, frozenset({"principal investment strategies", "principal investment strategy", "investment strategy", "investment strategies", "투자 전략", "투자전략", "투자 목적 및 투자 전략", "투자목적 및 투자전략", "집합투자기구의 투자전략"})),
     (SectionType.INVESTMENT_OBJECTIVE, frozenset({"investment objective", "investment objectives", "investment goal", "투자 목적", "투자목적", "집합투자기구의 투자목적"})),
     (SectionType.INDEX_METHODOLOGY, frozenset({"index methodology", "index methodologies", "지수 방법론", "지수 산출 방법", "지수산출방법"})),
