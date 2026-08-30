@@ -10,7 +10,11 @@ import pytest
 from financial_agent.graph.client import FusekiGraphClient, GraphQueryError
 
 
-SELECT_QUERY = "# accepted comment\nPREFIX ex: <urn:example:>\nSELECT ?item WHERE { ?item ?p ?o }"
+SELECT_QUERY = (
+    "# accepted comment\n"
+    "PREFIX ex: <urn:example:>\n"
+    "SELECT ?item ?optional WHERE { ?item ?p ?optional }"
+)
 
 
 class _Response:
@@ -27,11 +31,17 @@ class _Response:
         return self._body
 
 
-def _results_json(bindings: list[dict[str, object]]) -> bytes:
+def _results_json(
+    bindings: list[dict[str, object]],
+    variables: list[str] | None = None,
+) -> bytes:
     import json
 
     return json.dumps(
-        {"head": {"vars": ["item", "optional"]}, "results": {"bindings": bindings}}
+        {
+            "head": {"vars": variables or ["item", "optional"]},
+            "results": {"bindings": bindings},
+        }
     ).encode()
 
 
@@ -91,7 +101,7 @@ def test_select_preserves_caller_metadata_for_an_empty_result(
 
     result = FusekiGraphClient("http://graph.test/query").select(
         query_id="empty-query",
-        sparql="SELECT * WHERE { ?s ?p ?o }",
+        sparql=SELECT_QUERY,
         dataset_version="dataset-version",
         coverage_status="coverage-unknown",
     )
@@ -100,6 +110,63 @@ def test_select_preserves_caller_metadata_for_an_empty_result(
     assert result.dataset_version == "dataset-version"
     assert result.coverage_status == "coverage-unknown"
     assert result.bindings == ()
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "file:///tmp/graph",
+        "ftp://graph.test/query",
+        "//graph.test/query",
+        "http:///query",
+        "https://",
+        "https://user@graph.test/query",
+        "https://user:password@graph.test/query",
+        "https://graph.test/query#fragment",
+        "not a url",
+    ),
+)
+def test_client_rejects_invalid_query_endpoints_before_http(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+) -> None:
+    """Catches non-HTTP, credential-bearing, or ambiguous endpoint configuration."""
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: pytest.fail("invalid endpoint reached HTTP"),
+    )
+
+    with pytest.raises(GraphQueryError, match="invalid_endpoint"):
+        FusekiGraphClient(endpoint)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "http://graph.test:3030/dataset/query?timeout=5",
+        "https://graph.test/query/path?dataset=version",
+    ),
+)
+def test_client_accepts_http_and_https_query_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+) -> None:
+    """Catches rejecting legitimate HTTP(S) endpoint ports, paths, or queries."""
+    captured: dict[str, object] = {}
+
+    def fake_urlopen(request: object, *, timeout: float) -> _Response:
+        captured["request"] = request
+        return _Response(_results_json([]))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    FusekiGraphClient(endpoint).select(
+        query_id="endpoint-query",
+        sparql=SELECT_QUERY,
+        dataset_version="dataset-version",
+        coverage_status="covered",
+    )
+
+    assert captured["request"].full_url == endpoint
 
 
 @pytest.mark.parametrize(
@@ -144,7 +211,7 @@ def test_select_wraps_http_and_transport_failures(monkeypatch: pytest.MonkeyPatc
         with pytest.raises(GraphQueryError, match="request_failed"):
             FusekiGraphClient("http://graph.test/query").select(
                 query_id="failure-query",
-                sparql="SELECT * WHERE { ?s ?p ?o }",
+                sparql=SELECT_QUERY,
                 dataset_version="dataset-version",
                 coverage_status="covered",
             )
@@ -154,8 +221,18 @@ def test_select_wraps_http_and_transport_failures(monkeypatch: pytest.MonkeyPatc
     "body",
     (
         b"not json",
-        b'{"head": {"vars": ["item"]}}',
-        b'{"head": {"vars": ["item"]}, "results": {"bindings": [{"item": {"value": 3}}]}}',
+        b"[]",
+        b'{"head": [], "results": {"bindings": []}}',
+        b'{"head": {"vars": ["item", "optional"]}, "results": []}',
+        b'{"head": {"vars": ["item", "optional"]}, "results": {"bindings": {}}}',
+        b'{"head": {"vars": ["optional", "item"]}, "results": {"bindings": []}}',
+        b'{"head": {"vars": ["item"]}, "results": {"bindings": []}}',
+        b'{"head": {"vars": ["item", "optional"]}, "results": {"bindings": [{"item": {"type": "uri", "value": "urn:item", "datatype": "urn:type"}}]}}',
+        b'{"head": {"vars": ["item", "optional"]}, "results": {"bindings": [{"item": {"type": "literal", "value": "item", "datatype": "urn:type", "xml:lang": "en"}}]}}',
+        b'{"head": {"vars": ["item", "optional"]}, "results": {"bindings": [{"item": {"type": "typed-literal", "value": "item"}}]}}',
+        b'{"head": {"vars": ["item", "optional"]}, "results": {"bindings": [{"item": {"type": "unknown", "value": "item"}}]}}',
+        b'{"head": {"vars": ["item", "optional"]}, "results": {"bindings": [{"item": {"type": "literal", "value": "item", "unexpected": "x"}}]}}',
+        b'{"head": {"vars": ["item", "optional"]}, "results": {"bindings": [{"outside": {"type": "literal", "value": "item"}}]}}',
     ),
 )
 def test_select_rejects_malformed_sparql_results_json(
@@ -170,7 +247,7 @@ def test_select_rejects_malformed_sparql_results_json(
     with pytest.raises(GraphQueryError, match="malformed_result"):
         FusekiGraphClient("http://graph.test/query").select(
             query_id="malformed-result",
-            sparql="SELECT * WHERE { ?s ?p ?o }",
+            sparql=SELECT_QUERY,
             dataset_version="dataset-version",
             coverage_status="covered",
         )

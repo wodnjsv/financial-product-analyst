@@ -41,7 +41,10 @@ WHERE {{
   }}
   GRAPH <{evidence_graph}> {{
     ?assertion fp:supportedBy ?evidence .
-    ?evidence a fp:EvidenceRecord ; fp:evidenceId ?evidence_id .
+    ?evidence a fp:EvidenceRecord ;
+      fp:evidenceId ?evidence_id ;
+      fp:sourceRecord ?source .
+    ?source a fp:SourceRecord ; fp:sourceId ?source_id .
   }}
   FILTER (?dataset_version = {version})
   BIND ({Literal(predicate_id).n3()} AS ?predicate_id)

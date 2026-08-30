@@ -15,7 +15,12 @@ from financial_agent.graph.contract import (
     RelationProjection,
     SourceProjection,
 )
-from financial_agent.graph.exporter import build_graph_artifacts, entity_iri
+from financial_agent.graph.exporter import (
+    build_graph_artifacts,
+    entity_iri,
+    evidence_iri,
+    source_iri,
+)
 from financial_agent.graph.queries import build_relation_query
 
 
@@ -164,6 +169,24 @@ def test_relation_query_requires_the_requested_assertion_dataset_version() -> No
     result = dataset.query(build_relation_query("managedBy", VERSION))
 
     assert [str(row["relation_assertion_id"]) for row in result] == ["relation/managed"]
+
+
+@pytest.mark.parametrize("remove_link", (True, False))
+def test_relation_query_requires_a_resolvable_evidence_source(remove_link: bool) -> None:
+    """Catches evidence that dangles or points to no usable SourceRecord."""
+    dataset = _exported_dataset()
+    evidence_graph = dataset.graph(URIRef("urn:evidence:financial-product:2026-08-24%2Fv1"))
+    evidence = evidence_iri(VERSION, "evidence/1")
+    source = source_iri(VERSION, "source/1")
+    if remove_link:
+        evidence_graph.remove((evidence, FP.sourceRecord, None))
+    else:
+        evidence_graph.remove((source, RDF.type, FP.SourceRecord))
+        evidence_graph.remove((source, FP.sourceId, None))
+
+    result = dataset.query(build_relation_query("managedBy", VERSION))
+
+    assert list(result) == []
 
 
 def test_relation_query_accepts_every_approved_predicate() -> None:
