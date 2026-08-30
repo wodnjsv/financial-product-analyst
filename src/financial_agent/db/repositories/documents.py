@@ -511,7 +511,6 @@ class DocumentCorpusRepository:
                 )
         coverage_ids = {corpus.coverage.coverage_id}
         bound_entities = {binding.entity_id for binding in corpus.entity_bindings}
-        previous_coverage_id = corpus.coverage.coverage_id
         for coverage in captured.additional_coverages:
             if (
                 coverage.dataset_version != corpus.dataset_version
@@ -522,13 +521,9 @@ class DocumentCorpusRepository:
                 or not _is_sha256(coverage.record_hash)
             ):
                 raise DocumentCorpusValidationError("additional coverage")
-            if (
-                coverage.coverage_id in coverage_ids
-                or coverage.coverage_id <= previous_coverage_id
-            ):
-                raise DocumentCorpusValidationError("additional coverage order")
+            if coverage.coverage_id in coverage_ids:
+                raise DocumentCorpusValidationError("additional coverage")
             coverage_ids.add(coverage.coverage_id)
-            previous_coverage_id = coverage.coverage_id
 
     @staticmethod
     def validate_standalone_coverage(coverage: DocumentCoverageDraft) -> None:
@@ -769,13 +764,22 @@ class DocumentCorpusRepository:
         coverages = tuple(
             self._coverage_from_row(row) for row in coverage_rows
         )
-        if coverages[0].coverage_id != corpus.coverage.coverage_id:
-            raise DocumentCorpusValidationError("primary coverage order")
+        primary_coverages = tuple(
+            item
+            for item in coverages
+            if item.coverage_id == corpus.coverage.coverage_id
+        )
+        if len(primary_coverages) != 1:
+            raise DocumentCorpusValidationError("primary coverage missing")
         return CapturedDocumentCorpus(
             source=self._source_from_row(source_row),
             corpus=corpus,
             source_artifact=self._source_artifact_from_row(artifact_row),
-            additional_coverages=coverages[1:],
+            additional_coverages=tuple(
+                item
+                for item in coverages
+                if item.coverage_id != corpus.coverage.coverage_id
+            ),
         )
 
     async def transition_source_retention(

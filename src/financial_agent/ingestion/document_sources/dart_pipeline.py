@@ -75,6 +75,8 @@ class DartProspectusQualityReport:
     text_page_count: int
     selected_section_count: int
     chunk_count: int
+    observed_selected_token_count: int
+    counter_identity: str
     selected_section_types: tuple[str, ...]
     selected_page_ranges: tuple[tuple[int | None, int | None], ...]
     chunk_identities: tuple[tuple[str, str, str, str], ...]
@@ -126,6 +128,7 @@ def process_dart_prospectus(
     target_max: int = 800,
     overlap: int = 75,
     soft_limit: int = 20,
+    selected_token_soft_limit: int = 8_000,
     extraction_version: str = "pdfplumber-layout-v1",
 ) -> DartProspectusProcessingResult:
     """Build a traceable corpus in memory; do not persist or create Evidence."""
@@ -159,6 +162,7 @@ def process_dart_prospectus(
         target_max=target_max,
         overlap=overlap,
         soft_limit=soft_limit,
+        selected_token_soft_limit=selected_token_soft_limit,
     )
     corpus = _corpus(context, chunking.chunks, extraction_version)
     DocumentCorpusRepository.validate_corpus(corpus)
@@ -334,6 +338,10 @@ def _report(
         text_page_count=extracted.text_page_count,
         selected_section_count=len(sections),
         chunk_count=len(chunks),
+        observed_selected_token_count=(
+            chunking.observed_selected_token_count
+        ),
+        counter_identity=chunking.counter_identity,
         selected_section_types=selected_types,
         selected_page_ranges=tuple((section.page_start, section.page_end) for section in sections),
         chunk_identities=identities,

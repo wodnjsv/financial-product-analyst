@@ -67,6 +67,7 @@ class DartCorpusIngestionRequest:
     target_max: int = 800
     overlap: int = 75
     soft_limit: int = 20
+    selected_token_soft_limit: int = 8_000
     extraction_version: str = "pdfplumber-layout-v1"
 
 
@@ -175,8 +176,13 @@ async def ingest_one_dart_document(
         target_max=request.target_max,
         overlap=request.overlap,
         soft_limit=request.soft_limit,
+        selected_token_soft_limit=request.selected_token_soft_limit,
         extraction_version=request.extraction_version,
     )
+    if not processing.report.passed:
+        raise DartCorpusIngestionError(
+            "dart_corpus_quality_review_required"
+        )
     processing, additional_coverages = _bind_target_members(
         processing, request.target
     )
@@ -305,10 +311,12 @@ def _validate_request(request: DartCorpusIngestionRequest) -> None:
         != f"documents/dart/{receipt}/full-prospectus.pdf"
         or candidate.published_at is None
         or candidate.available_at is None
-        or candidate.effective_from is None
         or candidate.published_at.date() > _CUTOFF
         or candidate.available_at.date() > _CUTOFF
-        or candidate.effective_from > _CUTOFF
+        or (
+            candidate.effective_from is not None
+            and candidate.effective_from > _CUTOFF
+        )
     ):
         raise DartCorpusIngestionError("dart_candidate_not_cutoff_eligible")
     if not request.run_root.is_absolute() or request.run_root.is_symlink():
@@ -401,15 +409,18 @@ def _bind_target_members(
         )
         for entity_id in member_ids
     )
-    coverages = tuple(
-        _coverage(corpus, entity_id) for entity_id in member_ids
+    primary_coverage = _coverage(corpus, processing.report.entity_id)
+    additional_coverages = tuple(
+        _coverage(corpus, entity_id)
+        for entity_id in member_ids
+        if entity_id != processing.report.entity_id
     )
     updated_corpus = replace(
         corpus,
         entity_bindings=bindings,
-        coverage=coverages[0],
+        coverage=primary_coverage,
     )
-    return replace(processing, corpus=updated_corpus), coverages[1:]
+    return replace(processing, corpus=updated_corpus), additional_coverages
 
 
 def _coverage(corpus, entity_id: str) -> DocumentCoverageDraft:

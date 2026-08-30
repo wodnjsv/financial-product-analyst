@@ -93,6 +93,8 @@ def test_pipeline_builds_traceable_corpus_without_premature_evidence(
     assert result.report.evidence_records_created == 0
     assert result.report.graph_relations_created == 0
     assert result.report.excluded_section_leakage is False
+    assert result.report.observed_selected_token_count > 0
+    assert result.report.counter_identity == "WhitespaceTokenCounter"
     assert result.report.passed
 
 

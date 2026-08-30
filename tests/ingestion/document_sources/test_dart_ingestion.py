@@ -369,6 +369,28 @@ async def test_ingestion_stops_before_a_sixth_quarantined_pdf(
 
 
 @pytest.mark.asyncio
+async def test_ingestion_does_not_persist_a_document_over_the_token_review_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_capture(monkeypatch)
+    request = replace(_request(tmp_path), selected_token_soft_limit=1)
+    repository = _MemoryRepository()
+
+    with pytest.raises(DartCorpusIngestionError) as raised:
+        await ingest_one_dart_document(
+            repository,
+            object(),
+            request=request,
+            now=lambda: datetime(2026, 8, 31, tzinfo=UTC),
+        )
+
+    assert raised.value.code == "dart_corpus_quality_review_required"
+    assert repository.captured is None
+    assert len(tuple(request.run_root.rglob("*.pdf"))) == 1
+
+
+@pytest.mark.asyncio
 async def test_ingestion_persists_reads_back_and_removes_only_the_source_pdf(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -411,7 +433,7 @@ async def test_ingestion_stores_one_chunk_set_for_all_organizer_member_products(
 ) -> None:
     _install_capture(monkeypatch)
     request = _request(tmp_path)
-    second_entity = "public-fund:KRZ000000002"
+    second_entity = "aaa-public-fund:KRZ000000002"
     request = replace(
         request,
         target=replace(
@@ -436,6 +458,7 @@ async def test_ingestion_stores_one_chunk_set_for_all_organizer_member_products(
 
     assert repository.captured is not None
     corpus = repository.captured.corpus
+    assert corpus.coverage.entity_id == ENTITY_ID
     assert {binding.entity_id for binding in corpus.entity_bindings} == {
         ENTITY_ID,
         second_entity,

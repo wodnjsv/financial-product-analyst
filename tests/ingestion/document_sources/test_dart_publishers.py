@@ -99,6 +99,25 @@ def test_corporation_codes_are_fetched_once_from_the_official_endpoint() -> None
     assert len(opener.calls) == 1
 
 
+def test_current_official_archive_accepts_the_documented_english_name_field() -> None:
+    payload = _raw_xml_zip(
+        "<result><list><corp_code>00123456</corp_code>"
+        "<corp_name>한빛자산운용</corp_name>"
+        "<corp_eng_name>Hanbit Asset Management</corp_eng_name>"
+        "<stock_code></stock_code><modify_date>20260824</modify_date>"
+        "</list></result>"
+    )
+
+    result = reconcile_dart_publishers(
+        inventory=_inventory(("manager-one", "한빛자산운용")),
+        corp_code_zip=payload,
+        institution_identifiers={},
+        reviewed_aliases={},
+    )
+
+    assert result.bindings[0].corp_code == "00123456"
+
+
 def test_reconciles_only_exact_official_name_identifier_or_reviewed_alias() -> None:
     inventory = _inventory(
         ("manager-name", "한빛 자산운용"),

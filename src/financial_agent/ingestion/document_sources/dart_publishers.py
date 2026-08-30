@@ -228,10 +228,20 @@ def _decode_corporations(payload: bytes) -> tuple[_Corporation, ...]:
     for item in root:
         if item.tag != "list":
             raise DartPublisherDataError("dart_corporation_codes_malformed")
-        if len(item) != 4:
-            raise DartPublisherDataError("dart_corporation_codes_malformed")
         values = {child.tag: child.text or "" for child in item}
-        if set(values) != {"corp_code", "corp_name", "stock_code", "modify_date"}:
+        required_fields = {
+            "corp_code",
+            "corp_name",
+            "stock_code",
+            "modify_date",
+        }
+        if (
+            len(values) != len(item)
+            or frozenset(values) not in {
+                frozenset(required_fields),
+                frozenset((*required_fields, "corp_eng_name")),
+            }
+        ):
             raise DartPublisherDataError("dart_corporation_codes_malformed")
         corp_code = values["corp_code"].strip()
         corp_name = _normalize_name(values["corp_name"])
