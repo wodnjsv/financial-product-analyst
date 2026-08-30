@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -35,6 +36,71 @@ from tests.fixtures.official_ingestion import (
 )
 
 
+APPROVED_GRAPH_PREDICATES = {
+    "managedBy",
+    "issuedBy",
+    "tracksIndex",
+    "holdsSecurity",
+    "containsSecurity",
+    "securityOfCompany",
+    "controlsCompany",
+    "listedOn",
+    "classifiedAsIndustry",
+    "associatedWithTheme",
+    "hasShareClass",
+    "documentedBy",
+    "hasRiskFactor",
+}
+
+REQUIREMENT_GROUPS = {
+    "entities",
+    "attributes",
+    "metrics",
+    "relations",
+    "document_claims",
+    "control_checks",
+}
+
+APPROVED_CAPABILITIES = {
+    "resolve_entity",
+    "lookup_facts",
+    "filter_products",
+    "rank_metric",
+    "calculate_metric",
+    "validate_metric_compatibility",
+    "normalize_currency",
+    "traverse_relation",
+    "calculate_similarity",
+    "resolve_reference",
+    "search_documents",
+    "validate_source_spans",
+    "validate_missingness",
+    "validate_availability",
+    "validate_closed_world_coverage",
+    "deduplicate_share_classes",
+    "build_evidence_bundle",
+    "generate_atomic_claims",
+    "verify_claim_support",
+    "determine_disposition",
+    "apply_claim_gate",
+    "render_verified_answer",
+}
+
+FROZEN_CASE_FINGERPRINT = (
+    "730ff0efdbe38a8899e52c7b5bbea6993cdfdeb704e3a1e86b1325169a52e761"
+)
+
+
+def _question_catalog() -> dict[str, object]:
+    return json.loads(
+        (
+            Path(__file__).parents[1]
+            / "gold"
+            / "core_questions.json"
+        ).read_text("utf-8")
+    )
+
+
 def _records(rows: object, table: str) -> tuple[dict[str, object], ...]:
     values = rows if isinstance(rows, tuple) else (rows,)
     return tuple(
@@ -55,6 +121,166 @@ def _domestic_binding() -> KrxEtfProductBinding:
         krx_name="TIGER 미국채10년선물",
         name_matches=True,
     )
+
+
+def test_question_contract_preserves_frozen_case_identity_and_disposition() -> None:
+    catalog = _question_catalog()
+    frozen = [
+        {
+            key: case[key]
+            for key in (
+                "id",
+                "question",
+                "category",
+                "support_level",
+                "target_support_level",
+                "expected_disposition",
+            )
+        }
+        for case in catalog["cases"]
+    ]
+    payload = json.dumps(
+        frozen,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    assert hashlib.sha256(payload).hexdigest() == FROZEN_CASE_FINGERPRINT
+
+
+def test_question_contract_v13_has_explicit_requirements_and_routes() -> None:
+    catalog = _question_catalog()
+
+    assert catalog["schema_version"] == "1.3"
+    assert len(catalog["cases"]) == 52
+    assert {
+        state: sum(case["support_level"] == state for case in catalog["cases"])
+        for state in (
+            "supported",
+            "limited",
+            "requires_additional_data",
+            "unsupported",
+        )
+    } == {
+        "supported": 16,
+        "limited": 18,
+        "requires_additional_data": 11,
+        "unsupported": 7,
+    }
+
+    for case in catalog["cases"]:
+        assert "required_relations" not in case, case["id"]
+        assert set(case["requirements"]) == REQUIREMENT_GROUPS, case["id"]
+        assert case["requires_data"] is (
+            case["support_level"] == "requires_additional_data"
+        ), case["id"]
+        assert case["verification"] == {
+            "coverage_assessment": "frozen_design_2026-08-27",
+            "current_db_execution": "not_run",
+            "verified_dataset_version": None,
+            "verified_at": None,
+            "result_artifact": None,
+        }, case["id"]
+
+        predicates = {
+            relation["predicate"]
+            for relation in case["requirements"]["relations"]
+        }
+        assert predicates <= APPROVED_GRAPH_PREDICATES, case["id"]
+        assert all(
+            set(relation) == {
+                "predicate",
+                "direction",
+                "required_assertion_fields",
+            }
+            and {
+                "relation_assertion_id",
+                "evidence_id",
+                "dataset_version",
+            } <= set(relation["required_assertion_fields"])
+            for relation in case["requirements"]["relations"]
+        ), case["id"]
+        routes = case["retrieval"]["subtask_routes"]
+        profile = case["retrieval"]["profile"]
+        assert case["retrieval"]["roles"] == catalog["retrieval_profiles"][
+            profile
+        ]["roles"], case["id"]
+        assert len(routes) == len(case["subtasks"]), case["id"]
+        assert {route["subtask"] for route in routes} == set(
+            case["subtasks"]
+        ), case["id"]
+        assert all(
+            set(route) == {"subtask", "capability", "role", "required"}
+            and route["capability"] in APPROVED_CAPABILITIES
+            and route["required"] is True
+            for route in routes
+        ), case["id"]
+        allowed_route_roles = set(case["retrieval"]["roles"]) | {
+            "application",
+            "ontology",
+            "policy",
+        }
+        assert all(
+            set(
+                route["role"]
+                if isinstance(route["role"], list)
+                else [route["role"]]
+            )
+            <= allowed_route_roles
+            for route in routes
+        ), case["id"]
+        assert {
+            item["id"] for item in case["requirements"]["attributes"]
+        }.isdisjoint(APPROVED_GRAPH_PREDICATES), case["id"]
+        assert {
+            item["id"] for item in case["requirements"]["metrics"]
+        }.isdisjoint(APPROVED_GRAPH_PREDICATES), case["id"]
+        if "vector" in case["retrieval"]["roles"]:
+            assert profile in {"document_grounded", "federated"}, case["id"]
+
+
+def test_question_contract_separates_grades_and_document_provenance() -> None:
+    cases = {case["id"]: case for case in _question_catalog()["cases"]}
+
+    bond_filter = cases["FLT-BOND-001"]["requirements"]
+    assert {item["id"] for item in bond_filter["attributes"]} >= {
+        "credit_grade",
+        "currency",
+        "availability_status",
+    }
+    assert not bond_filter["relations"]
+
+    cross_risk = cases["CMP-RISK-001"]["requirements"]
+    assert {item["id"] for item in cross_risk["attributes"]} == {
+        "product_risk_grade",
+        "credit_grade",
+    }
+
+    document = cases["DOC-FUND-001"]["requirements"]
+    assert "PolicyProgram" in {item["type"] for item in document["entities"]}
+    assert {item["predicate"] for item in document["relations"]} == {
+        "documentedBy"
+    }
+    assert document["document_claims"][0]["required_provenance"] == [
+        "publisher_organization_id",
+        "published_at",
+        "effective_from",
+        "effective_to",
+        "available_at",
+        "document_version",
+        "source_object_id",
+        "document_chunk_id",
+        "source_span",
+    ]
+    assert all(
+        set(claim) == {"claim_type", "required_provenance"}
+        for claim in document["document_claims"]
+    )
+
+    fund_similarity = cases["REL-SIM-FUND-001"]["requirements"]
+    assert "tracksIndex" in {
+        item["predicate"] for item in fund_similarity["relations"]
+    }
 
 
 def test_stage03_question_coverage_contract_is_complete() -> None:

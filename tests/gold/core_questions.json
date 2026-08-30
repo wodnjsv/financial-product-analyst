@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.2",
+  "schema_version": "1.3",
   "catalog_status": "stage03_current_coverage_frozen_2026-08-27",
   "snapshot_cutoff": "2026-08-24",
   "interaction_mode": "single_question_single_answer",
@@ -18,67 +18,39 @@
     "ontology_role": "runtime_semantic_control_not_prompt_description_only",
     "official_sample_case_ids": ["FLT-BOND-001", "DOC-FUND-001", "REL-OETF-001", "REL-THEME-001", "REL-CORP-001", "UNS-GRADE-001", "UNS-ENTITY-001", "UNS-PRODUCT-001"]
   },
-  "return_normalization_policy": {
-    "explicit_metric_precedence": true,
-    "default_unqualified_annual_return": "trailing_1y_historical_cumulative_return",
-    "derive_1y_from_approved_official_inputs": true,
-    "multiyear_fallback": "cagr_from_complete_cumulative_period_only",
-    "expected_rate_policy": "label_and_separate_from_historical_return",
-    "followup_question_allowed": false
-  },
+  "return_normalization_policy": {"explicit_metric_precedence": true, "default_unqualified_annual_return": "trailing_1y_historical_cumulative_return", "derive_1y_from_approved_official_inputs": true, "multiyear_fallback": "cagr_from_complete_cumulative_period_only", "expected_rate_policy": "label_and_separate_from_historical_return", "followup_question_allowed": false},
   "fx_policy": {
     "target_currency": "KRW",
     "observation_cutoff": "2026-08-24",
     "missing_same_day_observation": "latest_official_observation_on_or_before_cutoff",
     "required_disclosures": ["rate_type", "actual_observation_date", "publisher", "source_id", "formula"]
   },
-  "external_data_selection_policy": {
-    "principle": "question_requirement_first",
-    "organizer_data_precedence": true,
-    "api_connection_policy": "optional_and_conditional",
-    "connect_only_when": "a gold question requires a fact absent or unusable in organizer data and the source provides the matching official definition",
-    "do_not_connect_for": "source availability alone or unrelated macro context",
-    "knowledge_cutoff": "2026-08-24"
-  },
+  "external_data_selection_policy": {"principle": "question_requirement_first", "organizer_data_precedence": true, "api_connection_policy": "optional_and_conditional", "connect_only_when": "a gold question requires a fact absent or unusable in organizer data and the source provides the matching official definition", "do_not_connect_for": "source availability alone or unrelated macro context", "knowledge_cutoff": "2026-08-24"},
   "retrieval_profiles": {
-    "selection_rule": "explicit_case_profile_then_subtask_requirements_then_category_default",
-    "default_by_category": {
-      "exact_lookup": "structured",
-      "compound_filter": "structured",
-      "ranking": "structured",
-      "calculation": "structured",
-      "cross_family": "structured",
-      "multi_hop": "structured_graph",
-      "context_resolution": "structured",
-      "missing_incompatible": "structured",
-      "ambiguity": "structured",
-      "document_temporal": "document_grounded",
-      "unsupported": "answerability_gate"
-    },
+    "selection_rule": "explicit_case_profile_from_normalized_requirements",
     "structured": {
-      "roles": ["keyword", "rdb"],
-      "order": ["entity_resolution", "deterministic_query"],
-      "use_for": ["exact_lookup", "compound_filter", "ranking", "calculation"]
+      "roles": ["keyword", "rdb"]
     },
     "structured_graph": {
-      "roles": ["keyword", "graph", "rdb"],
-      "order": ["entity_resolution", "relationship_traversal", "deterministic_filter_or_rank"],
-      "use_for": ["multi_hop_structured", "cross_entity_relationship"]
+      "roles": ["keyword", "graph", "rdb"]
     },
     "document_grounded": {
-      "roles": ["keyword", "vector", "graph"],
-      "order": ["entity_resolution", "document_candidate_retrieval", "parent_entity_binding", "source_span_validation"],
-      "use_for": ["strategy", "structure", "risk", "trend"]
+      "roles": ["keyword", "vector", "graph", "rdb"]
     },
     "federated": {
-      "roles": ["keyword", "graph", "rdb", "vector"],
-      "order": ["decompose", "ontology_ground", "route", "retrieve", "map", "validate"],
-      "use_for": ["relationship_plus_numeric_plus_narrative"]
+      "roles": ["keyword", "graph", "rdb", "vector"]
     },
-    "answerability_gate": {
-      "roles": ["keyword", "rdb", "graph"],
-      "order": ["validate_ontology_vocabulary", "resolve_exact_entity_at_cutoff", "verify_evidence_relation", "abstain_if_unproven"],
-      "use_for": ["official_unanswerable", "unsupported"]
+    "ontology_gate": {
+      "roles": ["ontology"]
+    },
+    "identity_evidence_gate": {
+      "roles": ["keyword", "rdb", "graph"]
+    },
+    "policy_gate": {
+      "roles": ["policy"]
+    },
+    "snapshot_scope_gate": {
+      "roles": ["rdb"]
     }
   },
   "conditional_authoritative_source_candidates": {
@@ -198,18 +170,56 @@
       "archetype": "domestic_etf_exact_fact_lookup",
       "category": "exact_lookup",
       "question": "이 국내 ETF의 운용사, 위험등급, 연금거래 가능 여부와 데이터 기준일을 알려줘.",
-      "segments": [{"id": "s1", "text": "이 국내 ETF의 운용사, 위험등급, 연금거래 가능 여부와 데이터 기준일을 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "이 국내 ETF의 운용사, 위험등급, 연금거래 가능 여부와 데이터 기준일을 알려줘."}
+      ],
       "intent": "lookup",
       "subtasks": ["resolve_product", "lookup_facts"],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_product",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "lookup_facts", "capability": "lookup_facts", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf"],
       "required_fields": ["pd_itm_no", "pd_nm", "pd_grp_no", "cu_fund_mgmt_co", "pd_risk_nm", "pd_pen_tr_yn", "du_upt_dt"],
-      "required_relations": ["managedBy", "hasRiskGrade", "hasPensionEligibility"],
-      "data_requirements": [{"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "AssetManager", "role": "relation_target"}
+        ],
+        "attributes": [
+          {"id": "product_risk_grade", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "product_risk_grade_v1"},
+          {"id": "pension_eligibility", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "boolean"}
+        ],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "managedBy",
+            "direction": "product_to_manager",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["EXACT_PRODUCT_IDENTITY", "ETF_ONLY", "DISCLOSE_APPLICABLE_DATE"]
+      },
+      "data_requirements": [
+        {"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["EXACT_PRODUCT_IDENTITY", "ETF_ONLY", "DISCLOSE_APPLICABLE_DATE"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_etf_master"],
       "closed_world_scope": null,
@@ -225,18 +235,62 @@
       "archetype": "overseas_etf_ticker_lookup",
       "category": "exact_lookup",
       "question": "티커가 ABCD인 해외 ETF의 정식명, 운용사, 투자지역, 기초지수와 거래통화를 알려줘.",
-      "segments": [{"id": "s1", "text": "티커가 ABCD인 해외 ETF의 정식명, 운용사, 투자지역, 기초지수와 거래통화를 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "티커가 ABCD인 해외 ETF의 정식명, 운용사, 투자지역, 기초지수와 거래통화를 알려줘."}
+      ],
       "intent": "lookup",
       "subtasks": ["resolve_ticker", "lookup_facts"],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_ticker",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "lookup_facts", "capability": "lookup_facts", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["overseas_etf"],
       "required_fields": ["pd_abrv_nm", "pd_itm_no", "pd_nm", "pd_grp_no", "cu_fund_mgmt_co", "wu_inv_rgn", "cu_base_index", "pd_trd_ccy"],
-      "required_relations": ["managedBy", "investsInRegion", "tracksIndex", "tradesInCurrency"],
-      "data_requirements": [{"name": "overseas_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "AssetManager", "role": "relation_target"},
+          {"type": "Index", "role": "relation_target"}
+        ],
+        "attributes": [
+          {"id": "region", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "investment_region_v1"},
+          {"id": "currency", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "iso_4217"}
+        ],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "managedBy",
+            "direction": "product_to_manager",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          },
+          {
+            "predicate": "tracksIndex",
+            "direction": "product_to_index",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY", "TICKER_IS_NOT_PRIMARY_KEY", "PLACEHOLDER_INDEX_IS_MISSING"]
+      },
+      "data_requirements": [
+        {"name": "overseas_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["ETF_ONLY", "TICKER_IS_NOT_PRIMARY_KEY", "PLACEHOLDER_INDEX_IS_MISSING"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["overseas_etf_master"],
       "closed_world_scope": null,
@@ -252,18 +306,61 @@
       "archetype": "bond_name_disambiguated_lookup",
       "category": "exact_lookup",
       "question": "한빛전자 회사채를 찾아서 발행일, 만기일, 표면금리와 신용등급을 알려줘.",
-      "segments": [{"id": "s1", "text": "한빛전자 회사채를 찾아서 발행일, 만기일, 표면금리와 신용등급을 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "한빛전자 회사채를 찾아서 발행일, 만기일, 표면금리와 신용등급을 알려줘."}
+      ],
       "intent": "lookup",
       "subtasks": ["search_by_name", "disambiguate_issues", "lookup_facts"],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "search_by_name",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {
+            "subtask": "disambiguate_issues",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "lookup_facts", "capability": "lookup_facts", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_bond"],
       "required_fields": ["PD_NO", "PD_NM", "PD_PBCM", "ISU_DT", "MAT_DT", "SRFC_IRT", "CRD_GRD", "CRD_GRD_DT"],
-      "required_relations": ["issuedBy", "hasCreditGrade"],
-      "data_requirements": [{"name": "domestic_bond_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticBond", "role": "candidate_product"},
+          {"type": "Issuer", "role": "relation_target"}
+        ],
+        "attributes": [
+          {"id": "credit_grade", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "credit_grade_v1"}
+        ],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "issuedBy",
+            "direction": "product_or_security_to_issuer",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["DO_NOT_MERGE_DISTINCT_ISSUES", "DISCLOSE_MISSING_CREDIT_GRADE"]
+      },
+      "data_requirements": [
+        {"name": "domestic_bond_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["DO_NOT_MERGE_DISTINCT_ISSUES", "DISCLOSE_MISSING_CREDIT_GRADE"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_bond_master"],
       "closed_world_scope": null,
@@ -279,18 +376,57 @@
       "archetype": "public_fund_share_class_lookup",
       "category": "exact_lookup",
       "question": "새봄글로벌주식형 펀드의 판매 클래스별 상품번호, 판매상태와 위험등급을 보여줘.",
-      "segments": [{"id": "s1", "text": "새봄글로벌주식형 펀드의 판매 클래스별 상품번호, 판매상태와 위험등급을 보여줘."}],
+      "segments": [
+        {"id": "s1", "text": "새봄글로벌주식형 펀드의 판매 클래스별 상품번호, 판매상태와 위험등급을 보여줘."}
+      ],
       "intent": "lookup",
       "subtasks": ["resolve_fund_group", "list_unique_share_classes"],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_fund_group",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "list_unique_share_classes", "capability": "lookup_facts", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["public_fund"],
       "required_fields": ["itm_no", "itm_nm", "rptt_ksd_itm_no", "sale_yn", "zrin_fd_ivst_risk_gcd"],
-      "required_relations": ["belongsToRepresentativeFund", "hasRiskGrade", "hasSaleStatus"],
-      "data_requirements": [{"name": "public_fund_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "PublicFund", "role": "candidate_product"},
+          {"type": "RepresentativeFund", "role": "relation_source"},
+          {"type": "FundShareClass", "role": "relation_target"}
+        ],
+        "attributes": [
+          {"id": "product_risk_grade", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "product_risk_grade_v1"},
+          {"id": "sale_status", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "sale_status_v1"}
+        ],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "hasShareClass",
+            "direction": "representative_fund_to_share_class",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["DEDUP_BY_ITM_NO", "INVALID_REPRESENTATIVE_SENTINEL_IS_MISSING"]
+      },
+      "data_requirements": [
+        {"name": "public_fund_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["DEDUP_BY_ITM_NO", "INVALID_REPRESENTATIVE_SENTINEL_IS_MISSING"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["public_fund_master"],
       "closed_world_scope": null,
@@ -306,18 +442,47 @@
       "archetype": "domestic_etf_operational_multi_filter",
       "category": "compound_filter",
       "question": "미국 주식에 투자하면서 연금거래가 가능하고 판매중이며 거래정지가 아닌 국내 ETF만 보여줘.",
-      "segments": [{"id": "s1", "text": "미국 주식에 투자하면서 연금거래가 가능하고 판매중이며 거래정지가 아닌 국내 ETF만 보여줘."}],
+      "segments": [
+        {"id": "s1", "text": "미국 주식에 투자하면서 연금거래가 가능하고 판매중이며 거래정지가 아닌 국내 ETF만 보여줘."}
+      ],
       "intent": "filter",
       "subtasks": ["apply_product_type_filter", "apply_classification_filters", "apply_operational_filters"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "apply_product_type_filter", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "apply_classification_filters", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "apply_operational_filters", "capability": "filter_products", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf"],
       "required_fields": ["pd_grp_no", "wu_inv_ast_type", "wu_inv_rgn", "pd_pen_tr_yn", "pd_sale_yn", "pd_tr_yn"],
-      "required_relations": ["investsInAssetClass", "investsInRegion", "hasPensionEligibility", "hasSaleStatus"],
-      "data_requirements": [{"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "asset_class", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "asset_class_v1"},
+          {"id": "region", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "investment_region_v1"},
+          {"id": "pension_eligibility", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "boolean"},
+          {"id": "sale_status", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "sale_status_v1"}
+        ],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY", "SALEABLE_EQUALS_1", "TRADING_SUSPENDED_EQUALS_1", "PENSION_ELIGIBLE_EQUALS_Y"]
+      },
+      "data_requirements": [
+        {"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["ETF_ONLY", "SALEABLE_EQUALS_1", "TRADING_SUSPENDED_EQUALS_1", "PENSION_ELIGIBLE_EQUALS_Y"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_etf_master"],
       "closed_world_scope": null,
@@ -333,18 +498,59 @@
       "archetype": "overseas_etf_region_fee_aum_filter",
       "category": "compound_filter",
       "question": "일본 주식형 해외 ETF 중 총보수 0.5% 이하이고 AUM이 있는 상품만 찾아줘.",
-      "segments": [{"id": "s1", "text": "일본 주식형 해외 ETF 중 총보수 0.5% 이하이고 AUM이 있는 상품만 찾아줘."}],
+      "segments": [
+        {"id": "s1", "text": "일본 주식형 해외 ETF 중 총보수 0.5% 이하이고 AUM이 있는 상품만 찾아줘."}
+      ],
       "intent": "filter",
       "subtasks": ["filter_product_type", "filter_region_and_asset", "filter_fee", "require_aum"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "filter_product_type", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "filter_region_and_asset", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "filter_fee", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "require_aum", "capability": "filter_products", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["overseas_etf"],
       "required_fields": ["pd_grp_no", "wu_inv_rgn", "wu_inv_ast_type", "cu_charge_rt", "du_last_aum"],
-      "required_relations": ["investsInRegion", "investsInAssetClass", "hasFee", "hasAUM"],
-      "data_requirements": [{"name": "overseas_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "OverseasETF", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "region", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "investment_region_v1"},
+          {"id": "asset_class", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "asset_class_v1"}
+        ],
+        "metrics": [
+          {
+            "id": "fee_rate",
+            "role": "filter",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "fee_definition", "applicable_date"]
+          },
+          {
+            "id": "aum",
+            "role": "filter",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY", "NON_MISSING_FEE", "NON_MISSING_AUM", "DISCLOSE_FEE_DEFINITION_LIMITATION"]
+      },
+      "data_requirements": [
+        {"name": "overseas_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["ETF_ONLY", "NON_MISSING_FEE", "NON_MISSING_AUM", "DISCLOSE_FEE_DEFINITION_LIMITATION"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["overseas_etf_master"],
       "closed_world_scope": null,
@@ -360,31 +566,61 @@
       "archetype": "official_saleable_krw_bond_credit_threshold",
       "category": "compound_filter",
       "question": "현재 판매 가능한 원화채권 중 AA- 이상 종목 알려줘.",
-      "segments": [{"id": "s1", "text": "현재 판매 가능한 원화채권 중 AA- 이상 종목 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "현재 판매 가능한 원화채권 중 AA- 이상 종목 알려줘."}
+      ],
       "intent": "filter",
       "subtasks": ["filter_currency", "validate_credit_grade_vocabulary", "filter_credit_threshold", "filter_not_matured", "filter_current_saleability"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "filter_currency", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "validate_credit_grade_vocabulary", "capability": "validate_metric_compatibility", "role": "rdb", "required": true},
+          {"subtask": "filter_credit_threshold", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "filter_not_matured", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "filter_current_saleability", "capability": "filter_products", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_bond"],
       "required_fields": ["STD_PD_MCLS_NM", "CRD_GRD", "MAT_DT", "BUYABLE_QUANTITY", "REMAINING_DAYS", "CURR_CD", "PD_STD_INFO_UPDATE"],
-      "required_relations": ["hasCreditGrade", "hasMaturity", "hasAvailability", "hasCurrency"],
-      "data_requirements": [{"name": "domestic_bond_master", "provenance": "organizer", "status": "available_with_announced_saleability_rule", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticBond", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "credit_grade", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "credit_grade_v1"},
+          {"id": "availability_status", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "availability_status_v1"},
+          {"id": "currency", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "iso_4217"}
+        ],
+        "metrics": [
+          {
+            "id": "maturity_date",
+            "role": "filter",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["KRW_ONLY", "CREDIT_GRADE_ORDER_AAA_AA_PLUS_AA_ZERO_AA_MINUS", "CREDIT_GRADE_AT_LEAST_AA_MINUS", "BUYABLE_QUANTITY_INVALID_IGNORE", "EXCLUDE_DELISTED_OR_LISTING_ENDED", "OTHERWISE_ASSUME_PURCHASABLE", "MATURITY_AFTER_CUTOFF", "REMAINING_DAYS_POSITIVE", "VALID_CREDIT_GRADE", "CREDIT_GRADE_ORDER", "BOND_HAS_CURRENCY", "AVAILABILITY_IS_TIME_SCOPED"]
+      },
+      "data_requirements": [
+        {"name": "domestic_bond_master", "provenance": "organizer", "status": "available_with_announced_saleability_rule", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["KRW_ONLY", "CREDIT_GRADE_ORDER_AAA_AA_PLUS_AA_ZERO_AA_MINUS", "CREDIT_GRADE_AT_LEAST_AA_MINUS", "BUYABLE_QUANTITY_INVALID_IGNORE", "EXCLUDE_DELISTED_OR_LISTING_ENDED", "OTHERWISE_ASSUME_PURCHASABLE", "MATURITY_AFTER_CUTOFF", "REMAINING_DAYS_POSITIVE"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_bond_master"],
       "closed_world_scope": null,
       "missingness_policy": "organizer_authoritative",
       "limitation_reason": null,
       "expected_route": ["domestic_bond"],
-      "retrieval_profile": "structured",
-      "subtask_routes": [
-        {"subtask": "validate_credit_grade_vocabulary", "role": "ontology"},
-        {"subtask": "filter_currency", "role": "rdb"},
-        {"subtask": "filter_credit_threshold", "role": "rdb"},
-        {"subtask": "filter_current_saleability", "role": "rdb"}
-      ],
       "ontology_checks": ["VALID_CREDIT_GRADE", "CREDIT_GRADE_ORDER", "BOND_HAS_CURRENCY", "AVAILABILITY_IS_TIME_SCOPED"],
       "temporal_scope": {"as_of": "2026-08-24", "exclude_matured": true, "saleability_rule": "exclude_delisted_or_listing_ended_otherwise_assume_purchasable"},
       "answerability_basis": "주최 측 공지에 따라 BUYABLE_QUANTITY는 사용하지 않고 상장폐지·리스팅 종료 종목만 제외한 나머지를 구매 가능으로 간주한다.",
@@ -398,18 +634,49 @@
       "archetype": "public_fund_sale_region_hedge_filter",
       "category": "compound_filter",
       "question": "공모펀드 중 판매중이고 당사판매가 가능하며 해외 주식에 투자하고 환헤지를 하는 상품을 찾아줘.",
-      "segments": [{"id": "s1", "text": "공모펀드 중 판매중이고 당사판매가 가능하며 해외 주식에 투자하고 환헤지를 하는 상품을 찾아줘."}],
+      "segments": [
+        {"id": "s1", "text": "공모펀드 중 판매중이고 당사판매가 가능하며 해외 주식에 투자하고 환헤지를 하는 상품을 찾아줘."}
+      ],
       "intent": "filter",
       "subtasks": ["filter_public_offering", "filter_sale_status", "filter_region_and_type", "filter_currency_hedge", "deduplicate_classes"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "filter_public_offering", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "filter_sale_status", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "filter_region_and_type", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "filter_currency_hedge", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "deduplicate_classes", "capability": "deduplicate_share_classes", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["public_fund"],
       "required_fields": ["prvo_pbff_desc", "sale_yn", "thco_sale_yn", "ovrs_fd_desc", "or_attr_desc", "exchdg_yn", "itm_no"],
-      "required_relations": ["hasOfferingType", "hasSaleStatus", "investsInRegion", "hasHedgePolicy"],
-      "data_requirements": [{"name": "public_fund_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "PublicFund", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "offering_type", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "offering_type_v1"},
+          {"id": "sale_status", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "sale_status_v1"},
+          {"id": "region", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "investment_region_v1"},
+          {"id": "hedge_policy", "role": "filter", "authority": "approved_structured_fact", "controlled_vocabulary": "hedge_policy_v1"}
+        ],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["PUBLIC_OFFERING_ONLY", "SALE_STATUS_ACTIVE", "DEDUP_BY_ITM_NO", "MISSING_HEDGE_IS_UNKNOWN"]
+      },
+      "data_requirements": [
+        {"name": "public_fund_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["PUBLIC_OFFERING_ONLY", "SALE_STATUS_ACTIVE", "DEDUP_BY_ITM_NO", "MISSING_HEDGE_IS_UNKNOWN"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["public_fund_master"],
       "closed_world_scope": null,
@@ -425,18 +692,62 @@
       "archetype": "provider_domestic_etf_aum_top5",
       "category": "ranking",
       "question": "가람자산운용이 운용하는 국내 ETF를 AUM이 큰 순서로 5개 알려줘.",
-      "segments": [{"id": "s1", "text": "가람자산운용이 운용하는 국내 ETF를 AUM이 큰 순서로 5개 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "가람자산운용이 운용하는 국내 ETF를 AUM이 큰 순서로 5개 알려줘."}
+      ],
       "intent": "rank",
       "subtasks": ["resolve_provider", "filter_provider_and_type", "rank_aum", "take_top5"],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_provider",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "filter_provider_and_type", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "rank_aum", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "take_top5", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf"],
       "required_fields": ["cu_fund_mgmt_co", "pd_grp_no", "du_last_aum", "du_upt_dt", "pd_itm_no"],
-      "required_relations": ["managedBy", "hasAUM"],
-      "data_requirements": [{"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "AssetManager", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "aum",
+            "role": "rank_key",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "managedBy",
+            "direction": "product_to_manager",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY", "NON_MISSING_AUM", "STABLE_DESCENDING_SORT", "TOP_K_5"]
+      },
+      "data_requirements": [
+        {"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["ETF_ONLY", "NON_MISSING_AUM", "STABLE_DESCENDING_SORT", "TOP_K_5"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_etf_master"],
       "closed_world_scope": null,
@@ -452,18 +763,53 @@
       "archetype": "overseas_etf_region_aum_top5",
       "category": "ranking",
       "question": "글로벌 채권형 해외 ETF 중 AUM 상위 5개를 알려줘.",
-      "segments": [{"id": "s1", "text": "글로벌 채권형 해외 ETF 중 AUM 상위 5개를 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "글로벌 채권형 해외 ETF 중 AUM 상위 5개를 알려줘."}
+      ],
       "intent": "rank",
       "subtasks": ["filter_type_region_asset", "rank_aum", "take_top5"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "filter_type_region_asset", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "rank_aum", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "take_top5", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["overseas_etf"],
       "required_fields": ["pd_grp_no", "wu_inv_rgn", "wu_inv_ast_type", "du_last_aum", "pd_curr_cd", "du_upt_dt"],
-      "required_relations": ["investsInRegion", "investsInAssetClass", "hasAUM", "hasCurrency"],
-      "data_requirements": [{"name": "overseas_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "OverseasETF", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "region", "role": "rank_key", "authority": "approved_structured_fact", "controlled_vocabulary": "investment_region_v1"},
+          {"id": "asset_class", "role": "rank_key", "authority": "approved_structured_fact", "controlled_vocabulary": "asset_class_v1"},
+          {"id": "currency", "role": "rank_key", "authority": "approved_structured_fact", "controlled_vocabulary": "iso_4217"}
+        ],
+        "metrics": [
+          {
+            "id": "aum",
+            "role": "rank_key",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY", "NON_MISSING_AUM", "SAME_CURRENCY", "TOP_K_5"]
+      },
+      "data_requirements": [
+        {"name": "overseas_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["ETF_ONLY", "NON_MISSING_AUM", "SAME_CURRENCY", "TOP_K_5"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["overseas_etf_master"],
       "closed_world_scope": null,
@@ -479,18 +825,58 @@
       "archetype": "buyable_bond_yield_top5",
       "category": "ranking",
       "question": "데이터상 매수 가능한 원화 회사채 중 매수수익률이 높은 5개를 알려줘.",
-      "segments": [{"id": "s1", "text": "데이터상 매수 가능한 원화 회사채 중 매수수익률이 높은 5개를 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "데이터상 매수 가능한 원화 회사채 중 매수수익률이 높은 5개를 알려줘."}
+      ],
       "intent": "rank",
       "subtasks": ["filter_buyable_bonds", "validate_yield", "rank_buy_yield", "take_top5"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "filter_buyable_bonds", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "validate_yield", "capability": "validate_metric_compatibility", "role": "rdb", "required": true},
+          {"subtask": "rank_buy_yield", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "take_top5", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_bond"],
       "required_fields": ["STD_PD_MCLS_NM", "CURR_CD", "BUYABLE_QUANTITY", "BUY_YIELD", "MAT_DT", "REMAINING_DAYS", "PD_STD_INFO_UPDATE"],
-      "required_relations": ["hasAvailability", "hasYield", "hasMaturity"],
-      "data_requirements": [{"name": "domestic_bond_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticBond", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "availability_status", "role": "rank_key", "authority": "approved_structured_fact", "controlled_vocabulary": "availability_status_v1"}
+        ],
+        "metrics": [
+          {
+            "id": "yield_rate",
+            "role": "rank_key",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "yield_definition", "applicable_date"]
+          },
+          {
+            "id": "maturity_date",
+            "role": "rank_key",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["DO_NOT_MIX_YIELD_TYPES", "BUYABLE_QUANTITY_INVALID_IGNORE", "EXCLUDE_DELISTED_OR_LISTING_ENDED", "OTHERWISE_ASSUME_PURCHASABLE", "NON_MISSING_BUY_YIELD", "TOP_K_5"]
+      },
+      "data_requirements": [
+        {"name": "domestic_bond_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["DO_NOT_MIX_YIELD_TYPES", "BUYABLE_QUANTITY_INVALID_IGNORE", "EXCLUDE_DELISTED_OR_LISTING_ENDED", "OTHERWISE_ASSUME_PURCHASABLE", "NON_MISSING_BUY_YIELD", "TOP_K_5"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_bond_master"],
       "closed_world_scope": null,
@@ -506,13 +892,44 @@
       "archetype": "public_fund_1y_return_top5",
       "category": "ranking",
       "question": "판매중인 공모 주식형 펀드 중 1년 수익률 상위 5개를 알려줘.",
-      "segments": [{"id": "s1", "text": "판매중인 공모 주식형 펀드 중 1년 수익률 상위 5개를 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "판매중인 공모 주식형 펀드 중 1년 수익률 상위 5개를 알려줘."}
+      ],
       "intent": "rank",
       "subtasks": ["filter_public_active_equity_funds", "deduplicate_by_itm_no", "validate_1y_return", "rank_top5"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "filter_public_active_equity_funds", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "deduplicate_by_itm_no", "capability": "deduplicate_share_classes", "role": "rdb", "required": true},
+          {"subtask": "validate_1y_return", "capability": "validate_metric_compatibility", "role": "rdb", "required": true},
+          {"subtask": "rank_top5", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["public_fund"],
       "required_fields": ["prvo_pbff_desc", "sale_yn", "or_attr_desc", "itm_no", "fd_yr1_ern_r"],
-      "required_relations": ["hasOfferingType", "hasSaleStatus", "hasReturnMetric"],
+      "requirements": {
+        "entities": [
+          {"type": "PublicFund", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "offering_type", "role": "rank_key", "authority": "approved_structured_fact", "controlled_vocabulary": "offering_type_v1"},
+          {"id": "sale_status", "role": "rank_key", "authority": "approved_structured_fact", "controlled_vocabulary": "sale_status_v1"}
+        ],
+        "metrics": [
+          {
+            "id": "trailing_1y_historical_cumulative_return",
+            "role": "rank_key",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "period", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["DEDUP_BY_ITM_NO", "NON_MISSING_RETURN", "REJECT_RETURN_BELOW_MINUS_100", "DISCLOSE_MISSING_RETURN_DATE"]
+      },
       "data_requirements": [
         {"name": "public_fund_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"},
         {"name": "official_fund_performance_snapshot", "provenance": "authoritative_external", "status": "required_for_exact_as_of", "cutoff": "2026-08-24"}
@@ -521,6 +938,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["public_fund_master", "official_fund_performance_snapshot"],
       "closed_world_scope": null,
@@ -536,18 +955,67 @@
       "archetype": "domestic_etf_premium_discount_recalculation",
       "category": "calculation",
       "question": "이 국내 ETF의 종가와 NAV로 괴리율을 다시 계산하고 원본 괴리율과 비교해줘.",
-      "segments": [{"id": "s1", "text": "이 국내 ETF의 종가와 NAV로 괴리율을 다시 계산하고 원본 괴리율과 비교해줘."}],
+      "segments": [
+        {"id": "s1", "text": "이 국내 ETF의 종가와 NAV로 괴리율을 다시 계산하고 원본 괴리율과 비교해줘."}
+      ],
       "intent": "calculate",
       "subtasks": ["resolve_product", "validate_price_nav_dates", "calculate_premium_discount", "compare_source_metric"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_product",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "validate_price_nav_dates", "capability": "validate_metric_compatibility", "role": "rdb", "required": true},
+          {"subtask": "calculate_premium_discount", "capability": "calculate_metric", "role": "rdb", "required": true},
+          {"subtask": "compare_source_metric", "capability": "lookup_facts", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf"],
       "required_fields": ["du_clpr", "du_last_nav", "du_diff_rt", "du_upt_dt"],
-      "required_relations": ["hasMarketPrice", "hasNAV", "hasPremiumDiscount"],
-      "data_requirements": [{"name": "domestic_etf_master", "provenance": "organizer", "status": "available_with_authoritative_missingness", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "market_price",
+            "role": "calculation_input",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          },
+          {
+            "id": "nav",
+            "role": "calculation_input",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          },
+          {
+            "id": "premium_discount_rate",
+            "role": "calculation_input",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["SAME_DATE_REQUIRED", "DETERMINISTIC_FORMULA", "ORGANIZER_NULL_REMAINS_UNAVAILABLE", "ZERO_IS_NOT_MISSING"]
+      },
+      "data_requirements": [
+        {"name": "domestic_etf_master", "provenance": "organizer", "status": "available_with_authoritative_missingness", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["SAME_DATE_REQUIRED", "DETERMINISTIC_FORMULA", "ORGANIZER_NULL_REMAINS_UNAVAILABLE", "ZERO_IS_NOT_MISSING"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "limited",
       "required_sources": ["domestic_etf_master"],
       "closed_world_scope": null,
@@ -563,18 +1031,63 @@
       "archetype": "bond_remaining_days_recalculation",
       "category": "calculation",
       "question": "기준일 2026년 7월 11일로 이 채권들의 잔존일수를 다시 계산하고 원본 값과 다른 항목을 알려줘.",
-      "segments": [{"id": "s1", "text": "기준일 2026년 7월 11일로 이 채권들의 잔존일수를 다시 계산하고 원본 값과 다른 항목을 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "기준일 2026년 7월 11일로 이 채권들의 잔존일수를 다시 계산하고 원본 값과 다른 항목을 알려줘."}
+      ],
       "intent": "calculate",
       "subtasks": ["resolve_products", "parse_maturity_dates", "calculate_remaining_days", "compare_source_values"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_products",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "parse_maturity_dates", "capability": "calculate_metric", "role": "rdb", "required": true},
+          {"subtask": "calculate_remaining_days", "capability": "calculate_metric", "role": "rdb", "required": true},
+          {"subtask": "compare_source_values", "capability": "lookup_facts", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_bond"],
       "required_fields": ["PD_NO", "MAT_DT", "REMAINING_DAYS"],
-      "required_relations": ["hasMaturity", "hasRemainingDays"],
-      "data_requirements": [{"name": "domestic_bond_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticBond", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "maturity_date",
+            "role": "calculation_input",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "applicable_date"]
+          },
+          {
+            "id": "remaining_days",
+            "role": "calculation_input",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "unit", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["FIXED_CUTOFF_DATE", "VALID_DATE_REQUIRED", "DETERMINISTIC_DATE_ARITHMETIC"]
+      },
+      "data_requirements": [
+        {"name": "domestic_bond_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["FIXED_CUTOFF_DATE", "VALID_DATE_REQUIRED", "DETERMINISTIC_DATE_ARITHMETIC"],
-      "reference_resolution": [{"mention": "이 채권들", "binds_to": "request.explicit_product_set", "expected": "resolved"}],
+      "reference_resolution": [
+        {"mention": "이 채권들", "binds_to": "request.explicit_product_set", "expected": "resolved"}
+      ],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_bond_master"],
       "closed_world_scope": null,
@@ -590,18 +1103,51 @@
       "archetype": "public_fund_count_by_analysis_unit",
       "category": "calculation",
       "question": "이 데이터의 공모펀드 수를 원본 행, 고유 판매클래스, 대표펀드군 기준으로 각각 알려줘.",
-      "segments": [{"id": "s1", "text": "이 데이터의 공모펀드 수를 원본 행, 고유 판매클래스, 대표펀드군 기준으로 각각 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "이 데이터의 공모펀드 수를 원본 행, 고유 판매클래스, 대표펀드군 기준으로 각각 알려줘."}
+      ],
       "intent": "aggregate",
       "subtasks": ["filter_public_offering", "count_raw_rows", "count_distinct_itm_no", "count_valid_representative_groups"],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {"subtask": "filter_public_offering", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "count_raw_rows", "capability": "calculate_metric", "role": "rdb", "required": true},
+          {"subtask": "count_distinct_itm_no", "capability": "calculate_metric", "role": "rdb", "required": true},
+          {"subtask": "count_valid_representative_groups", "capability": "calculate_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["public_fund"],
       "required_fields": ["prvo_pbff_desc", "itm_no", "rptt_ksd_itm_no", "prfd_attr_cd", "zrin_fd_ivst_risk_gcd"],
-      "required_relations": ["belongsToRepresentativeFund"],
-      "data_requirements": [{"name": "public_fund_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "PublicFund", "role": "candidate_product"},
+          {"type": "RepresentativeFund", "role": "relation_source"},
+          {"type": "FundShareClass", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "hasShareClass",
+            "direction": "representative_fund_to_share_class",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["REPORT_ANALYSIS_UNIT", "INVALID_REPRESENTATIVE_SENTINEL_IS_MISSING", "DISTINCT_COUNTS"]
+      },
+      "data_requirements": [
+        {"name": "public_fund_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["REPORT_ANALYSIS_UNIT", "INVALID_REPRESENTATIVE_SENTINEL_IS_MISSING", "DISTINCT_COUNTS"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["public_fund_master"],
       "closed_world_scope": null,
@@ -617,13 +1163,49 @@
       "archetype": "product_count_by_provider_and_family",
       "category": "calculation",
       "question": "가람자산운용이 운용하는 상품 수를 국내 ETF, 해외 ETF, 공모펀드로 나눠 알려줘.",
-      "segments": [{"id": "s1", "text": "가람자산운용이 운용하는 상품 수를 국내 ETF, 해외 ETF, 공모펀드로 나눠 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "가람자산운용이 운용하는 상품 수를 국내 ETF, 해외 ETF, 공모펀드로 나눠 알려줘."}
+      ],
       "intent": "aggregate",
       "subtasks": ["resolve_provider_identity", "count_domestic_etf", "count_overseas_etf", "count_public_fund", "merge_separate_counts"],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_provider_identity",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "count_domestic_etf", "capability": "calculate_metric", "role": "rdb", "required": true},
+          {"subtask": "count_overseas_etf", "capability": "calculate_metric", "role": "rdb", "required": true},
+          {"subtask": "count_public_fund", "capability": "calculate_metric", "role": "rdb", "required": true},
+          {"subtask": "merge_separate_counts", "capability": "calculate_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf", "overseas_etf", "public_fund"],
       "required_fields": ["cu_fund_mgmt_co", "pd_grp_no", "or_co_xtn_itt_cd", "itm_no"],
-      "required_relations": ["managedBy", "hasProductFamily"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "PublicFund", "role": "candidate_product"},
+          {"type": "AssetManager", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "managedBy",
+            "direction": "product_to_manager",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY_WITHIN_ETF_MASTERS", "PUBLIC_FUND_DEDUP_BY_ITM_NO", "SEPARATE_COUNTS_BY_FAMILY"]
+      },
       "data_requirements": [
         {"name": "domestic_and_overseas_etf_masters", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"},
         {"name": "official_institution_master", "provenance": "authoritative_external", "status": "required_for_public_fund_name_mapping", "cutoff": "2026-08-24"}
@@ -632,6 +1214,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_and_overseas_etf_masters", "official_institution_master"],
       "closed_world_scope": null,
@@ -647,13 +1231,42 @@
       "archetype": "cross_family_1y_return_comparison",
       "category": "cross_family",
       "question": "국내 ETF와 공모펀드의 1년 수익률 상위 상품을 한 표에서 비교해줘.",
-      "segments": [{"id": "s1", "text": "국내 ETF와 공모펀드의 1년 수익률 상위 상품을 한 표에서 비교해줘."}],
+      "segments": [
+        {"id": "s1", "text": "국내 ETF와 공모펀드의 1년 수익률 상위 상품을 한 표에서 비교해줘."}
+      ],
       "intent": "compare",
       "subtasks": ["rank_domestic_etf_1y", "rank_public_fund_1y", "check_metric_compatibility", "compose_or_separate"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "rank_domestic_etf_1y", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "rank_public_fund_1y", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "check_metric_compatibility", "capability": "validate_metric_compatibility", "role": "rdb", "required": true},
+          {"subtask": "compose_or_separate", "capability": "render_verified_answer", "role": "application", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf", "public_fund"],
       "required_fields": ["du_er_1y", "du_upt_dt", "fd_yr1_ern_r", "itm_no"],
-      "required_relations": ["hasReturnMetric"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "PublicFund", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "trailing_1y_historical_cumulative_return",
+            "role": "comparison_axis",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "period", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["SAME_PERIOD", "SAME_RETURN_DEFINITION", "SAME_DISTRIBUTION_TREATMENT", "SEPARATE_IF_INCOMPATIBLE"]
+      },
       "data_requirements": [
         {"name": "domestic_etf_and_public_fund_masters", "provenance": "organizer", "status": "partially_available", "cutoff": "2026-08-24"},
         {"name": "official_return_methodology_and_dates", "provenance": "authoritative_external", "status": "required", "cutoff": "2026-08-24"}
@@ -662,6 +1275,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "limited",
       "required_sources": ["domestic_etf_and_public_fund_masters", "official_return_methodology_and_dates"],
       "closed_world_scope": null,
@@ -677,13 +1292,50 @@
       "archetype": "cross_currency_aum_ranking",
       "category": "cross_family",
       "question": "국내 ETF와 해외 ETF를 합쳐 AUM이 큰 순서로 10개 알려줘.",
-      "segments": [{"id": "s1", "text": "국내 ETF와 해외 ETF를 합쳐 AUM이 큰 순서로 10개 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "국내 ETF와 해외 ETF를 합쳐 AUM이 큰 순서로 10개 알려줘."}
+      ],
       "intent": "compare_and_rank",
       "subtasks": ["retrieve_domestic_aum", "retrieve_overseas_aum", "resolve_currency_basis", "normalize_if_approved", "rank_top10"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "retrieve_domestic_aum", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "retrieve_overseas_aum", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {
+            "subtask": "resolve_currency_basis",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "normalize_if_approved", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "rank_top10", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["du_last_aum", "pd_curr_cd", "du_upt_dt"],
-      "required_relations": ["hasAUM", "hasCurrency"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "currency", "role": "comparison_axis", "authority": "approved_structured_fact", "controlled_vocabulary": "iso_4217"}
+        ],
+        "metrics": [
+          {
+            "id": "aum",
+            "role": "comparison_axis",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["CONVERT_TO_KRW_USING_OFFICIAL_FX", "USE_LATEST_OFFICIAL_RATE_ON_OR_BEFORE_CUTOFF", "DISCLOSE_FX_ACTUAL_DATE_AND_SOURCE", "TOP_K_10"]
+      },
       "data_requirements": [
         {"name": "domestic_and_overseas_etf_masters", "provenance": "organizer", "status": "available_but_incompatible", "cutoff": "2026-08-24"},
         {"name": "official_fx_snapshot", "provenance": "authoritative_external", "status": "approved_four_currency_scope", "cutoff": "2026-08-24"}
@@ -692,6 +1344,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "limited",
       "required_sources": ["domestic_and_overseas_etf_masters", "official_fx_snapshot"],
       "closed_world_scope": null,
@@ -707,18 +1361,46 @@
       "archetype": "cross_family_risk_grade_comparison",
       "category": "cross_family",
       "question": "국내 ETF와 회사채 중 위험등급이 가장 낮은 상품을 같이 순위로 보여줘.",
-      "segments": [{"id": "s1", "text": "국내 ETF와 회사채 중 위험등급이 가장 낮은 상품을 같이 순위로 보여줘."}],
+      "segments": [
+        {"id": "s1", "text": "국내 ETF와 회사채 중 위험등급이 가장 낮은 상품을 같이 순위로 보여줘."}
+      ],
       "intent": "compare_and_rank",
       "subtasks": ["retrieve_etf_risk", "retrieve_bond_risk", "check_risk_scale_compatibility"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "retrieve_etf_risk", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "retrieve_bond_risk", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "check_risk_scale_compatibility", "capability": "validate_metric_compatibility", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf", "domestic_bond"],
       "required_fields": ["pd_risk_cd", "pd_risk_nm", "PD_RISK_GCD", "CRD_GRD"],
-      "required_relations": ["hasProductRiskGrade", "hasCreditGrade"],
-      "data_requirements": [{"name": "domestic_etf_and_bond_masters", "provenance": "organizer", "status": "available_but_semantically_incompatible", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "DomesticBond", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "product_risk_grade", "role": "comparison_axis", "authority": "approved_structured_fact", "controlled_vocabulary": "product_risk_grade_v1"},
+          {"id": "credit_grade", "role": "comparison_axis", "authority": "approved_structured_fact", "controlled_vocabulary": "credit_grade_v1"}
+        ],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["CREDIT_GRADE_IS_NOT_PRODUCT_RISK", "FAMILY_SPECIFIC_RISK_SCALE", "NO_UNAPPROVED_NORMALIZATION", "RETURN_SEPARATE_FAMILY_SECTIONS"]
+      },
+      "data_requirements": [
+        {"name": "domestic_etf_and_bond_masters", "provenance": "organizer", "status": "available_but_semantically_incompatible", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["CREDIT_GRADE_IS_NOT_PRODUCT_RISK", "FAMILY_SPECIFIC_RISK_SCALE", "NO_UNAPPROVED_NORMALIZATION", "RETURN_SEPARATE_FAMILY_SECTIONS"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "limited",
       "required_sources": ["domestic_etf_and_bond_masters"],
       "closed_world_scope": null,
@@ -734,13 +1416,42 @@
       "archetype": "domestic_overseas_etf_fee_comparison",
       "category": "cross_family",
       "question": "국내 ETF와 해외 ETF 중 총보수가 낮은 상품을 같은 기준으로 비교해줘.",
-      "segments": [{"id": "s1", "text": "국내 ETF와 해외 ETF 중 총보수가 낮은 상품을 같은 기준으로 비교해줘."}],
+      "segments": [
+        {"id": "s1", "text": "국내 ETF와 해외 ETF 중 총보수가 낮은 상품을 같은 기준으로 비교해줘."}
+      ],
       "intent": "compare_and_rank",
       "subtasks": ["retrieve_domestic_fees", "retrieve_overseas_fees", "validate_fee_definitions", "rank_if_compatible"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "retrieve_domestic_fees", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "retrieve_overseas_fees", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "validate_fee_definitions", "capability": "validate_metric_compatibility", "role": "rdb", "required": true},
+          {"subtask": "rank_if_compatible", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["cu_charge_rt", "cu_charge_etc_rt"],
-      "required_relations": ["hasFee"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "fee_rate",
+            "role": "comparison_axis",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "fee_definition", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["SAME_FEE_SCOPE", "SAME_UNIT", "NON_MISSING_FEE", "SEPARATE_IF_INCOMPATIBLE"]
+      },
       "data_requirements": [
         {"name": "domestic_and_overseas_etf_masters", "provenance": "organizer", "status": "low_coverage_or_unconfirmed_definition", "cutoff": "2026-08-24"},
         {"name": "official_etf_fee_snapshot", "provenance": "authoritative_external", "status": "required", "cutoff": "2026-08-24"}
@@ -749,6 +1460,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_and_overseas_etf_masters", "official_etf_fee_snapshot"],
       "closed_world_scope": null,
@@ -764,13 +1477,59 @@
       "archetype": "cross_family_holding_filter_then_1y_return_rank",
       "category": "multi_hop",
       "question": "삼성전자를 보유한 국내·해외 ETF와 공모펀드를 1년 수익률 기준 TOP 10으로 알려줘.",
-      "segments": [{"id": "s1", "text": "삼성전자를 보유한 국내·해외 ETF와 공모펀드를 1년 수익률 기준 TOP 10으로 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "삼성전자를 보유한 국내·해외 ETF와 공모펀드를 1년 수익률 기준 TOP 10으로 알려줘."}
+      ],
       "intent": "relationship_filter_and_rank",
       "subtasks": ["resolve_security", "find_holding_products_by_family", "validate_family_coverage", "join_1y_return", "validate_return_compatibility", "rank_top10"],
-      "dependencies": [{"from": "find_holding_products_by_family.result_ids", "to": "join_1y_return.product_ids"}],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_security",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "find_holding_products_by_family", "capability": "traverse_relation", "role": "graph", "required": true},
+          {"subtask": "validate_family_coverage", "capability": "validate_closed_world_coverage", "role": "rdb", "required": true},
+          {"subtask": "join_1y_return", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "validate_return_compatibility", "capability": "validate_metric_compatibility", "role": "rdb", "required": true},
+          {"subtask": "rank_top10", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "find_holding_products_by_family.result_ids", "to": "join_1y_return.product_ids"}
+      ],
       "product_families": ["domestic_etf", "overseas_etf", "public_fund"],
       "required_fields": ["pd_itm_no", "pd_isin_cd", "du_er_1y", "fd_yr1_ern_r"],
-      "required_relations": ["holdsSecurity", "hasReturnMetric"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "PublicFund", "role": "candidate_product"},
+          {"type": "Security", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "trailing_1y_historical_cumulative_return",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "period", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "holdsSecurity",
+            "direction": "product_to_security",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at", "applicable_date"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["NO_HOLDING_INFERENCE_FROM_NAME", "VERIFIED_SECURITY_ID_JOIN", "SAME_1Y_RETURN_DEFINITION", "ORGANIZER_MISSING_VALUE_REMAINS_UNAVAILABLE", "NO_FALSE_EMPTY_FOR_UNCOVERED_FAMILY", "TOP_K_10"]
+      },
       "data_requirements": [
         {"name": "organizer_product_masters", "provenance": "organizer", "status": "return_fields_present_with_authoritative_missingness", "cutoff": "2026-08-24"},
         {"name": "official_etf_holdings_snapshot", "provenance": "authoritative_external", "status": "available_with_bounded_overseas_coverage", "cutoff": "2026-08-24"},
@@ -782,6 +1541,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "requires_additional_data",
       "required_sources": ["organizer_product_masters", "official_etf_holdings_snapshot", "official_public_fund_holdings_snapshot", "official_security_master"],
       "closed_world_scope": null,
@@ -797,22 +1558,62 @@
       "archetype": "etf_top_constituents_by_weight",
       "category": "multi_hop",
       "question": "이 ETF의 구성종목을 편입비중이 높은 순서로 10개 보여주고 각 비중의 기준일도 알려줘.",
-      "segments": [{"id": "s1", "text": "이 ETF의 구성종목을 편입비중이 높은 순서로 10개 보여주고 각 비중의 기준일도 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "이 ETF의 구성종목을 편입비중이 높은 순서로 10개 보여주고 각 비중의 기준일도 알려줘."}
+      ],
       "intent": "relationship_lookup_and_rank",
       "subtasks": ["resolve_etf", "retrieve_constituent_snapshot", "validate_weights", "rank_top10"],
-      "dependencies": [{"from": "resolve_etf.product_id", "to": "retrieve_constituent_snapshot.etf_product_id"}],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_etf",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "retrieve_constituent_snapshot", "capability": "traverse_relation", "role": "graph", "required": true},
+          {"subtask": "validate_weights", "capability": "validate_metric_compatibility", "role": "rdb", "required": true},
+          {"subtask": "rank_top10", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "resolve_etf.product_id", "to": "retrieve_constituent_snapshot.etf_product_id"}
+      ],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["pd_itm_no", "pd_isin_cd", "pd_nm"],
-      "required_relations": ["holdsSecurity", "hasHoldingWeight"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "Security", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "holdsSecurity",
+            "direction": "product_to_security",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at", "applicable_date", "weight_pct"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["USE_SINGLE_HOLDINGS_SNAPSHOT", "PRESERVE_CASH_AND_DERIVATIVE_TYPES", "VALIDATE_WEIGHT_UNIT", "TOP_K_10"]
+      },
       "data_requirements": [
         {"name": "organizer_etf_masters", "provenance": "organizer", "status": "product_identity_available", "cutoff": "2026-08-24"},
         {"name": "official_etf_holdings_snapshot", "provenance": "authoritative_external", "status": "available_with_source_specific_coverage", "cutoff": "2026-08-24"},
         {"name": "official_security_master", "provenance": "authoritative_external", "status": "available_with_source_specific_coverage", "cutoff": "2026-08-24"}
       ],
       "business_rules": ["USE_SINGLE_HOLDINGS_SNAPSHOT", "PRESERVE_CASH_AND_DERIVATIVE_TYPES", "VALIDATE_WEIGHT_UNIT", "TOP_K_10"],
-      "reference_resolution": [{"mention": "이 ETF", "binds_to": "request.explicit_product", "expected": "resolved"}],
+      "reference_resolution": [
+        {"mention": "이 ETF", "binds_to": "request.explicit_product", "expected": "resolved"}
+      ],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "limited",
       "required_sources": ["organizer_etf_masters", "official_etf_holdings_snapshot", "official_security_master"],
       "closed_world_scope": null,
@@ -828,13 +1629,55 @@
       "archetype": "etf_weighted_holdings_overlap_similarity",
       "category": "multi_hop",
       "question": "A ETF와 구성종목이 가장 많이 겹치는 ETF 5개를 찾아서 겹치는 종목과 비중도 설명해줘.",
-      "segments": [{"id": "s1", "text": "A ETF와 구성종목이 가장 많이 겹치는 ETF 5개를 찾아서 겹치는 종목과 비중도 설명해줘."}],
+      "segments": [
+        {"id": "s1", "text": "A ETF와 구성종목이 가장 많이 겹치는 ETF 5개를 찾아서 겹치는 종목과 비중도 설명해줘."}
+      ],
       "intent": "relationship_similarity",
       "subtasks": ["resolve_anchor_etf", "retrieve_same_date_holdings", "calculate_overlap", "rank_top5", "explain_overlap"],
-      "dependencies": [{"from": "resolve_anchor_etf.product_id", "to": "retrieve_same_date_holdings.anchor_product_id"}],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_anchor_etf",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "retrieve_same_date_holdings", "capability": "traverse_relation", "role": "graph", "required": true},
+          {"subtask": "calculate_overlap", "capability": "calculate_similarity", "role": "rdb", "required": true},
+          {"subtask": "rank_top5", "capability": "rank_metric", "role": "rdb", "required": true},
+          {
+            "subtask": "explain_overlap",
+            "capability": "generate_atomic_claims",
+            "role": ["rdb", "graph"],
+            "required": true
+          }
+        ]
+      },
+      "dependencies": [
+        {"from": "resolve_anchor_etf.product_id", "to": "retrieve_same_date_holdings.anchor_product_id"}
+      ],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["pd_itm_no", "pd_isin_cd", "pd_grp_no", "pd_curr_cd"],
-      "required_relations": ["holdsSecurity", "hasHoldingWeight"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "Security", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "holdsSecurity",
+            "direction": "product_to_security",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at", "applicable_date", "weight_pct"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY", "EXCLUDE_ANCHOR", "SAME_OR_DISCLOSED_HOLDINGS_DATE", "DETERMINISTIC_OVERLAP_FORMULA", "TOP_K_5"]
+      },
       "data_requirements": [
         {"name": "organizer_etf_masters", "provenance": "organizer", "status": "product_identity_available", "cutoff": "2026-08-24"},
         {"name": "official_etf_holdings_snapshot", "provenance": "authoritative_external", "status": "available_with_source_specific_coverage", "cutoff": "2026-08-24"},
@@ -845,6 +1688,8 @@
       "similarity_basis": ["constituent_identity", "constituent_weight"],
       "similarity_policy_id": "etf_weighted_holdings_overlap_v1",
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "limited",
       "required_sources": ["organizer_etf_masters", "official_etf_holdings_snapshot", "official_security_master"],
       "closed_world_scope": null,
@@ -860,16 +1705,65 @@
       "archetype": "etf_sector_exposure_from_constituents",
       "category": "multi_hop",
       "question": "반도체 업종 편입비중이 30% 이상인 ETF를 찾아서 AUM 순으로 보여줘.",
-      "segments": [{"id": "s1", "text": "반도체 업종 편입비중이 30% 이상인 ETF를 찾아서 AUM 순으로 보여줘."}],
+      "segments": [
+        {"id": "s1", "text": "반도체 업종 편입비중이 30% 이상인 ETF를 찾아서 AUM 순으로 보여줘."}
+      ],
       "intent": "relationship_aggregate_filter_and_rank",
       "subtasks": ["resolve_sector", "retrieve_holdings", "join_security_sector", "aggregate_sector_weight", "filter_threshold", "join_and_rank_aum"],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_sector",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "retrieve_holdings", "capability": "traverse_relation", "role": "graph", "required": true},
+          {"subtask": "join_security_sector", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "aggregate_sector_weight", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "filter_threshold", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "join_and_rank_aum", "capability": "lookup_facts", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [
         {"from": "retrieve_holdings.constituent_ids", "to": "join_security_sector.security_ids"},
         {"from": "aggregate_sector_weight.qualified_product_ids", "to": "join_and_rank_aum.product_ids"}
       ],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["pd_itm_no", "pd_isin_cd", "du_last_aum", "pd_curr_cd", "du_upt_dt"],
-      "required_relations": ["holdsSecurity", "classifiedInSector", "hasHoldingWeight", "hasAUM"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "Security", "role": "relation_target"},
+          {"type": "Industry", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "aum",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "holdsSecurity",
+            "direction": "product_to_security",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at", "applicable_date", "weight_pct"]
+          },
+          {
+            "predicate": "classifiedAsIndustry",
+            "direction": "company_or_security_to_industry",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["DETERMINISTIC_WEIGHT_AGGREGATION", "SECTOR_CLASSIFICATION_VERSION_REQUIRED", "THRESHOLD_GTE_30_PCT", "SAME_CURRENCY_OR_SEPARATE_RANKING"]
+      },
       "data_requirements": [
         {"name": "organizer_etf_masters", "provenance": "organizer", "status": "aum_available", "cutoff": "2026-08-24"},
         {"name": "official_etf_holdings_snapshot", "provenance": "authoritative_external", "status": "mandatory", "cutoff": "2026-08-24"},
@@ -879,6 +1773,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["organizer_etf_masters", "official_etf_holdings_snapshot", "official_security_sector_classification"],
       "closed_world_scope": null,
@@ -900,19 +1796,84 @@
       ],
       "intent": "dependent_multi_step",
       "subtasks": ["resolve_provider", "filter_active_etfs", "rank_1y_return", "bind_top_product", "find_similar_etfs"],
-      "dependencies": [{"from": "s1.top_product", "to": "s2.reference:that"}],
+      "retrieval": {
+        "profile": "federated",
+        "roles": ["keyword", "graph", "rdb", "vector"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_provider",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "filter_active_etfs", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "rank_1y_return", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "bind_top_product", "capability": "resolve_reference", "role": "rdb", "required": true},
+          {"subtask": "find_similar_etfs", "capability": "calculate_similarity", "role": "rdb", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "s1.top_product", "to": "s2.reference:that"}
+      ],
       "product_families": ["domestic_etf"],
       "required_fields": ["cu_fund_mgmt_co", "pd_grp_no", "pd_sale_yn", "pd_tr_yn", "du_er_1y", "du_upt_dt", "wu_inv_ast_type", "wu_inv_rgn", "cu_strtegy", "cu_lev_fector", "cu_base_index"],
-      "required_relations": ["managedBy", "hasReturnMetric", "investsInAssetClass", "investsInRegion", "hasStrategy", "tracksIndex"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "AssetManager", "role": "relation_target"},
+          {"type": "Index", "role": "relation_target"},
+          {"type": "OfficialDocument", "role": "relation_target"}
+        ],
+        "attributes": [
+          {"id": "asset_class", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "asset_class_v1"},
+          {"id": "region", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "investment_region_v1"}
+        ],
+        "metrics": [
+          {
+            "id": "trailing_1y_historical_cumulative_return",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "period", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "managedBy",
+            "direction": "product_to_manager",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          },
+          {
+            "predicate": "tracksIndex",
+            "direction": "product_to_index",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          },
+          {
+            "predicate": "documentedBy",
+            "direction": "entity_to_document",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at"]
+          }
+        ],
+        "document_claims": [
+          {
+            "claim_type": "investment_strategy",
+            "required_provenance": ["publisher_organization_id", "published_at", "effective_from", "effective_to", "available_at", "document_version", "source_object_id", "document_chunk_id", "source_span"]
+          }
+        ],
+        "control_checks": ["ETF_ONLY", "ACTIVE_CANDIDATES_ONLY", "NON_MISSING_RETURN", "EXCLUDE_RETURN_SENTINEL", "FAMILY_SPECIFIC_HARD_FILTERS", "MIN_SCORE_COVERAGE_60_PCT", "DISCLOSE_SIMILARITY_BASIS"]
+      },
       "data_requirements": [
         {"name": "domestic_etf_master", "provenance": "organizer", "status": "available_with_similarity_gaps", "cutoff": "2026-08-24"},
         {"name": "official_etf_holdings_snapshot", "provenance": "authoritative_external", "status": "mandatory_for_full_similarity", "cutoff": "2026-08-24"}
       ],
       "business_rules": ["ETF_ONLY", "ACTIVE_CANDIDATES_ONLY", "NON_MISSING_RETURN", "EXCLUDE_RETURN_SENTINEL", "FAMILY_SPECIFIC_HARD_FILTERS", "MIN_SCORE_COVERAGE_60_PCT", "DISCLOSE_SIMILARITY_BASIS"],
-      "reference_resolution": [{"mention": "그거", "binds_to": "s1.top_product", "expected": "resolved"}],
+      "reference_resolution": [
+        {"mention": "그거", "binds_to": "s1.top_product", "expected": "resolved"}
+      ],
       "similarity_basis": ["product_type", "leverage_inverse_profile", "leverage_factor", "asset_type", "investment_region", "strategy_or_base_index", "weighted_holdings_overlap", "risk_grade", "other_structure"],
       "similarity_policy_id": "domestic_etf_similarity_v1",
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_etf_master", "official_etf_holdings_snapshot"],
       "closed_world_scope": null,
@@ -928,22 +1889,81 @@
       "archetype": "public_fund_family_specific_similarity",
       "category": "multi_hop",
       "question": "A 공모 주식형 펀드와 비슷한 공모펀드 5개를 찾고 어떤 점이 비슷하고 다른지도 알려줘.",
-      "segments": [{"id": "s1", "text": "A 공모 주식형 펀드와 비슷한 공모펀드 5개를 찾고 어떤 점이 비슷하고 다른지도 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "A 공모 주식형 펀드와 비슷한 공모펀드 5개를 찾고 어떤 점이 비슷하고 다른지도 알려줘."}
+      ],
       "intent": "family_specific_similarity",
       "subtasks": ["resolve_anchor_fund", "deduplicate_share_class_rows", "select_public_fund_similarity_policy", "apply_hard_filters", "score_candidates", "rank_top5", "explain_dimensions"],
-      "dependencies": [{"from": "resolve_anchor_fund.product_id", "to": "score_candidates.anchor_product_id"}],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_anchor_fund",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "deduplicate_share_class_rows", "capability": "deduplicate_share_classes", "role": "rdb", "required": true},
+          {"subtask": "select_public_fund_similarity_policy", "capability": "calculate_similarity", "role": "rdb", "required": true},
+          {"subtask": "apply_hard_filters", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "score_candidates", "capability": "calculate_similarity", "role": "rdb", "required": true},
+          {"subtask": "rank_top5", "capability": "rank_metric", "role": "rdb", "required": true},
+          {
+            "subtask": "explain_dimensions",
+            "capability": "generate_atomic_claims",
+            "role": ["rdb", "graph"],
+            "required": true
+          }
+        ]
+      },
+      "dependencies": [
+        {"from": "resolve_anchor_fund.product_id", "to": "score_candidates.anchor_product_id"}
+      ],
       "product_families": ["public_fund"],
       "required_fields": ["itm_no", "rptt_ksd_itm_no", "or_attr_desc", "fd_ivst_rgn_desc", "bmrk_nm", "zrin_fd_ivst_risk_gcd", "exchdg_yn", "fd_set_pcd"],
-      "required_relations": ["belongsToRepresentativeFund", "investsInAssetClass", "investsInRegion", "hasBenchmark", "hasRiskGrade", "hasHedgePolicy"],
+      "requirements": {
+        "entities": [
+          {"type": "PublicFund", "role": "candidate_product"},
+          {"type": "RepresentativeFund", "role": "relation_source"},
+          {"type": "FundShareClass", "role": "relation_target"},
+          {"type": "Index", "role": "relation_target"}
+        ],
+        "attributes": [
+          {"id": "asset_class", "role": "similarity_axis", "authority": "approved_structured_fact", "controlled_vocabulary": "asset_class_v1"},
+          {"id": "region", "role": "similarity_axis", "authority": "approved_structured_fact", "controlled_vocabulary": "investment_region_v1"},
+          {"id": "product_risk_grade", "role": "similarity_axis", "authority": "approved_structured_fact", "controlled_vocabulary": "product_risk_grade_v1"},
+          {"id": "hedge_policy", "role": "similarity_axis", "authority": "approved_structured_fact", "controlled_vocabulary": "hedge_policy_v1"}
+        ],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "hasShareClass",
+            "direction": "representative_fund_to_share_class",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          },
+          {
+            "predicate": "tracksIndex",
+            "direction": "product_to_index",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["PUBLIC_FUND_ONLY", "DEDUPLICATE_BY_ITM_NO", "FAMILY_SPECIFIC_HARD_FILTERS", "MIN_SCORE_COVERAGE_60_PCT", "MISSING_DIMENSION_IS_NOT_MATCH", "TOP_K_5", "DISCLOSE_DIMENSION_EVIDENCE"]
+      },
       "data_requirements": [
         {"name": "public_fund_master", "provenance": "organizer", "status": "available_with_strategy_and_missingness_gaps", "cutoff": "2026-08-24"},
         {"name": "official_public_fund_strategy_and_benchmark_snapshot", "provenance": "authoritative_external", "status": "required_for_full_similarity", "cutoff": "2026-08-24"}
       ],
       "business_rules": ["PUBLIC_FUND_ONLY", "DEDUPLICATE_BY_ITM_NO", "FAMILY_SPECIFIC_HARD_FILTERS", "MIN_SCORE_COVERAGE_60_PCT", "MISSING_DIMENSION_IS_NOT_MATCH", "TOP_K_5", "DISCLOSE_DIMENSION_EVIDENCE"],
-      "reference_resolution": [{"mention": "A 공모 주식형 펀드", "binds_to": "request.explicit_product", "expected": "resolved"}],
+      "reference_resolution": [
+        {"mention": "A 공모 주식형 펀드", "binds_to": "request.explicit_product", "expected": "resolved"}
+      ],
       "similarity_basis": ["asset_class_or_management_type", "investment_region", "strategy_or_benchmark", "risk_grade", "other_structure"],
       "similarity_policy_id": "public_fund_similarity_v1",
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["public_fund_master", "official_public_fund_strategy_and_benchmark_snapshot"],
       "closed_world_scope": null,
@@ -959,22 +1979,86 @@
       "archetype": "domestic_bond_family_specific_similarity",
       "category": "multi_hop",
       "question": "A 회사채와 비슷한 회사채 5개를 찾고 발행주체, 신용등급, 잔존만기, 금리구조, 통화와 수익률 차이를 설명해줘.",
-      "segments": [{"id": "s1", "text": "A 회사채와 비슷한 회사채 5개를 찾고 발행주체, 신용등급, 잔존만기, 금리구조, 통화와 수익률 차이를 설명해줘."}],
+      "segments": [
+        {"id": "s1", "text": "A 회사채와 비슷한 회사채 5개를 찾고 발행주체, 신용등급, 잔존만기, 금리구조, 통화와 수익률 차이를 설명해줘."}
+      ],
       "intent": "family_specific_similarity",
       "subtasks": ["resolve_anchor_bond", "select_domestic_bond_similarity_policy", "apply_hard_filters", "validate_rating_and_yield_definitions", "score_candidates", "rank_top5", "explain_dimensions"],
-      "dependencies": [{"from": "resolve_anchor_bond.product_id", "to": "score_candidates.anchor_product_id"}],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_anchor_bond",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "select_domestic_bond_similarity_policy", "capability": "calculate_similarity", "role": "rdb", "required": true},
+          {"subtask": "apply_hard_filters", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "validate_rating_and_yield_definitions", "capability": "validate_metric_compatibility", "role": "rdb", "required": true},
+          {"subtask": "score_candidates", "capability": "calculate_similarity", "role": "rdb", "required": true},
+          {"subtask": "rank_top5", "capability": "rank_metric", "role": "rdb", "required": true},
+          {
+            "subtask": "explain_dimensions",
+            "capability": "generate_atomic_claims",
+            "role": ["rdb", "graph"],
+            "required": true
+          }
+        ]
+      },
+      "dependencies": [
+        {"from": "resolve_anchor_bond.product_id", "to": "score_candidates.anchor_product_id"}
+      ],
       "product_families": ["domestic_bond"],
       "required_fields": ["PD_NO", "PD_PBCM", "STD_PD_MCLS_NM", "BD_KND", "CRD_GRD", "CRD_GRD_DT", "REMAINING_DAYS", "SRFC_IRT", "CURR_CD", "BUY_YIELD", "PD_STD_INFO_UPDATE"],
-      "required_relations": ["issuedBy", "hasCreditGrade", "hasRemainingMaturity", "hasRateStructure", "hasCurrency", "hasYieldMetric"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticBond", "role": "candidate_product"},
+          {"type": "Issuer", "role": "relation_target"}
+        ],
+        "attributes": [
+          {"id": "credit_grade", "role": "similarity_axis", "authority": "approved_structured_fact", "controlled_vocabulary": "credit_grade_v1"},
+          {"id": "rate_structure", "role": "similarity_axis", "authority": "approved_structured_fact", "controlled_vocabulary": "rate_structure_v1"},
+          {"id": "currency", "role": "similarity_axis", "authority": "approved_structured_fact", "controlled_vocabulary": "iso_4217"}
+        ],
+        "metrics": [
+          {
+            "id": "remaining_maturity",
+            "role": "similarity_axis",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "unit", "applicable_date"]
+          },
+          {
+            "id": "yield_rate",
+            "role": "similarity_axis",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "yield_definition", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "issuedBy",
+            "direction": "product_or_security_to_issuer",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["DOMESTIC_BOND_ONLY", "SAME_BROAD_BOND_TYPE", "FAMILY_SPECIFIC_HARD_FILTERS", "SAME_YIELD_DEFINITION_ONLY", "MIN_SCORE_COVERAGE_60_PCT", "MISSING_DIMENSION_IS_NOT_MATCH", "TOP_K_5", "DISCLOSE_DIMENSION_EVIDENCE"]
+      },
       "data_requirements": [
         {"name": "domestic_bond_master", "provenance": "organizer", "status": "available_with_material_rating_yield_and_date_gaps", "cutoff": "2026-08-24"},
         {"name": "official_bond_rating_and_terms_snapshot", "provenance": "authoritative_external", "status": "required_for_missing_dimensions", "cutoff": "2026-08-24"}
       ],
       "business_rules": ["DOMESTIC_BOND_ONLY", "SAME_BROAD_BOND_TYPE", "FAMILY_SPECIFIC_HARD_FILTERS", "SAME_YIELD_DEFINITION_ONLY", "MIN_SCORE_COVERAGE_60_PCT", "MISSING_DIMENSION_IS_NOT_MATCH", "TOP_K_5", "DISCLOSE_DIMENSION_EVIDENCE"],
-      "reference_resolution": [{"mention": "A 회사채", "binds_to": "request.explicit_product", "expected": "resolved"}],
+      "reference_resolution": [
+        {"mention": "A 회사채", "binds_to": "request.explicit_product", "expected": "resolved"}
+      ],
       "similarity_basis": ["issuer_or_issuer_sector", "credit_grade", "remaining_maturity", "bond_and_rate_structure", "currency", "same_definition_yield_or_ytm"],
       "similarity_policy_id": "domestic_bond_similarity_v1",
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_bond_master", "official_bond_rating_and_terms_snapshot"],
       "closed_world_scope": null,
@@ -990,13 +2074,62 @@
       "archetype": "same_index_products_across_markets",
       "category": "multi_hop",
       "question": "S&P 500 지수를 추종하는 국내 ETF와 해외 ETF를 찾아서 운용사와 보수를 알려줘.",
-      "segments": [{"id": "s1", "text": "S&P 500 지수를 추종하는 국내 ETF와 해외 ETF를 찾아서 운용사와 보수를 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "S&P 500 지수를 추종하는 국내 ETF와 해외 ETF를 찾아서 운용사와 보수를 알려줘."}
+      ],
       "intent": "relationship_lookup_and_compare",
       "subtasks": ["resolve_index", "find_linked_etfs", "lookup_provider_and_fee", "validate_fee_compatibility"],
-      "dependencies": [{"from": "resolve_index.index_id", "to": "find_linked_etfs.index_id"}],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_index",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "find_linked_etfs", "capability": "traverse_relation", "role": "graph", "required": true},
+          {"subtask": "lookup_provider_and_fee", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "validate_fee_compatibility", "capability": "validate_metric_compatibility", "role": "rdb", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "resolve_index.index_id", "to": "find_linked_etfs.index_id"}
+      ],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["cu_base_index", "cu_fund_mgmt_co", "cu_charge_rt", "pd_itm_no"],
-      "required_relations": ["tracksIndex", "managedBy", "hasFee"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "Index", "role": "relation_target"},
+          {"type": "AssetManager", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "fee_rate",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "fee_definition", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "tracksIndex",
+            "direction": "product_to_index",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          },
+          {
+            "predicate": "managedBy",
+            "direction": "product_to_manager",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY", "NORMALIZE_INDEX_IDENTITY", "PLACEHOLDER_INDEX_IS_MISSING", "DISCLOSE_FEE_SCOPE"]
+      },
       "data_requirements": [
         {"name": "domestic_and_overseas_etf_masters", "provenance": "organizer", "status": "index_coverage_incomplete", "cutoff": "2026-08-24"},
         {"name": "official_index_product_mapping", "provenance": "authoritative_external", "status": "required", "cutoff": "2026-08-24"},
@@ -1006,6 +2139,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_and_overseas_etf_masters", "official_index_product_mapping", "official_etf_fee_snapshot"],
       "closed_world_scope": null,
@@ -1021,13 +2156,58 @@
       "archetype": "representative_fund_best_class_then_siblings",
       "category": "multi_hop",
       "question": "새봄글로벌주식 대표펀드군에서 1년 수익률이 가장 높은 판매 클래스를 찾고 같은 대표펀드의 다른 클래스도 보여줘.",
-      "segments": [{"id": "s1", "text": "새봄글로벌주식 대표펀드군에서 1년 수익률이 가장 높은 판매 클래스를 찾고 같은 대표펀드의 다른 클래스도 보여줘."}],
+      "segments": [
+        {"id": "s1", "text": "새봄글로벌주식 대표펀드군에서 1년 수익률이 가장 높은 판매 클래스를 찾고 같은 대표펀드의 다른 클래스도 보여줘."}
+      ],
       "intent": "relationship_rank_and_expand",
       "subtasks": ["resolve_representative_fund", "list_unique_share_classes", "rank_valid_1y_return", "expand_sibling_classes"],
-      "dependencies": [{"from": "resolve_representative_fund.group_id", "to": "list_unique_share_classes.group_id"}],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_representative_fund",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "list_unique_share_classes", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "rank_valid_1y_return", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "expand_sibling_classes", "capability": "traverse_relation", "role": "graph", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "resolve_representative_fund.group_id", "to": "list_unique_share_classes.group_id"}
+      ],
       "product_families": ["public_fund"],
       "required_fields": ["rptt_ksd_itm_no", "itm_no", "itm_nm", "sale_yn", "fd_yr1_ern_r"],
-      "required_relations": ["belongsToRepresentativeFund", "hasReturnMetric", "hasSaleStatus"],
+      "requirements": {
+        "entities": [
+          {"type": "PublicFund", "role": "candidate_product"},
+          {"type": "RepresentativeFund", "role": "relation_source"},
+          {"type": "FundShareClass", "role": "relation_target"}
+        ],
+        "attributes": [
+          {"id": "sale_status", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "sale_status_v1"}
+        ],
+        "metrics": [
+          {
+            "id": "trailing_1y_historical_cumulative_return",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "period", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "hasShareClass",
+            "direction": "representative_fund_to_share_class",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["VALID_REPRESENTATIVE_ID", "DEDUP_BY_ITM_NO", "NON_MISSING_RETURN", "DO_NOT_SUM_CLASS_AUM"]
+      },
       "data_requirements": [
         {"name": "public_fund_master", "provenance": "organizer", "status": "available_with_class_definition_gap", "cutoff": "2026-08-24"},
         {"name": "official_fund_class_master", "provenance": "authoritative_external", "status": "required_for_class_meaning", "cutoff": "2026-08-24"}
@@ -1036,6 +2216,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["public_fund_master", "official_fund_class_master"],
       "closed_world_scope": null,
@@ -1057,15 +2239,63 @@
       ],
       "intent": "dependent_multi_step",
       "subtasks": ["rank_provider_aum", "bind_top_product", "lookup_followup_metrics"],
-      "dependencies": [{"from": "s1.top_product", "to": "s2.reference:this_product"}],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {"subtask": "rank_provider_aum", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "bind_top_product", "capability": "resolve_reference", "role": "rdb", "required": true},
+          {"subtask": "lookup_followup_metrics", "capability": "lookup_facts", "role": "rdb", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "s1.top_product", "to": "s2.reference:this_product"}
+      ],
       "product_families": ["domestic_etf"],
       "required_fields": ["cu_fund_mgmt_co", "du_last_aum", "du_er_1y", "pd_risk_nm", "du_upt_dt"],
-      "required_relations": ["managedBy", "hasAUM", "hasReturnMetric", "hasRiskGrade"],
-      "data_requirements": [{"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "AssetManager", "role": "relation_target"}
+        ],
+        "attributes": [
+          {"id": "product_risk_grade", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "product_risk_grade_v1"}
+        ],
+        "metrics": [
+          {
+            "id": "aum",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          },
+          {
+            "id": "trailing_1y_historical_cumulative_return",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "period", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "managedBy",
+            "direction": "product_to_manager",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["EXECUTE_DEPENDENCIES_IN_ORDER", "UNIQUE_RESULT_BINDING", "DISCLOSE_METRIC_DATE"]
+      },
+      "data_requirements": [
+        {"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["EXECUTE_DEPENDENCIES_IN_ORDER", "UNIQUE_RESULT_BINDING", "DISCLOSE_METRIC_DATE"],
-      "reference_resolution": [{"mention": "이 상품", "binds_to": "s1.top_product", "expected": "resolved"}],
+      "reference_resolution": [
+        {"mention": "이 상품", "binds_to": "s1.top_product", "expected": "resolved"}
+      ],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_etf_master"],
       "closed_world_scope": null,
@@ -1087,15 +2317,52 @@
       ],
       "intent": "dependent_multi_step",
       "subtasks": ["filter_pension_etfs", "rank_aum_top10", "bind_product_set", "filter_bound_set_by_risk"],
-      "dependencies": [{"from": "s1.top10_products", "to": "s2.reference:these_products"}],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "filter_pension_etfs", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "rank_aum_top10", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "bind_product_set", "capability": "resolve_reference", "role": "rdb", "required": true},
+          {"subtask": "filter_bound_set_by_risk", "capability": "filter_products", "role": "rdb", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "s1.top10_products", "to": "s2.reference:these_products"}
+      ],
       "product_families": ["domestic_etf"],
       "required_fields": ["pd_pen_tr_yn", "du_last_aum", "pd_risk_cd", "pd_risk_nm"],
-      "required_relations": ["hasPensionEligibility", "hasAUM", "hasRiskGrade"],
-      "data_requirements": [{"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "pension_eligibility", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "boolean"},
+          {"id": "product_risk_grade", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "product_risk_grade_v1"}
+        ],
+        "metrics": [
+          {
+            "id": "aum",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["BOUND_SET_ONLY", "FAMILY_SPECIFIC_RISK_ORDER", "DO_NOT_REQUERY_ALL_PRODUCTS"]
+      },
+      "data_requirements": [
+        {"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["BOUND_SET_ONLY", "FAMILY_SPECIFIC_RISK_ORDER", "DO_NOT_REQUERY_ALL_PRODUCTS"],
-      "reference_resolution": [{"mention": "이 상품들", "binds_to": "s1.top10_products", "expected": "resolved"}],
+      "reference_resolution": [
+        {"mention": "이 상품들", "binds_to": "s1.top10_products", "expected": "resolved"}
+      ],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_etf_master"],
       "closed_world_scope": null,
@@ -1117,15 +2384,65 @@
       ],
       "intent": "compare_then_followup",
       "subtasks": ["compare_two_products", "resolve_followup_reference"],
-      "dependencies": [{"from": "s1.products", "to": "s2.reference:this_product"}],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "compare_two_products", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {
+            "subtask": "resolve_followup_reference",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          }
+        ]
+      },
+      "dependencies": [
+        {"from": "s1.products", "to": "s2.reference:this_product"}
+      ],
       "product_families": ["domestic_etf"],
       "required_fields": ["pd_itm_no", "du_last_aum", "du_er_1y", "pd_risk_nm"],
-      "required_relations": ["hasAUM", "hasReturnMetric", "hasRiskGrade"],
-      "data_requirements": [{"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "product_risk_grade", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "product_risk_grade_v1"}
+        ],
+        "metrics": [
+          {
+            "id": "aum",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          },
+          {
+            "id": "trailing_1y_historical_cumulative_return",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "period", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["DO_NOT_GUESS_AMBIGUOUS_REFERENCE", "RETURN_ALL_COMPATIBLE_CANDIDATES", "SINGLE_TURN_NO_FOLLOWUP"]
+      },
+      "data_requirements": [
+        {"name": "domestic_etf_master", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["DO_NOT_GUESS_AMBIGUOUS_REFERENCE", "RETURN_ALL_COMPATIBLE_CANDIDATES", "SINGLE_TURN_NO_FOLLOWUP"],
-      "reference_resolution": [{"mention": "이 상품", "binds_to": ["A ETF", "B ETF"], "expected": "ambiguous_fallback_all_candidates", "candidates": ["A ETF", "B ETF"]}],
+      "reference_resolution": [
+        {
+          "mention": "이 상품",
+          "binds_to": ["A ETF", "B ETF"],
+          "expected": "ambiguous_fallback_all_candidates",
+          "candidates": ["A ETF", "B ETF"]
+        }
+      ],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_etf_master"],
       "closed_world_scope": null,
@@ -1147,18 +2464,63 @@
       ],
       "intent": "cross_family_dependent_lookup",
       "subtasks": ["resolve_provider", "rank_domestic_etf", "bind_provider", "rank_overseas_etf_for_same_provider"],
-      "dependencies": [{"from": "s1.provider_entity", "to": "s2.reference:that_provider"}],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_provider",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "rank_domestic_etf", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "bind_provider", "capability": "resolve_reference", "role": "rdb", "required": true},
+          {"subtask": "rank_overseas_etf_for_same_provider", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "s1.provider_entity", "to": "s2.reference:that_provider"}
+      ],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["cu_fund_mgmt_co", "pd_grp_no", "du_last_aum", "pd_curr_cd"],
-      "required_relations": ["managedBy", "hasAUM"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "AssetManager", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "aum",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "managedBy",
+            "direction": "product_to_manager",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["BIND_PROVIDER_NOT_TOP_PRODUCT", "NORMALIZE_PROVIDER_IDENTITY", "SEPARATE_CURRENCY_DISCLOSURE"]
+      },
       "data_requirements": [
         {"name": "domestic_and_overseas_etf_masters", "provenance": "organizer", "status": "available_with_provider_name_variants", "cutoff": "2026-08-24"},
         {"name": "official_institution_master", "provenance": "authoritative_external", "status": "required_for_robust_identity", "cutoff": "2026-08-24"}
       ],
       "business_rules": ["BIND_PROVIDER_NOT_TOP_PRODUCT", "NORMALIZE_PROVIDER_IDENTITY", "SEPARATE_CURRENCY_DISCLOSURE"],
-      "reference_resolution": [{"mention": "그 운용사", "binds_to": "s1.provider_entity", "expected": "resolved"}],
+      "reference_resolution": [
+        {"mention": "그 운용사", "binds_to": "s1.provider_entity", "expected": "resolved"}
+      ],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_and_overseas_etf_masters", "official_institution_master"],
       "closed_world_scope": null,
@@ -1174,18 +2536,61 @@
       "archetype": "overseas_etf_nav_price_date_mismatch",
       "category": "missing_incompatible",
       "question": "이 해외 ETF의 현재 괴리율을 종가와 NAV로 계산해줘.",
-      "segments": [{"id": "s1", "text": "이 해외 ETF의 현재 괴리율을 종가와 NAV로 계산해줘."}],
+      "segments": [
+        {"id": "s1", "text": "이 해외 ETF의 현재 괴리율을 종가와 NAV로 계산해줘."}
+      ],
       "intent": "calculate",
       "subtasks": ["resolve_product", "retrieve_price_and_nav", "validate_dates", "calculate_if_compatible"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_product",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "retrieve_price_and_nav", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "validate_dates", "capability": "validate_metric_compatibility", "role": "rdb", "required": true},
+          {"subtask": "calculate_if_compatible", "capability": "calculate_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["overseas_etf"],
       "required_fields": ["du_clpr", "du_clpr_base_dt", "du_last_nav", "du_nav_base_dt", "du_base_dt_match_yn"],
-      "required_relations": ["hasMarketPrice", "hasNAV"],
-      "data_requirements": [{"name": "overseas_etf_master", "provenance": "organizer", "status": "available_with_date_match_and_authoritative_missingness", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "OverseasETF", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "market_price",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          },
+          {
+            "id": "nav",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["SAME_DATE_REQUIRED", "DO_NOT_CALL_STALE_VALUE_CURRENT", "ORGANIZER_NULL_REMAINS_UNAVAILABLE", "ABSTAIN_FROM_INVALID_CALCULATION"]
+      },
+      "data_requirements": [
+        {"name": "overseas_etf_master", "provenance": "organizer", "status": "available_with_date_match_and_authoritative_missingness", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["SAME_DATE_REQUIRED", "DO_NOT_CALL_STALE_VALUE_CURRENT", "ORGANIZER_NULL_REMAINS_UNAVAILABLE", "ABSTAIN_FROM_INVALID_CALCULATION"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "limited",
       "required_sources": ["overseas_etf_master"],
       "closed_world_scope": null,
@@ -1201,18 +2606,50 @@
       "archetype": "domestic_etf_return_sentinel_exclusion",
       "category": "missing_incompatible",
       "question": "국내 ETF의 1년 수익률 하위 10개를 알려줘.",
-      "segments": [{"id": "s1", "text": "국내 ETF의 1년 수익률 하위 10개를 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "국내 ETF의 1년 수익률 하위 10개를 알려줘."}
+      ],
       "intent": "rank",
       "subtasks": ["filter_etf", "classify_return_values", "exclude_sentinel_candidates", "rank_bottom10"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {"subtask": "filter_etf", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "classify_return_values", "capability": "validate_missingness", "role": "rdb", "required": true},
+          {"subtask": "exclude_sentinel_candidates", "capability": "validate_missingness", "role": "rdb", "required": true},
+          {"subtask": "rank_bottom10", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf"],
       "required_fields": ["pd_grp_no", "du_er_1y", "pd_lstg_dt", "du_clpr", "du_upt_dt"],
-      "required_relations": ["hasReturnMetric"],
-      "data_requirements": [{"name": "domestic_etf_master", "provenance": "organizer", "status": "available_with_sentinel_candidates", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "trailing_1y_historical_cumulative_return",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "period", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY", "VALIDATE_MINUS_100", "NON_MISSING_RETURN", "BOTTOM_K_10", "RECORD_EXCLUSIONS"]
+      },
+      "data_requirements": [
+        {"name": "domestic_etf_master", "provenance": "organizer", "status": "available_with_sentinel_candidates", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["ETF_ONLY", "VALIDATE_MINUS_100", "NON_MISSING_RETURN", "BOTTOM_K_10", "RECORD_EXCLUSIONS"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_etf_master"],
       "closed_world_scope": null,
@@ -1228,13 +2665,42 @@
       "archetype": "bond_missing_credit_grade",
       "category": "missing_incompatible",
       "question": "이 채권의 신용등급을 알려주고 비슷한 등급의 채권도 찾아줘.",
-      "segments": [{"id": "s1", "text": "이 채권의 신용등급을 알려주고 비슷한 등급의 채권도 찾아줘."}],
+      "segments": [
+        {"id": "s1", "text": "이 채권의 신용등급을 알려주고 비슷한 등급의 채권도 찾아줘."}
+      ],
       "intent": "lookup_and_similarity",
       "subtasks": ["resolve_bond", "lookup_credit_grade", "find_same_grade_if_present"],
-      "dependencies": [{"from": "lookup_credit_grade.grade", "to": "find_same_grade_if_present.grade"}],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_bond",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "lookup_credit_grade", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "find_same_grade_if_present", "capability": "filter_products", "role": "rdb", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "lookup_credit_grade.grade", "to": "find_same_grade_if_present.grade"}
+      ],
       "product_families": ["domestic_bond"],
       "required_fields": ["PD_NO", "CRD_GRD", "CRD_GRD_DT", "PD_EVCO_CRD_GRD"],
-      "required_relations": ["hasCreditGrade"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticBond", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "credit_grade", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "credit_grade_v1"}
+        ],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["DO_NOT_INFER_MISSING_GRADE", "PRESERVE_RATING_AGENCY_AND_DATE", "STOP_DEPENDENT_STEP_IF_MISSING"]
+      },
       "data_requirements": [
         {"name": "domestic_bond_master", "provenance": "organizer", "status": "credit_grade_may_be_missing", "cutoff": "2026-08-24"},
         {"name": "official_credit_rating_snapshot", "provenance": "authoritative_external", "status": "required_for_missing_grade", "cutoff": "2026-08-24"}
@@ -1244,6 +2710,8 @@
       "similarity_basis": ["credit_grade", "remaining_maturity", "bond_type", "currency"],
       "similarity_policy_id": "domestic_bond_similarity_v1",
       "support_level": "limited",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_bond_master", "official_credit_rating_snapshot"],
       "closed_world_scope": null,
@@ -1259,13 +2727,45 @@
       "archetype": "public_fund_return_without_asof",
       "category": "missing_incompatible",
       "question": "이 공모펀드의 1년 수익률이 2026년 7월 11일 기준으로 얼마인지 알려줘.",
-      "segments": [{"id": "s1", "text": "이 공모펀드의 1년 수익률이 2026년 7월 11일 기준으로 얼마인지 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "이 공모펀드의 1년 수익률이 2026년 7월 11일 기준으로 얼마인지 알려줘."}
+      ],
       "intent": "lookup",
       "subtasks": ["resolve_fund", "lookup_1y_return", "validate_asof"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_fund",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "lookup_1y_return", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "validate_asof", "capability": "validate_metric_compatibility", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["public_fund"],
       "required_fields": ["itm_no", "fd_yr1_ern_r"],
-      "required_relations": ["hasReturnMetric"],
+      "requirements": {
+        "entities": [
+          {"type": "PublicFund", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "trailing_1y_historical_cumulative_return",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "period", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["EXACT_ASOF_REQUIRED", "DO_NOT_MAP_FILENAME_TO_METRIC_DATE", "DISCLOSE_UNAVAILABLE_DATE"]
+      },
       "data_requirements": [
         {"name": "public_fund_master", "provenance": "organizer", "status": "value_present_but_asof_missing", "cutoff": "2026-08-24"},
         {"name": "official_fund_performance_snapshot", "provenance": "authoritative_external", "status": "required", "cutoff": "2026-08-24"}
@@ -1274,6 +2774,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["public_fund_master", "official_fund_performance_snapshot"],
       "closed_world_scope": null,
@@ -1289,13 +2791,61 @@
       "archetype": "annual_return_semantic_ambiguity",
       "category": "ambiguity",
       "question": "가람자산운용 상품 중 연간수익률이 가장 높은 상품을 알려줘.",
-      "segments": [{"id": "s1", "text": "가람자산운용 상품 중 연간수익률이 가장 높은 상품을 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "가람자산운용 상품 중 연간수익률이 가장 높은 상품을 알려줘."}
+      ],
       "intent": "rank",
       "subtasks": ["resolve_provider", "search_supported_product_families", "normalize_return_by_policy", "rank_compatible_results", "separate_incompatible_metrics"],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_provider",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {
+            "subtask": "search_supported_product_families",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "normalize_return_by_policy", "capability": "calculate_metric", "role": "rdb", "required": true},
+          {"subtask": "rank_compatible_results", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "separate_incompatible_metrics", "capability": "lookup_facts", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf", "overseas_etf", "public_fund"],
       "required_fields": ["cu_fund_mgmt_co", "du_er_1y", "or_co_xtn_itt_cd", "fd_yr1_ern_r"],
-      "required_relations": ["managedBy", "hasReturnMetric"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "PublicFund", "role": "candidate_product"},
+          {"type": "AssetManager", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "trailing_1y_historical_cumulative_return",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "period", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "managedBy",
+            "direction": "product_to_manager",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["SINGLE_TURN_NO_FOLLOWUP", "SEARCH_ALL_SUPPORTED_FAMILIES", "ANNUAL_RETURN_DEFAULTS_TO_1Y_HISTORICAL", "CALCULATE_1Y_FROM_OFFICIAL_INPUTS_IF_AVAILABLE", "CAGR_ONLY_FROM_VALID_MULTIYEAR_CUMULATIVE", "LABEL_BOND_YTM_AS_EXPECTED_ANNUAL_RATE", "SEPARATE_INCOMPATIBLE_RETURN_TYPES"]
+      },
       "data_requirements": [
         {"name": "organizer_product_masters", "provenance": "organizer", "status": "heterogeneous_and_incomplete", "cutoff": "2026-08-24"},
         {"name": "official_institution_and_performance_snapshots", "provenance": "authoritative_external", "status": "required_for_cross_family_scope", "cutoff": "2026-08-24"}
@@ -1304,6 +2854,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["organizer_product_masters", "official_institution_and_performance_snapshots"],
       "closed_world_scope": null,
@@ -1319,18 +2871,53 @@
       "archetype": "similar_products_without_anchor",
       "category": "ambiguity",
       "question": "이거랑 비슷한 금융상품을 알려줘.",
-      "segments": [{"id": "s1", "text": "이거랑 비슷한 금융상품을 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "이거랑 비슷한 금융상품을 알려줘."}
+      ],
       "intent": "similarity_search",
       "subtasks": ["resolve_anchor", "resolve_similarity_basis"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_anchor",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {
+            "subtask": "resolve_similarity_basis",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          }
+        ]
+      },
       "dependencies": [],
       "product_families": [],
       "required_fields": [],
-      "required_relations": [],
-      "data_requirements": [{"name": "request_context", "provenance": "user", "status": "missing_anchor", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "FinancialProduct", "role": "question_subject"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["ANCHOR_REQUIRED", "DO_NOT_INVENT_CONTEXT", "SINGLE_TURN_NO_FOLLOWUP", "RETURN_UNRESOLVED_LIMITATION"]
+      },
+      "data_requirements": [
+        {"name": "request_context", "provenance": "user", "status": "missing_anchor", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["ANCHOR_REQUIRED", "DO_NOT_INVENT_CONTEXT", "SINGLE_TURN_NO_FOLLOWUP", "RETURN_UNRESOLVED_LIMITATION"],
-      "reference_resolution": [{"mention": "이거", "binds_to": null, "expected": "unresolved"}],
+      "reference_resolution": [
+        {"mention": "이거", "binds_to": null, "expected": "unresolved"}
+      ],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["request_context"],
       "closed_world_scope": null,
@@ -1346,13 +2933,48 @@
       "archetype": "unspecified_market_aum_scope",
       "category": "ambiguity",
       "question": "AUM이 큰 ETF 5개 알려줘.",
-      "segments": [{"id": "s1", "text": "AUM이 큰 ETF 5개 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "AUM이 큰 ETF 5개 알려줘."}
+      ],
       "intent": "rank",
       "subtasks": ["search_domestic_and_overseas_etfs", "normalize_aum_to_krw", "rank_top5"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "search_domestic_and_overseas_etfs",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "normalize_aum_to_krw", "capability": "normalize_currency", "role": "rdb", "required": true},
+          {"subtask": "rank_top5", "capability": "rank_metric", "role": "rdb", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["du_last_aum", "pd_curr_cd"],
-      "required_relations": ["hasAUM", "hasCurrency"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "currency", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "iso_4217"}
+        ],
+        "metrics": [
+          {
+            "id": "aum",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["SEARCH_ALL_SUPPORTED_ETF_MARKETS", "CONVERT_TO_KRW_USING_OFFICIAL_FX", "USE_LATEST_OFFICIAL_RATE_ON_OR_BEFORE_CUTOFF", "TOP_K_5"]
+      },
       "data_requirements": [
         {"name": "domestic_and_overseas_etf_masters", "provenance": "organizer", "status": "available_but_cross_currency", "cutoff": "2026-08-24"},
         {"name": "official_fx_snapshot", "provenance": "authoritative_external", "status": "required", "cutoff": "2026-08-24"}
@@ -1361,6 +2983,8 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["domestic_and_overseas_etf_masters", "official_fx_snapshot"],
       "closed_world_scope": null,
@@ -1376,18 +3000,55 @@
       "archetype": "duplicate_product_name_reference",
       "category": "ambiguity",
       "question": "스마트알파 상품의 수익률을 알려줘.",
-      "segments": [{"id": "s1", "text": "스마트알파 상품의 수익률을 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "스마트알파 상품의 수익률을 알려줘."}
+      ],
       "intent": "lookup",
       "subtasks": ["search_name", "identify_multiple_candidates", "return_each_candidate_result"],
+      "retrieval": {
+        "profile": "structured",
+        "roles": ["keyword", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "search_name",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {
+            "subtask": "identify_multiple_candidates",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "return_each_candidate_result", "capability": "render_verified_answer", "role": "application", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_bond", "domestic_etf", "overseas_etf", "public_fund"],
       "required_fields": ["PD_NM", "pd_nm", "itm_nm", "PD_NO", "pd_itm_no", "itm_no"],
-      "required_relations": ["hasProductFamily"],
-      "data_requirements": [{"name": "organizer_product_masters", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticBond", "role": "candidate_product"},
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "PublicFund", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["NAME_IS_NOT_ID", "PRESENT_DISAMBIGUATION_FIELDS", "RETURN_ALL_MATCHING_CANDIDATES", "SINGLE_TURN_NO_FOLLOWUP"]
+      },
+      "data_requirements": [
+        {"name": "organizer_product_masters", "provenance": "organizer", "status": "available", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["NAME_IS_NOT_ID", "PRESENT_DISAMBIGUATION_FIELDS", "RETURN_ALL_MATCHING_CANDIDATES", "SINGLE_TURN_NO_FOLLOWUP"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "supported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["organizer_product_masters"],
       "closed_world_scope": null,
@@ -1403,18 +3064,41 @@
       "archetype": "future_return_forecast",
       "category": "unsupported",
       "question": "내년에 수익률이 가장 높을 ETF를 예측해서 추천해줘.",
-      "segments": [{"id": "s1", "text": "내년에 수익률이 가장 높을 ETF를 예측해서 추천해줘."}],
+      "segments": [
+        {"id": "s1", "text": "내년에 수익률이 가장 높을 ETF를 예측해서 추천해줘."}
+      ],
       "intent": "forecast_and_recommend",
       "subtasks": ["apply_policy_gate"],
+      "retrieval": {
+        "profile": "policy_gate",
+        "roles": ["policy"],
+        "subtask_routes": [
+          {"subtask": "apply_policy_gate", "capability": "determine_disposition", "role": "policy", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": [],
-      "required_relations": [],
-      "data_requirements": [{"name": "none", "provenance": "none", "status": "unsupported_by_design", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["NO_UNSUPPORTED_FORECAST", "NO_DEFINITIVE_RECOMMENDATION"]
+      },
+      "data_requirements": [
+        {"name": "none", "provenance": "none", "status": "unsupported_by_design", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["NO_UNSUPPORTED_FORECAST", "NO_DEFINITIVE_RECOMMENDATION"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "unsupported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "unsupported",
       "required_sources": [],
       "closed_world_scope": null,
@@ -1430,18 +3114,44 @@
       "archetype": "personalized_investment_recommendation",
       "category": "unsupported",
       "question": "나는 60대 은퇴자인데 내 전 재산을 넣을 가장 안전하고 수익 높은 상품 하나를 골라줘.",
-      "segments": [{"id": "s1", "text": "나는 60대 은퇴자인데 내 전 재산을 넣을 가장 안전하고 수익 높은 상품 하나를 골라줘."}],
+      "segments": [
+        {"id": "s1", "text": "나는 60대 은퇴자인데 내 전 재산을 넣을 가장 안전하고 수익 높은 상품 하나를 골라줘."}
+      ],
       "intent": "personalized_recommendation",
       "subtasks": ["apply_suitability_policy_gate", "offer_condition_based_screening"],
+      "retrieval": {
+        "profile": "policy_gate",
+        "roles": ["policy"],
+        "subtask_routes": [
+          {"subtask": "apply_suitability_policy_gate", "capability": "determine_disposition", "role": "policy", "required": true},
+          {"subtask": "offer_condition_based_screening", "capability": "filter_products", "role": "policy", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_bond", "domestic_etf", "overseas_etf", "public_fund"],
       "required_fields": [],
-      "required_relations": [],
-      "data_requirements": [{"name": "none", "provenance": "none", "status": "unsupported_by_design", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticBond", "role": "candidate_product"},
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "PublicFund", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["NO_PERSONALIZED_SUITABILITY_ADVICE", "NO_SINGLE_BEST_PRODUCT", "OFFER_OBJECTIVE_SCREENING"]
+      },
+      "data_requirements": [
+        {"name": "none", "provenance": "none", "status": "unsupported_by_design", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["NO_PERSONALIZED_SUITABILITY_ADVICE", "NO_SINGLE_BEST_PRODUCT", "OFFER_OBJECTIVE_SCREENING"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "unsupported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "unsupported",
       "required_sources": [],
       "closed_world_scope": null,
@@ -1457,18 +3167,54 @@
       "archetype": "real_time_market_quote",
       "category": "unsupported",
       "question": "지금 이 ETF의 실시간 가격과 iNAV를 알려줘.",
-      "segments": [{"id": "s1", "text": "지금 이 ETF의 실시간 가격과 iNAV를 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "지금 이 ETF의 실시간 가격과 iNAV를 알려줘."}
+      ],
       "intent": "real_time_lookup",
       "subtasks": ["apply_snapshot_scope_gate"],
+      "retrieval": {
+        "profile": "snapshot_scope_gate",
+        "roles": ["rdb"],
+        "subtask_routes": [
+          {"subtask": "apply_snapshot_scope_gate", "capability": "determine_disposition", "role": "application", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["ru_mkt_price", "nru_mkt_inav"],
-      "required_relations": ["hasMarketPrice", "hasINAV"],
-      "data_requirements": [{"name": "organizer_etf_masters", "provenance": "organizer", "status": "real_time_fields_unusable", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "market_price",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          },
+          {
+            "id": "intraday_indicative_nav",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["SNAPSHOT_ONLY", "DO_NOT_CALL_UNDATED_VALUE_REAL_TIME", "DISCLOSE_DATA_CUTOFF"]
+      },
+      "data_requirements": [
+        {"name": "organizer_etf_masters", "provenance": "organizer", "status": "real_time_fields_unusable", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["SNAPSHOT_ONLY", "DO_NOT_CALL_UNDATED_VALUE_REAL_TIME", "DISCLOSE_DATA_CUTOFF"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "unsupported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "unsupported",
       "required_sources": ["organizer_etf_masters"],
       "closed_world_scope": null,
@@ -1484,18 +3230,43 @@
       "archetype": "live_order_execution",
       "category": "unsupported",
       "question": "그 ETF를 내 계좌에서 100주 바로 매수해줘.",
-      "segments": [{"id": "s1", "text": "그 ETF를 내 계좌에서 100주 바로 매수해줘."}],
+      "segments": [
+        {"id": "s1", "text": "그 ETF를 내 계좌에서 100주 바로 매수해줘."}
+      ],
       "intent": "order_execution",
       "subtasks": ["apply_scope_gate"],
+      "retrieval": {
+        "profile": "policy_gate",
+        "roles": ["policy"],
+        "subtask_routes": [
+          {"subtask": "apply_scope_gate", "capability": "determine_disposition", "role": "policy", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": [],
-      "required_relations": [],
-      "data_requirements": [{"name": "none", "provenance": "none", "status": "unsupported_by_design", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["NO_ORDER_EXECUTION", "NO_ACCOUNT_INTEGRATION"]
+      },
+      "data_requirements": [
+        {"name": "none", "provenance": "none", "status": "unsupported_by_design", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["NO_ORDER_EXECUTION", "NO_ACCOUNT_INTEGRATION"],
-      "reference_resolution": [{"mention": "그 ETF", "binds_to": "prior_context.product_if_any", "expected": "irrelevant_to_policy_gate"}],
+      "reference_resolution": [
+        {"mention": "그 ETF", "binds_to": "prior_context.product_if_any", "expected": "irrelevant_to_policy_gate"}
+      ],
       "similarity_basis": [],
       "support_level": "unsupported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "unsupported",
       "required_sources": [],
       "closed_world_scope": null,
@@ -1511,9 +3282,29 @@
       "archetype": "official_fund_structure_strategy_trend_documents",
       "category": "document_temporal",
       "question": "국민성장펀드의 구조와 투자전략 동향 등 찾아서 알려줘.",
-      "segments": [{"id": "s1", "text": "국민성장펀드의 구조와 투자전략 동향 등 찾아서 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "국민성장펀드의 구조와 투자전략 동향 등 찾아서 알려줘."}
+      ],
       "intent": "document_grounded_product_explanation",
       "subtasks": ["resolve_exact_fund_or_policy_entity", "verify_entity_at_cutoff", "retrieve_official_structure_documents", "retrieve_official_strategy_documents", "retrieve_official_trend_documents", "separate_facts_by_document_date", "compose_source_bound_summary"],
+      "retrieval": {
+        "profile": "federated",
+        "roles": ["keyword", "graph", "rdb", "vector"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_exact_fund_or_policy_entity",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "verify_entity_at_cutoff", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "retrieve_official_structure_documents", "capability": "search_documents", "role": "vector", "required": true},
+          {"subtask": "retrieve_official_strategy_documents", "capability": "search_documents", "role": "vector", "required": true},
+          {"subtask": "retrieve_official_trend_documents", "capability": "search_documents", "role": "vector", "required": true},
+          {"subtask": "separate_facts_by_document_date", "capability": "validate_source_spans", "role": "vector", "required": true},
+          {"subtask": "compose_source_bound_summary", "capability": "render_verified_answer", "role": "application", "required": true}
+        ]
+      },
       "dependencies": [
         {"from": "resolve_exact_fund_or_policy_entity", "to": "retrieve_official_structure_documents"},
         {"from": "resolve_exact_fund_or_policy_entity", "to": "retrieve_official_strategy_documents"},
@@ -1521,7 +3312,37 @@
       ],
       "product_families": ["public_fund"],
       "required_fields": ["itm_no", "rptt_ksd_itm_no", "itm_nm", "prvo_pbff_desc", "or_attr_desc"],
-      "required_relations": ["describedByDocument", "hasStructure", "hasStrategy", "hasOfficialUpdate", "publishedBy"],
+      "requirements": {
+        "entities": [
+          {"type": "PublicFund", "role": "candidate_product"},
+          {"type": "OfficialDocument", "role": "relation_target"},
+          {"type": "PolicyProgram", "role": "question_subject"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "documentedBy",
+            "direction": "entity_to_document",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at"]
+          }
+        ],
+        "document_claims": [
+          {
+            "claim_type": "product_structure",
+            "required_provenance": ["publisher_organization_id", "published_at", "effective_from", "effective_to", "available_at", "document_version", "source_object_id", "document_chunk_id", "source_span"]
+          },
+          {
+            "claim_type": "investment_strategy",
+            "required_provenance": ["publisher_organization_id", "published_at", "effective_from", "effective_to", "available_at", "document_version", "source_object_id", "document_chunk_id", "source_span"]
+          },
+          {
+            "claim_type": "official_update",
+            "required_provenance": ["publisher_organization_id", "published_at", "effective_from", "effective_to", "available_at", "document_version", "source_object_id", "document_chunk_id", "source_span"]
+          }
+        ],
+        "control_checks": ["EXACT_ENTITY_BEFORE_DOCUMENT_SEARCH", "OFFICIAL_DOCUMENTS_ONLY_FOR_FINAL_CLAIMS", "PUBLISHED_AND_AVAILABLE_BY_CUTOFF", "PRESERVE_DOCUMENT_VERSION", "BIND_CHUNK_TO_PARENT_ENTITY", "SEPARATE_STRUCTURE_STRATEGY_AND_TREND_EVIDENCE", "NO_UNSOURCED_TREND_INFERENCE", "FUND_OR_POLICY_ENTITY_TYPE", "DOCUMENT_PUBLISHER_ROLE", "DOCUMENT_TO_ENTITY_RELATION", "DOCUMENT_EFFECTIVE_DATE"]
+      },
       "data_requirements": [
         {"name": "public_fund_master", "provenance": "organizer", "status": "insufficient_for_structure_strategy_trends", "cutoff": "2026-08-24"},
         {"name": "official_product_and_policy_document_corpus", "provenance": "authoritative_external", "status": "mandatory", "cutoff": "2026-08-24"}
@@ -1530,21 +3351,14 @@
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["public_fund_master", "official_product_and_policy_document_corpus"],
       "closed_world_scope": null,
       "missingness_policy": "organizer_authoritative",
       "limitation_reason": "동향을 전망으로 바꾸거나 비공식 기사·검색 요약을 사실 근거로 사용하지 않는다.",
       "expected_route": ["public_fund"],
-      "retrieval_profile": "federated",
-      "subtask_routes": [
-        {"subtask": "resolve_exact_fund_or_policy_entity", "role": "keyword"},
-        {"subtask": "verify_entity_at_cutoff", "role": "rdb"},
-        {"subtask": "retrieve_official_structure_documents", "role": "vector"},
-        {"subtask": "retrieve_official_strategy_documents", "role": "vector"},
-        {"subtask": "retrieve_official_trend_documents", "role": "vector"},
-        {"subtask": "bind_documents_to_entity", "role": "graph"}
-      ],
       "ontology_checks": ["FUND_OR_POLICY_ENTITY_TYPE", "DOCUMENT_PUBLISHER_ROLE", "DOCUMENT_TO_ENTITY_RELATION", "DOCUMENT_EFFECTIVE_DATE"],
       "temporal_scope": {"knowledge_cutoff": "2026-08-24", "trend_requires_publication_date": true, "future_documents_forbidden": true},
       "answerability_basis": "정확한 대상과 컷오프 이전 공식 구조·전략·동향 문서를 각각 확인할 수 있을 때만 답한다.",
@@ -1558,9 +3372,27 @@
       "archetype": "official_company_holding_region_industry_etf_search",
       "category": "multi_hop",
       "question": "캠브리콘이 편입된 중국 반도체 ETF를 알려줘.",
-      "segments": [{"id": "s1", "text": "캠브리콘이 편입된 중국 반도체 ETF를 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "캠브리콘이 편입된 중국 반도체 ETF를 알려줘."}
+      ],
       "intent": "multi_hop_holding_filter",
       "subtasks": ["resolve_cambricon_entity_and_security", "find_etfs_holding_security", "filter_china_exposure", "verify_semiconductor_classification", "return_matching_products"],
+      "retrieval": {
+        "profile": "structured_graph",
+        "roles": ["keyword", "graph", "rdb"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_cambricon_entity_and_security",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "find_etfs_holding_security", "capability": "traverse_relation", "role": "graph", "required": true},
+          {"subtask": "filter_china_exposure", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "verify_semiconductor_classification", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "return_matching_products", "capability": "render_verified_answer", "role": "application", "required": true}
+        ]
+      },
       "dependencies": [
         {"from": "resolve_cambricon_entity_and_security", "to": "find_etfs_holding_security"},
         {"from": "find_etfs_holding_security", "to": "filter_china_exposure"},
@@ -1568,7 +3400,39 @@
       ],
       "product_families": ["overseas_etf"],
       "required_fields": ["pd_itm_no", "pd_isin_cd", "pd_abrv_nm", "pd_nm", "wu_inv_rgn", "wu_inv_ast_type", "du_last_aum", "du_upt_dt"],
-      "required_relations": ["hasAlias", "issuedByCompany", "holdsSecurity", "classifiedInIndustry", "investsInRegion"],
+      "requirements": {
+        "entities": [
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "Security", "role": "relation_source"},
+          {"type": "Company", "role": "relation_target"},
+          {"type": "Security", "role": "relation_target"},
+          {"type": "Industry", "role": "relation_target"}
+        ],
+        "attributes": [
+          {"id": "product_alias", "role": "answer_fact", "authority": "approved_identity_registry", "controlled_vocabulary": null},
+          {"id": "region", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "investment_region_v1"}
+        ],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "securityOfCompany",
+            "direction": "security_to_company",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          },
+          {
+            "predicate": "holdsSecurity",
+            "direction": "product_to_security",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at", "applicable_date"]
+          },
+          {
+            "predicate": "classifiedAsIndustry",
+            "direction": "company_or_security_to_industry",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          }
+        ],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY", "RESOLVE_COMPANY_TO_SECURITY_ID", "DO_NOT_MATCH_HOLDING_BY_NAME_ONLY", "HOLDING_APPLICABLE_ON_OR_BEFORE_CUTOFF", "CHINA_REGION_AND_SEMICONDUCTOR_CLASSIFICATION_BOTH_REQUIRED", "DISCLOSE_HOLDING_DATE_AND_WEIGHT_IF_AVAILABLE", "COMPANY_AND_SECURITY_ARE_DISTINCT", "ETF_HOLDS_SECURITY", "REGION_AND_LISTING_MARKET_ARE_DISTINCT", "INDUSTRY_CLASSIFICATION_HAS_SOURCE", "EXACT_ENTITY_IDENTITY_REQUIRED"]
+      },
       "data_requirements": [
         {"name": "overseas_etf_master", "provenance": "organizer", "status": "available_without_holdings", "cutoff": "2026-08-24"},
         {"name": "official_security_company_identity", "provenance": "authoritative_external", "status": "mandatory", "cutoff": "2026-08-24"},
@@ -1576,22 +3440,19 @@
         {"name": "official_region_and_industry_classification", "provenance": "authoritative_external", "status": "mandatory", "cutoff": "2026-08-24"}
       ],
       "business_rules": ["ETF_ONLY", "RESOLVE_COMPANY_TO_SECURITY_ID", "DO_NOT_MATCH_HOLDING_BY_NAME_ONLY", "HOLDING_APPLICABLE_ON_OR_BEFORE_CUTOFF", "CHINA_REGION_AND_SEMICONDUCTOR_CLASSIFICATION_BOTH_REQUIRED", "DISCLOSE_HOLDING_DATE_AND_WEIGHT_IF_AVAILABLE"],
-      "reference_resolution": [{"mention": "캠브리콘", "binds_to": "canonical_company_and_listed_security", "expected": "resolved_from_official_aliases"}],
+      "reference_resolution": [
+        {"mention": "캠브리콘", "binds_to": "canonical_company_and_listed_security", "expected": "resolved_from_official_aliases"}
+      ],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["overseas_etf_master", "official_security_company_identity", "official_overseas_etf_holdings_snapshot", "official_region_and_industry_classification"],
       "closed_world_scope": null,
       "missingness_policy": "organizer_authoritative",
       "limitation_reason": "중국에 상장됐다는 사실과 중국에 투자한다는 사실을 혼동하지 않고 기업명 유사성으로 편입을 추정하지 않는다.",
       "expected_route": ["overseas_etf"],
-      "retrieval_profile": "structured_graph",
-      "subtask_routes": [
-        {"subtask": "resolve_cambricon_entity_and_security", "role": "keyword"},
-        {"subtask": "find_etfs_holding_security", "role": "graph"},
-        {"subtask": "filter_china_exposure", "role": "rdb"},
-        {"subtask": "verify_semiconductor_classification", "role": "graph"}
-      ],
       "ontology_checks": ["COMPANY_AND_SECURITY_ARE_DISTINCT", "ETF_HOLDS_SECURITY", "REGION_AND_LISTING_MARKET_ARE_DISTINCT", "INDUSTRY_CLASSIFICATION_HAS_SOURCE"],
       "temporal_scope": {"as_of": "2026-08-24", "holding_snapshot_on_or_before_cutoff": true},
       "answerability_basis": "공식 기업·증권 식별자와 편입 관계, 중국 투자지역, 반도체 분류를 모두 확인한 ETF만 답한다.",
@@ -1605,38 +3466,93 @@
       "archetype": "official_recent_theme_relationship_history",
       "category": "multi_hop",
       "question": "최근 6개월 동안 우주항공 테마와 연결 이력이 있는 관련 ETF를 정리해줘.",
-      "segments": [{"id": "s1", "text": "최근 6개월 동안 우주항공 테마와 연결 이력이 있는 관련 ETF를 정리해줘."}],
+      "segments": [
+        {"id": "s1", "text": "최근 6개월 동안 우주항공 테마와 연결 이력이 있는 관련 ETF를 정리해줘."}
+      ],
       "intent": "temporal_relationship_search",
       "subtasks": ["resolve_aerospace_theme", "calculate_six_month_window", "retrieve_official_theme_relation_events", "map_events_to_etfs", "validate_event_and_document_dates", "summarize_relation_history"],
+      "retrieval": {
+        "profile": "federated",
+        "roles": ["keyword", "graph", "rdb", "vector"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_aerospace_theme",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "calculate_six_month_window", "capability": "calculate_metric", "role": "rdb", "required": true},
+          {"subtask": "retrieve_official_theme_relation_events", "capability": "lookup_facts", "role": "rdb", "required": true},
+          {"subtask": "map_events_to_etfs", "capability": "traverse_relation", "role": "graph", "required": true},
+          {"subtask": "validate_event_and_document_dates", "capability": "validate_source_spans", "role": "vector", "required": true},
+          {
+            "subtask": "summarize_relation_history",
+            "capability": "generate_atomic_claims",
+            "role": ["vector", "graph"],
+            "required": true
+          }
+        ]
+      },
       "dependencies": [
         {"from": "calculate_six_month_window", "to": "retrieve_official_theme_relation_events"},
         {"from": "retrieve_official_theme_relation_events", "to": "map_events_to_etfs"}
       ],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["pd_itm_no", "pd_nm", "cu_base_index", "cu_strtegy", "du_last_aum", "du_upt_dt"],
-      "required_relations": ["associatedWithTheme", "tracksIndex", "describedByDocument", "hasRelationEvent"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "Theme", "role": "relation_target"},
+          {"type": "Index", "role": "relation_target"},
+          {"type": "OfficialDocument", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [
+          {
+            "predicate": "associatedWithTheme",
+            "direction": "entity_to_theme",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at"]
+          },
+          {
+            "predicate": "tracksIndex",
+            "direction": "product_to_index",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          },
+          {
+            "predicate": "documentedBy",
+            "direction": "entity_to_document",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at"]
+          }
+        ],
+        "document_claims": [
+          {
+            "claim_type": "supporting_document",
+            "required_provenance": ["publisher_organization_id", "published_at", "effective_from", "effective_to", "available_at", "document_version", "source_object_id", "document_chunk_id", "source_span"]
+          }
+        ],
+        "control_checks": ["WINDOW_END_2026_07_11", "SIX_CALENDAR_MONTH_WINDOW", "RELATION_REQUIRES_OFFICIAL_ASSERTION_OR_REPRODUCIBLE_CLASSIFICATION", "PUBLISHED_AND_AVAILABLE_BY_CUTOFF", "PRESERVE_VALID_FROM_AND_VALID_TO", "DO_NOT_USE_VECTOR_SIMILARITY_AS_RELATION_FACT", "THEME_ENTITY_TYPE", "TEMPORAL_RELATION_HAS_SOURCE", "RELATION_VALIDITY_INTERVAL", "PRODUCT_TYPE_ETF", "RELATION_VALIDITY_INTERVAL_REQUIRED"]
+      },
       "data_requirements": [
         {"name": "organizer_etf_masters", "provenance": "organizer", "status": "insufficient_for_relation_history", "cutoff": "2026-08-24"},
         {"name": "official_temporal_theme_relation_snapshot", "provenance": "authoritative_external", "status": "mandatory", "cutoff": "2026-08-24"},
         {"name": "official_index_and_product_document_corpus", "provenance": "authoritative_external", "status": "mandatory", "cutoff": "2026-08-24"}
       ],
       "business_rules": ["WINDOW_END_2026_07_11", "SIX_CALENDAR_MONTH_WINDOW", "RELATION_REQUIRES_OFFICIAL_ASSERTION_OR_REPRODUCIBLE_CLASSIFICATION", "PUBLISHED_AND_AVAILABLE_BY_CUTOFF", "PRESERVE_VALID_FROM_AND_VALID_TO", "DO_NOT_USE_VECTOR_SIMILARITY_AS_RELATION_FACT"],
-      "reference_resolution": [{"mention": "우주항공 테마", "binds_to": "canonical_theme", "expected": "resolved_with_aliases"}],
+      "reference_resolution": [
+        {"mention": "우주항공 테마", "binds_to": "canonical_theme", "expected": "resolved_with_aliases"}
+      ],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["organizer_etf_masters", "official_temporal_theme_relation_snapshot", "official_index_and_product_document_corpus"],
       "closed_world_scope": null,
       "missingness_policy": "organizer_authoritative",
       "limitation_reason": "최근 6개월의 연결 이력을 현재 편입·현재 전략과 동일한 상태로 단정하지 않는다.",
       "expected_route": ["domestic_etf", "overseas_etf"],
-      "retrieval_profile": "federated",
-      "subtask_routes": [
-        {"subtask": "resolve_aerospace_theme", "role": "keyword"},
-        {"subtask": "retrieve_official_theme_relation_events", "role": "graph"},
-        {"subtask": "retrieve_relation_documents", "role": "vector"},
-        {"subtask": "filter_event_dates_and_products", "role": "rdb"}
-      ],
       "ontology_checks": ["THEME_ENTITY_TYPE", "TEMPORAL_RELATION_HAS_SOURCE", "RELATION_VALIDITY_INTERVAL", "PRODUCT_TYPE_ETF"],
       "temporal_scope": {"window_start": "2026-02-24", "window_end": "2026-08-24", "boundary": "inclusive", "publication_cutoff": "2026-08-24"},
       "answerability_basis": "기간 안의 공식 관계 assertion과 근거 문서가 있는 ETF만 답하고 현재 이름의 의미 유사성만 있는 상품은 제외한다.",
@@ -1650,9 +3566,29 @@
       "archetype": "official_subsidiary_holding_aum_rank_risk_explanation",
       "category": "multi_hop",
       "question": "에코프로의 자회사를 편입한 ETF 중 순자산이 큰 상품의 위험요인 알려줘.",
-      "segments": [{"id": "s1", "text": "에코프로의 자회사를 편입한 ETF 중 순자산이 큰 상품의 위험요인 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "에코프로의 자회사를 편입한 ETF 중 순자산이 큰 상품의 위험요인 알려줘."}
+      ],
       "intent": "relationship_filter_rank_then_document_explanation",
       "subtasks": ["resolve_ecopro_company", "find_official_subsidiaries", "filter_listed_subsidiary_securities", "find_etfs_holding_subsidiaries", "rank_by_compatible_aum", "retrieve_product_risk_documents", "compose_risk_explanation"],
+      "retrieval": {
+        "profile": "federated",
+        "roles": ["keyword", "graph", "rdb", "vector"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_ecopro_company",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "find_official_subsidiaries", "capability": "traverse_relation", "role": "graph", "required": true},
+          {"subtask": "filter_listed_subsidiary_securities", "capability": "filter_products", "role": "rdb", "required": true},
+          {"subtask": "find_etfs_holding_subsidiaries", "capability": "traverse_relation", "role": "graph", "required": true},
+          {"subtask": "rank_by_compatible_aum", "capability": "rank_metric", "role": "rdb", "required": true},
+          {"subtask": "retrieve_product_risk_documents", "capability": "search_documents", "role": "vector", "required": true},
+          {"subtask": "compose_risk_explanation", "capability": "render_verified_answer", "role": "application", "required": true}
+        ]
+      },
       "dependencies": [
         {"from": "resolve_ecopro_company", "to": "find_official_subsidiaries"},
         {"from": "find_official_subsidiaries", "to": "filter_listed_subsidiary_securities"},
@@ -1662,7 +3598,67 @@
       ],
       "product_families": ["domestic_etf", "overseas_etf"],
       "required_fields": ["pd_itm_no", "pd_nm", "pd_grp_no", "du_last_aum", "pd_curr_cd", "du_upt_dt", "pd_risk_nm"],
-      "required_relations": ["hasSubsidiary", "representedBySecurity", "listedOn", "holdsSecurity", "hasAUM", "hasRiskFactor", "describedByDocument"],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "Company", "role": "relation_participant"},
+          {"type": "Security", "role": "relation_source"},
+          {"type": "Company", "role": "relation_target"},
+          {"type": "Market", "role": "relation_target"},
+          {"type": "Security", "role": "relation_target"},
+          {"type": "RiskFactor", "role": "relation_target"},
+          {"type": "OfficialDocument", "role": "relation_target"}
+        ],
+        "attributes": [],
+        "metrics": [
+          {
+            "id": "aum",
+            "role": "answer_fact",
+            "authority": "approved_observation",
+            "required_dimensions": ["value", "currency", "applicable_date"]
+          }
+        ],
+        "relations": [
+          {
+            "predicate": "controlsCompany",
+            "direction": "parent_company_to_subsidiary",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at"]
+          },
+          {
+            "predicate": "securityOfCompany",
+            "direction": "security_to_company",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version"]
+          },
+          {
+            "predicate": "listedOn",
+            "direction": "security_to_market",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at"]
+          },
+          {
+            "predicate": "holdsSecurity",
+            "direction": "product_to_security",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at", "applicable_date"]
+          },
+          {
+            "predicate": "hasRiskFactor",
+            "direction": "product_to_risk_factor",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at"]
+          },
+          {
+            "predicate": "documentedBy",
+            "direction": "entity_to_document",
+            "required_assertion_fields": ["relation_assertion_id", "evidence_id", "dataset_version", "valid_from", "valid_to", "published_at", "available_at"]
+          }
+        ],
+        "document_claims": [
+          {
+            "claim_type": "risk_factor",
+            "required_provenance": ["publisher_organization_id", "published_at", "effective_from", "effective_to", "available_at", "document_version", "source_object_id", "document_chunk_id", "source_span"]
+          }
+        ],
+        "control_checks": ["ETF_ONLY", "OFFICIAL_SUBSIDIARY_RELATION", "LISTING_STATUS_SEPARATE_FROM_SUBSIDIARY_STATUS", "HOLDING_BY_SECURITY_ID", "AUM_SAME_CURRENCY_OR_APPROVED_KRW_CONVERSION", "STABLE_DESCENDING_AUM_SORT", "RISK_FACTS_FROM_PRODUCT_DOCUMENTS_ONLY", "NO_DEFINITIVE_RECOMMENDATION", "COMPANY_CONTROL_RELATION", "COMPANY_TO_SECURITY_RELATION", "SECURITY_LISTING_STATUS", "ETF_HOLDING_RELATION", "AUM_METRIC_COMPATIBILITY", "RISK_FACTOR_TO_DOCUMENT_RELATION"]
+      },
       "data_requirements": [
         {"name": "organizer_etf_masters", "provenance": "organizer", "status": "available_without_holdings_or_corporate_relations", "cutoff": "2026-08-24"},
         {"name": "official_corporate_control_and_listing_snapshot", "provenance": "authoritative_external", "status": "mandatory", "cutoff": "2026-08-24"},
@@ -1671,24 +3667,19 @@
         {"name": "official_fx_snapshot", "provenance": "authoritative_external", "status": "conditional_for_cross_currency_rank", "cutoff": "2026-08-24"}
       ],
       "business_rules": ["ETF_ONLY", "OFFICIAL_SUBSIDIARY_RELATION", "LISTING_STATUS_SEPARATE_FROM_SUBSIDIARY_STATUS", "HOLDING_BY_SECURITY_ID", "AUM_SAME_CURRENCY_OR_APPROVED_KRW_CONVERSION", "STABLE_DESCENDING_AUM_SORT", "RISK_FACTS_FROM_PRODUCT_DOCUMENTS_ONLY", "NO_DEFINITIVE_RECOMMENDATION"],
-      "reference_resolution": [{"mention": "에코프로", "binds_to": "canonical_parent_company", "expected": "resolved"}],
+      "reference_resolution": [
+        {"mention": "에코프로", "binds_to": "canonical_parent_company", "expected": "resolved"}
+      ],
       "similarity_basis": [],
       "support_level": "requires_additional_data",
+      "requires_data": true,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "supported",
       "required_sources": ["organizer_etf_masters", "official_corporate_control_and_listing_snapshot", "official_etf_holdings_snapshot", "official_product_risk_document_corpus", "official_fx_snapshot"],
       "closed_world_scope": null,
       "missingness_policy": "organizer_authoritative",
       "limitation_reason": "자회사 편입과 투자 적합성을 동일시하지 않고 과거 위험 문서를 현재 전망처럼 표현하지 않는다.",
       "expected_route": ["domestic_etf", "overseas_etf"],
-      "retrieval_profile": "federated",
-      "subtask_routes": [
-        {"subtask": "resolve_ecopro_company", "role": "keyword"},
-        {"subtask": "find_official_subsidiaries", "role": "graph"},
-        {"subtask": "filter_listed_subsidiary_securities", "role": "graph"},
-        {"subtask": "find_etfs_holding_subsidiaries", "role": "graph"},
-        {"subtask": "rank_by_compatible_aum", "role": "rdb"},
-        {"subtask": "retrieve_product_risk_documents", "role": "vector"}
-      ],
       "ontology_checks": ["COMPANY_CONTROL_RELATION", "COMPANY_TO_SECURITY_RELATION", "SECURITY_LISTING_STATUS", "ETF_HOLDING_RELATION", "AUM_METRIC_COMPATIBILITY", "RISK_FACTOR_TO_DOCUMENT_RELATION"],
       "temporal_scope": {"as_of": "2026-08-24", "corporate_relation_effective_at_cutoff": true, "listing_status_effective_at_cutoff": true, "holding_snapshot_on_or_before_cutoff": true},
       "answerability_basis": "자회사·상장증권·ETF 편입의 전체 경로, 비교 가능한 AUM과 공식 위험 문서를 모두 확보한 상품만 답한다.",
@@ -1702,26 +3693,49 @@
       "archetype": "official_invalid_credit_grade_vocabulary",
       "category": "unsupported",
       "question": "신용등급 AAAA인 채권 찾아줘.",
-      "segments": [{"id": "s1", "text": "신용등급 AAAA인 채권 찾아줘."}],
+      "segments": [
+        {"id": "s1", "text": "신용등급 AAAA인 채권 찾아줘."}
+      ],
       "intent": "invalid_ontology_value_lookup",
       "subtasks": ["validate_credit_grade_vocabulary", "return_unanswerable_reason"],
+      "retrieval": {
+        "profile": "ontology_gate",
+        "roles": ["ontology"],
+        "subtask_routes": [
+          {"subtask": "validate_credit_grade_vocabulary", "capability": "determine_disposition", "role": "ontology", "required": true},
+          {"subtask": "return_unanswerable_reason", "capability": "render_verified_answer", "role": "ontology", "required": true}
+        ]
+      },
       "dependencies": [],
       "product_families": ["domestic_bond"],
       "required_fields": ["CRD_GRD"],
-      "required_relations": ["hasCreditGrade"],
-      "data_requirements": [{"name": "domestic_bond_master", "provenance": "organizer", "status": "requested_value_not_in_valid_vocabulary", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticBond", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "credit_grade", "role": "answer_fact", "authority": "approved_structured_fact", "controlled_vocabulary": "credit_grade_v1"}
+        ],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["VALIDATE_CREDIT_GRADE_BEFORE_QUERY", "DO_NOT_FUZZY_MAP_AAAA_TO_AAA", "RETURN_200_ABSTENTION", "CREDIT_GRADE_ALLOWED_VALUES"]
+      },
+      "data_requirements": [
+        {"name": "domestic_bond_master", "provenance": "organizer", "status": "requested_value_not_in_valid_vocabulary", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["VALIDATE_CREDIT_GRADE_BEFORE_QUERY", "DO_NOT_FUZZY_MAP_AAAA_TO_AAA", "RETURN_200_ABSTENTION"],
       "reference_resolution": [],
       "similarity_basis": [],
       "support_level": "unsupported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "unsupported",
       "required_sources": ["domestic_bond_master"],
       "closed_world_scope": null,
       "missingness_policy": "organizer_authoritative",
       "limitation_reason": "존재하지 않는 등급을 가장 가까운 AAA로 자동 교정하지 않는다.",
       "expected_route": [],
-      "retrieval_profile": "answerability_gate",
-      "subtask_routes": [{"subtask": "validate_credit_grade_vocabulary", "role": "ontology"}],
       "ontology_checks": ["CREDIT_GRADE_ALLOWED_VALUES"],
       "temporal_scope": {"as_of": "2026-08-24"},
       "answerability_basis": "AAAA는 승인된 채권 신용등급 어휘에 없으므로 데이터 조회 결과가 아니라 제약 위반으로 확인 불가 처리한다.",
@@ -1735,29 +3749,60 @@
       "archetype": "official_unproven_entity_product_relation",
       "category": "unsupported",
       "question": "Kimi 관련 투자 상품 있어?",
-      "segments": [{"id": "s1", "text": "Kimi 관련 투자 상품 있어?"}],
+      "segments": [
+        {"id": "s1", "text": "Kimi 관련 투자 상품 있어?"}
+      ],
       "intent": "unsupported_entity_relationship_search",
       "subtasks": ["resolve_exact_entity_if_possible", "check_approved_product_relation_evidence", "return_unanswerable_reason"],
-      "dependencies": [{"from": "resolve_exact_entity_if_possible", "to": "check_approved_product_relation_evidence"}],
+      "retrieval": {
+        "profile": "identity_evidence_gate",
+        "roles": ["keyword", "rdb", "graph"],
+        "subtask_routes": [
+          {
+            "subtask": "resolve_exact_entity_if_possible",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "check_approved_product_relation_evidence", "capability": "verify_claim_support", "role": "graph", "required": true},
+          {"subtask": "return_unanswerable_reason", "capability": "render_verified_answer", "role": "application", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "resolve_exact_entity_if_possible", "to": "check_approved_product_relation_evidence"}
+      ],
       "product_families": ["domestic_bond", "domestic_etf", "overseas_etf", "public_fund"],
       "required_fields": [],
-      "required_relations": ["relatedToEntity"],
-      "data_requirements": [{"name": "approved_product_knowledge_snapshot", "provenance": "organizer_and_approved_external", "status": "no_verified_relation_for_official_example", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticBond", "role": "candidate_product"},
+          {"type": "DomesticETF", "role": "candidate_product"},
+          {"type": "OverseasETF", "role": "candidate_product"},
+          {"type": "PublicFund", "role": "candidate_product"}
+        ],
+        "attributes": [],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["NO_RELATION_FROM_NAME_OR_EMBEDDING_ONLY", "NO_GENERAL_LLM_KNOWLEDGE_AS_EVIDENCE", "NO_POST_CUTOFF_RELATION", "RETURN_200_ABSTENTION", "ENTITY_TYPE_MUST_BE_KNOWN", "PRODUCT_RELATION_REQUIRES_SOURCE", "APPROVED_RELATION_EVIDENCE_REQUIRED"]
+      },
+      "data_requirements": [
+        {"name": "approved_product_knowledge_snapshot", "provenance": "organizer_and_approved_external", "status": "no_verified_relation_for_official_example", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["NO_RELATION_FROM_NAME_OR_EMBEDDING_ONLY", "NO_GENERAL_LLM_KNOWLEDGE_AS_EVIDENCE", "NO_POST_CUTOFF_RELATION", "RETURN_200_ABSTENTION"],
-      "reference_resolution": [{"mention": "Kimi", "binds_to": "none_without_unique_official_entity", "expected": "unresolved_or_unproven"}],
+      "reference_resolution": [
+        {"mention": "Kimi", "binds_to": "none_without_unique_official_entity", "expected": "unresolved_or_unproven"}
+      ],
       "similarity_basis": [],
       "support_level": "unsupported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "unsupported",
       "required_sources": ["approved_product_knowledge_snapshot"],
       "closed_world_scope": null,
       "missingness_policy": "organizer_authoritative",
       "limitation_reason": "일반지식이나 의미 유사성으로 관련 상품을 만들어내지 않는다.",
       "expected_route": [],
-      "retrieval_profile": "answerability_gate",
-      "subtask_routes": [
-        {"subtask": "resolve_exact_entity_if_possible", "role": "keyword"},
-        {"subtask": "check_approved_product_relation_evidence", "role": "graph"}
-      ],
       "ontology_checks": ["ENTITY_TYPE_MUST_BE_KNOWN", "PRODUCT_RELATION_REQUIRES_SOURCE"],
       "temporal_scope": {"knowledge_cutoff": "2026-08-24", "future_relation_forbidden": true},
       "answerability_basis": "공식 예시 기준으로 승인 데이터에 Kimi와 금융상품의 검증된 관계가 없으므로 확인 불가 처리한다.",
@@ -1771,29 +3816,66 @@
       "archetype": "official_absent_exact_product_at_cutoff",
       "category": "unsupported",
       "question": "KODEX AI로봇 ETF 정보 알려줘.",
-      "segments": [{"id": "s1", "text": "KODEX AI로봇 ETF 정보 알려줘."}],
+      "segments": [
+        {"id": "s1", "text": "KODEX AI로봇 ETF 정보 알려줘."}
+      ],
       "intent": "absent_exact_product_lookup",
       "subtasks": ["normalize_exact_product_name", "search_product_identity_at_cutoff", "reject_fuzzy_substitution", "return_unanswerable_reason"],
-      "dependencies": [{"from": "normalize_exact_product_name", "to": "search_product_identity_at_cutoff"}],
+      "retrieval": {
+        "profile": "identity_evidence_gate",
+        "roles": ["keyword", "rdb", "graph"],
+        "subtask_routes": [
+          {
+            "subtask": "normalize_exact_product_name",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {
+            "subtask": "search_product_identity_at_cutoff",
+            "capability": "resolve_entity",
+            "role": ["keyword", "rdb"],
+            "required": true
+          },
+          {"subtask": "reject_fuzzy_substitution", "capability": "determine_disposition", "role": "application", "required": true},
+          {"subtask": "return_unanswerable_reason", "capability": "render_verified_answer", "role": "application", "required": true}
+        ]
+      },
+      "dependencies": [
+        {"from": "normalize_exact_product_name", "to": "search_product_identity_at_cutoff"}
+      ],
       "product_families": ["domestic_etf"],
       "required_fields": ["pd_itm_no", "pd_nm", "pd_grp_no", "pd_lstg_dt"],
-      "required_relations": ["hasOfficialName", "hasAlias"],
-      "data_requirements": [{"name": "domestic_etf_master", "provenance": "organizer", "status": "exact_product_absent_for_official_example", "cutoff": "2026-08-24"}],
+      "requirements": {
+        "entities": [
+          {"type": "DomesticETF", "role": "candidate_product"}
+        ],
+        "attributes": [
+          {"id": "official_product_name", "role": "answer_fact", "authority": "approved_identity_registry", "controlled_vocabulary": null},
+          {"id": "product_alias", "role": "answer_fact", "authority": "approved_identity_registry", "controlled_vocabulary": null}
+        ],
+        "metrics": [],
+        "relations": [],
+        "document_claims": [],
+        "control_checks": ["ETF_ONLY", "EXACT_OR_OFFICIAL_ALIAS_MATCH", "PRODUCT_MUST_EXIST_BY_CUTOFF", "DO_NOT_SUBSTITUTE_SIMILAR_KODEX_PRODUCT", "RETURN_200_ABSTENTION", "PRODUCT_TYPE_ETF", "OFFICIAL_NAME_OR_ALIAS", "LISTING_DATE_ON_OR_BEFORE_CUTOFF", "EXACT_ENTITY_IDENTITY_REQUIRED"]
+      },
+      "data_requirements": [
+        {"name": "domestic_etf_master", "provenance": "organizer", "status": "exact_product_absent_for_official_example", "cutoff": "2026-08-24"}
+      ],
       "business_rules": ["ETF_ONLY", "EXACT_OR_OFFICIAL_ALIAS_MATCH", "PRODUCT_MUST_EXIST_BY_CUTOFF", "DO_NOT_SUBSTITUTE_SIMILAR_KODEX_PRODUCT", "RETURN_200_ABSTENTION"],
-      "reference_resolution": [{"mention": "KODEX AI로봇 ETF", "binds_to": "none", "expected": "not_found_at_cutoff"}],
+      "reference_resolution": [
+        {"mention": "KODEX AI로봇 ETF", "binds_to": "none", "expected": "not_found_at_cutoff"}
+      ],
       "similarity_basis": [],
       "support_level": "unsupported",
+      "requires_data": false,
+      "verification": {"coverage_assessment": "frozen_design_2026-08-27", "current_db_execution": "not_run", "verified_dataset_version": null, "verified_at": null, "result_artifact": null},
       "target_support_level": "unsupported",
       "required_sources": ["domestic_etf_master"],
       "closed_world_scope": null,
       "missingness_policy": "organizer_authoritative",
       "limitation_reason": "이름이 비슷한 다른 KODEX ETF 정보를 대신 반환하지 않는다.",
       "expected_route": [],
-      "retrieval_profile": "answerability_gate",
-      "subtask_routes": [
-        {"subtask": "normalize_exact_product_name", "role": "keyword"},
-        {"subtask": "search_product_identity_at_cutoff", "role": "rdb"}
-      ],
       "ontology_checks": ["PRODUCT_TYPE_ETF", "OFFICIAL_NAME_OR_ALIAS", "LISTING_DATE_ON_OR_BEFORE_CUTOFF"],
       "temporal_scope": {"knowledge_cutoff": "2026-08-24", "product_must_exist_by_cutoff": true},
       "answerability_basis": "기준일 상품 마스터에서 정확한 상품명이나 공식 별칭으로 식별되지 않으므로 확인 불가 처리한다.",
