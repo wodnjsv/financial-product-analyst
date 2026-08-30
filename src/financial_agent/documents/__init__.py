@@ -19,6 +19,8 @@ from .pdf_extraction import (
     PdfTableRow,
     PdfTextLine,
     assemble_pdf_sections,
+    extract_pdf_sections,
+    read_pdf_layout,
 )
 from .policy import (
     admit_document,
@@ -65,8 +67,10 @@ __all__ = [
     "admit_document",
     "binding_roles_for_document_role",
     "assemble_pdf_sections",
+    "extract_pdf_sections",
     "document_types_for_role",
     "publisher_roles_for_document_role",
+    "read_pdf_layout",
     "select_canonical_document",
     "validate_document_source_report",
     "write_document_source_report",

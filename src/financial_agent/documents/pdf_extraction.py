@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from io import BytesIO
 import re
+from pathlib import Path
+from typing import Mapping
+
+import pdfplumber
 
 from .chunking import ExtractedSection
 
@@ -21,9 +26,26 @@ _CLAIM_HEADINGS = frozenset(
         "투자 전략",
         "주요투자위험",
         "주요 투자위험",
+        "주요투자 위험",
         "집합투자기구의 투자목적",
         "집합투자기구의 투자전략",
         "집합투자기구의 투자위험",
+    }
+)
+_BOUNDARY_HEADINGS = frozenset(
+    {
+        "분류",
+        "투자비용",
+        "투자실적",
+        "운용전문인력",
+        "투자자 유의사항",
+        "투자결정시 유의사항 안내",
+        "매입 방법",
+        "환매 방법",
+        "수수료",
+        "보수 및 수수료",
+        "과세",
+        "재무제표",
     }
 )
 
@@ -112,6 +134,98 @@ def assemble_pdf_sections(
     )
 
 
+def read_pdf_layout(pdf_path: Path) -> tuple[PdfPageLayout, ...]:
+    """Read stable line and table geometry from one text-layer PDF."""
+
+    try:
+        payload = pdf_path.read_bytes()
+        with pdfplumber.open(BytesIO(payload)) as document:
+            if not document.pages:
+                raise PdfExtractionError("PDF_OPEN_FAILED", "PDF has no pages")
+            pages = tuple(
+                _page_layout(page, page_number)
+                for page_number, page in enumerate(document.pages, start=1)
+            )
+    except PdfExtractionError:
+        raise
+    except Exception as error:
+        raise PdfExtractionError("PDF_OPEN_FAILED", type(error).__name__) from None
+    return pages
+
+
+def extract_pdf_sections(
+    pdf_path: Path,
+    *,
+    extraction_version: str,
+) -> ExtractedPdfDocument:
+    """Extract one PDF from immutable bytes without an OCR fallback."""
+
+    try:
+        payload = pdf_path.read_bytes()
+    except OSError as error:
+        raise PdfExtractionError("PDF_OPEN_FAILED", type(error).__name__) from None
+    source_checksum = hashlib.sha256(payload).hexdigest()
+    try:
+        with pdfplumber.open(BytesIO(payload)) as document:
+            if not document.pages:
+                raise PdfExtractionError("PDF_OPEN_FAILED", "PDF has no pages")
+            pages = tuple(
+                _page_layout(page, page_number)
+                for page_number, page in enumerate(document.pages, start=1)
+            )
+    except PdfExtractionError:
+        raise
+    except Exception as error:
+        raise PdfExtractionError("PDF_OPEN_FAILED", type(error).__name__) from None
+    return assemble_pdf_sections(
+        pages,
+        source_checksum=source_checksum,
+        extraction_version=extraction_version,
+    )
+
+
+def _page_layout(page: object, page_number: int) -> PdfPageLayout:
+    extract_lines = getattr(page, "extract_text_lines")
+    raw_lines = extract_lines(return_chars=True, strip=True) or []
+    lines = tuple(_text_line(value) for value in raw_lines if value.get("text", "").strip())
+    find_tables = getattr(page, "find_tables")
+    rows: list[PdfTableRow] = []
+    for table in sorted(find_tables(), key=lambda item: item.bbox):
+        extracted = table.extract()
+        for row_geometry, values in zip(table.rows, extracted, strict=True):
+            cells = tuple(_clean_cell(value) for value in values)
+            if not any(value for value in cells):
+                continue
+            _, top, _, bottom = row_geometry.bbox
+            rows.append(PdfTableRow(cells, float(top), float(bottom)))
+    return PdfPageLayout(page_number, lines, tuple(rows))
+
+
+def _text_line(raw: Mapping[str, object]) -> PdfTextLine:
+    characters = raw.get("chars")
+    if not isinstance(characters, list) or not characters:
+        raise PdfExtractionError("PDF_LINE_GEOMETRY_INVALID")
+    sizes = [float(character["size"]) for character in characters]
+    font_names = [str(character.get("fontname", "")).casefold() for character in characters]
+    return PdfTextLine(
+        text=" ".join(str(raw["text"]).split()),
+        top=float(raw["top"]),
+        dominant_size=max(sizes),
+        emphasized=any(
+            marker in font_name
+            for font_name in font_names
+            for marker in ("bold", "demi", "semibold")
+        ),
+    )
+
+
+def _clean_cell(value: str | None) -> str | None:
+    if value is None:
+        return None
+    lines = tuple(" ".join(line.split()) for line in value.splitlines() if line.strip())
+    return "\n".join(lines) or None
+
+
 def _validate_assembly_input(
     pages: tuple[PdfPageLayout, ...],
     *,
@@ -145,11 +259,11 @@ def _canonical_text(
         if page_index:
             parts.append("\n\f\n")
             cursor += 3
-        for line_index, source_line in enumerate(page.lines):
+        page_items = _page_text_items(page)
+        for line_index, text in enumerate(page_items):
             if line_index:
                 parts.append("\n")
                 cursor += 1
-            text = " ".join(source_line.text.split())
             start = cursor
             parts.append(text)
             cursor += len(text)
@@ -157,21 +271,67 @@ def _canonical_text(
     return "".join(parts), tuple(spans)
 
 
+def _page_text_items(page: PdfPageLayout) -> tuple[str, ...]:
+    table_ranges = tuple((row.top, row.bottom) for row in page.table_rows)
+    items: list[tuple[float, int, int, str]] = []
+    for ordinal, line in enumerate(page.lines):
+        if any(top <= line.top <= bottom for top, bottom in table_ranges):
+            continue
+        items.append((line.top, 0, ordinal, " ".join(line.text.split())))
+    for row_ordinal, row in enumerate(page.table_rows):
+        for cell_ordinal, cell in enumerate(row.cells):
+            if cell:
+                items.append(
+                    (
+                        row.top,
+                        1,
+                        row_ordinal * 10_000 + cell_ordinal * 100,
+                        " ".join(cell.split()),
+                    )
+                )
+    return tuple(item[3] for item in sorted(items))
+
+
 def _sections(
     canonical_text: str, spans: tuple[_LineSpan, ...]
 ) -> tuple[ExtractedSection, ...]:
+    toc_pages = _table_of_contents_pages(spans)
     root_path: tuple[str, ...] = ()
     current: _OpenSection | None = None
+    current_has_body = False
     sections: list[ExtractedSection] = []
     for span in spans:
+        if span.page_number in toc_pages:
+            continue
         heading = _normalized_heading(span.text)
+        if re.match(r"^제\s*\d+\s*부(?:[.]|\s|$)", heading):
+            if current is not None:
+                _close_section(canonical_text, spans, current, span.start, sections)
+                current = None
+                current_has_body = False
+            root_path = ()
+            continue
         if heading in _SUMMARY_HEADINGS:
             if current is not None:
                 _close_section(canonical_text, spans, current, span.start, sections)
                 current = None
+                current_has_body = False
             root_path = (heading,)
             continue
+        if _is_boundary_heading(heading):
+            if current is not None:
+                _close_section(canonical_text, spans, current, span.start, sections)
+                current = None
+                current_has_body = False
+            continue
         if heading not in _CLAIM_HEADINGS:
+            if current is not None:
+                if current_has_body and _is_outline_marker(heading):
+                    _close_section(canonical_text, spans, current, span.start, sections)
+                    current = None
+                    current_has_body = False
+                elif not _is_outline_marker(heading):
+                    current_has_body = True
             continue
         if current is not None:
             _close_section(canonical_text, spans, current, span.start, sections)
@@ -180,6 +340,7 @@ def _sections(
             page_start=span.page_number,
             character_start=_next_content_start(canonical_text, span.end),
         )
+        current_has_body = False
     if current is not None:
         _close_section(canonical_text, spans, current, len(canonical_text), sections)
     return tuple(sections)
@@ -190,6 +351,40 @@ def _normalized_heading(text: str) -> str:
     if normalized.startswith("[") and normalized.endswith("]"):
         normalized = normalized[1:-1].strip()
     return normalized
+
+
+def _is_boundary_heading(heading: str) -> bool:
+    if heading in _BOUNDARY_HEADINGS:
+        return True
+    return re.fullmatch(r"투자비용\s*\d*", heading) is not None
+
+
+def _is_outline_marker(heading: str) -> bool:
+    return (
+        re.fullmatch(r"(?:\(\d+\)|\d+[.)]|[가-힣][.)]|[①-⑳])", heading)
+        is not None
+    )
+
+
+def _table_of_contents_pages(spans: tuple[_LineSpan, ...]) -> frozenset[int]:
+    first_by_page: dict[int, str] = {}
+    for span in spans:
+        first_by_page.setdefault(span.page_number, _normalized_heading(span.text))
+
+    toc_pages: set[int] = set()
+    in_toc = False
+    for page_number, first_heading in first_by_page.items():
+        if first_heading.replace(" ", "") == "목차":
+            in_toc = True
+        elif in_toc and first_heading in {
+            "투자결정시 유의사항 안내",
+            "요약정보",
+            "간이투자설명서",
+        }:
+            in_toc = False
+        if in_toc:
+            toc_pages.add(page_number)
+    return frozenset(toc_pages)
 
 
 def _next_content_start(text: str, position: int) -> int:
