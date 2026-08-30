@@ -151,7 +151,10 @@ class DartDocumentSourceAdapter:
             status = classify_access_error(error)
             return _unavailable(status, f"dart_{status.value}")
 
-        candidates = tuple(_candidate(filing) for filing in selected)
+        candidates = tuple(
+            _candidate(filing, target_entity_id=target.entity_id)
+            for filing in selected
+        )
         return SourceAdapterResult(
             status=SourceAuditStatus.ELIGIBLE,
             reason_code=None,
@@ -572,7 +575,11 @@ def _select_current_filings(
     )
 
 
-def _candidate(filing: _Filing) -> DocumentSourceCandidate:
+def _candidate(
+    filing: _Filing,
+    *,
+    target_entity_id: str,
+) -> DocumentSourceCandidate:
     published_at = datetime.combine(
         filing.receipt_date,
         datetime.min.time(),
@@ -604,6 +611,7 @@ def _candidate(filing: _Filing) -> DocumentSourceCandidate:
         effective_to=None,
         media_type=None,
         accession_or_receipt_id=filing.receipt_no,
+        target_entity_id=target_entity_id,
     )
 
 

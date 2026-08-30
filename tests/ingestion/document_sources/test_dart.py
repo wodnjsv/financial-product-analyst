@@ -236,6 +236,7 @@ def test_dart_selects_latest_effective_collective_investment_prospectus() -> Non
         "https://opendart.fss.or.kr/api/document.xml"
     )
     assert candidate.document_type == "full_prospectus"
+    assert candidate.target_entity_id == "product-1"
     assert candidate.effective_from is None
     assert len(opener.calls) == 1
 

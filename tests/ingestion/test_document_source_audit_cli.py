@@ -78,6 +78,7 @@ def _candidate(
         effective_to=None,
         media_type="text/html",
         accession_or_receipt_id=receipt_no,
+        target_entity_id=entity_id,
     )
 
 
@@ -339,7 +340,7 @@ def test_wrong_role_result_retains_route_source_in_report_and_summary(
                 reason_code=None,
                 candidates=(
                     _candidate(
-                        "wrong-role",
+                        "domestic-etf-1",
                         document_type="index_methodology",
                     ),
                 ),

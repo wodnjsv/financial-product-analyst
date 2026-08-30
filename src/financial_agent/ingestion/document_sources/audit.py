@@ -475,7 +475,7 @@ def _candidate_provenance_reason(
         ):
             return f"{route_key.lower()}_candidate_authority_mismatch"
         if route_key == "DART":
-            return _dart_candidate_provenance_reason(candidate)
+            return _dart_candidate_provenance_reason(candidate, target=target)
         return _sec_candidate_provenance_reason(candidate, target=target)
 
     if route_key == "REGISTERED":
@@ -533,6 +533,8 @@ _SEC_PRIMARY_DOCUMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
 
 def _dart_candidate_provenance_reason(
     candidate: DocumentSourceCandidate,
+    *,
+    target: DocumentSourceTarget,
 ) -> str | None:
     receipt = candidate.accession_or_receipt_id
     if (
@@ -544,6 +546,8 @@ def _dart_candidate_provenance_reason(
         or candidate.document_version != receipt
     ):
         return "dart_candidate_identity_mismatch"
+    if candidate.target_entity_id != target.entity_id:
+        return "dart_candidate_target_mismatch"
     if not _dart_viewer_locator_matches(candidate.source_locator, receipt=receipt):
         return "dart_candidate_locator_mismatch"
     if not _exact_https_locator(

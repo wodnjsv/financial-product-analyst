@@ -123,6 +123,7 @@ def _dart_candidate(
         "discovery_locator": "https://opendart.fss.or.kr/api/document.xml",
         "accession_or_receipt_id": receipt,
         "document_version": receipt,
+        "target_entity_id": "domestic-etf",
     }
     values.update(changes)
     return replace(
@@ -783,6 +784,25 @@ def test_tier_one_completeness_accepts_only_exact_official_metadata(
     )
 
     assert document_source_audit_passed(report) is True
+
+
+def test_dart_completeness_rejects_candidate_bound_to_another_product() -> None:
+    report = DocumentSourceAuditReport(
+        schema_version="1.0",
+        generated_at=_NOW,
+        cutoff_date=_CUTOFF,
+        dataset_version="2026-08-24",
+        entries=(
+            DocumentSourceAuditEntry(
+                target=_target("different-domestic-etf"),
+                status=SourceAuditStatus.ELIGIBLE,
+                reason_code=None,
+                candidate=_dart_candidate(),
+            ),
+        ),
+    )
+
+    assert document_source_audit_passed(report) is False
 
 
 @pytest.mark.parametrize(

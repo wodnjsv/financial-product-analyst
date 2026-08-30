@@ -107,6 +107,7 @@ class DocumentSourceCandidate:
     effective_to: date | None
     media_type: str | None
     accession_or_receipt_id: str | None
+    target_entity_id: str | None = None
 
     def __post_init__(self) -> None:
         validate_document_source_candidate(self)
@@ -134,6 +135,7 @@ def validate_document_source_candidate(candidate: DocumentSourceCandidate) -> No
         (candidate.document_version, "document_version"),
         (candidate.media_type, "media_type"),
         (candidate.accession_or_receipt_id, "accession_or_receipt_id"),
+        (candidate.target_entity_id, "target_entity_id"),
     ):
         if value is not None:
             _require_text(value, name)
@@ -359,6 +361,7 @@ def _candidate_mapping(candidate: DocumentSourceCandidate) -> dict[str, object]:
         "publisher_role": candidate.publisher_role.value,
         "source_code": candidate.source_code,
         "source_locator": candidate.source_locator,
+        "target_entity_id": candidate.target_entity_id,
     }
 
 
