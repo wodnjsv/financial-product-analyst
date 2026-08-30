@@ -9,7 +9,11 @@ from types import MappingProxyType
 import pytest
 
 from financial_agent.graph.contract import GraphArtifacts, GraphProjectionBatch
-from financial_agent.graph.manifest import EXPORTER_VERSION, build_graph_manifest
+from financial_agent.graph.manifest import (
+    EXPORTER_VERSION,
+    GraphComponentManifest,
+    build_graph_manifest,
+)
 from financial_agent.graph.validator import GraphValidationResult
 
 
@@ -176,3 +180,56 @@ def test_manifest_rejects_ontology_paths_outside_the_repository(
             ontology_paths=(outside,),
             validation=_validation(),
         )
+
+
+def test_manifest_rejects_a_duplicate_resolved_path_before_hashing(
+    tmp_path, monkeypatch
+) -> None:
+    ontology = tmp_path / "ontology"
+    ontology.mkdir()
+    common = ontology / "common.ttl"
+    common.write_bytes(b"ontology\n")
+    monkeypatch.setattr("financial_agent.graph.manifest._PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        type(common),
+        "read_bytes",
+        lambda _path: pytest.fail("duplicate paths must be rejected before hashing"),
+    )
+    batch, artifacts = _inputs()
+
+    with pytest.raises(ValueError, match="duplicate ontology path"):
+        build_graph_manifest(
+            batch=batch,
+            artifacts=artifacts,
+            ontology_paths=(common, common),
+            validation=_validation(),
+        )
+
+
+def test_manifest_defensively_freezes_caller_owned_mappings() -> None:
+    ontology_hashes = {"ontology/common.ttl": "a" * 64}
+    entity_type_counts = {"ETF": 1}
+    predicate_counts = {"holdsSecurity": 1}
+    manifest = GraphComponentManifest(
+        schema_version="1",
+        dataset_version="dataset-2026-08-24",
+        cutoff_date="2026-08-24",
+        exporter_version=EXPORTER_VERSION,
+        ontology_hashes=ontology_hashes,
+        data_nquads_hash="b" * 64,
+        evidence_nquads_hash="c" * 64,
+        validation_report_hash="d" * 64,
+        entity_type_counts=entity_type_counts,
+        predicate_counts=predicate_counts,
+    )
+    original_bytes = manifest.canonical_bytes()
+    original_hash = manifest.component_manifest_hash()
+
+    ontology_hashes["ontology/common.ttl"] = "e" * 64
+    entity_type_counts["ETF"] = 99
+    predicate_counts["holdsSecurity"] = 99
+
+    assert manifest.canonical_bytes() == original_bytes
+    assert manifest.component_manifest_hash() == original_hash
+    with pytest.raises(TypeError):
+        manifest.ontology_hashes["ontology/extra.ttl"] = "f" * 64  # type: ignore[index]

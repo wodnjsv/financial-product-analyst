@@ -304,6 +304,22 @@ def _build_batch(
         base_type = ENTITY_CLASS_BY_TYPE.get(row.entity_type)
         if base_type is None:
             _fail("unsupported_entity_type", f"{row.entity_id}:{row.entity_type}")
+        subtype_types = {
+            subtype_type
+            for subtype_type, subtype_value in (
+                ("product", row.product_family),
+                ("security", row.security_kind),
+                ("institution", row.institution_kind),
+            )
+            if subtype_value is not None
+        }
+        if len(subtype_types) > 1 or (
+            subtype_types and row.entity_type not in subtype_types
+        ):
+            _fail(
+                "inconsistent_entity_subtype",
+                f"{row.entity_id}:{row.entity_type}:{','.join(sorted(subtype_types))}",
+            )
         rdf_types = {base_type}
         family_by_entity[row.entity_id] = row.product_family
         if row.product_family is not None:

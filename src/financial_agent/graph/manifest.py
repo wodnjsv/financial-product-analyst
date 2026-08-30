@@ -28,6 +28,19 @@ class GraphComponentManifest:
     entity_type_counts: Mapping[str, int]
     predicate_counts: Mapping[str, int]
 
+    def __post_init__(self) -> None:
+        for field_name in (
+            "ontology_hashes",
+            "entity_type_counts",
+            "predicate_counts",
+        ):
+            values = getattr(self, field_name)
+            object.__setattr__(
+                self,
+                field_name,
+                MappingProxyType(dict(sorted(values.items()))),
+            )
+
     def canonical_bytes(self) -> bytes:
         payload = {
             "schema_version": self.schema_version,
@@ -54,14 +67,20 @@ class GraphComponentManifest:
 
 def _ontology_hashes(paths: Sequence[Path]) -> Mapping[str, str]:
     project_root = _PROJECT_ROOT.resolve()
-    hashes: dict[str, str] = {}
+    resolved_paths: dict[str, Path] = {}
     for path in paths:
         resolved = path.resolve()
         try:
             relative = resolved.relative_to(project_root).as_posix()
         except ValueError as error:
             raise ValueError("ontology path must be inside the repository") from error
-        hashes[relative] = sha256(resolved.read_bytes()).hexdigest()
+        if relative in resolved_paths:
+            raise ValueError(f"duplicate ontology path: {relative}")
+        resolved_paths[relative] = resolved
+    hashes = {
+        relative: sha256(resolved.read_bytes()).hexdigest()
+        for relative, resolved in resolved_paths.items()
+    }
     return MappingProxyType(dict(sorted(hashes.items())))
 
 

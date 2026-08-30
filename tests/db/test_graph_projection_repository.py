@@ -471,6 +471,49 @@ async def test_load_rejects_a_non_finite_approved_relation_metric(
     assert repository_engine.sync_engine.pool.checkedout() == 0
 
 
+@pytest.mark.parametrize(
+    "subtypes",
+    (("institution",), ("product",), ("institution", "product")),
+)
+async def test_load_rejects_subtype_rows_that_conflict_with_the_entity_type(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+    subtypes: tuple[str, ...],
+) -> None:
+    dataset_version = f"graph-corrupt-subtype-{uuid4().hex}"
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        insert_building_dataset(connection, dataset_version)
+        connection.execute("SET LOCAL session_replication_role = replica")
+        insert_entity(
+            connection,
+            dataset_version=dataset_version,
+            entity_id="company-with-wrong-subtype",
+            entity_type="company",
+        )
+        if "institution" in subtypes:
+            connection.execute(
+                """
+                INSERT INTO catalog.institution (
+                    dataset_version, entity_id, institution_kind
+                ) VALUES (%s, 'company-with-wrong-subtype', 'exchange')
+                """,
+                (dataset_version,),
+            )
+        if "product" in subtypes:
+            connection.execute(
+                """
+                INSERT INTO catalog.product (
+                    dataset_version, entity_id, product_family, primary_currency
+                ) VALUES (%s, 'company-with-wrong-subtype', 'public_fund', 'KRW')
+                """,
+                (dataset_version,),
+            )
+
+    with pytest.raises(GraphProjectionLoadError, match="subtype"):
+        await GraphProjectionRepository(repository_engine).load(dataset_version)
+    assert repository_engine.sync_engine.pool.checkedout() == 0
+
+
 @pytest.mark.parametrize("product_types", [(), ("ETF", "ETN")])
 async def test_load_fails_closed_when_relation_typing_facts_are_missing_or_conflicting(
     migrated_database_url: str,
