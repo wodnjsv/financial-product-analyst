@@ -651,3 +651,21 @@ feat: verify KODEX 200 document extraction
 - [ ] PostgreSQL test claims include an explicitly configured disposable DB.
 - [ ] Raw official data and secrets remain untracked and unstaged.
 - [ ] No product-wide download has started.
+
+---
+
+## 2026-08-31 KODEX 200 risk-table correction
+
+**Approved correction:** Replace the aggregate principal-risk chunks produced
+from pages 9–10 with one evidence span per risk row. A risk chunk contains only
+its risk label and body. Repeated table headers, page numbers, continuation
+markers, and merged-cell numerals are excluded. The KODEX 200 sample is expected
+to produce one strategy chunk and five risk chunks. The accepted Claim-based
+budget in ADR-0022 replaces every 8–15 target above; there is no minimum chunk
+count.
+
+- [x] Add a failing KODEX-shaped table regression test.
+- [x] Split risk rows without rewriting official prose.
+- [x] Verify six clean KODEX 200 chunks twice with identical identities.
+- [x] Visually compare the selected strategy and risk pages and run focused plus
+  broad regression tests.

@@ -191,15 +191,16 @@ def test_adapter_extracts_claim_sections_from_real_pdf(tmp_path: Path) -> None:
     assert result.source_checksum == hashlib.sha256(pdf_path.read_bytes()).hexdigest()
     assert {section.heading_path[-1] for section in result.sections} >= {
         "투자목적 및 투자전략",
-        "주요투자위험",
+        "상장폐지위험",
+        "추적오차 발생위험",
     }
     assert any(
         "KOSPI200 지수의 변동률을 추종합니다." == section.exact_text
         for section in result.sections
     )
     assert any(
-        "추적오차 발생위험" in section.exact_text
-        and "지수와 수익률이 다를 수 있습니다." in section.exact_text
+        section.exact_text
+        == "추적오차 발생위험\n지수와 수익률이 다를 수 있습니다."
         for section in result.sections
     )
 
@@ -283,11 +284,14 @@ def test_risk_table_heading_opens_one_section_with_following_rows() -> None:
         extraction_version="pdfplumber-layout-v1",
     )
 
-    assert len(result.sections) == 1
-    section = result.sections[0]
-    assert section.heading_path[-1] == "주요투자 위험"
-    assert "상장폐지위험" in section.exact_text
-    assert "추적오차 발생위험" in section.exact_text
+    assert tuple(section.heading_path[-1] for section in result.sections) == (
+        "상장폐지위험",
+        "추적오차 발생위험",
+    )
+    assert tuple(section.exact_text for section in result.sections) == (
+        "상장폐지위험\n상장폐지로 손실이 발생할 수 있습니다.",
+        "추적오차 발생위험\n지수와 수익률이 다를 수 있습니다.",
+    )
 
 
 def test_table_of_contents_pages_do_not_create_claim_sections() -> None:
@@ -395,4 +399,116 @@ def test_top_level_part_clears_summary_heading_context() -> None:
     assert tuple(section.heading_path for section in result.sections) == (
         ("요약정보", "투자목적"),
         ("투자 전략",),
+    )
+
+
+def test_kodex_shaped_risk_table_emits_one_clean_section_per_risk_row() -> None:
+    pages = (
+        PdfPageLayout(
+            1,
+            (
+                line("요약정보", top=10.0),
+                line("9", top=800.0),
+            ),
+            (
+                PdfTableRow(
+                    ("구분", "투자위험의 주요내용"), 20.0, 40.0
+                ),
+                PdfTableRow(
+                    (
+                        "주요투자\n위험",
+                        "1",
+                        "상장폐지위험",
+                        "상장폐지로 손실이 발생할 수 있습니다.",
+                        "1",
+                    ),
+                    40.0,
+                    80.0,
+                ),
+                PdfTableRow(
+                    (
+                        "개인수익자의 투자자금 회수 곤란 위험",
+                        "원하는 가격에 매도하지 못할 수 있습니다.",
+                    ),
+                    80.0,
+                    120.0,
+                ),
+                PdfTableRow(
+                    (
+                        "지수산출방식의 대폭 변경 또는 중단 위험",
+                        "지수 발표가 중단될 수 있습니다.",
+                    ),
+                    120.0,
+                    160.0,
+                ),
+                PdfTableRow(
+                    (
+                        "추적오차 발생위험",
+                        "지수와 동일한 수익률이 실현되지 않을 수 있습니다.",
+                    ),
+                    160.0,
+                    200.0,
+                ),
+            ),
+        ),
+        PdfPageLayout(
+            2,
+            (line("10", top=800.0),),
+            (
+                PdfTableRow(
+                    ("구분", "투자위험의 주요내용"), 20.0, 40.0
+                ),
+                PdfTableRow(
+                    (
+                        "주요투자\n위험",
+                        "1",
+                        "이익금 초과분배에 따른 위험",
+                        "분배금 지급으로 투자원금이 감소할 수 있습니다.",
+                        "1",
+                    ),
+                    40.0,
+                    80.0,
+                ),
+                PdfTableRow(
+                    ("매입 방법", "개인투자자는 장내 매수합니다."),
+                    100.0,
+                    120.0,
+                ),
+            ),
+        ),
+    )
+
+    result = assemble_pdf_sections(
+        pages,
+        source_checksum="5" * 64,
+        extraction_version="pdfplumber-layout-v1",
+    )
+    risks = tuple(
+        section
+        for section in result.sections
+        if "주요투자 위험" in section.heading_path
+    )
+
+    assert tuple(section.heading_path[-1] for section in risks) == (
+        "상장폐지위험",
+        "개인수익자의 투자자금 회수 곤란 위험",
+        "지수산출방식의 대폭 변경 또는 중단 위험",
+        "추적오차 발생위험",
+        "이익금 초과분배에 따른 위험",
+    )
+    assert tuple(section.exact_text for section in risks) == (
+        "상장폐지위험\n상장폐지로 손실이 발생할 수 있습니다.",
+        "개인수익자의 투자자금 회수 곤란 위험\n원하는 가격에 매도하지 못할 수 있습니다.",
+        "지수산출방식의 대폭 변경 또는 중단 위험\n지수 발표가 중단될 수 있습니다.",
+        "추적오차 발생위험\n지수와 동일한 수익률이 실현되지 않을 수 있습니다.",
+        "이익금 초과분배에 따른 위험\n분배금 지급으로 투자원금이 감소할 수 있습니다.",
+    )
+    assert all("투자위험의 주요내용" not in section.exact_text for section in risks)
+    assert all("\f" not in section.exact_text for section in risks)
+    assert tuple((section.page_start, section.page_end) for section in risks) == (
+        (1, 1),
+        (1, 1),
+        (1, 1),
+        (1, 1),
+        (2, 2),
     )

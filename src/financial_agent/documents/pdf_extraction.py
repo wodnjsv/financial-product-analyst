@@ -48,6 +48,15 @@ _BOUNDARY_HEADINGS = frozenset(
         "재무제표",
     }
 )
+_RISK_CLAIM_HEADINGS = frozenset(
+    {
+        "주요투자위험",
+        "주요 투자위험",
+        "주요투자 위험",
+        "집합투자기구의 투자위험",
+    }
+)
+_RISK_TABLE_HEADERS = frozenset({"구분", "투자위험의 주요내용"})
 
 
 class PdfExtractionError(ValueError):
@@ -120,7 +129,12 @@ def assemble_pdf_sections(
         extraction_version=extraction_version,
     )
     canonical_text, spans = _canonical_text(pages)
-    sections = _sections(canonical_text, spans)
+    sections = _split_risk_table_sections(
+        pages,
+        canonical_text,
+        spans,
+        _sections(canonical_text, spans),
+    )
     return ExtractedPdfDocument(
         canonical_text=canonical_text,
         page_count=len(pages),
@@ -385,6 +399,114 @@ def _table_of_contents_pages(spans: tuple[_LineSpan, ...]) -> frozenset[int]:
         if in_toc:
             toc_pages.add(page_number)
     return frozenset(toc_pages)
+
+
+def _split_risk_table_sections(
+    pages: tuple[PdfPageLayout, ...],
+    canonical_text: str,
+    spans: tuple[_LineSpan, ...],
+    sections: tuple[ExtractedSection, ...],
+) -> tuple[ExtractedSection, ...]:
+    aggregate_risks = tuple(
+        section
+        for section in sections
+        if _normalized_heading(section.heading_path[-1]) in _RISK_CLAIM_HEADINGS
+    )
+    if not aggregate_risks:
+        return sections
+
+    spans_by_page = {
+        page.page_number: tuple(
+            span for span in spans if span.page_number == page.page_number
+        )
+        for page in pages
+    }
+    split: list[ExtractedSection] = []
+    for page in pages:
+        matching = tuple(
+            section
+            for section in aggregate_risks
+            if section.page_start is not None
+            and section.page_end is not None
+            and section.page_start <= page.page_number <= section.page_end
+        )
+        if not matching:
+            continue
+        active = True
+        page_spans = spans_by_page[page.page_number]
+        for row in page.table_rows:
+            cells = tuple(
+                " ".join(cell.split()) for cell in row.cells if cell and cell.strip()
+            )
+            if not cells:
+                continue
+            headings = tuple(_normalized_heading(cell) for cell in cells)
+            first_heading = headings[0]
+            if _is_boundary_heading(first_heading):
+                active = False
+                continue
+            risk_heading_indexes = tuple(
+                index
+                for index, heading in enumerate(headings)
+                if heading in _RISK_CLAIM_HEADINGS
+            )
+            if risk_heading_indexes:
+                active = True
+                cells = cells[risk_heading_indexes[-1] + 1 :]
+            if not active:
+                continue
+            substantive = tuple(
+                cell
+                for cell in cells
+                if _normalized_heading(cell) not in _RISK_TABLE_HEADERS
+                and re.fullmatch(r"\d+", cell) is None
+            )
+            if len(substantive) < 2:
+                continue
+            label, body = substantive[-2:]
+            if "위험" not in label or len(body) < 10:
+                continue
+            label_span = _matching_span(page_spans, label)
+            body_span = _matching_span(page_spans, body, after=label_span.end)
+            if body_span.start <= label_span.start:
+                continue
+            parent = min(matching, key=lambda section: section.character_start)
+            split.append(
+                ExtractedSection(
+                    heading_path=(*parent.heading_path, label),
+                    exact_text=canonical_text[label_span.start : body_span.end],
+                    page_start=page.page_number,
+                    page_end=page.page_number,
+                    character_start=label_span.start,
+                    character_end=body_span.end,
+                )
+            )
+
+    if not split:
+        return sections
+    split_pages = {section.page_start for section in split}
+    retained = tuple(
+        section
+        for section in sections
+        if section not in aggregate_risks
+        or section.page_start is None
+        or section.page_end is None
+        or not any(
+            section.page_start <= page_number <= section.page_end
+            for page_number in split_pages
+            if page_number is not None
+        )
+    )
+    return tuple(sorted((*retained, *split), key=lambda section: section.character_start))
+
+
+def _matching_span(
+    spans: tuple[_LineSpan, ...], text: str, *, after: int = -1
+) -> _LineSpan:
+    for span in spans:
+        if span.start >= after and span.text == text:
+            return span
+    raise PdfExtractionError("PDF_TABLE_CELL_SPAN_MISSING")
 
 
 def _next_content_start(text: str, position: int) -> int:
