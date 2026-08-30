@@ -7,6 +7,7 @@ import pytest
 from financial_agent.documents.source_manifest import SourceAuditStatus
 from financial_agent.ingestion.document_sources.base import (
     DocumentSourceAccessError,
+    DocumentSourceAccessErrorCode,
     HttpStatusError,
     MissingRequiredEnvironmentError,
     classify_access_error,
@@ -105,10 +106,22 @@ def test_access_error_hides_chained_exception_text() -> None:
             raise RuntimeError("crtfc_key=synthetic-api-key")
         except RuntimeError as error:
             raise DocumentSourceAccessError(
-                "access_method_unverified",
+                DocumentSourceAccessErrorCode.ACCESS_METHOD_UNVERIFIED,
                 classify_access_error(error),
             ) from error
     except DocumentSourceAccessError as public_error:
         assert str(public_error) == "access_method_unverified"
         assert "synthetic-api-key" not in str(public_error)
         assert isinstance(public_error.__cause__, RuntimeError)
+
+
+def test_secret_bearing_error_code_is_rejected_before_public_rendering() -> None:
+    secret_bearing_code = "api_key=synthetic-secret"
+
+    with pytest.raises(TypeError, match="must be stable") as caught:
+        DocumentSourceAccessError(
+            secret_bearing_code,
+            SourceAuditStatus.ACCESS_DENIED,
+        )
+
+    assert secret_bearing_code not in str(caught.value)

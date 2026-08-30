@@ -3,6 +3,7 @@
 from .base import (
     DocumentDiscoveryContext,
     DocumentSourceAccessError,
+    DocumentSourceAccessErrorCode,
     DocumentSourceAdapter,
     HttpStatusError,
     MissingRequiredEnvironmentError,
@@ -14,6 +15,7 @@ from .base import (
 __all__ = [
     "DocumentDiscoveryContext",
     "DocumentSourceAccessError",
+    "DocumentSourceAccessErrorCode",
     "DocumentSourceAdapter",
     "HttpStatusError",
     "MissingRequiredEnvironmentError",

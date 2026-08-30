@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from enum import Enum
 from pathlib import Path
 import socket
 from typing import AbstractSet, Protocol
@@ -44,13 +45,26 @@ class DocumentSourceAdapter(Protocol):
     ) -> SourceAdapterResult: ...
 
 
+class DocumentSourceAccessErrorCode(str, Enum):
+    ACCESS_METHOD_UNVERIFIED = "access_method_unverified"
+    CREDENTIALS_MISSING = "credentials_missing"
+    UNSAFE_LOCATOR = "unsafe_locator"
+    LOCATOR_HOST_NOT_ALLOWED = "locator_host_not_allowed"
+
+
 class DocumentSourceAccessError(Exception):
     """A safe public error that keeps only a stable code and audit status."""
 
-    def __init__(self, code: str, status: SourceAuditStatus) -> None:
+    def __init__(
+        self,
+        code: DocumentSourceAccessErrorCode,
+        status: SourceAuditStatus,
+    ) -> None:
+        if not isinstance(code, DocumentSourceAccessErrorCode):
+            raise TypeError("document source access error code must be stable")
         self.code = code
         self.status = status
-        super().__init__(code)
+        super().__init__(code.value)
 
 
 class HttpStatusError(Exception):
@@ -94,13 +108,15 @@ def sanitize_public_locator(
         _validate_locator(locator)
     except ValueError as error:
         raise DocumentSourceAccessError(
-            "unsafe_locator", SourceAuditStatus.ACCESS_DENIED
+            DocumentSourceAccessErrorCode.UNSAFE_LOCATOR,
+            SourceAuditStatus.ACCESS_DENIED,
         ) from error
 
     hostname = urlparse(locator).hostname
     if hostname is None or hostname.lower() not in allowed_hosts:
         raise DocumentSourceAccessError(
-            "locator_host_not_allowed", SourceAuditStatus.ACCESS_DENIED
+            DocumentSourceAccessErrorCode.LOCATOR_HOST_NOT_ALLOWED,
+            SourceAuditStatus.ACCESS_DENIED,
         )
     return locator
 
