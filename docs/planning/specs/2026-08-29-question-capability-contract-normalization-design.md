@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-29
 
-**Status:** Proposed for user review
+**Status:** Approved 2026-08-30
 
 **Scope:** 내부 52개 회귀 질문의 요구사항 분류, 검색 역할, 데이터 지원 상태,
 실행 검증 상태와 Stage 04 온톨로지 입력 계약
@@ -14,6 +14,7 @@
 [ADR-0005](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md),
 [ADR-0007](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md),
 [ADR-0018](../decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md),
+[ADR-0021](../decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md),
 [ADR-0020](../decisions/ADR-0020-treat-organizer-missingness-as-authoritative.md)
 
 ## 1. 문제
@@ -46,8 +47,8 @@ Keyword·RDB·Graph를 지정하여 정책만으로 차단 가능한 예측·개
 
 ### 목표
 
-1. 52개 질문의 요구사항을 Entity, Metric, Relation, Document Claim,
-   Control Check로 분리한다.
+1. 52개 질문의 요구사항을 Entity, Attribute, Metric, Relation,
+   Document Claim, Control Check로 분리한다.
 2. Graph 관계는 ADR-0018의 13개 predicate만 사용한다.
 3. 질문마다 최종 해석된 검색 역할과 Capability별 route를 명시한다.
 4. 데이터 지원 상태, 추가 데이터 필요 여부, 예상 응답 동작과 실제 실행
@@ -64,6 +65,8 @@ Keyword·RDB·Graph를 지정하여 정책만으로 차단 가능한 예측·개
 - 52개 질문의 지원 상태 수량 변경
 - 공식 35문항의 비공개 문장 추측
 - 새로운 온톨로지 관계 추가
+- TTL·SHACL·ABox·Fuseki 구현
+- PostgreSQL 스키마 또는 Stage 03 적재 변경
 
 ## 3. 결정
 
@@ -86,6 +89,14 @@ Keyword·RDB·Graph를 지정하여 정책만으로 차단 가능한 예측·개
   "requirements": {
     "entities": [
       {"type": "DomesticETF", "role": "candidate_product"}
+    ],
+    "attributes": [
+      {
+        "id": "product_risk_grade",
+        "role": "output",
+        "authority": "organizer_product_field",
+        "controlled_vocabulary": "product_risk_grade_v1"
+      }
     ],
     "metrics": [
       {
@@ -120,8 +131,9 @@ Keyword·RDB·Graph를 지정하여 정책만으로 차단 가능한 예측·개
 
 | 분류 | 포함 | 저장·검증 권위 |
 | --- | --- | --- |
-| `entities` | 상품, 기업, 증권, 운용사, 지수, 테마, 문서의 타입과 역할 | PostgreSQL canonical ID + 온톨로지 타입 제약 |
-| `metrics` | AUM, 수익률, 가격, NAV, 보수, 등급, 상태, 비중, 통화 | PostgreSQL Observation 또는 구조화 상품 필드 |
+| `entities` | 상품, 정책 프로그램, 기업, 증권, 운용사, 지수, 테마, 문서의 타입과 역할 | PostgreSQL canonical ID + 온톨로지 타입 제약 |
+| `attributes` | 투자지역, 자산군, 상품 위험등급, 채권 신용등급, 통화, 판매·가용 상태, 환헤지, 금리구조 | 구조화 상품 필드 또는 제어 어휘; 온톨로지·SHACL 허용값 검증 |
+| `metrics` | AUM, 수익률, 가격, NAV, 보수, 만기·잔존일, 편입비중 등 수치 관측값 | PostgreSQL Observation 또는 RelationAssertion 속성 |
 | `relations` | 승인된 엔티티 간 의미 관계 | PostgreSQL RelationAssertion; Graph는 투영본 |
 | `document_claims` | 구조, 전략, 위험, 동향 등 공식 문서 구절로 입증할 주장 | DocumentChunk → EvidenceRecord → AtomicClaim |
 | `control_checks` | 결측, 비교 가능성, 커버리지, 중복, 컷오프, 정책 | 결정론적 규칙과 VerificationReport |
@@ -130,6 +142,12 @@ Keyword·RDB·Graph를 지정하여 정책만으로 차단 가능한 예측·개
 `required_relations`는 제거하고 `requirements.relations`로 대체한다. 저장소 내부
 소비 코드가 없고 테스트가 해당 필드 존재를 계약으로 강제하지 않으므로, 같은
 의미를 두 필드에 중복 보관하는 호환 계층은 만들지 않는다.
+
+`attributes`와 `metrics`는 Graph domain predicate가 아니다. `Region`,
+`AssetClass`, 등급, 통화, 상태처럼 허용 어휘와 출처를 검증해야 하지만 다단계
+탐색이 필요하지 않은 의미는 controlled attribute로 둔다. 수치·시계열·순위
+입력은 metric으로 둔다. 두 분류 모두 PostgreSQL이 권위를 가지며, 온톨로지는
+허용 타입·어휘·스킴 버전만 검증한다.
 
 ### 3.3 관계 이름 정규화
 
@@ -155,8 +173,10 @@ hasRiskFactor
 
 | 기존 명칭 | 새 위치 또는 관계 |
 | --- | --- |
-| `hasAUM`, `hasReturnMetric`, `hasFee`, `hasNAV`, `hasYieldMetric` | `requirements.metrics` |
-| `hasRiskGrade`, `hasCreditGrade`, `hasCurrency`, `hasSaleStatus` | `requirements.metrics` + 필요 시 `control_checks` |
+| `hasAUM`, `hasReturnMetric`, `hasFee`, `hasNAV`, `hasYieldMetric`, `hasMarketPrice`, `hasINAV`, `hasPremiumDiscount`, `hasMaturity`, `hasRemainingDays`, `hasRemainingMaturity`, `hasYield` | `requirements.metrics` |
+| `hasRiskGrade`, `hasProductRiskGrade` | `requirements.attributes.product_risk_grade` + 필요 시 `control_checks` |
+| `hasCreditGrade` | `requirements.attributes.credit_grade` + 등급 스킴·순서 `control_checks` |
+| `investsInRegion`, `investsInAssetClass`, `hasCurrency`, `tradesInCurrency`, `hasSaleStatus`, `hasAvailability`, `hasPensionEligibility`, `hasOfferingType`, `hasHedgePolicy`, `hasRateStructure` | `requirements.attributes` + 필요 시 `control_checks` |
 | `hasHoldingWeight` | 보유 relation assertion의 필수 속성 |
 | `hasSubsidiary` | `controlsCompany` |
 | `representedBySecurity`, `issuedByCompany` | `securityOfCompany`의 질의 방향 또는 `issuedBy` |
@@ -164,12 +184,38 @@ hasRiskFactor
 | `belongsToRepresentativeFund` | `hasShareClass`의 역방향 질의 |
 | `describedByDocument` | `documentedBy` |
 | `hasStructure`, `hasStrategy`, `hasOfficialUpdate` | `document_claims.claim_type` |
+| `publishedBy` | `document_claims.provenance.publisher_organization_id` |
 | `hasRelationEvent` | `associatedWithTheme` RelationAssertion의 시간 속성 |
 | `hasAlias`, `hasOfficialName` | Entity resolution용 식별·별칭 속성 |
+| `hasProductFamily` | `requirements.entities[].type` |
+| `hasBenchmark` | `tracksIndex` |
 | `relatedToEntity` | 승인 predicate가 아님; Evidence 부재를 검사하는 control check |
 
 관계의 역방향 질의는 새 predicate를 만들지 않는다. `query_direction` 또는
 Capability 입력으로 표현한다.
+
+### 3.3.1 최소 온톨로지 보정
+
+52개 질문 감사 결과 Graph 경로가 필요한 질문은 23개이며, 별칭을 정규화하면
+13개 승인 predicate 중 12개로 모두 표현된다. `containsSecurity`는 현재 52개
+질문에서 직접 사용되지 않지만 지수 구성종목 경로를 위해 유지한다. 새 domain
+predicate는 추가하지 않는다.
+
+대신 다음 의미 경계를 명시한다.
+
+- `ProductRiskGrade`와 `CreditGrade`를 분리한다. 각 값은 스킴 ID, 스킴 버전,
+  공식 출처, 적용일을 가지며 신용등급만 승인된 스킴 안에서 순서를 비교한다.
+- `PolicyProgram`을 문서 주제 엔티티로 추가한다. `FinancialProduct`로 입증되지
+  않은 정책형 대상을 상품으로 강제하지 않는다.
+- `documentedBy`의 주체는 `FinancialProduct`, `Organization`, `PolicyProgram`을
+  허용한다.
+- `publisher_organization_id`, `published_at`, `effective_from`, `effective_to`,
+  `available_at`, `document_version`, `source_object_id`는 문서 provenance다.
+  `publishedBy`를 14번째 domain predicate로 만들지 않는다.
+- `RiskFactor` Claim은 `DocumentChunk`의 페이지·절·원문 span Evidence로
+  역추적되어야 한다.
+- `Region`, `AssetClass`, 등급, 통화, 상태는 controlled attribute이며 13개
+  Graph domain predicate에 포함되지 않는다.
 
 ### 3.4 검색 역할과 Capability route
 
@@ -349,18 +395,23 @@ RelationAssertion 또는 DocumentChunk Evidence로 binding되어야 한다.
 ## 7. 검증 기준
 
 1. 질문 case가 정확히 52개이고 ID·원문·상태 분포가 변하지 않는다.
-2. 모든 case에 다섯 요구사항 분류와 `retrieval`, `requires_data`,
+2. 모든 case에 여섯 요구사항 분류와 `retrieval`, `requires_data`,
    `verification`이 존재한다.
 3. 모든 `subtasks`가 최소 한 개 route를 가지며 route의 subtask 이름은 실제
    `subtasks`에 존재한다.
 4. `requirements.relations[].predicate`는 승인된 13개 중 하나다.
-5. `requirements.metrics`의 ID가 Graph predicate로 중복되지 않는다.
+5. `requirements.attributes`와 `requirements.metrics`의 ID가 Graph predicate로
+   중복되지 않는다.
 6. `requires_data`와 `support_level`의 관계가 모든 case에서 일치한다.
 7. 52개 모두 `current_db_execution=not_run`으로 시작한다.
 8. 정책 차단 질문은 `policy_gate`이고 저장소 역할이 없다.
 9. 문서형·Federated 질문만 Vector 역할을 사용한다.
 10. `python -m json.tool`, 질문 계약 테스트, 관련 ingestion 회귀가 통과한다.
 11. 최종 diff에 구현 코드, 원본 데이터, 비밀정보, 생성 산출물이 포함되지 않는다.
+12. `ProductRiskGrade`와 `CreditGrade`가 다른 제어 어휘로 매핑되고, 신용등급
+    순서 검증은 승인된 스킴에만 적용된다.
+13. `DOC-FUND-001`은 상품 또는 `PolicyProgram`을 구분하고 문서 발행기관·게시일·
+    적용일·가용일을 provenance 요구사항으로 가진다.
 
 ## 8. 대안과 기각 이유
 
@@ -374,6 +425,17 @@ RelationAssertion 또는 DocumentChunk Evidence로 binding되어야 한다.
 기각한다. 같은 요구사항이 두 위치에 남아 향후 Stage 04가 과거 혼합 필드를
 다시 Graph 범위로 사용할 위험이 있다.
 
+### Region·AssetClass·등급·상태를 Graph 관계로 추가
+
+기각한다. 52개 질문에서 이 값들은 구조화 필터, 비교 가능성 검증, 유사도 점수
+입력으로 사용되며 다단계 관계 탐색을 요구하지 않는다. PostgreSQL 권위 필드와
+제어 어휘를 SHACL로 검증하는 편이 작은 온톨로지 원칙과 일치한다.
+
+### `publishedBy`를 14번째 핵심 관계로 추가
+
+기각한다. 발행기관은 문서 Claim의 공식성과 시간 적격성을 검증하는 provenance
+필드다. Graph 경로 확장 없이 문서·Evidence 계약에서 강제할 수 있다.
+
 ### 카테고리 기본 검색 프로필만 유지
 
 기각한다. 같은 `unsupported` 카테고리 안에서도 정책, 실시간 범위, 온톨로지
@@ -384,6 +446,7 @@ RelationAssertion 또는 DocumentChunk Evidence로 binding되어야 한다.
 
 이 변경은 기존 지원 상태나 데이터 범위를 늘리지 않는다. Stage 04는 정규화된
 `requirements.relations`만 Graph competency 입력으로 사용하고,
-`requirements.metrics`는 PostgreSQL observation 조회·계산 입력으로 사용한다.
+`requirements.attributes`와 `requirements.metrics`는 PostgreSQL 구조화 조회·
+검증·계산 입력으로 사용한다.
 Stage 05~07은 질문별 Capability route와 Evidence·Claim 출시 Capability를 구현
 계획의 기준으로 사용한다.
