@@ -309,6 +309,16 @@ def _response_status(response: BinaryIO) -> int:
     return status_code
 
 
+def has_complete_sec_identity(target: DocumentSourceTarget) -> bool:
+    """Return whether the target has one syntactically exact SEC identity."""
+
+    try:
+        _resolve_binding(target)
+    except _SecResponseError:
+        return False
+    return True
+
+
 def _resolve_binding(target: DocumentSourceTarget) -> _Binding:
     values = {
         scheme: tuple(

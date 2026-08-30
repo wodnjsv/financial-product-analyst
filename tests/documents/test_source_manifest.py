@@ -33,6 +33,7 @@ def target(
     required_role: DocumentRole = DocumentRole.PRODUCT_SUMMARY,
     cutoff_date: date = CUTOFF,
     identifiers: tuple[tuple[str, str], ...] = (("ISIN", "KR0000000001"),),
+    binding_role: str = "subject_product",
 ) -> DocumentSourceTarget:
     return DocumentSourceTarget(
         dataset_version="facts-v1",
@@ -41,7 +42,7 @@ def target(
         canonical_name="Sample product",
         product_family=product_family,
         required_role=required_role,
-        binding_role="subject_product",
+        binding_role=binding_role,
         identifiers=identifiers,
         cutoff_date=cutoff_date,
     )
@@ -203,6 +204,21 @@ def test_candidate_rejects_unapproved_authority_tier() -> None:
         replace(candidate(), authority_tier=UnapprovedAuthorityTier.TIER_4)
 
 
+def test_candidate_rejects_unapproved_publisher_role_type() -> None:
+    with pytest.raises(ValueError, match="publisher_role"):
+        replace(candidate(), publisher_role="regulator_disclosure")  # type: ignore[arg-type]
+
+
+def test_audit_entry_rejects_non_enum_status() -> None:
+    with pytest.raises(ValueError, match="status"):
+        DocumentSourceAuditEntry(
+            target=target(),
+            status="eligible",  # type: ignore[arg-type]
+            reason_code=None,
+            candidate=candidate(),
+        )
+
+
 def test_report_rejects_eligible_domestic_bond() -> None:
     bond = DocumentSourceAuditEntry(
         target=target(
@@ -216,3 +232,59 @@ def test_report_rejects_eligible_domestic_bond() -> None:
 
     with pytest.raises(ValueError, match="domestic bond"):
         validate_document_source_report(report(entries=(bond,)))
+
+
+def test_report_rejects_non_bond_not_applicable_status() -> None:
+    required_product = DocumentSourceAuditEntry(
+        target=target(),
+        status=SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE,
+        reason_code="adapter_target_not_supported",
+        candidate=None,
+    )
+
+    with pytest.raises(ValueError, match="not_applicable"):
+        validate_document_source_report(report(entries=(required_product,)))
+
+
+@pytest.mark.parametrize(
+    "forged_candidate",
+    (
+        replace(candidate(), document_type="index_methodology"),
+        replace(candidate(), publisher_role=PublisherRole.INDEX_PROVIDER),
+        replace(
+            candidate(),
+            authority_tier=SourceAuthorityTier.TIER_2_CLAIM_OWNER,
+        ),
+        replace(candidate(), document_version=None),
+        replace(candidate(), effective_from=None),
+        replace(
+            candidate(),
+            effective_from=date(2026, 8, 1),
+            effective_to=date(2026, 8, 23),
+        ),
+    ),
+)
+def test_report_rejects_forged_eligible_candidate_metadata(
+    forged_candidate: DocumentSourceCandidate,
+) -> None:
+    forged = DocumentSourceAuditEntry(
+        target=target(),
+        status=SourceAuditStatus.ELIGIBLE,
+        reason_code=None,
+        candidate=forged_candidate,
+    )
+
+    with pytest.raises(ValueError):
+        validate_document_source_report(report(entries=(forged,)))
+
+
+def test_report_rejects_eligible_candidate_with_incompatible_binding() -> None:
+    forged = DocumentSourceAuditEntry(
+        target=target(binding_role="subject_index"),
+        status=SourceAuditStatus.ELIGIBLE,
+        reason_code=None,
+        candidate=candidate(),
+    )
+
+    with pytest.raises(ValueError, match="binding"):
+        validate_document_source_report(report(entries=(forged,)))

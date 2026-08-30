@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 
 import pytest
 
 from financial_agent.documents import (
     DocumentRole,
+    DocumentSourceAuditEntry,
+    DocumentSourceAuditReport,
     DocumentSourceCandidate,
     DocumentSourceTarget,
     PublisherRole,
@@ -63,11 +65,12 @@ def _source_candidate(
     document_version: str | None = "2026.1",
     effective_from: date | None = date(2026, 8, 1),
     jurisdiction: str = "KR",
+    authority_tier: SourceAuthorityTier | None = None,
 ) -> DocumentSourceCandidate:
     return DocumentSourceCandidate(
         document_id=document_id,
         source_code=source_code,
-        authority_tier=(
+        authority_tier=authority_tier or (
             SourceAuthorityTier.TIER_1_REGULATORY
             if source_code in {"DART", "SEC"}
             else SourceAuthorityTier.TIER_2_CLAIM_OWNER
@@ -103,10 +106,13 @@ class _StubAdapter:
     source_code: str
     result: SourceAdapterResult
     error: BaseException | None = None
+    supports_result: bool = True
+    supports_calls: list[DocumentSourceTarget] = field(default_factory=list)
     calls: list[DocumentSourceTarget] = field(default_factory=list)
 
     def supports(self, target: DocumentSourceTarget) -> bool:
-        return True
+        self.supports_calls.append(target)
+        return self.supports_result
 
     def discover(
         self,
@@ -251,6 +257,41 @@ def test_overseas_summary_routes_to_sec_only_with_complete_exact_identity() -> N
 
 
 @pytest.mark.parametrize(
+    "identifiers",
+    (
+        (("SEC_CIK", "0"), _SEC_IDENTIFIERS[1], _SEC_IDENTIFIERS[2]),
+        (_SEC_IDENTIFIERS[0], ("SEC_SERIES_ID", "S123"), _SEC_IDENTIFIERS[2]),
+        (_SEC_IDENTIFIERS[0], _SEC_IDENTIFIERS[1], ("SEC_CLASS_ID", "c000000001")),
+        (_SEC_IDENTIFIERS[0], ("SEC_CIK", "123"), *_SEC_IDENTIFIERS[1:]),
+    ),
+)
+def test_invalid_sec_identity_routes_to_registered_without_sec_call(
+    identifiers: tuple[tuple[str, str], ...],
+) -> None:
+    target = _target(
+        "overseas-invalid",
+        product_family="overseas_etf",
+        identifiers=identifiers,
+    )
+    sec = _unavailable_adapter("SEC")
+    registered = _unavailable_adapter(
+        "REGISTERED", SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    )
+
+    audit_document_sources(
+        targets=(target,),
+        adapters=(sec, registered),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert sec.supports_calls == []
+    assert sec.calls == []
+    assert registered.supports_calls == [target]
+    assert registered.calls == [target]
+
+
+@pytest.mark.parametrize(
     "required_role",
     (DocumentRole.PRODUCT_FULL, DocumentRole.OFFICIAL_UPDATE),
 )
@@ -278,7 +319,47 @@ def test_sec_is_never_called_for_an_unsupported_overseas_role(
         assert registered.calls == [target]
     else:
         assert registered.calls == []
-        assert report.entries[0].status is SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE
+        assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+
+
+def test_domestic_product_official_update_routes_to_registered_before_dart() -> None:
+    target = _target(
+        "domestic-update",
+        product_family="domestic_etf",
+        required_role=DocumentRole.OFFICIAL_UPDATE,
+    )
+    dart = _unavailable_adapter("DART")
+    registered = _unavailable_adapter("REGISTERED")
+
+    audit_document_sources(
+        targets=(target,),
+        adapters=(dart, registered),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert dart.supports_calls == []
+    assert dart.calls == []
+    assert registered.supports_calls == [target]
+    assert registered.calls == [target]
+
+
+def test_selected_owner_must_support_target_before_discovery() -> None:
+    target = _target("domestic-etf")
+    dart = _unavailable_adapter("DART")
+    dart.supports_result = False
+
+    report = audit_document_sources(
+        targets=(target,),
+        adapters=(dart,),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert dart.supports_calls == [target]
+    assert dart.calls == []
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].reason_code == "dart_target_not_supported"
 
 
 @pytest.mark.parametrize(
@@ -332,6 +413,23 @@ def test_unavailable_targets_remain_in_the_report() -> None:
     )
 
 
+def test_non_bond_adapter_not_applicable_is_incomplete() -> None:
+    dart = _unavailable_adapter(
+        "DART", SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE
+    )
+
+    report = audit_document_sources(
+        targets=(_target("domestic-etf"),),
+        adapters=(dart,),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].reason_code == "dart_target_not_supported"
+    assert document_source_audit_passed(report) is False
+
+
 def test_adapter_exception_becomes_stable_unverified_status() -> None:
     dart = _unavailable_adapter("DART")
     dart.error = RuntimeError("api_key=must-not-escape")
@@ -352,7 +450,6 @@ def test_adapter_exception_becomes_stable_unverified_status() -> None:
 def test_canonical_version_failure_is_a_stable_audit_entry() -> None:
     candidate = _source_candidate(
         "unknown-version",
-        document_version=None,
         effective_from=None,
     )
 
@@ -366,7 +463,34 @@ def test_canonical_version_failure_is_a_stable_audit_entry() -> None:
     entry = report.entries[0]
     assert entry.status is SourceAuditStatus.VERSION_UNKNOWN
     assert entry.reason_code == "effective_version_not_verified"
-    assert entry.candidate is None
+    assert entry.candidate == candidate
+    assert document_source_audit_passed(report) is False
+
+
+def test_sec_unknown_effectiveness_remains_version_unknown_with_candidate() -> None:
+    candidate = _source_candidate(
+        "sec-unknown-version",
+        source_code="SEC",
+        effective_from=None,
+        jurisdiction="US",
+    )
+
+    report = audit_document_sources(
+        targets=(
+            _target(
+                "overseas-etf",
+                product_family="overseas_etf",
+                identifiers=_SEC_IDENTIFIERS,
+            ),
+        ),
+        adapters=(_eligible_adapter("SEC", candidate),),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.VERSION_UNKNOWN
+    assert report.entries[0].candidate == candidate
+    assert document_source_audit_passed(report) is False
 
 
 def test_canonical_authority_failure_is_a_stable_audit_entry() -> None:
@@ -387,6 +511,108 @@ def test_canonical_authority_failure_is_a_stable_audit_entry() -> None:
     assert entry.status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
     assert entry.reason_code == "publisher_role_not_approved"
     assert entry.candidate is None
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    (
+        _source_candidate("wrong-source", source_code="SEC"),
+        _source_candidate(
+            "wrong-tier",
+            authority_tier=SourceAuthorityTier.TIER_2_CLAIM_OWNER,
+        ),
+        _source_candidate(
+            "wrong-publisher",
+            publisher_role=PublisherRole.INDEX_PROVIDER,
+        ),
+    ),
+)
+def test_dart_candidate_provenance_mismatch_fails_before_selection(
+    candidate: DocumentSourceCandidate,
+) -> None:
+    report = audit_document_sources(
+        targets=(_target("domestic-etf"),),
+        adapters=(_eligible_adapter("DART", candidate),),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].candidate is None
+    assert document_source_audit_passed(report) is False
+
+
+def test_sec_candidate_source_mismatch_fails_before_selection() -> None:
+    candidate = _source_candidate(
+        "wrong-sec-source",
+        source_code="DART",
+        jurisdiction="US",
+    )
+
+    report = audit_document_sources(
+        targets=(
+            _target(
+                "overseas-etf",
+                product_family="overseas_etf",
+                identifiers=_SEC_IDENTIFIERS,
+            ),
+        ),
+        adapters=(_eligible_adapter("SEC", candidate),),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].reason_code == "sec_candidate_source_mismatch"
+    assert report.entries[0].candidate is None
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    (
+        _source_candidate(
+            "registered-tier-one",
+            source_code="OFFICIAL_INDEX",
+            document_type="index_methodology",
+            publisher_role=PublisherRole.INDEX_PROVIDER,
+            authority_tier=SourceAuthorityTier.TIER_1_REGULATORY,
+        ),
+        _source_candidate(
+            "registered-tier-publisher-mismatch",
+            source_code="OFFICIAL_INDEX",
+            document_type="index_methodology",
+            publisher_role=PublisherRole.INDEX_PROVIDER,
+            authority_tier=SourceAuthorityTier.TIER_3_EXCHANGE_ASSOCIATION,
+        ),
+        _source_candidate(
+            "registered-role-publisher-mismatch",
+            source_code="OFFICIAL_POLICY",
+            document_type="index_methodology",
+            publisher_role=PublisherRole.POLICY_AUTHORITY,
+            authority_tier=SourceAuthorityTier.TIER_2_CLAIM_OWNER,
+        ),
+    ),
+)
+def test_registered_candidate_provenance_mismatch_fails_before_selection(
+    candidate: DocumentSourceCandidate,
+) -> None:
+    target = _target(
+        "index-1",
+        entity_type="index",
+        product_family=None,
+        required_role=DocumentRole.INDEX_METHODOLOGY,
+        binding_role="subject_index",
+    )
+
+    report = audit_document_sources(
+        targets=(target,),
+        adapters=(_eligible_adapter("REGISTERED", candidate),),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].candidate is None
 
 
 def test_canonical_selection_returns_only_the_latest_role_candidate() -> None:
@@ -468,3 +694,87 @@ def test_report_is_identical_when_targets_adapters_and_candidates_are_reordered(
     )
 
     assert report_one == report_two
+
+
+@pytest.mark.parametrize(
+    "result",
+    (
+        SourceAdapterResult(  # type: ignore[arg-type]
+            status="document_not_found",
+            reason_code="dart_document_not_found",
+            candidates=(),
+        ),
+        SourceAdapterResult(
+            status=SourceAuditStatus.DOCUMENT_NOT_FOUND,
+            reason_code="API_KEY=must-not-escape",
+            candidates=(),
+        ),
+        SourceAdapterResult(
+            status=SourceAuditStatus.DOCUMENT_NOT_FOUND,
+            reason_code="dart_document_not_found",
+            candidates=(_source_candidate("unexpected"),),
+        ),
+        SourceAdapterResult(
+            status=SourceAuditStatus.ELIGIBLE,
+            reason_code="unexpected_reason",
+            candidates=(_source_candidate("unexpected"),),
+        ),
+    ),
+)
+def test_malformed_adapter_result_normalizes_to_stable_unverified(
+    result: SourceAdapterResult,
+) -> None:
+    report = audit_document_sources(
+        targets=(_target("domestic-etf"),),
+        adapters=(_StubAdapter("DART", result),),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    entry = report.entries[0]
+    assert entry.status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert entry.reason_code == "dart_adapter_result_invalid"
+    assert entry.candidate is None
+    assert "must-not-escape" not in repr(report)
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    (
+        replace(
+            _source_candidate("wrong-document-type"),
+            document_type="index_methodology",
+        ),
+        replace(
+            _source_candidate("wrong-source"),
+            source_code="SEC",
+        ),
+        replace(
+            _source_candidate("wrong-tier"),
+            authority_tier=SourceAuthorityTier.TIER_2_CLAIM_OWNER,
+        ),
+        replace(
+            _source_candidate("missing-version"),
+            document_version=None,
+        ),
+    ),
+)
+def test_forged_eligible_report_cannot_pass(
+    candidate: DocumentSourceCandidate,
+) -> None:
+    report = DocumentSourceAuditReport(
+        schema_version="1.0",
+        generated_at=_NOW,
+        cutoff_date=_CUTOFF,
+        dataset_version="2026-08-24",
+        entries=(
+            DocumentSourceAuditEntry(
+                target=_target("domestic-etf"),
+                status=SourceAuditStatus.ELIGIBLE,
+                reason_code=None,
+                candidate=candidate,
+            ),
+        ),
+    )
+
+    assert document_source_audit_passed(report) is False

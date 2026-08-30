@@ -7,15 +7,22 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 from urllib.parse import parse_qsl, urlparse
 
 from .models import DocumentRole, PublisherRole
+from .policy import (
+    binding_roles_for_document_role,
+    document_types_for_role,
+    publisher_roles_for_document_role,
+)
 
 
 _CUTOFF_DATE = date(2026, 8, 24)
 _ASIA_SEOUL = timezone(timedelta(hours=9))
 _PUBLIC_QUERY_KEYS = frozenset({"rcpNo", "CIK", "accession_number"})
+_REASON_CODE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 class SourceAuthorityTier(str, Enum):
@@ -90,6 +97,8 @@ class DocumentSourceCandidate:
             raise ValueError(
                 "authority_tier must be an approved source authority tier"
             )
+        if not isinstance(self.publisher_role, PublisherRole):
+            raise ValueError("publisher_role must be an approved publisher role")
         for value, name in (
             (self.document_id, "document_id"),
             (self.source_code, "source_code"),
@@ -126,8 +135,12 @@ class DocumentSourceAuditEntry:
     candidate: DocumentSourceCandidate | None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.status, SourceAuditStatus):
+            raise ValueError("audit entry status must be an approved status")
         if self.reason_code is not None:
             _require_text(self.reason_code, "reason_code")
+            if _REASON_CODE.fullmatch(self.reason_code) is None:
+                raise ValueError("reason_code must be a stable code")
         if self.status is SourceAuditStatus.ELIGIBLE:
             if self.candidate is None or self.reason_code is not None:
                 raise ValueError("eligible audit entry requires only a candidate")
@@ -166,10 +179,17 @@ def validate_document_source_report(report: DocumentSourceAuditReport) -> str:
         if key in target_keys:
             raise ValueError("duplicate audit target role")
         target_keys.add(key)
-        if _is_domestic_bond(target) and entry.status is SourceAuditStatus.ELIGIBLE:
-            raise ValueError("domestic bond cannot be eligible in the current scope")
+        if _is_domestic_bond(target):
+            if entry.status is SourceAuditStatus.ELIGIBLE:
+                raise ValueError("domestic bond cannot be eligible in the current scope")
+        elif entry.status is SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE:
+            raise ValueError("not_applicable is reserved for domestic bonds")
         if entry.status is SourceAuditStatus.ELIGIBLE:
-            _validate_eligible_timing(entry.candidate, report.cutoff_date)
+            _validate_eligible_candidate(
+                target,
+                entry.candidate,
+                report.cutoff_date,
+            )
 
     payload = _canonical_report_bytes(report)
     return hashlib.sha256(payload).hexdigest()
@@ -335,11 +355,28 @@ def _is_domestic_bond(target: DocumentSourceTarget) -> bool:
     )
 
 
-def _validate_eligible_timing(
-    candidate: DocumentSourceCandidate | None, cutoff_date: date
+def _validate_eligible_candidate(
+    target: DocumentSourceTarget,
+    candidate: DocumentSourceCandidate | None,
+    cutoff_date: date,
 ) -> None:
     if candidate is None:
         raise ValueError("eligible audit entry requires a candidate")
+    if target.binding_role not in binding_roles_for_document_role(
+        target.required_role
+    ):
+        raise ValueError("eligible candidate binding is incompatible with role")
+    if candidate.document_type not in document_types_for_role(
+        target.required_role
+    ):
+        raise ValueError("eligible candidate document type is incompatible with role")
+    if candidate.publisher_role not in publisher_roles_for_document_role(
+        target.required_role,
+        target.binding_role,
+    ):
+        raise ValueError("eligible candidate publisher is not approved for role")
+    if not _authority_matches_publisher(candidate):
+        raise ValueError("eligible candidate authority tier does not match publisher")
     timestamps = (candidate.published_at, candidate.available_at)
     if any(value is None for value in timestamps):
         raise ValueError("eligible candidate timing is missing")
@@ -349,6 +386,31 @@ def _validate_eligible_timing(
         if value
     ):
         raise ValueError("eligible candidate is after the approved cutoff")
+    if (
+        candidate.document_version is None
+        or candidate.effective_from is None
+        or candidate.effective_from > cutoff_date
+        or (
+            candidate.effective_to is not None
+            and candidate.effective_to < cutoff_date
+        )
+    ):
+        raise ValueError("eligible candidate effective version is not verified")
+
+
+def _authority_matches_publisher(candidate: DocumentSourceCandidate) -> bool:
+    if candidate.authority_tier is SourceAuthorityTier.TIER_1_REGULATORY:
+        return candidate.publisher_role is PublisherRole.REGULATOR_DISCLOSURE
+    if candidate.authority_tier is SourceAuthorityTier.TIER_2_CLAIM_OWNER:
+        return candidate.publisher_role in {
+            PublisherRole.INDEX_PROVIDER,
+            PublisherRole.POLICY_AUTHORITY,
+            PublisherRole.POLICY_OPERATOR,
+        }
+    return candidate.publisher_role in {
+        PublisherRole.EXCHANGE,
+        PublisherRole.INDUSTRY_ASSOCIATION,
+    }
 
 
 def source_timestamp_is_after_cutoff(
