@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 import re
@@ -24,6 +25,32 @@ _RECEIPT_NO = re.compile(r"^[0-9]{14}$")
 _DCM_NO = re.compile(r"node1\['dcmNo'\]\s*=\s*\"([0-9]+)\"\s*;")
 _HTML_LIMIT_BYTES = 4 * 1024 * 1024
 _REQUEST_TIMEOUT_SECONDS = 30.0
+
+
+@dataclass(frozen=True, slots=True)
+class DartCapturedProspectus:
+    manifest: OfficialObjectManifest
+    attachment_locator: str
+
+    @property
+    def object_name(self) -> str:
+        return self.manifest.object_name
+
+    @property
+    def object_key(self) -> str:
+        return self.manifest.object_key
+
+    @property
+    def media_type(self) -> str:
+        return self.manifest.media_type
+
+    @property
+    def size_bytes(self) -> int:
+        return self.manifest.size_bytes
+
+    @property
+    def sha256(self) -> str:
+        return self.manifest.sha256
 
 
 class _DownloadTableParser(HTMLParser):
@@ -89,7 +116,7 @@ def capture_dart_full_prospectus(
     canonical_name: str,
     destination: Path,
     maximum_bytes: int,
-) -> OfficialObjectManifest:
+) -> DartCapturedProspectus:
     """Resolve and atomically capture one official full-prospectus PDF."""
 
     receipt_no = _validate_candidate(candidate)
@@ -159,7 +186,10 @@ def capture_dart_full_prospectus(
             "DART_PROSPECTUS_PDF_INVALID",
             "DART prospectus attachment could not be verified",
         ) from None
-    return object_manifest
+    return DartCapturedProspectus(
+        manifest=object_manifest,
+        attachment_locator=attachment_url,
+    )
 
 
 def _validate_candidate(candidate: DocumentSourceCandidate) -> str:

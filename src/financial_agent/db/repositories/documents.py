@@ -221,6 +221,14 @@ def _source_artifact_record_hash(
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
 
 
+def source_artifact_record_hash(
+    artifact: DocumentSourceArtifactRecord,
+) -> str:
+    """Return the canonical persisted identity for source-file provenance."""
+
+    return _source_artifact_record_hash(artifact)
+
+
 def _captured_payload(captured: CapturedDocumentCorpus) -> dict[str, object]:
     return {
         "source": captured.source.model_dump(mode="json"),
@@ -238,6 +246,12 @@ def _captured_payload(captured: CapturedDocumentCorpus) -> dict[str, object]:
 
 def _captured_bytes(captured: CapturedDocumentCorpus) -> bytes:
     return _canonical_bytes(_captured_payload(captured))
+
+
+def captured_corpus_hash(captured: CapturedDocumentCorpus) -> str:
+    """Return a stable read-back comparison hash for one captured corpus."""
+
+    return hashlib.sha256(_captured_bytes(captured)).hexdigest()
 
 
 def _corpus_payload(corpus: DocumentCorpusRecord) -> dict[str, object]:

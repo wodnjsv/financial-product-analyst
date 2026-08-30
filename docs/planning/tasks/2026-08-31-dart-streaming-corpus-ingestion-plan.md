@@ -354,14 +354,14 @@ git commit -m "feat: discover organizer DART filings by publisher"
   `ingest_one_dart_document(...)`, and `safe_discard_verified_pdf(...)`.
 - Capture returns official original filename and sanitized attachment locator.
 
-- [ ] **Step 1: Write failing cleanup-authorization tests**
+- [x] **Step 1: Write failing cleanup-authorization tests**
 
 Deny cleanup when the transaction did not commit, read-back differs, retention
 is not `delete_authorized`, path is a symlink/directory/outside run root, or the
 immediate pre-delete checksum differs. The success case deletes exactly one PDF
 and transitions to `metadata_only_deleted` after deletion.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 ~~~bash
 .venv/bin/python -m pytest \
@@ -369,7 +369,7 @@ and transitions to `metadata_only_deleted` after deletion.
   tests/ingestion/document_sources/test_dart_ingestion.py -q
 ~~~
 
-- [ ] **Step 3: Implement the one-document state machine**
+- [x] **Step 3: Implement the one-document state machine**
 
 Use a generated temporary directory under one run root. Capture, extract,
 select, chunk, append the captured corpus, read it back, compare canonical
@@ -379,13 +379,13 @@ the artifact deleted.
 Keep at most five quarantined PDFs or 100 MiB, whichever comes first. Stop for
 review before exceeding either bound.
 
-- [ ] **Step 4: Verify crash and resume boundaries**
+- [x] **Step 4: Verify crash and resume boundaries**
 
 Simulate crashes after commit, read-back, authorization, and deletion. Resume
 must converge to one corpus and `metadata_only_deleted` without deleting an
 unrelated file.
 
-- [ ] **Step 5: Commit Task 5**
+- [x] **Step 5: Commit Task 5**
 
 ~~~bash
 git add src/financial_agent/ingestion/document_sources/dart_capture.py \

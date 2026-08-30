@@ -19,6 +19,13 @@ from .dart_pipeline import (
     assemble_captured_corpus,
     process_dart_prospectus,
 )
+from .dart_ingestion import (
+    DartCorpusIngestionError,
+    DartCorpusIngestionRequest,
+    DartCorpusIngestionResult,
+    ingest_one_dart_document,
+    safe_discard_verified_pdf,
+)
 from .dart_batch import (
     DartBatchDiscoveryResult,
     DartTargetDiscoveryDisposition,
@@ -47,6 +54,9 @@ __all__ = [
     "DartProspectusContext",
     "DartProspectusProcessingResult",
     "DartProspectusQualityReport",
+    "DartCorpusIngestionError",
+    "DartCorpusIngestionRequest",
+    "DartCorpusIngestionResult",
     "DartBatchDiscoveryResult",
     "DartPublisherBinding",
     "DartPublisherDataError",
@@ -60,6 +70,7 @@ __all__ = [
     "build_organizer_dart_inventory",
     "discover_dart_candidates_by_publisher",
     "fetch_dart_corporation_codes",
+    "ingest_one_dart_document",
     "process_dart_prospectus",
     "reconcile_dart_publishers",
     "HttpStatusError",
@@ -68,4 +79,5 @@ __all__ = [
     "SourceAdapterResult",
     "classify_access_error",
     "sanitize_public_locator",
+    "safe_discard_verified_pdf",
 ]

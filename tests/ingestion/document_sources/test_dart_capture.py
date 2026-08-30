@@ -166,6 +166,7 @@ def test_capture_selects_bound_full_attachment_not_generated_report(
     assert captured.media_type == "application/pdf"
     assert captured.size_bytes == len(_PDF)
     assert captured.sha256 == hashlib.sha256(_PDF).hexdigest()
+    assert captured.attachment_locator == opener.requests[-1][0]
     assert urlparse(opener.requests[-1][0]).path == "/pdf/download/file.do"
     assert opener.requests[-1][1]["Referer"].endswith(
         f"rcp_no={_RECEIPT}&dcm_no=11509553"
