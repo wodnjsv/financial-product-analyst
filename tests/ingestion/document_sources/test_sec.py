@@ -514,18 +514,35 @@ def test_sec_497k_prevents_full_prospectus_fallback() -> None:
     ]
 
 
-def test_sec_returns_exact_bound_claim_relevant_497_as_official_update() -> None:
+def test_sec_does_not_admit_nominal_497_supplement_from_description() -> None:
     supplement = _filing(
         form="497",
         primary_document="strategy-supplement.htm",
         description="Supplement - Principal Investment Strategy Update",
     )
-    result, _ = _discover([supplement])
+    result, opener = _discover([supplement])
 
-    assert result.status is SourceAuditStatus.ELIGIBLE
-    assert [candidate.document_type for candidate in result.candidates] == [
-        "official_update"
-    ]
+    assert result.status is SourceAuditStatus.DOCUMENT_NOT_FOUND
+    assert result.reason_code == "sec_prospectus_not_found"
+    assert result.candidates == ()
+    assert [url for url, _ in opener.calls] == [_SUBMISSIONS_URL]
+
+
+def test_sec_does_not_admit_administrative_497_with_claim_words() -> None:
+    administrative = _filing(
+        form="497",
+        primary_document="administrative-supplement.htm",
+        description=(
+            "Supplement to Investment Strategy Materials - "
+            "Distributor Contact Change"
+        ),
+    )
+    result, opener = _discover([administrative])
+
+    assert result.status is SourceAuditStatus.DOCUMENT_NOT_FOUND
+    assert result.reason_code == "sec_prospectus_not_found"
+    assert result.candidates == ()
+    assert [url for url, _ in opener.calls] == [_SUBMISSIONS_URL]
 
 
 def test_sec_excludes_generic_497_definitive_material() -> None:
@@ -664,21 +681,89 @@ def test_sec_denies_unsafe_redirect_before_following(location: str) -> None:
     assert [url for url, _ in opener.calls] == [_SUBMISSIONS_URL]
 
 
-def test_sec_follows_approved_metadata_redirect_without_reading_redirect_body() -> None:
-    redirected = (
-        f"https://data.sec.gov/submissions/CIK{_PADDED_CIK}-submissions-001.json"
-    )
+def _assert_metadata_redirect_denied(
+    responses: dict[str, object],
+    *,
+    redirect_from: str,
+    redirect_to: str,
+) -> None:
     opener = _SyntheticOpener(
-        {redirected: _submissions([])},
-        redirect_from=_SUBMISSIONS_URL,
-        redirect_to=redirected,
+        responses,
+        redirect_from=redirect_from,
+        redirect_to=redirect_to,
     )
 
     result = SecDocumentSourceAdapter(opener).discover(_target(), _context())
 
-    assert result.status is SourceAuditStatus.DOCUMENT_NOT_FOUND
-    assert [url for url, _ in opener.calls] == [_SUBMISSIONS_URL, redirected]
-    assert opener.opened_responses[0].read_sizes == []
+    assert result.status is SourceAuditStatus.ACCESS_DENIED
+    assert result.reason_code == "sec_redirect_location_denied"
+    called_urls = [url for url, _ in opener.calls]
+    assert redirect_from in called_urls
+    assert redirect_to not in called_urls
+    assert opener.opened_responses[-1].read_sizes == []
+
+
+def test_sec_denies_cross_cik_submissions_redirect_before_target_request() -> None:
+    redirected = "https://data.sec.gov/submissions/CIK0001445547.json"
+
+    _assert_metadata_redirect_denied(
+        {_SUBMISSIONS_URL: _submissions([])},
+        redirect_from=_SUBMISSIONS_URL,
+        redirect_to=redirected,
+    )
+
+
+def test_sec_denies_main_to_older_submissions_redirect_before_target_request() -> None:
+    redirected = (
+        f"https://data.sec.gov/submissions/CIK{_PADDED_CIK}-submissions-001.json"
+    )
+
+    _assert_metadata_redirect_denied(
+        {_SUBMISSIONS_URL: _submissions([])},
+        redirect_from=_SUBMISSIONS_URL,
+        redirect_to=redirected,
+    )
+
+
+def test_sec_denies_cross_accession_index_redirect_before_target_request() -> None:
+    filing = _filing()
+    source = f"{_archive_base(filing['accessionNumber'])}/index.json"
+    redirected = f"{_archive_base('0001445546-25-008730')}/index.json"
+
+    _assert_metadata_redirect_denied(
+        _responses([filing]),
+        redirect_from=source,
+        redirect_to=redirected,
+    )
+
+
+def test_sec_denies_index_to_header_redirect_before_target_request() -> None:
+    filing = _filing()
+    base = _archive_base(filing["accessionNumber"])
+    source = f"{base}/index.json"
+    redirected = f"{base}/{filing['accessionNumber']}.hdr.sgml"
+
+    _assert_metadata_redirect_denied(
+        _responses([filing]),
+        redirect_from=source,
+        redirect_to=redirected,
+    )
+
+
+def test_sec_denies_header_to_header_redirect_before_target_request() -> None:
+    filing = _filing()
+    base = _archive_base(filing["accessionNumber"])
+    source = f"{base}/{filing['accessionNumber']}.hdr.sgml"
+    redirected = (
+        f"{_archive_base('0001445546-25-008730')}/"
+        "0001445546-25-008730.hdr.sgml"
+    )
+
+    _assert_metadata_redirect_denied(
+        _responses([filing]),
+        redirect_from=source,
+        redirect_to=redirected,
+    )
 
 
 def test_sec_never_calls_auto_following_opener() -> None:
@@ -700,10 +785,31 @@ def test_sec_never_calls_auto_following_opener() -> None:
     assert not opener.called
 
 
-def test_sec_supports_only_overseas_product_document_roles() -> None:
+def test_sec_supports_only_overseas_product_summary_targets() -> None:
     adapter = SecDocumentSourceAdapter(_SyntheticOpener({}))
 
     assert adapter.supports(_target())
-    assert adapter.supports(_target(required_role=DocumentRole.PRODUCT_FULL))
-    assert adapter.supports(_target(required_role=DocumentRole.OFFICIAL_UPDATE))
+    assert not adapter.supports(_target(required_role=DocumentRole.PRODUCT_FULL))
+    assert not adapter.supports(_target(required_role=DocumentRole.OFFICIAL_UPDATE))
     assert not adapter.supports(_target(product_family="domestic_etf"))
+
+
+def test_sec_product_full_discovery_is_unsupported_before_network() -> None:
+    summary = _filing()
+    full = _filing(
+        "0001445546-25-007000",
+        form="485BPOS",
+        primary_document="full.htm",
+        description="Prospectus",
+    )
+    opener = _SyntheticOpener(_responses([summary, full]))
+
+    result = SecDocumentSourceAdapter(opener).discover(
+        _target(required_role=DocumentRole.PRODUCT_FULL),
+        _context(),
+    )
+
+    assert result.status is SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE
+    assert result.reason_code == "sec_target_not_supported"
+    assert result.candidates == ()
+    assert opener.calls == []

@@ -7,7 +7,7 @@ from datetime import date, datetime, time
 import json
 import re
 from typing import BinaryIO
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from financial_agent.documents import (
@@ -30,7 +30,6 @@ from .base import (
 
 _SUBMISSIONS_ROOT = "https://data.sec.gov/submissions"
 _ARCHIVES_ROOT = "https://www.sec.gov/Archives/edgar/data"
-_SEC_HOSTS = frozenset({"data.sec.gov", "www.sec.gov"})
 _SEOUL = ZoneInfo("Asia/Seoul")
 _CIK = re.compile(r"^[0-9]{1,10}$")
 _SERIES_ID = re.compile(r"^S[0-9]{9}$")
@@ -41,30 +40,9 @@ _USER_AGENT = re.compile(
     r"^\S(?:.*\S)?\s+[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
     r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
 )
-_DATA_PATH = re.compile(
-    r"^/submissions/CIK[0-9]{10}(?:-submissions-[0-9]{3})?\.json$"
-)
-_ARCHIVE_METADATA_PATH = re.compile(
-    r"^/Archives/edgar/data/[0-9]{1,10}/[0-9]{18}/"
-    r"(?:index\.json|[0-9]{10}-[0-9]{2}-[0-9]{6}\.hdr\.sgml)$"
-)
 _TAG_TEMPLATE = r"<{tag}>\s*([^<\r\n]+)"
 _DISCOVERY_FORMS = frozenset({"497K", "497", "485BPOS", "N-1A", "N-1A/A"})
 _FULL_FORMS = frozenset({"485BPOS", "N-1A", "N-1A/A"})
-_CLAIM_IMPACT_TERMS = (
-    "investment objective",
-    "investment strategy",
-    "principal investment",
-    "principal risk",
-    "tracked index",
-    "underlying index",
-    "index strategy",
-    "currency hedg",
-    "derivative",
-    "leverage",
-    "legal structure",
-    "operating structure",
-)
 _MAX_SUBMISSION_FILES = 100
 _MAX_FILINGS_PER_RESPONSE = 100_000
 _MAX_INDEX_ITEMS = 10_000
@@ -72,7 +50,6 @@ _MAX_SUBMISSIONS_BYTES = 8 * 1024 * 1024
 _MAX_INDEX_BYTES = 2 * 1024 * 1024
 _MAX_HEADER_BYTES = 512 * 1024
 _REQUEST_TIMEOUT_SECONDS = 15.0
-_MAX_REDIRECTS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,12 +105,7 @@ class SecDocumentSourceAdapter:
         return (
             target.entity_type == "product"
             and target.product_family == "overseas_etf"
-            and target.required_role
-            in {
-                DocumentRole.PRODUCT_SUMMARY,
-                DocumentRole.PRODUCT_FULL,
-                DocumentRole.OFFICIAL_UPDATE,
-            }
+            and target.required_role is DocumentRole.PRODUCT_SUMMARY
             and target.binding_role == "subject_product"
         )
 
@@ -142,6 +114,11 @@ class SecDocumentSourceAdapter:
         target: DocumentSourceTarget,
         context: DocumentDiscoveryContext,
     ) -> SourceAdapterResult:
+        if not self.supports(target):
+            return _unavailable(
+                SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE,
+                "sec_target_not_supported",
+            )
         user_agent = context.sec_user_agent
         if user_agent is None or _USER_AGENT.fullmatch(user_agent.strip()) is None:
             return _unavailable(
@@ -168,7 +145,6 @@ class SecDocumentSourceAdapter:
                 filings,
                 binding=binding,
                 cutoff_date=context.cutoff_date,
-                required_role=target.required_role,
                 headers=headers,
             )
         except _SecResponseError as error:
@@ -222,7 +198,6 @@ class SecDocumentSourceAdapter:
         *,
         binding: _Binding,
         cutoff_date: date,
-        required_role: DocumentRole,
         headers: dict[str, str],
     ) -> tuple[_BoundFiling, ...]:
         recognized = tuple(
@@ -241,11 +216,7 @@ class SecDocumentSourceAdapter:
                 "sec_after_cutoff_only",
             )
 
-        relevant = tuple(
-            filing
-            for filing in eligible
-            if filing.form != "497" or _is_claim_relevant_497(filing.description)
-        )
+        relevant = tuple(filing for filing in eligible if filing.form != "497")
         bound: list[_BoundFiling] = []
         for filing in relevant:
             archive_base = _archive_base(binding, filing.accession)
@@ -267,7 +238,7 @@ class SecDocumentSourceAdapter:
             if _header_has_exact_binding(header_payload, binding=binding):
                 bound.append(_BoundFiling(filing, media_type))
 
-        selected = _select_bound(tuple(bound), required_role=required_role)
+        selected = _select_bound(tuple(bound))
         if selected:
             return selected
         if relevant and not bound:
@@ -287,50 +258,32 @@ class SecDocumentSourceAdapter:
         *,
         headers: dict[str, str],
     ) -> bytes:
-        current_url = url
-        for redirect_count in range(_MAX_REDIRECTS + 1):
-            response = _open_no_redirect(
-                self._opener,
-                current_url,
-                headers=headers,
-            )
-            try:
-                status_code = _response_status(response)
-            except Exception:
-                response.close()
-                raise
-            if 300 <= status_code < 400:
-                try:
-                    location = _response_location(response)
-                finally:
-                    response.close()
-                if redirect_count >= _MAX_REDIRECTS:
-                    raise _SecResponseError(
-                        SourceAuditStatus.ACCESS_DENIED,
-                        "sec_redirect_limit_exceeded",
-                    )
-                redirected_url = urljoin(current_url, location)
-                if not _is_approved_metadata_url(redirected_url):
-                    raise _SecResponseError(
-                        SourceAuditStatus.ACCESS_DENIED,
-                        "sec_redirect_location_denied",
-                    )
-                current_url = redirected_url
-                continue
-            if status_code != 200:
-                response.close()
-                raise HttpStatusError(status_code)
-            try:
-                payload = response.read(limit + 1)
-            finally:
-                response.close()
-            if not isinstance(payload, bytes) or len(payload) > limit:
-                raise _SecMalformedResponse
-            return payload
-        raise _SecResponseError(
-            SourceAuditStatus.ACCESS_DENIED,
-            "sec_redirect_limit_exceeded",
+        response = _open_no_redirect(
+            self._opener,
+            url,
+            headers=headers,
         )
+        try:
+            status_code = _response_status(response)
+        except Exception:
+            response.close()
+            raise
+        if 300 <= status_code < 400:
+            response.close()
+            raise _SecResponseError(
+                SourceAuditStatus.ACCESS_DENIED,
+                "sec_redirect_location_denied",
+            )
+        if status_code != 200:
+            response.close()
+            raise HttpStatusError(status_code)
+        try:
+            payload = response.read(limit + 1)
+        finally:
+            response.close()
+        if not isinstance(payload, bytes) or len(payload) > limit:
+            raise _SecMalformedResponse
+        return payload
 
 
 def _open_no_redirect(
@@ -354,35 +307,6 @@ def _response_status(response: BinaryIO) -> int:
     if not isinstance(status_code, int) or isinstance(status_code, bool):
         raise _SecMalformedResponse
     return status_code
-
-
-def _response_location(response: BinaryIO) -> str:
-    headers = getattr(response, "headers", None)
-    location = headers.get("Location") if headers is not None else None
-    if not isinstance(location, str) or not location.strip():
-        raise _SecMalformedResponse
-    return location
-
-
-def _is_approved_metadata_url(url: str) -> bool:
-    try:
-        parsed = urlparse(url)
-        port = parsed.port
-    except ValueError:
-        return False
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname not in _SEC_HOSTS
-        or port not in {None, 443}
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-    ):
-        return False
-    if parsed.hostname == "data.sec.gov":
-        return _DATA_PATH.fullmatch(parsed.path) is not None
-    return _ARCHIVE_METADATA_PATH.fullmatch(parsed.path) is not None
 
 
 def _resolve_binding(target: DocumentSourceTarget) -> _Binding:
@@ -648,37 +572,17 @@ def _tag_values(block: str, tag: str) -> tuple[str, ...]:
     return tuple(match.group(1).strip() for match in pattern.finditer(block))
 
 
-def _select_bound(
-    filings: tuple[_BoundFiling, ...],
-    *,
-    required_role: DocumentRole,
-) -> tuple[_BoundFiling, ...]:
+def _select_bound(filings: tuple[_BoundFiling, ...]) -> tuple[_BoundFiling, ...]:
     summaries = tuple(item for item in filings if item.filing.form == "497K")
     full = tuple(item for item in filings if item.filing.form in _FULL_FORMS)
-    updates = tuple(item for item in filings if item.filing.form == "497")
-    if required_role is DocumentRole.PRODUCT_FULL:
-        base = (_latest(full),) if full else ()
-        return tuple(item for item in base if item is not None)
-    if required_role is DocumentRole.OFFICIAL_UPDATE:
-        return (_latest(updates),) if updates else ()
     base = (_latest(summaries),) if summaries else ((_latest(full),) if full else ())
-    selected = tuple(item for item in base if item is not None)
-    if updates:
-        selected += (_latest(updates),)
-    return selected
+    return tuple(item for item in base if item is not None)
 
 
 def _latest(filings: tuple[_BoundFiling, ...]) -> _BoundFiling:
     return max(
         filings,
         key=lambda item: (item.filing.accepted_at, item.filing.accession),
-    )
-
-
-def _is_claim_relevant_497(description: str) -> bool:
-    normalized = " ".join(description.lower().split())
-    return "supplement" in normalized and any(
-        term in normalized for term in _CLAIM_IMPACT_TERMS
     )
 
 
@@ -702,11 +606,7 @@ def _candidate(
         allowed_hosts=frozenset({"www.sec.gov"}),
     )
     document_type = (
-        "summary_prospectus"
-        if filing.form == "497K"
-        else "official_update"
-        if filing.form == "497"
-        else "full_prospectus"
+        "summary_prospectus" if filing.form == "497K" else "full_prospectus"
     )
     return DocumentSourceCandidate(
         document_id=f"sec-accession:{filing.accession}",
