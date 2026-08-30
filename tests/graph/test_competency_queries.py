@@ -19,6 +19,11 @@ from financial_agent.graph.exporter import build_graph_artifacts, entity_iri
 from financial_agent.graph.queries import build_relation_query
 
 
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Dataset\\.default_context is deprecated, use Dataset\\.default_graph instead\\.:DeprecationWarning:rdflib\\.graph"
+)
+
+
 VERSION = "2026-08-24/v1"
 CUTOFF = date(2026, 8, 24)
 RELATIONS = (
