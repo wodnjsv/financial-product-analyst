@@ -84,7 +84,7 @@ SHA-256
   `product_type` Observation, identifier scheme, and `hasShareClass` relation;
   it does not guess ETF/ETN or fund roles from a display name.
 
-- [ ] **Step 1: Add the Graph dependency profile and test marker**
+- [x] **Step 1: Add the Graph dependency profile and test marker**
 
 Add only this optional dependency group and marker:
 
@@ -107,7 +107,7 @@ environment without changing a lockfile:
   -m pip install -e '.[graph]'
 ```
 
-- [ ] **Step 2: Write the failing TBox contract test**
+- [x] **Step 2: Write the failing TBox contract test**
 
 The test must parse all five Turtle files and compare the object-property local
 names with the question contract, not with a second hand-maintained test set:
@@ -143,7 +143,7 @@ Also assert that each property has the domain/range from ADR-0021, all declared
 classes resolve, product-risk and credit-grade classes are distinct, and the
 five input files contain no duplicate ontology declaration.
 
-- [ ] **Step 3: Run the test and confirm RED**
+- [x] **Step 3: Run the test and confirm RED**
 
 ```bash
 PYTHONPATH=src \
@@ -153,7 +153,7 @@ PYTHONPATH=src \
 
 Expected: failure because `contract.py` and the five TBox files do not exist.
 
-- [ ] **Step 4: Implement the shared contract constants**
+- [x] **Step 4: Implement the shared contract constants**
 
 Use immutable constants and no dependency on ingestion mappers:
 
@@ -208,7 +208,7 @@ RELATION_METRIC_PROPERTY_BY_ID = {
 }
 ```
 
-- [ ] **Step 5: Implement the five TBox modules**
+- [x] **Step 5: Implement the five TBox modules**
 
 `common.ttl` owns the ontology declaration, common classes,
 `RelationAssertion`, `EvidenceRecord`, `SourceRecord`, all 13 domain object
@@ -222,7 +222,7 @@ subclasses and controlled vocabulary. Preserve the approved multi-role model:
 `DomesticETF` and `FundShareClass` are not disjoint, while `ETF` and `ETN` are
 disjoint. Keep `ProductRiskGrade` and `CreditGrade` separate.
 
-- [ ] **Step 6: Run the TBox test and Graph suite GREEN**
+- [x] **Step 6: Run the TBox test and Graph suite GREEN**
 
 ```bash
 PYTHONPATH=src \
@@ -230,7 +230,7 @@ PYTHONPATH=src \
   -m pytest tests/graph/test_ontology_contract.py tests/contracts -q
 ```
 
-- [ ] **Step 7: Commit the independently useful TBox**
+- [x] **Step 7: Commit the independently useful TBox**
 
 ```bash
 git add pyproject.toml src/financial_agent/graph ontology tests/graph
@@ -283,7 +283,7 @@ human-readable text or transient blank-node labels. The function returns a
 result for semantic non-conformance and raises only for unreadable or
 syntactically invalid input.
 
-- [ ] **Step 1: Write parameterized positive and negative tests**
+- [x] **Step 1: Write parameterized positive and negative tests**
 
 Test all 13 predicates in `valid_all_predicates.trig`; test each named invalid
 fixture independently and assert the stable SHACL source-constraint component,
@@ -314,7 +314,7 @@ Also assert that the exact-identity multi-role fixture conforms and that the
 unknown-predicate fixture fails the predicate `sh:in` constraint. Task 3 adds
 the earlier exporter-side allowlist failure for typed batches.
 
-- [ ] **Step 2: Run the tests and confirm RED**
+- [x] **Step 2: Run the tests and confirm RED**
 
 ```bash
 PYTHONPATH=src \
@@ -322,7 +322,7 @@ PYTHONPATH=src \
   -m pytest tests/graph/test_shacl_validation.py -q
 ```
 
-- [ ] **Step 3: Implement common and domain SHACL shapes**
+- [x] **Step 3: Implement common and domain SHACL shapes**
 
 The common shapes enforce assertion subject, predicate, object, relation ID,
 dataset version, Evidence, source resolution, valid-date ordering, and cutoff.
@@ -334,7 +334,7 @@ grade-scheme separation, and the relation-scoped `holdsSecurity` weight
 observation. `documentedBy` and `hasRiskFactor` shapes are present, but only
 synthetic fixtures instantiate them in Phase 1.
 
-- [ ] **Step 4: Implement the pySHACL wrapper**
+- [x] **Step 4: Implement the pySHACL wrapper**
 
 Parse all named-graph input and copy its triples into one validation union
 `Graph`, add a deterministic validation-context node carrying `cutoffDate`,
@@ -357,7 +357,7 @@ Canonicalize `report_graph` with RDFLib's canonical graph utility, serialize
 sorted N-Triples with LF newlines, and hash those bytes. Normalize
 `report_text` only for display. Never mutate or repair the source dataset.
 
-- [ ] **Step 5: Run SHACL and ontology tests GREEN**
+- [x] **Step 5: Run SHACL and ontology tests GREEN**
 
 ```bash
 PYTHONPATH=src \
@@ -366,7 +366,7 @@ PYTHONPATH=src \
   tests/graph/test_shacl_validation.py -q
 ```
 
-- [ ] **Step 6: Commit the validation gate**
+- [x] **Step 6: Commit the validation gate**
 
 ```bash
 git add ontology/shapes src/financial_agent/graph/validator.py \
@@ -468,7 +468,7 @@ def source_iri(dataset_version: str, source_id: str) -> URIRef: ...
 def build_graph_artifacts(batch: GraphProjectionBatch) -> GraphArtifacts: ...
 ```
 
-- [ ] **Step 1: Write failing contract and exporter tests**
+- [x] **Step 1: Write failing contract and exporter tests**
 
 Cover reversible UTF-8 percent encoding, empty/NUL identifier rejection,
 stable entity IRIs across versions, versioned assertion/Evidence/Source IRIs,
@@ -500,7 +500,7 @@ def test_invalid_projection_fails_the_whole_build(mutation, code) -> None:
 Create two batches containing identical records in reverse order and assert
 byte equality for both N-Quads outputs.
 
-- [ ] **Step 2: Run exporter tests and confirm RED**
+- [x] **Step 2: Run exporter tests and confirm RED**
 
 ```bash
 PYTHONPATH=src \
@@ -509,7 +509,7 @@ PYTHONPATH=src \
   tests/graph/test_graph_exporter.py -q
 ```
 
-- [ ] **Step 3: Implement IRI and record validation**
+- [x] **Step 3: Implement IRI and record validation**
 
 Encode dynamic segments with `urllib.parse.quote(value, safe="")`. Reject
 empty strings, NUL, invalid predicate IDs, foreign dataset versions, missing
@@ -521,7 +521,7 @@ compare after conversion to UTC+09:00 against 23:59:59 on `cutoff_date`.
 `SourceProjection` deliberately exposes only IDs. Do not add title, locator,
 raw value, or checksum fields unless the approved design is amended.
 
-- [ ] **Step 4: Implement deterministic named-graph N-Quads**
+- [x] **Step 4: Implement deterministic named-graph N-Quads**
 
 Use no blank nodes. Create these contexts exactly:
 
@@ -546,7 +546,7 @@ Deduplicate identical lines using a set before sorting. Emit explicit
 never reverse-engineer IDs from IRIs. Preserve one assertion node per
 `relation_id`; attach all Evidence IDs and supported relation metrics.
 
-- [ ] **Step 5: Run exporter, parse, and SHACL tests GREEN**
+- [x] **Step 5: Run exporter, parse, and SHACL tests GREEN**
 
 ```bash
 PYTHONPATH=src \
@@ -556,7 +556,7 @@ PYTHONPATH=src \
   tests/graph/test_shacl_validation.py -q
 ```
 
-- [ ] **Step 6: Commit the pure projection layer**
+- [x] **Step 6: Commit the pure projection layer**
 
 ```bash
 git add src/financial_agent/graph/contract.py \
@@ -613,7 +613,7 @@ def build_graph_manifest(
 ) -> GraphComponentManifest: ...
 ```
 
-- [ ] **Step 1: Write the PostgreSQL integration test first**
+- [x] **Step 1: Write the PostgreSQL integration test first**
 
 Place it under `tests/db/` so it can reuse the existing migrated PostgreSQL
 fixture. Mark it `@pytest.mark.postgres`. Insert a synthetic building dataset,
@@ -625,13 +625,13 @@ Add a SQL statement listener and assert every statement executed by `load` is
 `SELECT` or `SET TRANSACTION READ ONLY`; assert `operations.dataset_readiness`
 and `operations.active_dataset` remain unchanged.
 
-- [ ] **Step 2: Write the manifest unit tests**
+- [x] **Step 2: Write the manifest unit tests**
 
 Assert sorted canonical JSON, stable SHA-256, order-independent input path
 handling, changed hash when any ontology/data/evidence/report byte changes, and
 exact entity/predicate counts.
 
-- [ ] **Step 3: Run tests and confirm RED**
+- [x] **Step 3: Run tests and confirm RED**
 
 ```bash
 PYTHONPATH=src \
@@ -647,7 +647,7 @@ PYTHONPATH=src FINANCIAL_AGENT_TEST_DATABASE_URL="$FINANCIAL_AGENT_TEST_DATABASE
   -m pytest tests/db/test_graph_projection_repository.py -q
 ```
 
-- [ ] **Step 4: Implement the read-only repository**
+- [x] **Step 4: Implement the read-only repository**
 
 Open one async connection and transaction, execute
 `SET TRANSACTION READ ONLY`, fetch `operations.dataset_version.cutoff_date`,
@@ -687,7 +687,7 @@ relation domain/range fail the projection; names are never used for typing.
 Group Evidence and metrics by relation ID, sort every collection, and return a
 single immutable batch only after all queries succeed.
 
-- [ ] **Step 5: Implement canonical manifest generation**
+- [x] **Step 5: Implement canonical manifest generation**
 
 Use:
 
@@ -704,7 +704,7 @@ Hash the bytes of each tracked TBox/SHACL input, both N-Quads artifacts, and
 the normalized validation report. The manifest function is pure and performs
 no database or filesystem write.
 
-- [ ] **Step 6: Run unit, Graph, and PostgreSQL tests GREEN**
+- [x] **Step 6: Run unit, Graph, and PostgreSQL tests GREEN**
 
 ```bash
 PYTHONPATH=src \
@@ -716,7 +716,7 @@ Run the marked PostgreSQL test when its dedicated disposable database is
 configured; an unavailable database is a reported environment gate, not a
 silent pass.
 
-- [ ] **Step 7: Commit the database-to-manifest boundary**
+- [x] **Step 7: Commit the database-to-manifest boundary**
 
 ```bash
 git add src/financial_agent/graph/repository.py \
@@ -766,7 +766,7 @@ class FusekiGraphClient:
 There is intentionally no update, graph-store, admin, delete, or dataset
 activation method.
 
-- [ ] **Step 1: Write five failing RDFLib competency tests**
+- [x] **Step 1: Write five failing RDFLib competency tests**
 
 Add query builders for `managedBy`, `issuedBy`, `tracksIndex`,
 `holdsSecurity`, and `hasShareClass`. Each SELECT must return:
@@ -781,14 +781,14 @@ the entire expected binding. Add an empty-result test proving the wrapper
 returns `dataset_version`, `query_id`, and caller-supplied `coverage_status`
 without converting zero rows into a claim of relationship absence.
 
-- [ ] **Step 2: Write the failing HTTP client tests**
+- [x] **Step 2: Write the failing HTTP client tests**
 
 Monkeypatch `urllib.request.urlopen` to verify POSTed
 `application/x-www-form-urlencoded` SELECT requests, required SPARQL JSON
 accept headers, deterministic binding sort, timeout propagation, malformed
 JSON rejection, HTTP failure wrapping, and rejection of non-SELECT query text.
 
-- [ ] **Step 3: Run tests and confirm RED**
+- [x] **Step 3: Run tests and confirm RED**
 
 ```bash
 PYTHONPATH=src \
@@ -797,7 +797,7 @@ PYTHONPATH=src \
   tests/graph/test_graph_client.py -q
 ```
 
-- [ ] **Step 4: Implement evidence-bound query builders**
+- [x] **Step 4: Implement evidence-bound query builders**
 
 Use a shared SELECT template with explicit `GRAPH` clauses for the versioned
 data and evidence graph IRIs. Join a direct edge to the matching
@@ -809,14 +809,14 @@ The public builder accepts only one of the 13 approved predicate IDs and a
 dataset version. Phase 1 tests current real paths for five predicates while all
 13 remain available for synthetic contract validation.
 
-- [ ] **Step 5: Implement the standard-library read-only client**
+- [x] **Step 5: Implement the standard-library read-only client**
 
 Reject any query whose parsed first operation is not `SELECT`. POST only to the
 configured query endpoint, decode SPARQL Results JSON, normalize unbound values
 to absent keys, sort bindings lexically, and return the typed result. Do not
 accept credentials in the result object or log request bodies.
 
-- [ ] **Step 6: Run query and full Graph unit suites GREEN**
+- [x] **Step 6: Run query and full Graph unit suites GREEN**
 
 ```bash
 PYTHONPATH=src \
@@ -824,7 +824,7 @@ PYTHONPATH=src \
   -m pytest tests/graph -m 'not jena_integration' -q
 ```
 
-- [ ] **Step 7: Commit the read path**
+- [x] **Step 7: Commit the read path**
 
 ```bash
 git add src/financial_agent/graph/queries.py \
@@ -861,7 +861,7 @@ Exit `0` only when version, parse, SHACL, TDB2, command-line SPARQL, Fuseki
 SPARQL, and read-only checks all pass. Exit nonzero with a concise stage name on
 any failure.
 
-- [ ] **Step 1: Write the Jena integration test first**
+- [x] **Step 1: Write the Jena integration test first**
 
 Mark it `@pytest.mark.jena_integration` and require all three explicit gates:
 
@@ -877,7 +877,7 @@ synthetic N-Quads in `tmp_path`, invokes the runner as a subprocess, and asserts
 exit code zero plus a structured summary containing `jena_version=6.0.0`,
 `tdb2_query=pass`, `fuseki_query=pass`, and `update_surface=blocked`.
 
-- [ ] **Step 2: Run the selected test and confirm the environment failure**
+- [x] **Step 2: Run the selected test and confirm the environment failure**
 
 ```bash
 RUN_JENA_INTEGRATION=1 PYTHONPATH=src \
@@ -889,14 +889,14 @@ RUN_JENA_INTEGRATION=1 PYTHONPATH=src \
 Expected before binary setup: explicit failure naming `JENA_HOME` or
 `FUSEKI_HOME`, not an import error or silent skip.
 
-- [ ] **Step 3: Implement the read-only assembler template**
+- [x] **Step 3: Implement the read-only assembler template**
 
 Configure a TDB2 dataset with query endpoints only. Use the literal token
 `__TDB2_LOCATION__`; the runner replaces it with a temporary absolute directory
 in a temporary copy. Do not expose `update`, `upload`, `data`, Graph Store
 Protocol, or admin endpoints.
 
-- [ ] **Step 4: Implement the external-binary runner**
+- [x] **Step 4: Implement the external-binary runner**
 
 Use `subprocess.run([...], shell=False, check=True)` and a temporary directory.
 Resolve executables only below the supplied homes and require output version
@@ -915,7 +915,7 @@ Resolve executables only below the supplied homes and require output version
 Never download binaries, write into the repository, or leave a server process
 running from this script.
 
-- [ ] **Step 5: Install verified Jena 6.0.0 outside the repository**
+- [x] **Step 5: Install verified Jena 6.0.0 outside the repository**
 
 Download the official Apache Jena and Fuseki 6.0.0 binary archives plus their
 `.sha512` files into a new `mktemp -d` directory, verify both checksums, extract
@@ -926,7 +926,7 @@ into the worktree.
 Java must report version 21 or newer; the current local Java 24 satisfies this
 gate.
 
-- [ ] **Step 6: Run the exact-runtime gate GREEN**
+- [x] **Step 6: Run the exact-runtime gate GREEN**
 
 ```bash
 RUN_JENA_INTEGRATION=1 \
@@ -938,7 +938,7 @@ PYTHONPATH=src \
   -m jena_integration -q
 ```
 
-- [ ] **Step 7: Document repeatable local verification**
+- [x] **Step 7: Document repeatable local verification**
 
 The runbook records prerequisites, exact environment variables, checksum
 verification, unit and Jena commands, expected summaries, cleanup behavior,
@@ -946,7 +946,7 @@ and the distinction between local Graph Phase 1 compatibility and NCP
 readiness. It must not contain a local user path, credential, or generated
 dataset version.
 
-- [ ] **Step 8: Commit the exact-runtime gate**
+- [x] **Step 8: Commit the exact-runtime gate**
 
 ```bash
 git add config/fuseki scripts/graph tests/graph/test_jena_integration.py \
@@ -975,7 +975,7 @@ git commit -m "test: verify graph runtime with jena and fuseki"
 | Jena/Fuseki | pass with verified 6.0.0 binaries |
 | Diff/data safety | no raw data, binary, generated DB, secret, Vector, Stage 03, or migration change |
 
-- [ ] **Step 1: Run the always-on Graph gate**
+- [x] **Step 1: Run the always-on Graph gate**
 
 ```bash
 PYTHONPATH=src \
@@ -983,7 +983,7 @@ PYTHONPATH=src \
   -m pytest tests/graph -m 'not jena_integration' -q
 ```
 
-- [ ] **Step 2: Run the existing non-live regression**
+- [x] **Step 2: Run the existing non-live regression**
 
 ```bash
 PYTHONPATH=src \
@@ -997,7 +997,7 @@ The pre-change baseline is `699 passed, 336 deselected`. New Graph tests
 increase the pass count; existing failures or a pass-count drop block
 completion.
 
-- [ ] **Step 3: Run the two external integration gates**
+- [x] **Step 3: Run the two external integration gates**
 
 Run `tests/db/test_graph_projection_repository.py` against a disposable
 PostgreSQL 15 database and run the Task 6 Jena command with verified external
@@ -1005,7 +1005,7 @@ binaries. Record actual counts and elapsed times in STATUS. If either required
 gate cannot run, leave the plan incomplete and report the named environment
 blocker.
 
-- [ ] **Step 4: Prove the phase has no activation/write path**
+- [x] **Step 4: Prove the phase has no activation/write path**
 
 ```bash
 rg -n 'record_dataset_readiness|activate_dataset|active_dataset|INSERT|UPDATE|DELETE' \
@@ -1016,7 +1016,7 @@ Expected: no readiness/activation call and no SQL mutation statement. Mentions
 inside a read-only HTTP rejection assertion are acceptable only when the diff
 shows they cannot invoke an update endpoint.
 
-- [ ] **Step 5: Inspect scope and repository safety**
+- [x] **Step 5: Inspect scope and repository safety**
 
 ```bash
 git status --short
@@ -1029,7 +1029,7 @@ Confirm no path under `data/`, no organizer PDF/workbook, `.env`, Jena archive,
 TDB2 directory, generated N-Quads, Vector implementation, Stage 03 ingestion
 implementation, or Alembic migration appears.
 
-- [ ] **Step 6: Update status accurately**
+- [x] **Step 6: Update status accurately**
 
 Change Stage 04 status to state that Graph Phase 1 core is locally complete
 only after every required gate above passes. Keep all of Stage 04 incomplete:
@@ -1040,7 +1040,7 @@ dataset-relative coverage remain Phase 2/final Stage work.
 Record exact test counts, Jena/Fuseki version, and any environment limitation.
 Do not use “GraphDB complete” or “Stage 04 complete.”
 
-- [ ] **Step 7: Mark completed plan checkboxes and commit status evidence**
+- [x] **Step 7: Mark completed plan checkboxes and commit status evidence**
 
 ```bash
 git add docs/planning/STATUS.md \
@@ -1050,7 +1050,7 @@ git diff --cached
 git commit -m "docs: record graph phase one verification"
 ```
 
-- [ ] **Step 8: Perform final branch inspection**
+- [x] **Step 8: Perform final branch inspection**
 
 ```bash
 git status --short

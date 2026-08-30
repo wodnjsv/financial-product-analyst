@@ -14,7 +14,7 @@
 | 실패·판정·시간 예산 | 확정 기본안; 55초 내부 마감은 NCP 벤치마크 후 단계별 재배분 가능 | [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md), [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) |
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
-| 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute와 문서 provenance 경계 승인; TTL·SHACL·ABox·Fuseki 구현 대기 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
+| 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute·문서 provenance 경계 승인; TTL·SHACL·Evidence-bound ABox·읽기 전용 Fuseki를 포함한 Graph Phase 1 core 로컬 완료, Stage 04는 미완료 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 | Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
 
@@ -112,6 +112,18 @@
 - 첫 전체 N-PORT 측정은 Python 내 연결표가 약 4.6 GB를 사용해 중단했다. 선택 행을 폐기 가능한 SQLite keyed join으로 spill하고 250 holdings·10만 생성 레코드 상한을 적용한 뒤, 9,672개 출력 묶음에서 구성종목 1,299,751개와 관측값 7,798,506개를 약 33분 42초·최대 0.26 GB로 처리했다. 공식 `N/A`·공란 파생상품 817행은 추가 검증 후 관계를 보존하고 `unknown` Observation으로 정규화했다.
 - Task 9 일반 계약·ingestion 회귀는 `511 passed, 15 deselected`, 로컬 공식 캡처 재검증은 `1 passed`였다. NCP Object Storage 왕복, Linux/amd64 이미지, 실제 PostgreSQL 결합 재현은 로컬에 자격증명·Docker·DB URL이 없어 실행하지 않았다. 예상 N-PORT 논리 payload와 인덱스·두 재현 빌드를 고려하면 현재 10 GB NCP DB는 부족하므로 실제 적재 전에 최소 50 GB, 권장 100 GB로 확장해야 한다.
 
+### Stage 04 Graph·Vector 투영과 데이터셋 활성화
+
+**상태: Graph Phase 1 core 로컬 완료; Stage 04 미완료**
+
+- 13개 승인 predicate의 TBox·SHACL, PostgreSQL 읽기 전용 투영, 결정론적 N-Quads·Graph component manifest, Evidence-bound SPARQL 읽기 경로와 읽기 전용 Fuseki 적합성 게이트를 구현했다.
+- 2026-08-30 최종 로컬 검증은 외부 서비스 없는 Graph gate `141 passed, 13 deselected in 7.82s`, 기존 non-live 회귀 `840 passed, 357 deselected in 10.93s`, 전용 폐기 가능 PostgreSQL `15.19` 투영 gate `8 passed in 0.47s`, Apache Jena/Fuseki `6.0.0`·Java `24` exact-runtime gate `13 passed in 21.69s`를 모두 통과했다.
+- Graph 모듈은 `record_dataset_readiness`, `activate_dataset`, `active_dataset` 또는 SQL 변경 경로를 두지 않는다. 정적 스캔의 유일한 `INSERT` 문구는 없는 `/update` endpoint가 HTTP 404/405로 거부함을 검증하는 음성 probe이다.
+- 관리형 sandbox에서 PostgreSQL shared memory와 임시 loopback port bind는 승인된 로컬 실행을 필요로 했다. 모든 gate는 완료됐고 PostgreSQL 클러스터, Fuseki JVM, TDB2·N-Quads·검증 임시 디렉터리는 종료·삭제했다. 체크섬을 검증한 Jena/Fuseki 외부 binary home은 저장소 밖에만 유지한다.
+- 이 결과는 후속 Graph Phase 2 범위나 Stage 04 완료를 의미하지 않는다. Vector, 실제 관계·문서 데이터, PostgreSQL·Graph·Vector·Evidence 간 manifest 동일성, readiness·activation, NCP 배포, Graph 경로가 필요한 23개 질문의 dataset-relative 커버리지는 후속 Phase 2·최종 Stage 작업으로 남아 있다.
+
+기준 계획: [Stage 04 Graph Phase 1](tasks/2026-08-30-stage-04-graph-phase-1-implementation-plan.md)
+
 ## 3. 현재 실행하면 안 되는 계획
 
 [2026-08-10 Core Implementation Plan](tasks/2026-08-10-financial-agent-core-implementation-plan.md)은 질문·데이터·온톨로지 요구사항의 역사적 출처로만 유지한다. DuckDB, 로컬 인덱스, 옛 ADR 번호, 이전 에이전트 역할을 포함한 실행 순서는 현재 아키텍처와 맞지 않으므로 그대로 구현하지 않는다.
@@ -125,7 +137,7 @@
 | Stage | 범위 | 상태 |
 | --- | --- | --- |
 | 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | current organizer 로컬 결정성 검증 완료; current KRX holdings 로컬 통합과 나머지 공식 source 동결 대기; NCP acceptance는 Stage 08로 이연 |
-| 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
+| 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | Graph Phase 1 core 로컬 완료; Vector·실제 관계/문서·manifest 동일성·readiness/activation·NCP·23질문 커버리지 대기, Stage 04 미완료 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
 | 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
 | 07 | Verifier, Claim Gate Registry, Answer Composer, Renderer와 검증된 응답 캐시 | 대기 |
@@ -175,7 +187,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 35. ~~current KRX ETF holdings 1,161개 exact binding·로컬 비활성 적재·대표 질의 검증~~ — 2026-08-27 완료
 36. 나머지 current 공식 외부 source 동결과 Stage 03 로컬 완료 게이트 — [구현 계획](tasks/2026-08-27-stage-03-local-completion-plan.md) 승인, Task 1~6 완료; 52개 질문 커버리지를 `supported` 16, `limited` 18, `requires_additional_data` 11, `unsupported` 7로 동결
 37. ~~52개 질문 계약 schema `1.3` 정규화와 온톨로지 논리 보정 승인~~ — 2026-08-30 완료; 지원 상태 수량 유지, 실제 DB 실행은 전건 `not_run`
-38. 최소 TBox·SHACL·Evidence-bound ABox 구현부터 로컬 평가 API까지 Stage 04~07 순차 구현
+38. Stage 04 Graph Phase 1 core 로컬 구현·검증 완료; Vector·실제 관계/문서·manifest 동일성·readiness/activation을 완료한 뒤 로컬 평가 API까지 Stage 04~07 순차 구현
 39. Stage 08에서 최종 NCP 비활성 적재·Graph/Vector·권한·성능·복구·공개 API acceptance
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.
