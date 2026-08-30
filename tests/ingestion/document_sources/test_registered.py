@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import date
+from datetime import UTC, date, datetime
 from io import BytesIO
 import json
 from pathlib import Path
@@ -11,10 +11,13 @@ import pytest
 
 from financial_agent.documents import (
     DocumentRole,
+    DocumentSourceAuditEntry,
+    DocumentSourceAuditReport,
     DocumentSourceTarget,
     PublisherRole,
     SourceAuditStatus,
     SourceAuthorityTier,
+    validate_document_source_report,
 )
 from financial_agent.ingestion.document_sources import DocumentDiscoveryContext
 from financial_agent.ingestion.document_sources.registered import (
@@ -26,6 +29,48 @@ _ROOT = Path(__file__).resolve().parents[3]
 _AUTHORITY_REGISTRY = _ROOT / "config" / "official-document-authorities.json"
 _LOCATOR_REGISTRY = _ROOT / "tests" / "fixtures" / "document_source_locators.json"
 _CUTOFF = date(2026, 8, 24)
+_TIER_2 = "tier_2_claim_owner"
+_TIER_3 = "tier_3_exchange_association"
+_PERMITTED_MATRIX = (
+    (
+        _TIER_2,
+        "index_provider",
+        DocumentRole.INDEX_METHODOLOGY,
+        "subject_index",
+        "index",
+    ),
+    (_TIER_2, "index_provider", DocumentRole.OFFICIAL_UPDATE, "subject_index", "index"),
+    (_TIER_2, "policy_authority", DocumentRole.POLICY_BASE, "subject_policy", "policy"),
+    (
+        _TIER_2,
+        "policy_authority",
+        DocumentRole.OFFICIAL_UPDATE,
+        "subject_policy",
+        "policy",
+    ),
+    (_TIER_2, "policy_operator", DocumentRole.POLICY_BASE, "subject_policy", "policy"),
+    (
+        _TIER_2,
+        "policy_operator",
+        DocumentRole.OFFICIAL_UPDATE,
+        "subject_policy",
+        "policy",
+    ),
+    (_TIER_3, "exchange", DocumentRole.OFFICIAL_UPDATE, "subject_product", "product"),
+    (
+        _TIER_3,
+        "industry_association",
+        DocumentRole.OFFICIAL_UPDATE,
+        "subject_product",
+        "product",
+    ),
+)
+_FORBIDDEN_CROSS_BINDINGS = (
+    (_TIER_2, "index_provider", "subject_product", "product"),
+    (_TIER_2, "policy_operator", "subject_index", "index"),
+    (_TIER_3, "exchange", "subject_index", "index"),
+    (_TIER_3, "industry_association", "subject_policy", "policy"),
+)
 
 
 def _target(
@@ -122,6 +167,56 @@ def _mutated_locator_registry(tmp_path: Path, **changes: object) -> Path:
     return _write_registry(tmp_path, payload)
 
 
+def _matrix_registries(
+    tmp_path: Path,
+    *,
+    authority_tier: str,
+    publisher_role: str,
+    required_role: DocumentRole,
+    binding_role: str,
+    entity_type: str,
+) -> tuple[Path, Path]:
+    source_code = f"SYNTHETIC_{publisher_role.upper()}"
+    host = f"{publisher_role.replace('_', '-')}.example.invalid"
+    authority_path = tmp_path / "authorities.json"
+    authority_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "authorities": [
+                    {
+                        "source_code": source_code,
+                        "authority_tier": authority_tier,
+                        "publisher_role": publisher_role,
+                        "jurisdiction": "ZZ",
+                        "allowed_hosts": [host],
+                        "allowed_document_roles": [required_role.value],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    locator = _payload()["locators"][0]
+    locator.update(
+        entity_id=f"{entity_type}-1",
+        entity_type=entity_type,
+        required_role=required_role.value,
+        binding_role=binding_role,
+        document_id=f"document-{publisher_role}-{required_role.value}",
+        source_code=source_code,
+        authority_tier=authority_tier,
+        publisher_code=source_code,
+        publisher_role=publisher_role,
+        source_locator=f"https://{host}/document.pdf",
+        discovery_locator=f"https://{host}/documents",
+        document_type=required_role.value,
+    )
+    return authority_path, _write_registry(
+        tmp_path, {"schema_version": "1.0", "locators": [locator]}
+    )
+
+
 def _adapter(
     opener: _SyntheticOpener | None = None,
 ) -> tuple[RegisteredDocumentSourceAdapter, _SyntheticOpener]:
@@ -178,6 +273,117 @@ def test_preflight_reads_at_most_one_byte_and_never_retains_a_body() -> None:
     assert response.read_sizes == [1]
     assert response.closed
     assert not hasattr(result.candidates[0], "body")
+
+
+def test_cutoff_day_fractional_timestamp_passes_canonical_report_validation(
+    tmp_path: Path,
+) -> None:
+    timestamp = "2026-08-24T23:59:59.500000+09:00"
+    path = _mutated_locator_registry(
+        tmp_path,
+        published_at=timestamp,
+        available_at=timestamp,
+    )
+    adapter, _ = _adapter()
+    target = _target()
+
+    result = adapter.discover(target, _context(path))
+    assert result.status is SourceAuditStatus.ELIGIBLE
+    report = DocumentSourceAuditReport(
+        schema_version="1.0",
+        generated_at=datetime(2026, 8, 24, 12, tzinfo=UTC),
+        cutoff_date=_CUTOFF,
+        dataset_version=target.dataset_version,
+        entries=(
+            DocumentSourceAuditEntry(
+                target=target,
+                status=result.status,
+                reason_code=result.reason_code,
+                candidate=result.candidates[0],
+            ),
+        ),
+    )
+
+    assert validate_document_source_report(report)
+
+
+@pytest.mark.parametrize(
+    (
+        "authority_tier",
+        "publisher_role",
+        "required_role",
+        "binding_role",
+        "entity_type",
+    ),
+    _PERMITTED_MATRIX,
+)
+def test_permitted_tier_publisher_role_binding_matrix(
+    tmp_path: Path,
+    authority_tier: str,
+    publisher_role: str,
+    required_role: DocumentRole,
+    binding_role: str,
+    entity_type: str,
+) -> None:
+    authority_path, locator_path = _matrix_registries(
+        tmp_path,
+        authority_tier=authority_tier,
+        publisher_role=publisher_role,
+        required_role=required_role,
+        binding_role=binding_role,
+        entity_type=entity_type,
+    )
+    opener = _SyntheticOpener()
+    adapter = RegisteredDocumentSourceAdapter(opener, authority_path)
+    target = _target(
+        entity_id=f"{entity_type}-1",
+        entity_type=entity_type,
+        required_role=required_role,
+        binding_role=binding_role,
+    )
+
+    result = adapter.discover(target, _context(locator_path))
+
+    assert result.status is SourceAuditStatus.ELIGIBLE
+    candidate = result.candidates[0]
+    assert candidate.authority_tier.value == authority_tier
+    assert candidate.publisher_role.value == publisher_role
+    assert len(opener.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("authority_tier", "publisher_role", "binding_role", "entity_type"),
+    _FORBIDDEN_CROSS_BINDINGS,
+)
+def test_forbidden_cross_binding_matrix_is_rejected_before_access(
+    tmp_path: Path,
+    authority_tier: str,
+    publisher_role: str,
+    binding_role: str,
+    entity_type: str,
+) -> None:
+    authority_path, locator_path = _matrix_registries(
+        tmp_path,
+        authority_tier=authority_tier,
+        publisher_role=publisher_role,
+        required_role=DocumentRole.OFFICIAL_UPDATE,
+        binding_role=binding_role,
+        entity_type=entity_type,
+    )
+    opener = _SyntheticOpener()
+    adapter = RegisteredDocumentSourceAdapter(opener, authority_path)
+    target = _target(
+        entity_id=f"{entity_type}-1",
+        entity_type=entity_type,
+        required_role=DocumentRole.OFFICIAL_UPDATE,
+        binding_role=binding_role,
+    )
+
+    result = adapter.discover(target, _context(locator_path))
+
+    assert result.status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert result.reason_code == "registered_publisher_role_not_approved"
+    assert opener.calls == []
 
 
 def test_missing_reviewed_locator_is_access_method_unverified() -> None:

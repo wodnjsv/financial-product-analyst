@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime
 import json
 from pathlib import Path
 import re
 from typing import BinaryIO
 from urllib.parse import urljoin, urlparse
-from zoneinfo import ZoneInfo
 
 from financial_agent.documents import (
     DocumentRole,
@@ -24,6 +23,9 @@ from financial_agent.documents.policy import (
     document_types_for_role,
     publisher_roles_for_document_role,
 )
+from financial_agent.documents.source_manifest import (
+    source_timestamp_is_after_cutoff,
+)
 
 from .base import (
     DocumentDiscoveryContext,
@@ -36,7 +38,6 @@ from .base import (
 )
 
 
-_SEOUL = ZoneInfo("Asia/Seoul")
 _SOURCE_CODE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
 _JURISDICTION = re.compile(r"^[A-Z]{2}$")
 _HOST = re.compile(
@@ -514,10 +515,9 @@ def _validate_locator_for_target(
 
 
 def _validate_cutoff(locator: _ReviewedLocator, *, cutoff_date: date) -> None:
-    cutoff_at = datetime.combine(cutoff_date, time.max, tzinfo=_SEOUL)
     if (
-        locator.published_at.astimezone(_SEOUL) > cutoff_at
-        or locator.available_at.astimezone(_SEOUL) > cutoff_at
+        source_timestamp_is_after_cutoff(locator.published_at, cutoff_date)
+        or source_timestamp_is_after_cutoff(locator.available_at, cutoff_date)
         or locator.effective_from > cutoff_date
     ):
         raise _RegisteredResultError(

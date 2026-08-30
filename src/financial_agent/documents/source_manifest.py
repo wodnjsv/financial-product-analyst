@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 import hashlib
 import json
@@ -343,12 +343,18 @@ def _validate_eligible_timing(
     timestamps = (candidate.published_at, candidate.available_at)
     if any(value is None for value in timestamps):
         raise ValueError("eligible candidate timing is missing")
-    cutoff_at = datetime.combine(
-        cutoff_date, time(23, 59, 59), tzinfo=_ASIA_SEOUL
-    )
     if any(
-        value.astimezone(_ASIA_SEOUL) > cutoff_at
+        source_timestamp_is_after_cutoff(value, cutoff_date)
         for value in timestamps
         if value
     ):
         raise ValueError("eligible candidate is after the approved cutoff")
+
+
+def source_timestamp_is_after_cutoff(
+    value: datetime,
+    cutoff_date: date,
+) -> bool:
+    """Return whether an aware source timestamp falls after the Seoul cutoff day."""
+
+    return value.astimezone(_ASIA_SEOUL).date() > cutoff_date
