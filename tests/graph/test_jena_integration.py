@@ -7,6 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -19,6 +20,7 @@ from financial_agent.graph.contract import (
     SourceProjection,
 )
 from financial_agent.graph.exporter import build_graph_artifacts
+from scripts.graph import verify_jena
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -149,9 +151,11 @@ def _expected_bindings() -> dict[str, object]:
     }
 
 
-@pytest.mark.jena_integration
-def test_verified_jena_tdb2_and_read_only_fuseki(tmp_path: Path) -> None:
-    """Catches runtime drift, query mismatch, or a writable Fuseki surface."""
+def _run_verifier(
+    tmp_path: Path,
+    *,
+    environment_overrides: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     jena_home, fuseki_home = _require_exact_runtime()
     artifacts = build_graph_artifacts(_synthetic_batch())
     data_path = tmp_path / "data.nq"
@@ -163,8 +167,11 @@ def test_verified_jena_tdb2_and_read_only_fuseki(tmp_path: Path) -> None:
         json.dumps(_expected_bindings(), ensure_ascii=False, sort_keys=True),
         encoding="utf-8",
     )
+    environment = os.environ.copy()
+    if environment_overrides is not None:
+        environment.update(environment_overrides)
 
-    result = subprocess.run(
+    return subprocess.run(
         [
             sys.executable,
             str(PROJECT_ROOT / "scripts" / "graph" / "verify_jena.py"),
@@ -182,17 +189,80 @@ def test_verified_jena_tdb2_and_read_only_fuseki(tmp_path: Path) -> None:
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        env=environment,
         check=False,
         shell=False,
     )
 
-    assert result.returncode == 0, result.stderr or result.stdout
-    summary = dict(
+
+def _summary(result: subprocess.CompletedProcess[str]) -> dict[str, str]:
+    return dict(
         item.split("=", 1)
         for item in result.stdout.splitlines()
         if "=" in item
     )
+
+
+@pytest.mark.jena_integration
+def test_verified_jena_tdb2_and_read_only_fuseki(tmp_path: Path) -> None:
+    """Catches runtime drift, query mismatch, or any writable/admin surface."""
+    result = _run_verifier(tmp_path)
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    summary = _summary(result)
     assert summary["jena_version"] == "6.0.0"
     assert summary["tdb2_query"] == "pass"
     assert summary["fuseki_query"] == "pass"
     assert summary["update_surface"] == "blocked"
+    assert summary["admin_surface"] == "blocked"
+
+
+@pytest.mark.jena_integration
+def test_ambient_launcher_overrides_cannot_change_the_verified_runtime(
+    tmp_path: Path,
+) -> None:
+    """Catches caller-controlled launchers, classpaths, logging, or server mode."""
+    hostile_root = tmp_path / "ambient-overrides"
+    result = _run_verifier(
+        tmp_path,
+        environment_overrides={
+            "JENA_HOME": str(hostile_root / "jena"),
+            "FUSEKI_HOME": str(hostile_root / "fuseki"),
+            "JAVA": str(hostile_root / "java"),
+            "JAVA_HOME": str(hostile_root / "java-home"),
+            "CLASSPATH": str(hostile_root / "ambient.jar"),
+            "JVM_ARGS": "-Dfinancial.agent.ambient=true",
+            "LOGGING": str(hostile_root / "log4j2.properties"),
+            "MAIN": "serverUI",
+            "FUSEKI_BASE": str(hostile_root / "fuseki-base"),
+            "JAVA_TOOL_OPTIONS": "-Dfinancial.agent.java_tool_options=true",
+            "_JAVA_OPTIONS": "-Dfinancial.agent.java_options=true",
+            "JDK_JAVA_OPTIONS": "-Dfinancial.agent.jdk_java_options=true",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert _summary(result)["admin_surface"] == "blocked"
+
+
+@pytest.mark.jena_integration
+@pytest.mark.parametrize("forbidden_location", ("project", "jena", "fuseki"))
+def test_temporary_parent_rejects_repository_and_binary_homes(
+    forbidden_location: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches caller TMPDIR placing verifier state in protected roots."""
+    jena_home, fuseki_home = _require_exact_runtime()
+    forbidden_parent = {
+        "project": PROJECT_ROOT,
+        "jena": jena_home,
+        "fuseki": fuseki_home,
+    }[forbidden_location]
+    monkeypatch.setenv("TMPDIR", str(forbidden_parent))
+    monkeypatch.setattr(tempfile, "tempdir", None)
+
+    with pytest.raises(verify_jena.VerificationFailure, match="temporary_state"):
+        verify_jena._validated_temp_parent(
+            jena_home=jena_home.resolve(),
+            fuseki_home=fuseki_home.resolve(),
+        )

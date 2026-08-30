@@ -43,6 +43,22 @@ SHAPE_PATHS = (
     PROJECT_ROOT / "ontology" / "shapes" / "domain.shacl.ttl",
 )
 ASSEMBLER_TEMPLATE = PROJECT_ROOT / "config" / "fuseki" / "financial-product.ttl"
+RUNTIME_CUSTOMIZATION_VARIABLES = (
+    "JENA_HOME",
+    "FUSEKI_HOME",
+    "FUSEKI_BASE",
+    "JAVA",
+    "JAVA_HOME",
+    "CLASSPATH",
+    "JVM_ARGS",
+    "LOGGING",
+    "MAIN",
+    "JAVA_TOOL_OPTIONS",
+    "_JAVA_OPTIONS",
+    "JDK_JAVA_OPTIONS",
+    "TMP",
+    "TMPDIR",
+)
 
 
 class VerificationFailure(RuntimeError):
@@ -57,11 +73,13 @@ def _run(
     command: Sequence[str],
     *,
     cwd: Path | None = None,
+    environment: Mapping[str, str],
 ) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             list(command),
             cwd=cwd,
+            env=dict(environment),
             capture_output=True,
             text=True,
             shell=False,
@@ -88,8 +106,12 @@ def _resolve_executable(home: Path, relative_path: str) -> Path:
     return executable
 
 
-def _reported_version(stage: str, command: Sequence[str]) -> str:
-    result = _run(stage, command)
+def _reported_version(
+    stage: str,
+    command: Sequence[str],
+    environment: Mapping[str, str],
+) -> str:
+    result = _run(stage, command, environment=environment)
     output = f"{result.stdout}\n{result.stderr}"
     match = re.search(r"\bversion\s+([0-9]+\.[0-9]+\.[0-9]+)\b", output, re.IGNORECASE)
     if match is None:
@@ -100,18 +122,72 @@ def _reported_version(stage: str, command: Sequence[str]) -> str:
     return version
 
 
-def _java_major() -> int:
-    java = shutil.which("java")
-    if java is None:
+def _sanitized_ambient_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    for variable in RUNTIME_CUSTOMIZATION_VARIABLES:
+        environment.pop(variable, None)
+    return environment
+
+
+def _verified_java(environment: Mapping[str, str]) -> tuple[Path, int]:
+    java_name = shutil.which("java", path=environment.get("PATH"))
+    if java_name is None:
         raise VerificationFailure("java_version", "java was not found on PATH")
-    result = _run("java_version", [java, "-version"])
+    java = Path(java_name).resolve()
+    if not java.is_file() or not os.access(java, os.X_OK):
+        raise VerificationFailure("java_version", f"java is not executable: {java}")
+    result = _run(
+        "java_version",
+        [str(java), "-version"],
+        environment=environment,
+    )
     match = re.search(r'version "([0-9]+)', f"{result.stdout}\n{result.stderr}")
     if match is None:
         raise VerificationFailure("java_version", "java version output was not recognized")
     major = int(match.group(1))
     if major < 21:
         raise VerificationFailure("java_version", f"Java 21 or newer is required, found {major}")
-    return major
+    return java, major
+
+
+def _validated_temp_parent(*, jena_home: Path, fuseki_home: Path) -> Path:
+    temporary_parent = Path(tempfile.gettempdir()).resolve()
+    protected_roots = (
+        ("PROJECT_ROOT", PROJECT_ROOT.resolve()),
+        ("JENA_HOME", jena_home),
+        ("FUSEKI_HOME", fuseki_home),
+    )
+    for label, protected_root in protected_roots:
+        if temporary_parent == protected_root or temporary_parent.is_relative_to(
+            protected_root
+        ):
+            raise VerificationFailure(
+                "temporary_state",
+                f"temporary parent must be outside {label}: {temporary_parent}",
+            )
+    return temporary_parent
+
+
+def _runtime_environment(
+    *,
+    base_environment: Mapping[str, str],
+    jena_home: Path,
+    fuseki_home: Path,
+    java: Path,
+    temporary_root: Path,
+) -> dict[str, str]:
+    environment = dict(base_environment)
+    environment.update(
+        {
+            "JENA_HOME": str(jena_home),
+            "FUSEKI_HOME": str(fuseki_home),
+            "FUSEKI_BASE": str(temporary_root / "fuseki-base"),
+            "JAVA": str(java),
+            "MAIN": "main",
+            "TMPDIR": str(temporary_root),
+        }
+    )
+    return environment
 
 
 def _input_path(value: str, label: str) -> Path:
@@ -193,6 +269,7 @@ def _write_validation_inputs(
     data: Path,
     evidence: Path,
     cutoff: date,
+    environment: Mapping[str, str],
 ) -> tuple[Path, Path]:
     cutoff_end = datetime.combine(
         cutoff + timedelta(days=1),
@@ -221,20 +298,28 @@ def _write_validation_inputs(
             str(evidence),
             str(context),
         ],
+        environment=environment,
     )
     data_union.write_text(data_result.stdout, encoding="utf-8")
     shapes_result = _run(
         "shacl_prepare",
         [str(riot), "--merge", "--output=TTL", *(str(path) for path in SHAPE_PATHS)],
+        environment=environment,
     )
     shapes_union.write_text(shapes_result.stdout, encoding="utf-8")
     return data_union, shapes_union
 
 
-def _check_shacl(shacl: Path, data_union: Path, shapes_union: Path) -> None:
+def _check_shacl(
+    shacl: Path,
+    data_union: Path,
+    shapes_union: Path,
+    environment: Mapping[str, str],
+) -> None:
     result = _run(
         "shacl",
         [str(shacl), "validate", "--shapes", str(shapes_union), "--data", str(data_union)],
+        environment=environment,
     )
     if re.search(r"(?:sh:conforms|/ns/shacl#conforms>)\s+true\b", result.stdout) is None:
         raise VerificationFailure("shacl", "validation did not report sh:conforms true")
@@ -255,6 +340,7 @@ def _run_cli_queries(
     tdb2_location: Path,
     query_paths: Mapping[str, Path],
     expected: Mapping[str, list[dict[str, str]]],
+    environment: Mapping[str, str],
 ) -> None:
     for query_id in QUERY_IDS:
         result = _run(
@@ -267,6 +353,7 @@ def _run_cli_queries(
                 str(query_paths[query_id]),
                 "--results=JSON",
             ],
+            environment=environment,
         )
         actual = _normalize_sparql_json(result.stdout, "tdb2_query")
         if actual != expected[query_id]:
@@ -338,7 +425,7 @@ def _blocked_status(request: Request, stage: str) -> None:
         raise VerificationFailure(stage, f"writable surface returned HTTP {status}")
 
 
-def _verify_read_only(base_url: str) -> None:
+def _verify_read_only(server_url: str, base_url: str) -> None:
     update_request = Request(
         f"{base_url}/update",
         data=urlencode(
@@ -364,6 +451,10 @@ def _verify_read_only(base_url: str) -> None:
             method="PUT",
         ),
         "graph_store_surface",
+    )
+    _blocked_status(
+        Request(f"{server_url}/$/datasets", method="GET"),
+        "admin_surface",
     )
 
 
@@ -393,17 +484,43 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
     tdbloader = _resolve_executable(jena_home, "bin/tdb2.tdbloader")
     tdbquery = _resolve_executable(jena_home, "bin/tdb2.tdbquery")
     fuseki_server = _resolve_executable(fuseki_home, "fuseki-server")
-    java_major = _java_major()
-    jena_version = _reported_version("jena_version", [str(riot), "--version"])
-    fuseki_version = _reported_version("fuseki_version", [str(fuseki_server), "--version"])
+    base_environment = _sanitized_ambient_environment()
+    java, java_major = _verified_java(base_environment)
+    temporary_parent = _validated_temp_parent(
+        jena_home=jena_home,
+        fuseki_home=fuseki_home,
+    )
     dataset_version, cutoff, expected = _load_expected(expected_path)
 
-    for path in (*TBOX_PATHS, *SHAPE_PATHS, data, evidence):
-        _run("parse", [str(riot), "--validate", str(path)])
-
     fuseki_process: subprocess.Popen[str] | None = None
-    with tempfile.TemporaryDirectory(prefix="financial-agent-jena-") as temporary_name:
+    with tempfile.TemporaryDirectory(
+        prefix="financial-agent-jena-",
+        dir=temporary_parent,
+    ) as temporary_name:
         temporary_root = Path(temporary_name)
+        environment = _runtime_environment(
+            base_environment=base_environment,
+            jena_home=jena_home,
+            fuseki_home=fuseki_home,
+            java=java,
+            temporary_root=temporary_root,
+        )
+        jena_version = _reported_version(
+            "jena_version",
+            [str(riot), "--version"],
+            environment,
+        )
+        fuseki_version = _reported_version(
+            "fuseki_version",
+            [str(fuseki_server), "--version"],
+            environment,
+        )
+        for path in (*TBOX_PATHS, *SHAPE_PATHS, data, evidence):
+            _run(
+                "parse",
+                [str(riot), "--validate", str(path)],
+                environment=environment,
+            )
         tdb2_location = temporary_root / "tdb2"
         data_union, shapes_union = _write_validation_inputs(
             riot=riot,
@@ -411,11 +528,13 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
             data=data,
             evidence=evidence,
             cutoff=cutoff,
+            environment=environment,
         )
-        _check_shacl(shacl, data_union, shapes_union)
+        _check_shacl(shacl, data_union, shapes_union, environment)
         _run(
             "tdb2_load",
             [str(tdbloader), "--loc", str(tdb2_location), str(data), str(evidence)],
+            environment=environment,
         )
         query_paths = _query_files(temporary_root, dataset_version)
         _run_cli_queries(
@@ -423,6 +542,7 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
             tdb2_location=tdb2_location,
             query_paths=query_paths,
             expected=expected,
+            environment=environment,
         )
 
         template = ASSEMBLER_TEMPLATE.read_text(encoding="utf-8")
@@ -436,11 +556,10 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
             encoding="utf-8",
         )
         port = _loopback_port()
-        base_url = f"http://127.0.0.1:{port}/financial-product"
+        server_url = f"http://127.0.0.1:{port}"
+        base_url = f"{server_url}/financial-product"
         endpoint = f"{base_url}/query"
         log_path = temporary_root / "fuseki.log"
-        environment = os.environ.copy()
-        environment["FUSEKI_BASE"] = str(temporary_root / "fuseki-base")
         try:
             with log_path.open("w", encoding="utf-8") as log_file:
                 fuseki_process = subprocess.Popen(
@@ -465,7 +584,7 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
                     query_paths[QUERY_IDS[0]].read_text(encoding="utf-8"),
                 )
                 _run_http_queries(endpoint, query_paths, expected)
-                _verify_read_only(base_url)
+                _verify_read_only(server_url, base_url)
         finally:
             _stop_process(fuseki_process)
 
@@ -480,6 +599,7 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
         "fuseki_query": "pass",
         "update_surface": "blocked",
         "graph_store_surface": "blocked",
+        "admin_surface": "blocked",
         "temporary_state": "removed",
         "fuseki_process": "terminated",
     }

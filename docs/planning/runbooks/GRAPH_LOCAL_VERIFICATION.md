@@ -107,6 +107,7 @@ tdb2_query=pass
 fuseki_query=pass
 update_surface=blocked
 graph_store_surface=blocked
+admin_surface=blocked
 temporary_state=removed
 fuseki_process=terminated
 ```
@@ -115,7 +116,15 @@ The runner validates the five TBox files, two SHACL files, and both N-Quads;
 validates their union with Jena SHACL; loads both named graphs into a temporary
 TDB2 database; executes the five shared competency queries through the CLI and
 the loopback-only Fuseki query endpoint; compares every normalized binding;
-and confirms that update and Graph Store surfaces are unavailable.
+and confirms that update, Graph Store, and server admin surfaces are
+unavailable.
+
+Before launching any Jena or Fuseki command, the runner resolves and verifies
+one Java 21+ executable. It removes ambient launcher customization variables,
+then passes every Jena/Fuseki process the same controlled environment with the
+supplied absolute `JENA_HOME` and `FUSEKI_HOME`, the verified absolute `JAVA`,
+a temporary `FUSEKI_BASE`, and `MAIN=main`. This prevents caller classpath,
+JVM, logging, Java-home, or Fuseki UI overrides from changing the gate.
 
 ## Cleanup behavior
 
@@ -123,6 +132,11 @@ The runner owns its generated validation files, query files, rendered
 assembler, Fuseki log, and TDB2 database. It terminates Fuseki in `finally` and
 removes the enclosing temporary directory whether the gate passes or fails.
 It does not modify either extracted binary home.
+
+The caller's resolved temporary parent must be outside the repository,
+`JENA_HOME`, and `FUSEKI_HOME`. The runner rejects an unsafe `TMPDIR` before it
+creates runtime state, then directs Jena spill files and all verifier state to
+the validated temporary tree.
 
 The external archive directory is intentionally caller-owned so it can be
 reused for later exact-runtime verification. Remove that directory manually
