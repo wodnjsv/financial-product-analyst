@@ -98,7 +98,7 @@ REQUIREMENT_GROUPS = {
 }
 
 FROZEN_CASE_FINGERPRINT = (
-    "66e8b51004270a8233d02328cb7095360f46afedf168f7325f9dd221e2a7271b"
+    "730ff0efdbe38a8899e52c7b5bbea6993cdfdeb704e3a1e86b1325169a52e761"
 )
 ```
 
@@ -127,6 +127,7 @@ def test_question_contract_preserves_frozen_case_identity_and_disposition() -> N
             for key in (
                 "id",
                 "question",
+                "category",
                 "support_level",
                 "target_support_level",
                 "expected_disposition",
@@ -151,6 +152,20 @@ def test_question_contract_v13_has_explicit_requirements_and_routes() -> None:
 
     assert catalog["schema_version"] == "1.3"
     assert len(catalog["cases"]) == 52
+    assert {
+        state: sum(case["support_level"] == state for case in catalog["cases"])
+        for state in (
+            "supported",
+            "limited",
+            "requires_additional_data",
+            "unsupported",
+        )
+    } == {
+        "supported": 16,
+        "limited": 18,
+        "requires_additional_data": 11,
+        "unsupported": 7,
+    }
 
     for case in catalog["cases"]:
         assert "required_relations" not in case, case["id"]
@@ -171,9 +186,24 @@ def test_question_contract_v13_has_explicit_requirements_and_routes() -> None:
             for relation in case["requirements"]["relations"]
         }
         assert predicates <= APPROVED_GRAPH_PREDICATES, case["id"]
+        assert all(
+            set(relation) == {
+                "predicate",
+                "direction",
+                "required_assertion_fields",
+            }
+            and {
+                "relation_assertion_id",
+                "evidence_id",
+                "dataset_version",
+            } <= set(relation["required_assertion_fields"])
+            for relation in case["requirements"]["relations"]
+        ), case["id"]
+        routes = case["retrieval"]["subtask_routes"]
+        assert len(routes) == len(case["subtasks"]), case["id"]
         assert {
             route["subtask"]
-            for route in case["retrieval"]["subtask_routes"]
+            for route in routes
         } == set(case["subtasks"]), case["id"]
 ```
 
@@ -525,7 +555,7 @@ git commit -m "docs: align ontology with question contract"
 
 - [ ] Schema `1.3` parses and contains exactly 52 cases.
 - [ ] Frozen case fingerprint remains
-  `66e8b51004270a8233d02328cb7095360f46afedf168f7325f9dd221e2a7271b`.
+  `730ff0efdbe38a8899e52c7b5bbea6993cdfdeb704e3a1e86b1325169a52e761`.
 - [ ] All six requirement groups exist in every case.
 - [ ] Every subtask has exactly one explicit route.
 - [ ] Only the approved 13 predicates can appear in Graph requirements.
