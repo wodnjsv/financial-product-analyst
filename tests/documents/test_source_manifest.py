@@ -21,6 +21,9 @@ from financial_agent.documents.source_manifest import (
     validate_document_source_report,
     write_document_source_report,
 )
+from financial_agent.ingestion.document_sources.audit import (
+    document_source_audit_passed,
+)
 
 
 CUTOFF = date(2026, 8, 24)
@@ -100,6 +103,31 @@ def report(
         cutoff_date=CUTOFF,
         dataset_version="facts-v1",
         entries=entries,
+    )
+
+
+def unresolved_policy_target() -> DocumentSourceTarget:
+    return replace(
+        target(
+            entity_id="policy-missing",
+            entity_type="policy",
+            product_family=None,
+            required_role=DocumentRole.POLICY_BASE,
+            identifiers=(),
+            binding_role="subject_policy",
+        ),
+        canonical_name=None,
+    )
+
+
+def policy_candidate() -> DocumentSourceCandidate:
+    return replace(
+        candidate(),
+        source_code="POLICY_AUTHORITY",
+        authority_tier=SourceAuthorityTier.TIER_2_CLAIM_OWNER,
+        publisher_code="POLICY_AUTHORITY",
+        publisher_role=PublisherRole.POLICY_AUTHORITY,
+        document_type="policy_base",
     )
 
 
@@ -197,19 +225,8 @@ def test_target_rejects_noncanonical_cutoff() -> None:
 def test_unresolved_policy_target_allows_truthful_missing_name(
     tmp_path: Path,
 ) -> None:
-    unresolved_target = replace(
-        target(
-            entity_id="policy-missing",
-            entity_type="policy",
-            product_family=None,
-            required_role=DocumentRole.POLICY_BASE,
-            identifiers=(),
-            binding_role="subject_policy",
-        ),
-        canonical_name=None,
-    )
     unavailable = DocumentSourceAuditEntry(
-        target=unresolved_target,
+        target=unresolved_policy_target(),
         status=SourceAuditStatus.IDENTIFIER_MISSING,
         reason_code="policy_entity_missing",
         candidate=None,
@@ -225,6 +242,60 @@ def test_unresolved_policy_target_allows_truthful_missing_name(
 
     payload = json.loads(destination.read_text(encoding="utf-8"))
     assert payload["entries"][0]["target"]["canonical_name"] is None
+
+
+@pytest.mark.parametrize(
+    ("status", "reason_code", "source_candidate"),
+    (
+        (SourceAuditStatus.ELIGIBLE, None, policy_candidate()),
+        (
+            SourceAuditStatus.DOCUMENT_NOT_FOUND,
+            "policy_entity_missing",
+            None,
+        ),
+        (
+            SourceAuditStatus.IDENTIFIER_MISSING,
+            "policy_document_missing",
+            None,
+        ),
+        (
+            SourceAuditStatus.IDENTIFIER_MISSING,
+            "policy_entity_missing",
+            policy_candidate(),
+        ),
+    ),
+)
+def test_unresolved_policy_target_rejects_any_other_disposition(
+    status: SourceAuditStatus,
+    reason_code: str | None,
+    source_candidate: DocumentSourceCandidate | None,
+) -> None:
+    with pytest.raises(ValueError, match="unresolved policy"):
+        DocumentSourceAuditEntry(
+            target=unresolved_policy_target(),
+            status=status,
+            reason_code=reason_code,
+            candidate=source_candidate,
+        )
+
+
+def test_unresolved_policy_target_requires_absent_identifiers() -> None:
+    with pytest.raises(ValueError, match="canonical_name"):
+        replace(
+            unresolved_policy_target(),
+            identifiers=(("POLICY_ID", "policy-missing"),),
+        )
+
+
+def test_truthful_unresolved_policy_report_cannot_pass_completeness() -> None:
+    unavailable = DocumentSourceAuditEntry(
+        target=unresolved_policy_target(),
+        status=SourceAuditStatus.IDENTIFIER_MISSING,
+        reason_code="policy_entity_missing",
+        candidate=None,
+    )
+
+    assert document_source_audit_passed(report(entries=(unavailable,))) is False
 
 
 def test_non_policy_target_still_requires_canonical_name() -> None:

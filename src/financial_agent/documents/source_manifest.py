@@ -72,6 +72,7 @@ class DocumentSourceTarget:
             and self.required_role
             in {DocumentRole.POLICY_BASE, DocumentRole.OFFICIAL_UPDATE}
             and self.binding_role == "subject_policy"
+            and not self.identifiers
         ):
             raise ValueError("canonical_name is required for resolved targets")
         _require_text(self.binding_role, "binding_role")
@@ -179,6 +180,14 @@ class DocumentSourceAuditEntry:
             _require_text(self.reason_code, "reason_code")
             if _REASON_CODE.fullmatch(self.reason_code) is None:
                 raise ValueError("reason_code must be a stable code")
+        if self.target.canonical_name is None and (
+            self.status is not SourceAuditStatus.IDENTIFIER_MISSING
+            or self.reason_code != "policy_entity_missing"
+            or self.candidate is not None
+        ):
+            raise ValueError(
+                "unresolved policy target requires the missing-entity disposition"
+            )
         if self.status is SourceAuditStatus.ELIGIBLE:
             if (
                 self.candidate is None

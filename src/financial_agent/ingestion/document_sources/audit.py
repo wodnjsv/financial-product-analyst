@@ -325,17 +325,19 @@ def _entry_from_result(
             target.required_role.value,
             selection.rejected_document_ids,
         )
+    selection_attempt = None
+    if selection.status is not SourceAuditStatus.ELIGIBLE:
+        selection_attempt = (
+            _attempt_from_candidate(selection.candidate)
+            if selection.candidate is not None
+            else attempted_source
+        )
     return DocumentSourceAuditEntry(
         target=target,
         status=selection.status,
         reason_code=selection.reason_code,
         candidate=selection.candidate,
-        attempted_source=(
-            _attempt_from_candidate(selection.candidate)
-            if selection.status is not SourceAuditStatus.ELIGIBLE
-            and selection.candidate is not None
-            else None
-        ),
+        attempted_source=selection_attempt,
     )
 
 

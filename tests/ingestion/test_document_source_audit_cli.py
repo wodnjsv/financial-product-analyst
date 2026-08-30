@@ -18,6 +18,11 @@ from financial_agent.documents.source_manifest import (
     SourceAuthorityTier,
 )
 from financial_agent.ingestion import cli
+from financial_agent.ingestion.document_sources import (
+    DocumentDiscoveryContext,
+    SourceAdapterResult,
+)
+from financial_agent.ingestion.document_sources.audit import audit_document_sources
 
 
 _CUTOFF = date(2026, 8, 24)
@@ -44,14 +49,18 @@ def _target(
     )
 
 
-def _candidate(entity_id: str) -> DocumentSourceCandidate:
+def _candidate(
+    entity_id: str,
+    *,
+    document_type: str = "summary_prospectus",
+) -> DocumentSourceCandidate:
     return DocumentSourceCandidate(
         document_id=f"document-{entity_id}",
         source_code="DART",
         authority_tier=SourceAuthorityTier.TIER_1_REGULATORY,
         publisher_code="FSS_DART",
         publisher_role=PublisherRole.REGULATOR_DISCLOSURE,
-        document_type="summary_prospectus",
+        document_type=document_type,
         document_version="2026.1",
         source_locator=(
             "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260820000123"
@@ -301,6 +310,69 @@ def test_incomplete_summary_and_report_sort_exact_attempted_source_codes(
     ) == ["DART", "OFFICIAL_A", "OFFICIAL_B", "SEC"]
     assert "SYNTHETIC-SECRET" not in output.err
     assert "SYNTHETIC-SECRET" not in json.dumps(payload)
+
+
+def test_wrong_role_result_retains_route_source_in_report_and_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _configure_environment(monkeypatch, tmp_path)
+
+    class WrongRoleDartAdapter:
+        source_code = "DART"
+
+        def supports(self, _target: DocumentSourceTarget) -> bool:
+            return True
+
+        def discover(
+            self,
+            _target: DocumentSourceTarget,
+            _context: DocumentDiscoveryContext,
+        ) -> SourceAdapterResult:
+            return SourceAdapterResult(
+                status=SourceAuditStatus.ELIGIBLE,
+                reason_code=None,
+                candidates=(
+                    _candidate(
+                        "wrong-role",
+                        document_type="index_methodology",
+                    ),
+                ),
+            )
+
+    report = audit_document_sources(
+        targets=(_target("domestic-etf-1"),),
+        adapters=(WrongRoleDartAdapter(),),
+        context=DocumentDiscoveryContext(
+            cutoff_date=_CUTOFF,
+            dart_api_key="configured",
+            sec_user_agent=None,
+            locator_registry_path=None,
+        ),
+        generated_at=_GENERATED_AT,
+    )
+
+    async def fake_run(_configuration: object):
+        return _execution(report)
+
+    monkeypatch.setattr(cli, "_run_document_source_audit", fake_run)
+
+    assert cli.main(("audit-document-sources",)) == 2
+    output = capsys.readouterr()
+    payload = json.loads(
+        (tmp_path / "document-source-audit.json").read_text(encoding="utf-8")
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.DOCUMENT_NOT_FOUND
+    assert report.entries[0].reason_code == "no_candidate_for_required_role"
+    assert "sources=DART:1" in output.err
+    assert payload["entries"][0]["candidate"] is None
+    assert payload["entries"][0]["attempted_source"] == {
+        "discovery_locator": None,
+        "source_code": "DART",
+        "source_locator": None,
+    }
 
 
 @pytest.mark.parametrize(
