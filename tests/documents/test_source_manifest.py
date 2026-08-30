@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
+from enum import Enum
 import hashlib
 from pathlib import Path
 
@@ -50,6 +52,7 @@ def candidate(
     source_locator: str = "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260820000123",
     discovery_locator: str = "https://dart.fss.or.kr/",
     published_at: datetime | None = NOW,
+    available_at: datetime | None = NOW,
 ) -> DocumentSourceCandidate:
     return DocumentSourceCandidate(
         document_id="document-a",
@@ -64,7 +67,7 @@ def candidate(
         jurisdiction="KR",
         original_language="ko",
         published_at=published_at,
-        available_at=NOW,
+        available_at=available_at,
         effective_from=CUTOFF,
         effective_to=None,
         media_type="text/html",
@@ -145,12 +148,39 @@ def test_candidate_rejects_naive_timestamp() -> None:
 
 
 @pytest.mark.parametrize(
+    ("published_at", "available_at", "expected_null"),
+    (
+        (None, NOW, b'"published_at":null'),
+        (NOW, None, b'"available_at":null'),
+    ),
+)
+def test_unavailable_candidate_serializes_missing_timestamp_as_null(
+    tmp_path: Path,
+    published_at: datetime | None,
+    available_at: datetime | None,
+    expected_null: bytes,
+) -> None:
+    unavailable = DocumentSourceAuditEntry(
+        target=target(),
+        status=SourceAuditStatus.VERSION_UNKNOWN,
+        reason_code="timing_missing",
+        candidate=candidate(published_at=published_at, available_at=available_at),
+    )
+    destination = tmp_path / "report.json"
+
+    write_document_source_report(report(entries=(unavailable,)), destination)
+
+    assert expected_null in destination.read_bytes()
+
+
+@pytest.mark.parametrize(
     "source_locator",
     (
         "https://dart.fss.or.kr/dsaf001/main.do?api_key=synthetic-secret",
         "https://user:password@dart.fss.or.kr/dsaf001/main.do",
         "https://dart.fss.or.kr/dsaf001/main.do#private",
         "https://dart.fss.or.kr/dsaf001/main.do#",
+        "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260820000123;api_key=synthetic-secret",
         "http://dart.fss.or.kr/dsaf001/main.do",
     ),
 )
@@ -163,6 +193,14 @@ def test_candidate_allows_only_public_query_keys() -> None:
     candidate(
         source_locator="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260820000123"
     )
+
+
+def test_candidate_rejects_unapproved_authority_tier() -> None:
+    class UnapprovedAuthorityTier(str, Enum):
+        TIER_4 = "tier_4_unapproved"
+
+    with pytest.raises(ValueError, match="authority_tier"):
+        replace(candidate(), authority_tier=UnapprovedAuthorityTier.TIER_4)
 
 
 def test_report_rejects_eligible_domestic_bond() -> None:

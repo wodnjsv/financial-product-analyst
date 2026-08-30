@@ -86,6 +86,10 @@ class DocumentSourceCandidate:
     accession_or_receipt_id: str | None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.authority_tier, SourceAuthorityTier):
+            raise ValueError(
+                "authority_tier must be an approved source authority tier"
+            )
         for value, name in (
             (self.document_id, "document_id"),
             (self.source_code, "source_code"),
@@ -273,7 +277,9 @@ def _date_text(value: date | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _datetime_text(value: datetime) -> str:
+def _datetime_text(value: datetime | None) -> str | None:
+    if value is None:
+        return None
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -310,6 +316,7 @@ def _validate_locator(locator: str) -> None:
         or parsed.password is not None
         or parsed.fragment
         or "#" in locator
+        or ";" in parsed.query
     ):
         raise ValueError("document source locator is unsafe")
     try:
