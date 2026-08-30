@@ -58,7 +58,10 @@ fp:object a owl:ObjectProperty ; rdfs:domain fp:RelationAssertion .
 fp:supportedBy a owl:ObjectProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range fp:EvidenceRecord .
 fp:sourceRecord a owl:ObjectProperty ; rdfs:domain fp:EvidenceRecord ; rdfs:range fp:SourceRecord .
 fp:documentChunk a owl:ObjectProperty ; rdfs:domain fp:RiskFactor ; rdfs:range fp:DocumentChunk .
+fp:entityId a owl:DatatypeProperty ; rdfs:range xsd:string .
 fp:relationId a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:string .
+fp:evidenceId a owl:DatatypeProperty ; rdfs:domain fp:EvidenceRecord ; rdfs:range xsd:string .
+fp:sourceId a owl:DatatypeProperty ; rdfs:domain fp:SourceRecord ; rdfs:range xsd:string .
 fp:datasetVersion a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:string .
 fp:validFrom a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:date .
 fp:validTo a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:date .

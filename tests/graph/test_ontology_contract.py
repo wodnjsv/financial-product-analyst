@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from rdflib import Graph, OWL, RDF, RDFS, URIRef
+from rdflib import Graph, OWL, RDF, RDFS, URIRef, XSD
 
 from financial_agent.graph.contract import APPROVED_PREDICATES, FP, ONTOLOGY_IRI
 
@@ -138,3 +138,15 @@ def test_common_tbox_owns_the_single_ontology_declaration() -> None:
             Graph().parse(path, format="turtle").subjects(RDF.type, OWL.Ontology)
         )
         assert not declarations, path.name
+
+
+def test_exported_identifier_metadata_properties_are_typed_literals() -> None:
+    """Catches removal of explicit IDs that read queries bind without parsing opaque IRIs."""
+    graph = _tbox()
+
+    for property_ in (FP.entityId, FP.evidenceId, FP.sourceId):
+        assert (property_, RDF.type, OWL.DatatypeProperty) in graph
+        assert (property_, RDFS.range, XSD.string) in graph
+
+    assert (FP.evidenceId, RDFS.domain, FP.EvidenceRecord) in graph
+    assert (FP.sourceId, RDFS.domain, FP.SourceRecord) in graph

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
 from types import MappingProxyType
+from typing import Mapping
 
 from rdflib import Namespace
 
@@ -61,3 +65,111 @@ RELATION_METRIC_PROPERTY_BY_ID = MappingProxyType(
         "official_holding_weight_pct": "holdingWeightPercentage",
     }
 )
+
+APPROVED_RDF_TYPES = frozenset(
+    {
+        "FinancialProduct",
+        "ExchangeTradedProduct",
+        "ETF",
+        "ETN",
+        "Bond",
+        "DomesticBond",
+        "FixedRateBond",
+        "FloatingRateBond",
+        "PublicFund",
+        "PublicOfferingFund",
+        "RepresentativeFund",
+        "FundShareClass",
+        "DomesticETF",
+        "DomesticETN",
+        "OverseasETF",
+        "OverseasETN",
+        "Organization",
+        "AssetManager",
+        "Issuer",
+        "Company",
+        "Security",
+        "EquitySecurity",
+        "DebtSecurity",
+        "Index",
+        "Theme",
+        "Industry",
+        "Market",
+        "Region",
+        "AssetClass",
+        "ProductRiskGrade",
+        "CreditGrade",
+        "PolicyProgram",
+        "OfficialDocument",
+        "DocumentChunk",
+        "RiskFactor",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class EntityProjection:
+    dataset_version: str
+    entity_id: str
+    rdf_types: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceProjection:
+    dataset_version: str
+    source_id: str
+    publisher_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceProjection:
+    dataset_version: str
+    evidence_id: str
+    source_id: str
+    applicable_date: date | None
+    valid_from: date | None
+    valid_to: date | None
+    published_at: datetime | None
+    available_at: datetime | None
+    cutoff_status: str
+
+
+@dataclass(frozen=True, slots=True)
+class RelationMetricProjection:
+    dataset_version: str
+    relation_id: str
+    metric_id: str
+    numeric_value: Decimal
+    unit: str | None
+    applicable_date: date | None
+
+
+@dataclass(frozen=True, slots=True)
+class RelationProjection:
+    dataset_version: str
+    relation_id: str
+    subject_id: str
+    predicate_id: str
+    object_id: str
+    valid_from: date | None
+    valid_to: date | None
+    evidence_ids: tuple[str, ...]
+    metrics: tuple[RelationMetricProjection, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class GraphProjectionBatch:
+    dataset_version: str
+    cutoff_date: date
+    entities: tuple[EntityProjection, ...]
+    sources: tuple[SourceProjection, ...]
+    evidences: tuple[EvidenceProjection, ...]
+    relations: tuple[RelationProjection, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class GraphArtifacts:
+    data_nquads: bytes
+    evidence_nquads: bytes
+    entity_type_counts: Mapping[str, int]
+    predicate_counts: Mapping[str, int]
