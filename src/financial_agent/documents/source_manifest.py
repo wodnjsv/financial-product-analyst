@@ -11,6 +11,8 @@ import re
 import tempfile
 from urllib.parse import parse_qsl, urlparse
 
+from financial_agent.entity_types import ENTITY_TYPES
+
 from .models import DocumentRole, PublisherRole
 from .policy import (
     binding_roles_for_document_role,
@@ -24,6 +26,7 @@ _ASIA_SEOUL = timezone(timedelta(hours=9))
 _PUBLIC_QUERY_KEYS = frozenset({"rcpNo", "CIK", "accession_number"})
 _REASON_CODE = re.compile(r"^[a-z][a-z0-9_]*$")
 _SOURCE_CODE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
+_POLICY_ENTITY_TYPES = frozenset({"product", "institution"})
 
 
 class SourceAuthorityTier(str, Enum):
@@ -64,10 +67,12 @@ class DocumentSourceTarget:
         _require_text(self.dataset_version, "dataset_version")
         _require_text(self.entity_id, "entity_id")
         _require_text(self.entity_type, "entity_type")
+        if self.entity_type not in ENTITY_TYPES:
+            raise ValueError("entity_type must use the catalog vocabulary")
         if self.canonical_name is not None:
             _require_text(self.canonical_name, "canonical_name")
         elif not (
-            self.entity_type == "policy"
+            self.entity_type in _POLICY_ENTITY_TYPES
             and self.product_family is None
             and self.required_role
             in {DocumentRole.POLICY_BASE, DocumentRole.OFFICIAL_UPDATE}

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from financial_agent.db.schema import catalog as catalog_schema
 from financial_agent.documents import DocumentRole, PublisherRole
 from financial_agent.documents.source_manifest import (
     DocumentSourceAuditEntry,
@@ -106,11 +107,13 @@ def report(
     )
 
 
-def unresolved_policy_target() -> DocumentSourceTarget:
+def unresolved_policy_target(
+    entity_type: str = "product",
+) -> DocumentSourceTarget:
     return replace(
         target(
             entity_id="policy-missing",
-            entity_type="policy",
+            entity_type=entity_type,
             product_family=None,
             required_role=DocumentRole.POLICY_BASE,
             identifiers=(),
@@ -222,11 +225,13 @@ def test_target_rejects_noncanonical_cutoff() -> None:
         target(cutoff_date=date(2026, 8, 23))
 
 
+@pytest.mark.parametrize("entity_type", ("product", "institution"))
 def test_unresolved_policy_target_allows_truthful_missing_name(
     tmp_path: Path,
+    entity_type: str,
 ) -> None:
     unavailable = DocumentSourceAuditEntry(
-        target=unresolved_policy_target(),
+        target=unresolved_policy_target(entity_type),
         status=SourceAuditStatus.IDENTIFIER_MISSING,
         reason_code="policy_entity_missing",
         candidate=None,
@@ -242,6 +247,29 @@ def test_unresolved_policy_target_allows_truthful_missing_name(
 
     payload = json.loads(destination.read_text(encoding="utf-8"))
     assert payload["entries"][0]["target"]["canonical_name"] is None
+    assert payload["entries"][0]["target"]["entity_type"] == entity_type
+
+
+def test_policy_target_uses_only_real_catalog_entity_types() -> None:
+    assert set(catalog_schema.ENTITY_TYPES) == {
+        "product",
+        "security",
+        "company",
+        "institution",
+        "index",
+        "theme",
+    }
+    assert "policy" not in catalog_schema.ENTITY_TYPES
+
+    with pytest.raises(ValueError, match="entity_type"):
+        target(
+            entity_id="policy-invented-subtype",
+            entity_type="policy",
+            product_family=None,
+            required_role=DocumentRole.POLICY_BASE,
+            identifiers=(),
+            binding_role="subject_policy",
+        )
 
 
 @pytest.mark.parametrize(

@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
+from typing import BinaryIO, cast
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -68,12 +69,14 @@ from financial_agent.ingestion.document_sources.audit import (
     audit_document_sources,
     document_source_audit_passed,
 )
-from financial_agent.ingestion.document_sources.base import DocumentDiscoveryContext
+from financial_agent.ingestion.document_sources.base import (
+    DocumentDiscoveryContext,
+    NoRedirectHttpOpener,
+)
 from financial_agent.ingestion.document_sources.dart import DartDocumentSourceAdapter
 from financial_agent.ingestion.document_sources.registered import (
     RegisteredDocumentSourceAdapter,
     ReviewedAuthorityContext,
-    _load_locator_registry,
 )
 from financial_agent.ingestion.document_sources.sec import SecDocumentSourceAdapter
 from financial_agent.ingestion.sources import (
@@ -191,13 +194,13 @@ class _NoRedirectHttpOpener:
         method: str,
         headers: Mapping[str, str],
         timeout: float,
-    ) -> object:
+    ) -> BinaryIO:
         request = Request(url, headers=dict(headers), method=method)
         try:
-            return self._opener.open(request, timeout=timeout)
+            return cast(BinaryIO, self._opener.open(request, timeout=timeout))
         except HTTPError as error:
             if 300 <= error.code < 400:
-                return error
+                return cast(BinaryIO, error)
             raise
 
 
@@ -617,17 +620,12 @@ async def _list_exact_policy_targets(
     *,
     dataset_version: str,
     cutoff_date: date,
-    locator_registry_path: Path,
+    registered_authorities: ReviewedAuthorityContext,
 ) -> _PolicyTargetReconciliation:
-    try:
-        locators = _load_locator_registry(locator_registry_path)
-    except Exception:
-        raise IngestionArgumentError() from None
     policy_locators = tuple(
         locator
-        for locator in locators.values()
-        if locator.entity_type == "policy"
-        and locator.required_role
+        for locator in registered_authorities.locators
+        if locator.required_role
         in {DocumentRole.POLICY_BASE, DocumentRole.OFFICIAL_UPDATE}
         and locator.binding_role == "subject_policy"
     )
@@ -697,7 +695,7 @@ async def _list_exact_policy_targets(
             entity_type=entity_type,
             canonical_name=canonical_name,
         )
-        if entity_type != locator.entity_type or entity_type != "policy":
+        if entity_type != locator.entity_type:
             unavailable_entries.append(
                 DocumentSourceAuditEntry(
                     target=target,
@@ -738,14 +736,10 @@ def _policy_target(
     )
 
 
-def _audit_document_targets(
-    targets: tuple[DocumentSourceTarget, ...],
-    *,
+def _document_audit_runtime(
     configuration: _DocumentSourceAuditConfiguration,
-    opener: object,
-    generated_at: datetime,
-    preliminary_entries: tuple[DocumentSourceAuditEntry, ...] = (),
-) -> _DocumentSourceAuditExecution:
+    opener: NoRedirectHttpOpener,
+) -> tuple[RegisteredDocumentSourceAdapter, DocumentDiscoveryContext]:
     registered_adapter = RegisteredDocumentSourceAdapter(
         opener,
         _DOCUMENT_AUTHORITY_REGISTRY,
@@ -756,6 +750,33 @@ def _audit_document_targets(
         sec_user_agent=configuration.sec_user_agent,
         locator_registry_path=configuration.locator_registry_path,
     )
+    try:
+        reviewed_authorities = registered_adapter.reviewed_context(context)
+    except (OSError, UnicodeDecodeError, ValueError):
+        raise IngestionArgumentError() from None
+    return registered_adapter, replace(
+        context,
+        registered_authorities=reviewed_authorities,
+    )
+
+
+def _audit_document_targets(
+    targets: tuple[DocumentSourceTarget, ...],
+    *,
+    configuration: _DocumentSourceAuditConfiguration,
+    opener: NoRedirectHttpOpener,
+    generated_at: datetime,
+    preliminary_entries: tuple[DocumentSourceAuditEntry, ...] = (),
+    registered_adapter: RegisteredDocumentSourceAdapter | None = None,
+    context: DocumentDiscoveryContext | None = None,
+) -> _DocumentSourceAuditExecution:
+    if registered_adapter is None or context is None:
+        if registered_adapter is not None or context is not None:
+            raise IngestionArgumentError()
+        registered_adapter, context = _document_audit_runtime(
+            configuration,
+            opener,
+        )
     preliminary_entries = tuple(
         replace(
             entry,
@@ -795,13 +816,18 @@ def _audit_document_targets(
     validate_document_source_report(report)
     return _DocumentSourceAuditExecution(
         report=report,
-        registered_authorities=registered_adapter.reviewed_authorities,
+        registered_authorities=context.registered_authorities,
     )
 
 
 async def _run_document_source_audit(
     configuration: _DocumentSourceAuditConfiguration,
 ) -> _DocumentSourceAuditExecution:
+    opener = _NoRedirectHttpOpener()
+    registered_adapter, context = _document_audit_runtime(
+        configuration,
+        opener,
+    )
     engine = create_database_engine(
         DatabaseConfig(url=configuration.database_url),
         read_only=True,
@@ -818,11 +844,12 @@ async def _run_document_source_audit(
             )
             policy_reconciliation = _PolicyTargetReconciliation((), ())
             if configuration.locator_registry_path is not None:
+                assert context.registered_authorities is not None
                 policy_reconciliation = await _list_exact_policy_targets(
                     connection,
                     dataset_version=configuration.dataset_version,
                     cutoff_date=cutoff_date,
-                    locator_registry_path=configuration.locator_registry_path,
+                    registered_authorities=context.registered_authorities,
                 )
     finally:
         await engine.dispose()
@@ -830,9 +857,11 @@ async def _run_document_source_audit(
     return _audit_document_targets(
         (*targets, *policy_reconciliation.targets),
         configuration=configuration,
-        opener=_NoRedirectHttpOpener(),
+        opener=opener,
         generated_at=generated_at,
         preliminary_entries=policy_reconciliation.unavailable_entries,
+        registered_adapter=registered_adapter,
+        context=context,
     )
 
 

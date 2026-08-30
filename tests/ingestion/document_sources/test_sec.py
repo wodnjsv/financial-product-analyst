@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 from io import BytesIO
 import json
@@ -190,17 +191,20 @@ class _SyntheticOpener:
         self.redirect_to = redirect_to
         self.redirected = False
         self.calls: list[tuple[str, dict[str, str]]] = []
+        self.methods: list[str] = []
         self.opened_responses: list[_Response] = []
 
     def open_no_redirect(
         self,
         url: str,
         *,
-        headers: dict[str, str],
+        method: str,
+        headers: Mapping[str, str],
         timeout: float,
     ) -> _Response:
         del timeout
-        self.calls.append((url, headers))
+        self.calls.append((url, dict(headers)))
+        self.methods.append(method)
         if self.error is not None:
             raise self.error
         if (
@@ -786,11 +790,18 @@ def test_sec_never_calls_auto_following_opener() -> None:
 
     opener = AutoFollowingOpener()
 
-    result = SecDocumentSourceAdapter(opener).discover(_target(), _context())
+    with pytest.raises(TypeError, match="open_no_redirect"):
+        SecDocumentSourceAdapter(opener).discover(_target(), _context())
 
-    assert result.status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
-    assert result.reason_code == "sec_access_method_unverified"
     assert not opener.called
+
+
+def test_sec_uses_the_shared_explicit_get_opener_contract() -> None:
+    result, opener = _discover([_filing()])
+
+    assert result.status is SourceAuditStatus.ELIGIBLE
+    assert opener.methods
+    assert set(opener.methods) == {"GET"}
 
 
 def test_sec_supports_only_overseas_product_summary_targets() -> None:

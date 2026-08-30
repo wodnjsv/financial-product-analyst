@@ -24,6 +24,7 @@ from financial_agent.ingestion.document_sources.audit import (
     audit_document_sources,
     document_source_audit_passed,
 )
+from financial_agent.ingestion.document_sources import registered as registered_module
 from financial_agent.ingestion.document_sources.registered import (
     ReviewedAuthority,
     ReviewedAuthorityContext,
@@ -43,9 +44,11 @@ _REGISTERED_AUTHORITY = ReviewedAuthority(
     authority_tier=SourceAuthorityTier.TIER_2_CLAIM_OWNER,
     publisher_role=PublisherRole.INDEX_PROVIDER,
     jurisdiction="KR",
+    allowed_hosts=frozenset({"official.example.invalid"}),
     allowed_document_roles=frozenset(
         {DocumentRole.INDEX_METHODOLOGY, DocumentRole.OFFICIAL_UPDATE}
     ),
+    terms_review_required=False,
 )
 _REGISTERED_AUTHORITIES = ReviewedAuthorityContext((_REGISTERED_AUTHORITY,))
 
@@ -107,6 +110,118 @@ def _source_candidate(
         media_type="application/pdf",
         accession_or_receipt_id=document_id,
     )
+
+
+def _dart_candidate(
+    receipt: str = "20260820000123",
+    **changes: object,
+) -> DocumentSourceCandidate:
+    values: dict[str, object] = {
+        "source_locator": (
+            f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt}"
+        ),
+        "discovery_locator": "https://opendart.fss.or.kr/api/document.xml",
+        "accession_or_receipt_id": receipt,
+        "document_version": receipt,
+    }
+    values.update(changes)
+    return replace(
+        _source_candidate(
+            f"dart-rcept:{receipt}",
+            source_code="DART",
+            publisher_code="FSS_DART",
+        ),
+        **values,
+    )
+
+
+def _sec_candidate(**changes: object) -> DocumentSourceCandidate:
+    accession = "0001445546-25-008729"
+    archive = "https://www.sec.gov/Archives/edgar/data/1445546/000144554625008729"
+    values: dict[str, object] = {
+        "source_locator": f"{archive}/synthetic-497k.htm",
+        "discovery_locator": f"{archive}/{accession}-index.html",
+        "original_language": "en",
+        "media_type": "text/html",
+        "accession_or_receipt_id": accession,
+        "document_version": accession,
+    }
+    values.update(changes)
+    return replace(
+        _source_candidate(
+            f"sec-accession:{accession}",
+            source_code="SEC",
+            publisher_code="US_SEC_EDGAR",
+            jurisdiction="US",
+        ),
+        **values,
+    )
+
+
+def _registered_candidate(**changes: object) -> DocumentSourceCandidate:
+    values: dict[str, object] = {
+        "source_locator": (
+            "https://official.example.invalid/index-1-methodology.pdf"
+        ),
+        "discovery_locator": "https://official.example.invalid/documents",
+        "accession_or_receipt_id": None,
+    }
+    values.update(changes)
+    return replace(
+        _source_candidate(
+            "official-index-methodology",
+            source_code="OFFICIAL_INDEX",
+            publisher_code="OFFICIAL_INDEX",
+            document_type="index_methodology",
+            publisher_role=PublisherRole.INDEX_PROVIDER,
+        ),
+        **values,
+    )
+
+
+def _reviewed_context(
+    candidate: DocumentSourceCandidate,
+    *,
+    entity_id: str = "index-1",
+    allowed_hosts: frozenset[str] = frozenset({"official.example.invalid"}),
+    terms_review_required: bool = False,
+) -> ReviewedAuthorityContext:
+    authority = ReviewedAuthority(
+        source_code="OFFICIAL_INDEX",
+        publisher_code="OFFICIAL_INDEX",
+        authority_tier=SourceAuthorityTier.TIER_2_CLAIM_OWNER,
+        publisher_role=PublisherRole.INDEX_PROVIDER,
+        jurisdiction="KR",
+        allowed_hosts=allowed_hosts,
+        allowed_document_roles=frozenset(
+            {DocumentRole.INDEX_METHODOLOGY, DocumentRole.OFFICIAL_UPDATE}
+        ),
+        terms_review_required=terms_review_required,
+    )
+    locator = registered_module.ReviewedLocator(
+        entity_id=entity_id,
+        entity_type="index",
+        required_role=DocumentRole.INDEX_METHODOLOGY,
+        binding_role="subject_index",
+        document_id=candidate.document_id,
+        source_code=candidate.source_code,
+        authority_tier=candidate.authority_tier,
+        publisher_code=candidate.publisher_code,
+        publisher_role=candidate.publisher_role,
+        source_locator=candidate.source_locator,
+        discovery_locator=candidate.discovery_locator,
+        document_type=candidate.document_type,
+        document_version=candidate.document_version,
+        published_at=candidate.published_at,
+        available_at=candidate.available_at,
+        effective_from=candidate.effective_from,
+        effective_to=candidate.effective_to,
+        original_language=candidate.original_language,
+        jurisdiction=candidate.jurisdiction,
+        media_type=candidate.media_type,
+        accession_or_receipt_id=candidate.accession_or_receipt_id,
+    )
+    return ReviewedAuthorityContext((authority,), (locator,))
 
 
 def _context() -> DocumentDiscoveryContext:
@@ -241,7 +356,7 @@ def test_unavailable_regulator_result_retains_exact_attempted_source(
     )
 
 
-def test_unavailable_registered_results_retain_distinct_reviewed_authorities() -> None:
+def test_unavailable_registered_attempts_without_exact_locators_stay_code_only() -> None:
     authorities = ReviewedAuthorityContext(
         tuple(
             ReviewedAuthority(
@@ -250,9 +365,13 @@ def test_unavailable_registered_results_retain_distinct_reviewed_authorities() -
                 authority_tier=SourceAuthorityTier.TIER_2_CLAIM_OWNER,
                 publisher_role=PublisherRole.INDEX_PROVIDER,
                 jurisdiction="KR",
+                allowed_hosts=frozenset(
+                    {f"{source_code.lower().replace('_', '-')}.example.invalid"}
+                ),
                 allowed_document_roles=frozenset(
                     {DocumentRole.INDEX_METHODOLOGY}
                 ),
+                terms_review_required=False,
             )
             for source_code in ("OFFICIAL_A", "OFFICIAL_B")
         )
@@ -310,7 +429,7 @@ def test_unavailable_registered_results_retain_distinct_reviewed_authorities() -
         (entry.target.entity_id, entry.attempted_source.source_code)
         for entry in report.entries
         if entry.attempted_source is not None
-    ] == [("index-a", "OFFICIAL_A"), ("index-b", "OFFICIAL_B")]
+    ] == [("index-a", "REGISTERED"), ("index-b", "REGISTERED")]
     assert "SYNTHETIC-SECRET" not in repr(report)
 
 
@@ -330,6 +449,33 @@ def test_domestic_bond_is_not_applicable_without_adapter_calls() -> None:
     assert dart.calls == []
     assert registered.calls == []
     assert document_source_audit_passed(report) is True
+
+
+def test_completeness_gate_rejects_attempted_metadata_on_not_applicable_entry() -> None:
+    target = _target("bond", product_family="domestic_bond")
+    report = DocumentSourceAuditReport(
+        schema_version="1.0",
+        generated_at=_NOW,
+        cutoff_date=_CUTOFF,
+        dataset_version="2026-08-24",
+        entries=(
+            DocumentSourceAuditEntry(
+                target=target,
+                status=SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE,
+                reason_code="domestic_bond_not_in_document_scope",
+                candidate=None,
+                attempted_source=DocumentSourceAttempt(
+                    source_code="DART",
+                    source_locator=None,
+                    discovery_locator=(
+                        "https://approved-label.example.invalid/api/list.json"
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    assert document_source_audit_passed(report) is False
 
 
 def test_duplicate_index_target_is_audited_once() -> None:
@@ -509,8 +655,8 @@ def test_selected_owner_must_support_target_before_discovery() -> None:
     ("entity_type", "required_role", "binding_role"),
     (
         ("index", DocumentRole.INDEX_METHODOLOGY, "subject_index"),
-        ("policy", DocumentRole.POLICY_BASE, "subject_policy"),
-        ("policy", DocumentRole.OFFICIAL_UPDATE, "subject_policy"),
+        ("product", DocumentRole.POLICY_BASE, "subject_policy"),
+        ("institution", DocumentRole.OFFICIAL_UPDATE, "subject_policy"),
     ),
 )
 def test_claim_owner_targets_route_only_to_registered_adapter(
@@ -590,9 +736,210 @@ def test_adapter_exception_becomes_stable_unverified_status() -> None:
     assert "must-not-escape" not in repr(report)
 
 
+def test_programming_type_error_from_adapter_is_not_normalized_as_source_failure() -> None:
+    dart = _unavailable_adapter("DART")
+    dart.error = TypeError("synthetic programming defect")
+
+    with pytest.raises(TypeError, match="programming defect"):
+        audit_document_sources(
+            targets=(_target("domestic-etf"),),
+            adapters=(dart,),
+            context=_context(),
+            generated_at=_NOW,
+        )
+
+
+@pytest.mark.parametrize(
+    ("target", "candidate"),
+    (
+        (_target("domestic-etf"), _dart_candidate()),
+        (
+            _target(
+                "overseas-etf",
+                product_family="overseas_etf",
+                identifiers=_SEC_IDENTIFIERS,
+            ),
+            _sec_candidate(),
+        ),
+    ),
+)
+def test_tier_one_completeness_accepts_only_exact_official_metadata(
+    target: DocumentSourceTarget,
+    candidate: DocumentSourceCandidate,
+) -> None:
+    report = DocumentSourceAuditReport(
+        schema_version="1.0",
+        generated_at=_NOW,
+        cutoff_date=_CUTOFF,
+        dataset_version="2026-08-24",
+        entries=(
+            DocumentSourceAuditEntry(
+                target=target,
+                status=SourceAuditStatus.ELIGIBLE,
+                reason_code=None,
+                candidate=candidate,
+            ),
+        ),
+    )
+
+    assert document_source_audit_passed(report) is True
+
+
+@pytest.mark.parametrize(
+    ("target", "candidate"),
+    (
+        (
+            _target("domestic-etf"),
+            _dart_candidate(publisher_code="APPROVED_LABEL_ON_WRONG_PUBLISHER"),
+        ),
+        (_target("domestic-etf"), _dart_candidate(jurisdiction="US")),
+        (_target("domestic-etf"), _dart_candidate(document_version="2026.1")),
+        (
+            _target("domestic-etf"),
+            _dart_candidate(
+                source_locator=(
+                    "https://approved-label.example.invalid/dsaf001/main.do"
+                    "?rcpNo=20260820000123"
+                )
+            ),
+        ),
+        (
+            _target(
+                "overseas-etf",
+                product_family="overseas_etf",
+                identifiers=_SEC_IDENTIFIERS,
+            ),
+            _sec_candidate(publisher_code="APPROVED_LABEL_ON_WRONG_PUBLISHER"),
+        ),
+        (
+            _target(
+                "overseas-etf",
+                product_family="overseas_etf",
+                identifiers=_SEC_IDENTIFIERS,
+            ),
+            _sec_candidate(jurisdiction="KR"),
+        ),
+        (
+            _target(
+                "overseas-etf",
+                product_family="overseas_etf",
+                identifiers=_SEC_IDENTIFIERS,
+            ),
+            _sec_candidate(document_version="2026.1"),
+        ),
+        (
+            _target(
+                "overseas-etf",
+                product_family="overseas_etf",
+                identifiers=_SEC_IDENTIFIERS,
+            ),
+            _sec_candidate(
+                discovery_locator=(
+                    "https://approved-label.example.invalid/Archives/edgar/data/"
+                    "1445546/000144554625008729/"
+                    "0001445546-25-008729-index.html"
+                )
+            ),
+        ),
+    ),
+)
+def test_tier_one_approved_labels_cannot_bypass_official_identity_and_url_proof(
+    target: DocumentSourceTarget,
+    candidate: DocumentSourceCandidate,
+) -> None:
+    report = DocumentSourceAuditReport(
+        schema_version="1.0",
+        generated_at=_NOW,
+        cutoff_date=_CUTOFF,
+        dataset_version="2026-08-24",
+        entries=(
+            DocumentSourceAuditEntry(
+                target=target,
+                status=SourceAuditStatus.ELIGIBLE,
+                reason_code=None,
+                candidate=candidate,
+            ),
+        ),
+    )
+
+    assert document_source_audit_passed(report) is False
+
+
+@pytest.mark.parametrize(
+    ("source_code", "target", "unsafe_locator"),
+    (
+        (
+            "DART",
+            _target("domestic-etf"),
+            "https://approved-label.example.invalid/api/list.json",
+        ),
+        (
+            "SEC",
+            _target(
+                "overseas-etf",
+                product_family="overseas_etf",
+                identifiers=_SEC_IDENTIFIERS,
+            ),
+            "https://approved-label.example.invalid/submissions/CIK0001445546.json",
+        ),
+        (
+            "DART",
+            _target("domestic-etf"),
+            "https://opendart.fss.or.kr/api/unreviewed.json",
+        ),
+        (
+            "SEC",
+            _target(
+                "overseas-etf",
+                product_family="overseas_etf",
+                identifiers=_SEC_IDENTIFIERS,
+            ),
+            (
+                "https://www.sec.gov/Archives/edgar/data/1445546/"
+                "not-an-accession/unreviewed-index.html"
+            ),
+        ),
+    ),
+)
+def test_attempted_source_metadata_must_use_the_official_domain(
+    source_code: str,
+    target: DocumentSourceTarget,
+    unsafe_locator: str,
+) -> None:
+    adapter = _StubAdapter(
+        source_code,
+        SourceAdapterResult(
+            status=SourceAuditStatus.ACCESS_DENIED,
+            reason_code=f"{source_code.lower()}_access_denied",
+            candidates=(),
+            attempted_source=DocumentSourceAttempt(
+                source_code=source_code,
+                source_locator=None,
+                discovery_locator=unsafe_locator,
+            ),
+        ),
+    )
+
+    report = audit_document_sources(
+        targets=(target,),
+        adapters=(adapter,),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].reason_code == (
+        f"{source_code.lower()}_attempted_source_invalid"
+    )
+    assert report.entries[0].attempted_source == DocumentSourceAttempt(
+        source_code=source_code,
+        source_locator=None,
+        discovery_locator=None,
+    )
+
+
 def test_canonical_version_failure_is_a_stable_audit_entry() -> None:
-    candidate = _source_candidate(
-        "unknown-version",
+    candidate = _dart_candidate(
         effective_from=None,
     )
 
@@ -611,11 +958,8 @@ def test_canonical_version_failure_is_a_stable_audit_entry() -> None:
 
 
 def test_sec_unknown_effectiveness_remains_version_unknown_with_candidate() -> None:
-    candidate = _source_candidate(
-        "sec-unknown-version",
-        source_code="SEC",
+    candidate = _sec_candidate(
         effective_from=None,
-        jurisdiction="US",
     )
 
     report = audit_document_sources(
@@ -829,43 +1173,169 @@ def test_registered_adapter_without_reviewed_authority_context_fails_closed() ->
     assert report.entries[0].reason_code == "registered_authority_context_missing"
 
 
-def test_canonical_selection_returns_only_the_latest_role_candidate() -> None:
-    older = _source_candidate(
-        "older",
-        source_code="OFFICIAL_INDEX",
-        publisher_code="OFFICIAL_INDEX",
-        document_type="index_methodology",
-        publisher_role=PublisherRole.INDEX_PROVIDER,
-        effective_from=date(2026, 7, 1),
-    )
-    latest = _source_candidate(
-        "latest",
-        source_code="OFFICIAL_INDEX",
-        publisher_code="OFFICIAL_INDEX",
-        document_type="index_methodology",
-        publisher_role=PublisherRole.INDEX_PROVIDER,
-        effective_from=date(2026, 8, 1),
-    )
-    target = _target(
-        "index-1",
+def _index_target(entity_id: str = "index-1") -> DocumentSourceTarget:
+    return _target(
+        entity_id,
         entity_type="index",
         product_family=None,
         required_role=DocumentRole.INDEX_METHODOLOGY,
         binding_role="subject_index",
     )
 
+
+def test_review_context_retains_domain_terms_and_exact_locator_binding() -> None:
+    candidate = _registered_candidate()
+    context = _reviewed_context(candidate)
+
+    authority = context.authority_for("OFFICIAL_INDEX")
+    assert authority is not None
+    assert authority.allowed_hosts == frozenset({"official.example.invalid"})
+    assert authority.terms_review_required is False
+    locator = context.locator_for("index-1", DocumentRole.INDEX_METHODOLOGY)
+    assert locator is not None
+    assert locator.document_id == candidate.document_id
+    assert locator.source_locator == candidate.source_locator
+    assert locator.discovery_locator == candidate.discovery_locator
+
+
+def test_registered_candidate_with_exact_reviewed_binding_is_complete() -> None:
+    candidate = _registered_candidate()
+    context = _reviewed_context(candidate)
+    report = _registered_report(candidate)
+
+    assert document_source_audit_passed(
+        report,
+        registered_authorities=context,
+    ) is True
+
+
+def test_official_registered_locator_bound_to_the_wrong_entity_fails_closed() -> None:
+    candidate = _registered_candidate()
+    context = _reviewed_context(candidate, entity_id="index-1")
+    adapter = _eligible_adapter("REGISTERED", candidate)
+    adapter.reviewed_authorities = context
+
+    report = audit_document_sources(
+        targets=(_index_target("index-2"),),
+        adapters=(adapter,),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].reason_code == "registered_candidate_locator_unreviewed"
+    assert report.entries[0].candidate is None
+
+
+def test_unreviewed_registered_document_identity_fails_closed() -> None:
+    reviewed_candidate = _registered_candidate()
+    returned_candidate = replace(
+        reviewed_candidate,
+        document_id="different-document",
+        source_locator="https://official.example.invalid/different.pdf",
+    )
+    context = _reviewed_context(reviewed_candidate)
+    adapter = _eligible_adapter("REGISTERED", returned_candidate)
+    adapter.reviewed_authorities = context
+
+    report = audit_document_sources(
+        targets=(_index_target(),),
+        adapters=(adapter,),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].reason_code == "registered_candidate_locator_mismatch"
+    assert report.entries[0].candidate is None
+
+
+def test_registered_candidate_on_wrong_reviewed_host_fails_closed() -> None:
+    candidate = _registered_candidate(
+        source_locator="https://approved-label.example.invalid/methodology.pdf",
+        discovery_locator="https://approved-label.example.invalid/documents",
+    )
+    context = _reviewed_context(candidate)
+    adapter = _eligible_adapter("REGISTERED", candidate)
+    adapter.reviewed_authorities = context
+
+    report = audit_document_sources(
+        targets=(_index_target(),),
+        adapters=(adapter,),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].reason_code == "registered_candidate_locator_host_not_allowed"
+
+
+def test_terms_review_required_authority_cannot_prove_completeness() -> None:
+    candidate = _registered_candidate()
+    context = _reviewed_context(candidate, terms_review_required=True)
+    report = _registered_report(candidate)
+
+    assert document_source_audit_passed(
+        report,
+        registered_authorities=context,
+    ) is False
+
+
+def test_registered_attempt_locator_must_match_the_target_review_snapshot() -> None:
+    candidate = _registered_candidate()
+    context = _reviewed_context(candidate, entity_id="index-1")
+    adapter = _StubAdapter(
+        "REGISTERED",
+        SourceAdapterResult(
+            status=SourceAuditStatus.ACCESS_DENIED,
+            reason_code="registered_access_denied",
+            candidates=(),
+            attempted_source=DocumentSourceAttempt(
+                source_code=candidate.source_code,
+                source_locator=candidate.source_locator,
+                discovery_locator=candidate.discovery_locator,
+            ),
+        ),
+        reviewed_authorities=context,
+    )
+
+    report = audit_document_sources(
+        targets=(_index_target("index-2"),),
+        adapters=(adapter,),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    assert report.entries[0].reason_code == "registered_attempted_source_invalid"
+    assert report.entries[0].attempted_source == DocumentSourceAttempt(
+        source_code="REGISTERED",
+        source_locator=None,
+        discovery_locator=None,
+    )
+
+
+def test_canonical_selection_returns_only_the_latest_role_candidate() -> None:
+    older = _dart_candidate(
+        "20260701000001",
+        effective_from=date(2026, 7, 1),
+    )
+    latest = _dart_candidate(
+        "20260801000001",
+        effective_from=date(2026, 8, 1),
+    )
+    target = _target("domestic-etf")
+
     report = audit_document_sources(
         targets=(target,),
-        adapters=(_eligible_adapter("REGISTERED", older, latest),),
+        adapters=(_eligible_adapter("DART", older, latest),),
         context=_context(),
         generated_at=_NOW,
     )
 
     assert report.entries[0].status is SourceAuditStatus.ELIGIBLE
     assert report.entries[0].candidate == latest
-    assert document_source_audit_passed(
-        report, registered_authorities=_REGISTERED_AUTHORITIES
-    ) is True
+    assert document_source_audit_passed(report) is True
 
 
 def test_report_is_identical_when_targets_adapters_and_candidates_are_reordered() -> None:
@@ -1052,19 +1522,13 @@ def _registered_report(candidate: DocumentSourceCandidate) -> DocumentSourceAudi
 
 
 def test_registered_eligible_report_requires_explicit_authority_context() -> None:
-    report = _registered_report(
-        _source_candidate(
-            "official-index",
-            source_code="OFFICIAL_INDEX",
-            publisher_code="OFFICIAL_INDEX",
-            document_type="index_methodology",
-            publisher_role=PublisherRole.INDEX_PROVIDER,
-        )
-    )
+    candidate = _registered_candidate()
+    report = _registered_report(candidate)
+    reviewed_context = _reviewed_context(candidate)
 
     assert document_source_audit_passed(report) is False
     assert document_source_audit_passed(
-        report, registered_authorities=_REGISTERED_AUTHORITIES
+        report, registered_authorities=reviewed_context
     ) is True
 
 

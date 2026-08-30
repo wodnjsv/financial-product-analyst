@@ -7,7 +7,7 @@ from datetime import date
 from enum import Enum
 from pathlib import Path
 import socket
-from typing import AbstractSet, Protocol
+from typing import TYPE_CHECKING, AbstractSet, BinaryIO, Mapping, Protocol
 from urllib.parse import urlparse
 
 from financial_agent.documents.source_manifest import (
@@ -18,6 +18,9 @@ from financial_agent.documents.source_manifest import (
     _validate_locator,
 )
 
+if TYPE_CHECKING:
+    from .registered import ReviewedAuthorityContext
+
 
 @dataclass(frozen=True, slots=True)
 class DocumentDiscoveryContext:
@@ -25,6 +28,7 @@ class DocumentDiscoveryContext:
     dart_api_key: str | None
     sec_user_agent: str | None
     locator_registry_path: Path | None
+    registered_authorities: ReviewedAuthorityContext | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +49,19 @@ class DocumentSourceAdapter(Protocol):
         target: DocumentSourceTarget,
         context: DocumentDiscoveryContext,
     ) -> SourceAdapterResult: ...
+
+
+class NoRedirectHttpOpener(Protocol):
+    """Single HTTP boundary shared by every official-source adapter."""
+
+    def open_no_redirect(
+        self,
+        url: str,
+        *,
+        method: str,
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> BinaryIO: ...
 
 
 class DocumentSourceAccessErrorCode(str, Enum):
@@ -83,6 +100,8 @@ class MissingRequiredEnvironmentError(Exception):
 
 def classify_access_error(error: BaseException) -> SourceAuditStatus:
     """Map untrusted source failures to the stable manifest status taxonomy."""
+    if isinstance(error, TypeError):
+        raise error
     if isinstance(error, DocumentSourceAccessError):
         return error.status
     if isinstance(error, MissingRequiredEnvironmentError):

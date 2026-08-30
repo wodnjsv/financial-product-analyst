@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, date, datetime
 from io import BytesIO
@@ -40,21 +41,27 @@ _PERMITTED_MATRIX = (
         "index",
     ),
     (_TIER_2, "index_provider", DocumentRole.OFFICIAL_UPDATE, "subject_index", "index"),
-    (_TIER_2, "policy_authority", DocumentRole.POLICY_BASE, "subject_policy", "policy"),
+    (_TIER_2, "policy_authority", DocumentRole.POLICY_BASE, "subject_policy", "product"),
     (
         _TIER_2,
         "policy_authority",
         DocumentRole.OFFICIAL_UPDATE,
         "subject_policy",
-        "policy",
+        "product",
     ),
-    (_TIER_2, "policy_operator", DocumentRole.POLICY_BASE, "subject_policy", "policy"),
+    (
+        _TIER_2,
+        "policy_operator",
+        DocumentRole.POLICY_BASE,
+        "subject_policy",
+        "institution",
+    ),
     (
         _TIER_2,
         "policy_operator",
         DocumentRole.OFFICIAL_UPDATE,
         "subject_policy",
-        "policy",
+        "institution",
     ),
     (_TIER_3, "exchange", DocumentRole.OFFICIAL_UPDATE, "subject_product", "product"),
     (
@@ -69,7 +76,7 @@ _FORBIDDEN_CROSS_BINDINGS = (
     (_TIER_2, "index_provider", "subject_product", "product"),
     (_TIER_2, "policy_operator", "subject_index", "index"),
     (_TIER_3, "exchange", "subject_index", "index"),
-    (_TIER_3, "industry_association", "subject_policy", "policy"),
+    (_TIER_3, "industry_association", "subject_policy", "institution"),
 )
 
 
@@ -142,10 +149,10 @@ class _SyntheticOpener:
         url: str,
         *,
         method: str,
-        headers: dict[str, str],
+        headers: Mapping[str, str],
         timeout: float,
     ) -> _Response:
-        self.calls.append((url, method, headers, timeout))
+        self.calls.append((url, method, dict(headers), timeout))
         if not self.responses:
             raise AssertionError("unexpected preflight request")
         return self.responses.pop(0)
@@ -237,8 +244,18 @@ def test_adapter_exposes_immutable_context_from_reviewed_authority_registry() ->
     assert authority.authority_tier is SourceAuthorityTier.TIER_2_CLAIM_OWNER
     assert authority.publisher_role is PublisherRole.INDEX_PROVIDER
     assert authority.jurisdiction == "ZZ"
+    assert authority.allowed_hosts == frozenset({"index.example.invalid"})
+    assert authority.terms_review_required is False
     assert authority.allowed_document_roles == frozenset(
         {DocumentRole.INDEX_METHODOLOGY, DocumentRole.OFFICIAL_UPDATE}
+    )
+    snapshot = adapter.reviewed_context(_context())
+    locator = snapshot.locator_for("index-1", DocumentRole.INDEX_METHODOLOGY)
+    assert locator is not None
+    assert snapshot.locator_is_reviewed(locator)
+    assert locator.document_id == "document-index-1-methodology"
+    assert locator.source_locator == (
+        "https://index.example.invalid/methodology.pdf"
     )
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 from io import BytesIO
 import json
@@ -149,11 +150,19 @@ class _SyntheticOpener:
         self.error = error
         self.redirect_location = redirect_location
         self.calls: list[str] = []
+        self.requests: list[tuple[str, str, dict[str, str], float]] = []
         self.responses: list[_Response] = []
 
-    def open_no_redirect(self, url: str, *, timeout: float) -> _Response:
-        del timeout
+    def open_no_redirect(
+        self,
+        url: str,
+        *,
+        method: str,
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> _Response:
         self.calls.append(url)
+        self.requests.append((url, method, dict(headers), timeout))
         if self.error is not None:
             raise self.error
         if self.redirect_location is not None and len(self.calls) == 1:
@@ -817,6 +826,25 @@ def test_dart_follows_explicit_same_host_https_redirect() -> None:
     assert opener.responses[0].read_sizes == []
 
 
+def test_dart_uses_the_shared_explicit_get_opener_contract() -> None:
+    opener = _SyntheticOpener(
+        {1: _list_response([_filing("20260820000123", "20260820")])}
+    )
+
+    result = DartDocumentSourceAdapter(opener).discover(_target(), _context())
+
+    assert result.status is SourceAuditStatus.ELIGIBLE
+    assert opener.requests
+    assert all(method == "GET" for _, method, _, _ in opener.requests)
+    assert all(
+        headers == {
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",
+        }
+        for _, _, headers, _ in opener.requests
+    )
+
+
 def test_dart_never_calls_an_opener_without_no_redirect_boundary() -> None:
     class AutoFollowingOpener:
         def __init__(self) -> None:
@@ -829,10 +857,9 @@ def test_dart_never_calls_an_opener_without_no_redirect_boundary() -> None:
 
     opener = AutoFollowingOpener()
 
-    result = DartDocumentSourceAdapter(opener).discover(_target(), _context())
+    with pytest.raises(TypeError, match="open_no_redirect"):
+        DartDocumentSourceAdapter(opener).discover(_target(), _context())
 
-    assert result.status is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
-    assert result.reason_code == "dart_access_method_unverified"
     assert not opener.called
 
 

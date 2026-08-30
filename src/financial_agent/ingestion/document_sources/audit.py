@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 import logging
 import re
+from urllib.parse import parse_qsl, urlparse
 
 from financial_agent.documents import (
     DocumentRole,
@@ -29,12 +30,14 @@ from financial_agent.documents.source_manifest import (
 
 from .base import (
     DocumentDiscoveryContext,
+    DocumentSourceAccessError,
     DocumentSourceAdapter,
     SourceAdapterResult,
     classify_access_error,
+    sanitize_public_locator,
 )
 from .sec import has_complete_sec_identity
-from .registered import ReviewedAuthorityContext
+from .registered import ReviewedAuthorityContext, ReviewedLocator
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,6 +89,7 @@ def audit_document_sources(
         raise ValueError("document discovery context cutoff differs from targets")
 
     adapter_registry = _adapter_registry(adapters)
+    context = _prepare_registered_context(adapter_registry, context)
     unique_targets, conflicting_keys = _unique_targets(targets)
     entries = tuple(
         _audit_target(
@@ -120,15 +124,22 @@ def document_source_audit_passed(
         return False
     try:
         validate_document_source_report(report)
-    except (TypeError, ValueError):
+    except (DocumentSourceAccessError, TypeError, ValueError):
         return False
     if not report.entries:
         return False
     for entry in report.entries:
+        route_key = _route_key(entry.target)
+        if entry.attempted_source is not None and _validated_attempted_source(
+            entry.attempted_source,
+            target=entry.target,
+            route_key=route_key,
+            registered_authorities=registered_authorities,
+        ) != entry.attempted_source:
+            return False
         if entry.status not in _COMPLETE_STATUSES:
             return False
         if entry.status is SourceAuditStatus.ELIGIBLE:
-            route_key = _route_key(entry.target)
             candidate = entry.candidate
             if (
                 candidate is None
@@ -208,7 +219,9 @@ def _audit_target(
     adapter = route_adapters[0]
     registered_authorities: ReviewedAuthorityContext | None = None
     if route_key == "REGISTERED":
-        value = getattr(adapter, "reviewed_authorities", None)
+        value = context.registered_authorities
+        if value is None:
+            value = getattr(adapter, "reviewed_authorities", None)
         if not isinstance(value, ReviewedAuthorityContext):
             return _unavailable_entry(
                 target,
@@ -259,6 +272,7 @@ def _entry_from_result(
     assert isinstance(result, SourceAdapterResult)
     attempted_source = _validated_attempted_source(
         result.attempted_source,
+        target=target,
         route_key=route_key,
         registered_authorities=registered_authorities,
     )
@@ -460,7 +474,9 @@ def _candidate_provenance_reason(
             or candidate.publisher_role is not PublisherRole.REGULATOR_DISCLOSURE
         ):
             return f"{route_key.lower()}_candidate_authority_mismatch"
-        return None
+        if route_key == "DART":
+            return _dart_candidate_provenance_reason(candidate)
+        return _sec_candidate_provenance_reason(candidate, target=target)
 
     if route_key == "REGISTERED":
         if registered_authorities is None:
@@ -479,8 +495,227 @@ def _candidate_provenance_reason(
             return "registered_candidate_authority_mismatch"
         if target.required_role not in authority.allowed_document_roles:
             return "registered_candidate_role_not_reviewed"
+        if authority.terms_review_required:
+            return "registered_candidate_terms_review_required"
+        locator = registered_authorities.locator_for(
+            target.entity_id,
+            target.required_role,
+        )
+        if locator is None:
+            return "registered_candidate_locator_unreviewed"
+        if (
+            locator.entity_type != target.entity_type
+            or locator.binding_role != target.binding_role
+        ):
+            return "registered_candidate_locator_unreviewed"
+        if (
+            not _locator_uses_allowed_host(
+                locator.source_locator,
+                authority.allowed_hosts,
+            )
+            or not _locator_uses_allowed_host(
+                locator.discovery_locator,
+                authority.allowed_hosts,
+            )
+        ):
+            return "registered_candidate_locator_host_not_allowed"
+        if not _candidate_matches_reviewed_locator(candidate, locator):
+            return "registered_candidate_locator_mismatch"
         return None
     return "candidate_source_owner_unverified"
+
+
+_DART_RECEIPT = re.compile(r"^[0-9]{14}$")
+_SEC_ACCESSION = re.compile(r"^[0-9]{10}-[0-9]{2}-[0-9]{6}$")
+_SEC_COMPACT_ACCESSION = re.compile(r"^[0-9]{18}$")
+_SEC_PRIMARY_DOCUMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$")
+
+
+def _dart_candidate_provenance_reason(
+    candidate: DocumentSourceCandidate,
+) -> str | None:
+    receipt = candidate.accession_or_receipt_id
+    if (
+        candidate.publisher_code != "FSS_DART"
+        or candidate.jurisdiction != "KR"
+        or not isinstance(receipt, str)
+        or _DART_RECEIPT.fullmatch(receipt) is None
+        or candidate.document_id != f"dart-rcept:{receipt}"
+        or candidate.document_version != receipt
+    ):
+        return "dart_candidate_identity_mismatch"
+    if not _dart_viewer_locator_matches(candidate.source_locator, receipt=receipt):
+        return "dart_candidate_locator_mismatch"
+    if not _exact_https_locator(
+        candidate.discovery_locator,
+        host="opendart.fss.or.kr",
+        path="/api/document.xml",
+    ):
+        return "dart_candidate_locator_mismatch"
+    return None
+
+
+def _sec_candidate_provenance_reason(
+    candidate: DocumentSourceCandidate,
+    *,
+    target: DocumentSourceTarget,
+) -> str | None:
+    accession = candidate.accession_or_receipt_id
+    cik = _target_sec_cik(target)
+    if (
+        candidate.publisher_code != "US_SEC_EDGAR"
+        or candidate.jurisdiction != "US"
+        or cik is None
+        or not isinstance(accession, str)
+        or _SEC_ACCESSION.fullmatch(accession) is None
+        or candidate.document_id != f"sec-accession:{accession}"
+        or candidate.document_version != accession
+    ):
+        return "sec_candidate_identity_mismatch"
+    compact_accession = accession.replace("-", "")
+    if _sec_archive_document_identity(
+        candidate.source_locator,
+        cik=cik,
+    ) != compact_accession:
+        return "sec_candidate_locator_mismatch"
+    if _sec_archive_index_identity(
+        candidate.discovery_locator,
+        cik=cik,
+    ) != compact_accession:
+        return "sec_candidate_locator_mismatch"
+    return None
+
+
+def _target_sec_cik(target: DocumentSourceTarget) -> str | None:
+    values = tuple(
+        value for scheme, value in target.identifiers if scheme == "SEC_CIK"
+    )
+    if len(values) != 1 or not values[0].isdigit() or int(values[0]) == 0:
+        return None
+    return str(int(values[0]))
+
+
+def _sec_archive_document_identity(locator: str, *, cik: str) -> str | None:
+    parts = _https_parts(locator)
+    if parts is None:
+        return None
+    host, path, query = parts
+    prefix = f"/Archives/edgar/data/{cik}/"
+    remainder = path[len(prefix) :] if path.startswith(prefix) else ""
+    segments = remainder.split("/")
+    if len(segments) != 2:
+        return None
+    compact_accession, primary_document = segments
+    if (
+        host != "www.sec.gov"
+        or query
+        or _SEC_COMPACT_ACCESSION.fullmatch(compact_accession) is None
+        or _SEC_PRIMARY_DOCUMENT.fullmatch(primary_document) is None
+    ):
+        return None
+    return compact_accession
+
+
+def _sec_archive_index_identity(locator: str, *, cik: str) -> str | None:
+    parts = _https_parts(locator)
+    if parts is None:
+        return None
+    host, path, query = parts
+    prefix = f"/Archives/edgar/data/{cik}/"
+    remainder = path[len(prefix) :] if path.startswith(prefix) else ""
+    segments = remainder.split("/")
+    if len(segments) != 2:
+        return None
+    compact_accession, filename = segments
+    suffix = "-index.html"
+    accession = filename[: -len(suffix)] if filename.endswith(suffix) else ""
+    if (
+        host != "www.sec.gov"
+        or query
+        or _SEC_COMPACT_ACCESSION.fullmatch(compact_accession) is None
+        or _SEC_ACCESSION.fullmatch(accession) is None
+        or accession.replace("-", "") != compact_accession
+    ):
+        return None
+    return compact_accession
+
+
+def _dart_viewer_locator_matches(locator: str, *, receipt: str) -> bool:
+    parts = _https_parts(locator)
+    return parts == (
+        "dart.fss.or.kr",
+        "/dsaf001/main.do",
+        (("rcpNo", receipt),),
+    )
+
+
+def _exact_https_locator(locator: str, *, host: str, path: str) -> bool:
+    return _https_parts(locator) == (host, path, ())
+
+
+def _https_parts(
+    locator: str,
+) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
+    try:
+        parsed = urlparse(locator)
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname is None
+        or port not in {None, 443}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        return None
+    return (
+        parsed.hostname.lower(),
+        parsed.path,
+        tuple(parse_qsl(parsed.query, keep_blank_values=True)),
+    )
+
+
+def _locator_uses_allowed_host(
+    locator: str,
+    allowed_hosts: frozenset[str],
+) -> bool:
+    try:
+        sanitize_public_locator(locator, allowed_hosts=allowed_hosts)
+        parsed = urlparse(locator)
+        return parsed.port in {None, 443}
+    except (DocumentSourceAccessError, TypeError, ValueError):
+        return False
+
+
+def _candidate_matches_reviewed_locator(
+    candidate: DocumentSourceCandidate,
+    locator: ReviewedLocator,
+) -> bool:
+    try:
+        reviewed_candidate = DocumentSourceCandidate(
+            document_id=locator.document_id,
+            source_code=locator.source_code,
+            authority_tier=locator.authority_tier,
+            publisher_code=locator.publisher_code,
+            publisher_role=locator.publisher_role,
+            document_type=locator.document_type,
+            document_version=locator.document_version,
+            source_locator=locator.source_locator,
+            discovery_locator=locator.discovery_locator,
+            jurisdiction=locator.jurisdiction,
+            original_language=locator.original_language,
+            published_at=locator.published_at,
+            available_at=locator.available_at,
+            effective_from=locator.effective_from,
+            effective_to=locator.effective_to,
+            media_type=locator.media_type,
+            accession_or_receipt_id=locator.accession_or_receipt_id,
+        )
+    except (TypeError, ValueError):
+        return False
+    return candidate == reviewed_candidate
 
 
 def _route_key(target: DocumentSourceTarget) -> str:
@@ -575,6 +810,30 @@ def _adapter_registry(
         if isinstance(source_code, str):
             grouped.setdefault(source_code, []).append(adapter)
     return {source_code: tuple(items) for source_code, items in grouped.items()}
+
+
+def _prepare_registered_context(
+    adapter_registry: dict[str, tuple[DocumentSourceAdapter, ...]],
+    context: DocumentDiscoveryContext,
+) -> DocumentDiscoveryContext:
+    if context.registered_authorities is not None:
+        return context
+    registered = adapter_registry.get("REGISTERED", ())
+    if len(registered) != 1:
+        return context
+    adapter = registered[0]
+    loader = getattr(adapter, "reviewed_context", None)
+    try:
+        value = loader(context) if callable(loader) else getattr(
+            adapter,
+            "reviewed_authorities",
+            None,
+        )
+    except (OSError, UnicodeDecodeError, ValueError):
+        return context
+    if not isinstance(value, ReviewedAuthorityContext):
+        return context
+    return replace(context, registered_authorities=value)
 
 
 def _unique_targets(
@@ -684,13 +943,16 @@ def _attempt_from_candidate(
 def _validated_attempted_source(
     attempt: DocumentSourceAttempt | None,
     *,
+    target: DocumentSourceTarget,
     route_key: str,
     registered_authorities: ReviewedAuthorityContext | None,
 ) -> DocumentSourceAttempt | None:
     if attempt is None:
         return None
-    if route_key in {"DART", "SEC"}:
-        return attempt if attempt.source_code == route_key else None
+    if route_key == "DART":
+        return attempt if _dart_attempt_is_valid(attempt) else None
+    if route_key == "SEC":
+        return attempt if _sec_attempt_is_valid(attempt, target=target) else None
     if route_key != "REGISTERED":
         return None
     if attempt.source_code == "REGISTERED":
@@ -702,11 +964,103 @@ def _validated_attempted_source(
         )
     if registered_authorities is None:
         return None
-    return (
-        attempt
-        if registered_authorities.authority_for(attempt.source_code) is not None
-        else None
+    authority = registered_authorities.authority_for(attempt.source_code)
+    if authority is None:
+        return None
+    if attempt.source_locator is None and attempt.discovery_locator is None:
+        return attempt
+    locator = registered_authorities.locator_for(
+        target.entity_id,
+        target.required_role,
     )
+    if (
+        locator is None
+        or locator.source_code != attempt.source_code
+        or locator.entity_type != target.entity_type
+        or locator.binding_role != target.binding_role
+        or attempt.source_locator != locator.source_locator
+        or attempt.discovery_locator != locator.discovery_locator
+        or not _locator_uses_allowed_host(
+            locator.source_locator,
+            authority.allowed_hosts,
+        )
+        or not _locator_uses_allowed_host(
+            locator.discovery_locator,
+            authority.allowed_hosts,
+        )
+    ):
+        return None
+    return attempt
+
+
+def _dart_attempt_is_valid(attempt: DocumentSourceAttempt) -> bool:
+    if attempt.source_code != "DART":
+        return False
+    if attempt.source_locator is None and attempt.discovery_locator is None:
+        return True
+    if attempt.source_locator is not None:
+        parts = _https_parts(attempt.source_locator)
+        if parts is None:
+            return False
+        host, path, query = parts
+        if (
+            host != "dart.fss.or.kr"
+            or path != "/dsaf001/main.do"
+            or len(query) != 1
+            or query[0][0] != "rcpNo"
+            or _DART_RECEIPT.fullmatch(query[0][1]) is None
+        ):
+            return False
+    if attempt.discovery_locator is not None and not any(
+        _exact_https_locator(
+            attempt.discovery_locator,
+            host="opendart.fss.or.kr",
+            path=path,
+        )
+        for path in ("/api/list.json", "/api/document.xml")
+    ):
+        return False
+    return True
+
+
+def _sec_attempt_is_valid(
+    attempt: DocumentSourceAttempt,
+    *,
+    target: DocumentSourceTarget,
+) -> bool:
+    if attempt.source_code != "SEC":
+        return False
+    if attempt.source_locator is None and attempt.discovery_locator is None:
+        return True
+    cik = _target_sec_cik(target)
+    if cik is None:
+        return False
+    padded_cik = cik.zfill(10)
+    source_identity = None
+    if attempt.source_locator is not None:
+        source_identity = _sec_archive_document_identity(
+            attempt.source_locator,
+            cik=cik,
+        )
+        if source_identity is None:
+            return False
+    if attempt.discovery_locator is not None:
+        if _exact_https_locator(
+            attempt.discovery_locator,
+            host="data.sec.gov",
+            path=f"/submissions/CIK{padded_cik}.json",
+        ):
+            return source_identity is None
+        discovery_identity = _sec_archive_index_identity(
+            attempt.discovery_locator,
+            cik=cik,
+        )
+        if discovery_identity is None or (
+            source_identity is not None
+            and discovery_identity != source_identity
+        ):
+            return False
+    return True
 
 
 def _is_domestic_bond(target: DocumentSourceTarget) -> bool:

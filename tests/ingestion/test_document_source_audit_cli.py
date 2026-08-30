@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, date, datetime
 import hashlib
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -20,6 +22,7 @@ from financial_agent.documents.source_manifest import (
 from financial_agent.ingestion import cli
 from financial_agent.ingestion.document_sources import (
     DocumentDiscoveryContext,
+    NoRedirectHttpOpener,
     SourceAdapterResult,
 )
 from financial_agent.ingestion.document_sources.audit import audit_document_sources
@@ -54,18 +57,19 @@ def _candidate(
     *,
     document_type: str = "summary_prospectus",
 ) -> DocumentSourceCandidate:
+    receipt_no = "20260820000123"
     return DocumentSourceCandidate(
-        document_id=f"document-{entity_id}",
+        document_id=f"dart-rcept:{receipt_no}",
         source_code="DART",
         authority_tier=SourceAuthorityTier.TIER_1_REGULATORY,
         publisher_code="FSS_DART",
         publisher_role=PublisherRole.REGULATOR_DISCLOSURE,
         document_type=document_type,
-        document_version="2026.1",
+        document_version=receipt_no,
         source_locator=(
-            "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260820000123"
+            f"https://dart.fss.or.kr/dsaf001/main.do?rcpNo={receipt_no}"
         ),
-        discovery_locator="https://dart.fss.or.kr/",
+        discovery_locator="https://opendart.fss.or.kr/api/document.xml",
         jurisdiction="KR",
         original_language="ko",
         published_at=_GENERATED_AT,
@@ -73,7 +77,7 @@ def _candidate(
         effective_from=_CUTOFF,
         effective_to=None,
         media_type="text/html",
-        accession_or_receipt_id="20260820000123",
+        accession_or_receipt_id=receipt_no,
     )
 
 
@@ -485,7 +489,15 @@ def test_audit_cli_rejects_non_postgresql_database_url_without_printing_it(
 
 
 class _NeverOpen:
-    def open_no_redirect(self, *_args: object, **_kwargs: object) -> object:
+    def open_no_redirect(
+        self,
+        url: str,
+        *,
+        method: str,
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> NoReturn:
+        del url, method, headers, timeout
         raise AssertionError("missing source configuration must not call the network")
 
 
@@ -526,7 +538,15 @@ def test_missing_dart_and_sec_configuration_is_reported_per_affected_target() ->
 
 
 class _UnsafeBodyOpen:
-    def open_no_redirect(self, *_args: object, **_kwargs: object) -> object:
+    def open_no_redirect(
+        self,
+        url: str,
+        *,
+        method: str,
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> NoReturn:
+        del url, method, headers, timeout
         raise RuntimeError("raw body SYNTHETIC-SECRET <html>denied</html>")
 
 
@@ -556,6 +576,127 @@ def test_upstream_raw_body_is_not_retained_in_audit_error() -> None:
     assert "<html>" not in repr(execution)
 
 
+class _SyntheticTransport:
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+        self.requests: list[tuple[object, float]] = []
+
+    def open(self, request: object, *, timeout: float) -> object:
+        self.requests.append((request, timeout))
+        raise self.error
+
+
+def _production_wrapper_with_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    transport: _SyntheticTransport,
+) -> NoRedirectHttpOpener:
+    monkeypatch.setattr(cli, "build_opener", lambda *_handlers: transport)
+    return cli._NoRedirectHttpOpener()  # type: ignore[attr-defined]
+
+
+def _configured_dart_audit(tmp_path: Path) -> object:
+    return cli._DocumentSourceAuditConfiguration(  # type: ignore[attr-defined]
+        database_url="postgresql://audit@localhost/financial_agent",
+        dataset_version=_DATASET_VERSION,
+        output_root=tmp_path,
+        dart_api_key="configured-key",
+        sec_user_agent=None,
+        locator_registry_path=None,
+    )
+
+
+def test_production_http_wrapper_reaches_dart_with_explicit_get_without_live_network(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    transport = _SyntheticTransport(TimeoutError("synthetic timeout"))
+    opener = _production_wrapper_with_transport(monkeypatch, transport)
+
+    execution = cli._audit_document_targets(  # type: ignore[attr-defined]
+        (_target("domestic-etf-1"),),
+        configuration=_configured_dart_audit(tmp_path),
+        opener=opener,
+        generated_at=_GENERATED_AT,
+    )
+
+    assert (
+        execution.report.entries[0].status
+        is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    )
+    assert len(transport.requests) == 1
+    request, timeout = transport.requests[0]
+    assert request.get_method() == "GET"
+    assert dict(request.header_items()) == {
+        "Accept": "application/json",
+        "Accept-encoding": "identity",
+    }
+    assert timeout == 15.0
+
+
+def test_production_http_wrapper_reaches_sec_with_explicit_get_without_live_network(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    transport = _SyntheticTransport(TimeoutError("synthetic timeout"))
+    opener = _production_wrapper_with_transport(monkeypatch, transport)
+    target = _target(
+        "overseas-etf-1",
+        product_family="overseas_etf",
+        identifiers=(
+            ("SEC_CIK", "1445546"),
+            ("SEC_SERIES_ID", "S000000001"),
+            ("SEC_CLASS_ID", "C000000001"),
+        ),
+    )
+    configuration = cli._DocumentSourceAuditConfiguration(  # type: ignore[attr-defined]
+        database_url="postgresql://audit@localhost/financial_agent",
+        dataset_version=_DATASET_VERSION,
+        output_root=tmp_path,
+        dart_api_key=None,
+        sec_user_agent="Synthetic Audit synthetic@example.invalid",
+        locator_registry_path=None,
+    )
+
+    execution = cli._audit_document_targets(  # type: ignore[attr-defined]
+        (target,),
+        configuration=configuration,
+        opener=opener,
+        generated_at=_GENERATED_AT,
+    )
+
+    assert (
+        execution.report.entries[0].status
+        is SourceAuditStatus.ACCESS_METHOD_UNVERIFIED
+    )
+    assert len(transport.requests) == 1
+    request, timeout = transport.requests[0]
+    assert request.get_method() == "GET"
+    assert request.full_url == (
+        "https://data.sec.gov/submissions/CIK0001445546.json"
+    )
+    assert dict(request.header_items()) == {
+        "Accept-encoding": "identity",
+        "User-agent": "Synthetic Audit synthetic@example.invalid",
+    }
+    assert timeout == 15.0
+
+
+def test_programming_type_error_crossing_production_wrapper_is_not_source_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    transport = _SyntheticTransport(TypeError("synthetic programming defect"))
+    opener = _production_wrapper_with_transport(monkeypatch, transport)
+
+    with pytest.raises(TypeError, match="programming defect"):
+        cli._audit_document_targets(  # type: ignore[attr-defined]
+            (_target("domestic-etf-1"),),
+            configuration=_configured_dart_audit(tmp_path),
+            opener=opener,
+            generated_at=_GENERATED_AT,
+        )
+
+
 class _MappingsResult:
     def __init__(self, rows: list[dict[str, object]]) -> None:
         self._rows = rows
@@ -577,10 +718,14 @@ class _PolicyConnection:
         return _MappingsResult(self.rows)
 
 
-def _policy_locator(entity_id: str) -> dict[str, object]:
+def _policy_locator(
+    entity_id: str,
+    *,
+    entity_type: str,
+) -> dict[str, object]:
     return {
         "entity_id": entity_id,
-        "entity_type": "policy",
+        "entity_type": entity_type,
         "required_role": "policy_base",
         "binding_role": "subject_policy",
         "document_id": f"document-{entity_id}",
@@ -628,23 +773,30 @@ async def test_policy_registry_reconciles_missing_and_type_mismatched_entities(
         encoding="utf-8",
     )
     monkeypatch.setattr(cli, "_DOCUMENT_AUTHORITY_REGISTRY", authority_registry)
-    unreviewed_locator = _policy_locator("policy-unreviewed")
-    unreviewed_locator.update(
-        source_code="UNREVIEWED_AUTHORITY",
-        publisher_code="UNREVIEWED_AUTHORITY",
-        source_locator="https://unreviewed.example.invalid/policy.pdf",
-        discovery_locator="https://unreviewed.example.invalid/documents",
-    )
     registry = tmp_path / "locators.json"
+    unsafe_policy_locator = _policy_locator(
+        "policy-unsafe-host",
+        entity_type="product",
+    )
+    unsafe_policy_locator["source_locator"] = (
+        "https://unreviewed.example.invalid/policy-unsafe-host.pdf"
+    )
     registry.write_text(
         json.dumps(
             {
                 "schema_version": "1.0",
                 "locators": [
-                    _policy_locator("policy-present"),
-                    _policy_locator("policy-absent"),
-                    _policy_locator("policy-type-mismatch"),
-                    unreviewed_locator,
+                    _policy_locator("policy-product", entity_type="product"),
+                    _policy_locator(
+                        "policy-institution",
+                        entity_type="institution",
+                    ),
+                    _policy_locator("policy-absent", entity_type="product"),
+                    unsafe_policy_locator,
+                    _policy_locator(
+                        "policy-type-mismatch",
+                        entity_type="product",
+                    ),
                 ],
             }
         ),
@@ -653,9 +805,19 @@ async def test_policy_registry_reconciles_missing_and_type_mismatched_entities(
     connection = _PolicyConnection(
         [
             {
-                "entity_id": "policy-present",
-                "canonical_name": "Present policy entity",
-                "entity_type": "policy",
+                "entity_id": "policy-product",
+                "canonical_name": "Policy fund product",
+                "entity_type": "product",
+            },
+            {
+                "entity_id": "policy-institution",
+                "canonical_name": "Policy operating institution",
+                "entity_type": "institution",
+            },
+            {
+                "entity_id": "policy-unsafe-host",
+                "canonical_name": "Policy with unsafe reviewed locator",
+                "entity_type": "product",
             },
             {
                 "entity_id": "policy-type-mismatch",
@@ -664,19 +826,40 @@ async def test_policy_registry_reconciles_missing_and_type_mismatched_entities(
             }
         ]
     )
+    base_context = DocumentDiscoveryContext(
+        cutoff_date=_CUTOFF,
+        dart_api_key=None,
+        sec_user_agent=None,
+        locator_registry_path=registry,
+    )
+    registered_adapter = cli.RegisteredDocumentSourceAdapter(  # type: ignore[attr-defined]
+        _NeverOpen(),
+        authority_registry,
+    )
+    reviewed_authorities = registered_adapter.reviewed_context(base_context)
+    discovery_context = cli.replace(  # type: ignore[attr-defined]
+        base_context,
+        registered_authorities=reviewed_authorities,
+    )
 
     reconciliation = await cli._list_exact_policy_targets(  # type: ignore[attr-defined]
         connection,  # type: ignore[arg-type]
         dataset_version=_DATASET_VERSION,
         cutoff_date=_CUTOFF,
-        locator_registry_path=registry,
+        registered_authorities=reviewed_authorities,
     )
 
     assert [
         (target.entity_id, target.entity_type, target.canonical_name)
         for target in reconciliation.targets
     ] == [
-        ("policy-present", "policy", "Present policy entity")
+        ("policy-institution", "institution", "Policy operating institution"),
+        ("policy-product", "product", "Policy fund product"),
+        (
+            "policy-unsafe-host",
+            "product",
+            "Policy with unsafe reviewed locator",
+        ),
     ]
     assert [
         (
@@ -690,7 +873,7 @@ async def test_policy_registry_reconciles_missing_and_type_mismatched_entities(
     ] == [
         (
             "policy-absent",
-            "policy",
+            "product",
             None,
             SourceAuditStatus.IDENTIFIER_MISSING,
             "policy_entity_missing",
@@ -702,19 +885,12 @@ async def test_policy_registry_reconciles_missing_and_type_mismatched_entities(
             SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
             "policy_entity_type_mismatch",
         ),
-        (
-            "policy-unreviewed",
-            "policy",
-            None,
-            SourceAuditStatus.IDENTIFIER_MISSING,
-            "policy_entity_missing",
-        ),
     ]
     assert [
         entry.attempted_source.source_code
         for entry in reconciliation.unavailable_entries
         if entry.attempted_source is not None
-    ] == ["REGISTERED", "REGISTERED", "REGISTERED"]
+    ] == ["REGISTERED", "REGISTERED"]
 
     configuration = cli._DocumentSourceAuditConfiguration(  # type: ignore[attr-defined]
         database_url="postgresql://audit@localhost/financial_agent",
@@ -730,12 +906,26 @@ async def test_policy_registry_reconciles_missing_and_type_mismatched_entities(
         opener=_NeverOpen(),
         generated_at=_GENERATED_AT,
         preliminary_entries=reconciliation.unavailable_entries,
+        registered_adapter=registered_adapter,
+        context=discovery_context,
+    )
+    unsafe_target = next(
+        target
+        for target in reconciliation.targets
+        if target.entity_id == "policy-unsafe-host"
+    )
+    unsafe_execution = cli._audit_document_targets(  # type: ignore[attr-defined]
+        (unsafe_target,),
+        configuration=configuration,
+        opener=_NeverOpen(),
+        generated_at=_GENERATED_AT,
+        registered_adapter=registered_adapter,
+        context=discovery_context,
     )
 
     assert [entry.status for entry in execution.report.entries] == [
         SourceAuditStatus.IDENTIFIER_MISSING,
         SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
-        SourceAuditStatus.IDENTIFIER_MISSING,
     ]
     assert [
         entry.attempted_source.source_code
@@ -744,7 +934,6 @@ async def test_policy_registry_reconciles_missing_and_type_mismatched_entities(
     ] == [
         "SYNTHETIC_POLICY_AUTHORITY",
         "SYNTHETIC_POLICY_AUTHORITY",
-        "REGISTERED",
     ]
     assert all(
         entry.attempted_source is not None
@@ -758,6 +947,14 @@ async def test_policy_registry_reconciles_missing_and_type_mismatched_entities(
     assert all(
         getattr(statement, "is_select", False)
         for statement in connection.statements
+    )
+    assert (
+        unsafe_execution.report.entries[0].status
+        is SourceAuditStatus.ACCESS_DENIED
+    )
+    assert (
+        unsafe_execution.report.entries[0].reason_code
+        == "registered_locator_host_not_allowed"
     )
 
 

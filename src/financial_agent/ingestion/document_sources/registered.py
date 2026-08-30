@@ -27,12 +27,14 @@ from financial_agent.documents.policy import (
 from financial_agent.documents.source_manifest import (
     source_timestamp_is_after_cutoff,
 )
+from financial_agent.entity_types import ENTITY_TYPES
 
 from .base import (
     DocumentDiscoveryContext,
     DocumentSourceAccessError,
     DocumentSourceAccessErrorCode,
     HttpStatusError,
+    NoRedirectHttpOpener,
     SourceAdapterResult,
     classify_access_error,
     sanitize_public_locator,
@@ -50,6 +52,7 @@ _MEDIA_TYPES = frozenset({"application/pdf", "text/html"})
 _REQUEST_TIMEOUT_SECONDS = 15.0
 _MAX_REDIRECTS = 3
 _MAX_REGISTRY_BYTES = 8 * 1024 * 1024
+_POLICY_ENTITY_TYPES = frozenset({"product", "institution"})
 
 _AUTHORITY_KEYS = frozenset({"schema_version", "authorities"})
 _AUTHORITY_RULE_KEYS = frozenset(
@@ -126,7 +129,9 @@ class ReviewedAuthority:
     authority_tier: SourceAuthorityTier
     publisher_role: PublisherRole
     jurisdiction: str
+    allowed_hosts: frozenset[str]
     allowed_document_roles: frozenset[DocumentRole]
+    terms_review_required: bool
 
     def __post_init__(self) -> None:
         if (
@@ -145,6 +150,15 @@ class ReviewedAuthority:
         ):
             raise ValueError("reviewed authority jurisdiction is invalid")
         if (
+            not isinstance(self.allowed_hosts, frozenset)
+            or not self.allowed_hosts
+            or any(
+                host != host.lower() or _HOST.fullmatch(host) is None
+                for host in self.allowed_hosts
+            )
+        ):
+            raise ValueError("reviewed authority hosts are invalid")
+        if (
             not isinstance(self.allowed_document_roles, frozenset)
             or not self.allowed_document_roles
             or not all(
@@ -156,49 +170,14 @@ class ReviewedAuthority:
             )
         ):
             raise ValueError("reviewed authority document roles are invalid")
+        if not isinstance(self.terms_review_required, bool):
+            raise ValueError("reviewed authority terms state is invalid")
 
 
 @dataclass(frozen=True, slots=True)
-class ReviewedAuthorityContext:
-    """Immutable authority snapshot supplied with registered audit evidence."""
+class ReviewedLocator:
+    """Exact per-target document identity loaded from the locator registry."""
 
-    authorities: tuple[ReviewedAuthority, ...]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.authorities, tuple) or not self.authorities:
-            raise ValueError("reviewed authority context must be nonempty")
-        if not all(isinstance(item, ReviewedAuthority) for item in self.authorities):
-            raise ValueError("reviewed authority context contains an invalid authority")
-        source_codes = tuple(item.source_code for item in self.authorities)
-        if len(source_codes) != len(set(source_codes)):
-            raise ValueError("reviewed authority context source_code is duplicated")
-        if source_codes != tuple(sorted(source_codes)):
-            raise ValueError("reviewed authority context must be canonical")
-
-    def authority_for(self, source_code: str) -> ReviewedAuthority | None:
-        return next(
-            (
-                authority
-                for authority in self.authorities
-                if authority.source_code == source_code
-            ),
-            None,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _AuthorityRule:
-    source_code: str
-    authority_tier: SourceAuthorityTier
-    publisher_role: PublisherRole
-    jurisdiction: str
-    allowed_hosts: frozenset[str]
-    allowed_document_roles: frozenset[DocumentRole]
-    terms_review_required: bool
-
-
-@dataclass(frozen=True, slots=True)
-class _ReviewedLocator:
     entity_id: str
     entity_type: str
     required_role: DocumentRole
@@ -222,7 +201,101 @@ class _ReviewedLocator:
     accession_or_receipt_id: str | None
 
 
-class _RegistryError(Exception):
+@dataclass(frozen=True, slots=True)
+class ReviewedAuthorityContext:
+    """Immutable authority snapshot supplied with registered audit evidence."""
+
+    authorities: tuple[ReviewedAuthority, ...]
+    locators: tuple[ReviewedLocator, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.authorities, tuple) or not self.authorities:
+            raise ValueError("reviewed authority context must be nonempty")
+        if not all(isinstance(item, ReviewedAuthority) for item in self.authorities):
+            raise ValueError("reviewed authority context contains an invalid authority")
+        source_codes = tuple(item.source_code for item in self.authorities)
+        if len(source_codes) != len(set(source_codes)):
+            raise ValueError("reviewed authority context source_code is duplicated")
+        if source_codes != tuple(sorted(source_codes)):
+            raise ValueError("reviewed authority context must be canonical")
+        if not isinstance(self.locators, tuple) or not all(
+            isinstance(item, ReviewedLocator) for item in self.locators
+        ):
+            raise ValueError("reviewed authority context contains an invalid locator")
+        locator_keys = tuple(
+            (item.entity_id, item.required_role.value) for item in self.locators
+        )
+        if len(locator_keys) != len(set(locator_keys)):
+            raise ValueError("reviewed authority context locator is duplicated")
+        if locator_keys != tuple(sorted(locator_keys)):
+            raise ValueError("reviewed authority locators must be canonical")
+
+    def authority_for(self, source_code: str) -> ReviewedAuthority | None:
+        return next(
+            (
+                authority
+                for authority in self.authorities
+                if authority.source_code == source_code
+            ),
+            None,
+        )
+
+    def locator_for(
+        self,
+        entity_id: str,
+        required_role: DocumentRole,
+    ) -> ReviewedLocator | None:
+        return next(
+            (
+                locator
+                for locator in self.locators
+                if locator.entity_id == entity_id
+                and locator.required_role is required_role
+            ),
+            None,
+        )
+
+    def locator_is_reviewed(self, locator: ReviewedLocator) -> bool:
+        authority = self.authority_for(locator.source_code)
+        if authority is None:
+            return False
+        if (
+            locator.authority_tier is not authority.authority_tier
+            or locator.publisher_code != authority.publisher_code
+            or locator.publisher_role is not authority.publisher_role
+            or locator.jurisdiction != authority.jurisdiction
+            or locator.required_role not in authority.allowed_document_roles
+            or locator.document_type
+            not in document_types_for_role(locator.required_role)
+        ):
+            return False
+        try:
+            approved_publishers = publisher_roles_for_document_role(
+                locator.required_role,
+                locator.binding_role,
+            )
+            _sanitize_exact_host(locator.source_locator, authority.allowed_hosts)
+            _sanitize_exact_host(locator.discovery_locator, authority.allowed_hosts)
+        except (DocumentSourceAccessError, KeyError, ValueError):
+            return False
+        return locator.publisher_role in approved_publishers
+
+
+@dataclass(frozen=True, slots=True)
+class _AuthorityRule:
+    source_code: str
+    authority_tier: SourceAuthorityTier
+    publisher_role: PublisherRole
+    jurisdiction: str
+    allowed_hosts: frozenset[str]
+    allowed_document_roles: frozenset[DocumentRole]
+    terms_review_required: bool
+
+
+_ReviewedLocator = ReviewedLocator
+
+
+class _RegistryError(ValueError):
     pass
 
 
@@ -242,10 +315,33 @@ class RegisteredDocumentSourceAdapter:
 
     source_code = "REGISTERED"
 
-    def __init__(self, opener: object, authority_registry: Path) -> None:
+    def __init__(
+        self,
+        opener: NoRedirectHttpOpener,
+        authority_registry: Path,
+    ) -> None:
         self._opener = opener
         self._authorities = _load_authority_registry(authority_registry)
         self.reviewed_authorities = _reviewed_authority_context(self._authorities)
+
+    def reviewed_context(
+        self,
+        context: DocumentDiscoveryContext,
+    ) -> ReviewedAuthorityContext:
+        """Load one immutable locator snapshot for the current audit."""
+
+        prepared = context.registered_authorities
+        if prepared is not None:
+            if prepared.authorities != self.reviewed_authorities.authorities:
+                raise _RegistryError
+            return prepared
+        if context.locator_registry_path is None:
+            return self.reviewed_authorities
+        locators = _load_locator_registry(context.locator_registry_path)
+        return _reviewed_authority_context(
+            self._authorities,
+            tuple(locators.values()),
+        )
 
     def supports(self, target: DocumentSourceTarget) -> bool:
         if target.required_role not in {
@@ -271,28 +367,19 @@ class RegisteredDocumentSourceAdapter:
         if context.locator_registry_path is None:
             return fallback
         try:
-            locators = _load_locator_registry(context.locator_registry_path)
-            locator = locators[(target.entity_id, target.required_role)]
+            snapshot = self.reviewed_context(context)
+            locator = snapshot.locator_for(target.entity_id, target.required_role)
+            if locator is None:
+                return fallback
             authority = self._authorities[locator.source_code]
-        except Exception:
+        except (KeyError, OSError, UnicodeDecodeError, ValueError):
             return fallback
         source_only = DocumentSourceAttempt(authority.source_code, None, None)
-        declared_target = DocumentSourceTarget(
-            dataset_version=target.dataset_version,
-            entity_id=locator.entity_id,
-            entity_type=locator.entity_type,
-            canonical_name=target.canonical_name,
-            product_family=None,
-            required_role=locator.required_role,
-            binding_role=locator.binding_role,
-            identifiers=(),
-            cutoff_date=target.cutoff_date,
-        )
         try:
             _validate_locator_for_target(
                 locator,
                 authority=authority,
-                target=declared_target,
+                target=target,
             )
             _validate_cutoff(locator, cutoff_date=context.cutoff_date)
             return DocumentSourceAttempt(
@@ -300,7 +387,7 @@ class RegisteredDocumentSourceAdapter:
                 source_locator=locator.source_locator,
                 discovery_locator=locator.discovery_locator,
             )
-        except Exception:
+        except _RegisteredResultError:
             return source_only
 
     def discover(
@@ -325,21 +412,14 @@ class RegisteredDocumentSourceAdapter:
             )
 
         try:
-            locators = _load_locator_registry(context.locator_registry_path)
-        except (
-            OSError,
-            TypeError,
-            ValueError,
-            _RegistryError,
-            UnicodeDecodeError,
-            json.JSONDecodeError,
-        ):
+            snapshot = self.reviewed_context(context)
+        except (OSError, UnicodeDecodeError, ValueError):
             return _unavailable(
                 SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
                 "registered_locator_registry_invalid",
             )
 
-        locator = locators.get((target.entity_id, target.required_role))
+        locator = snapshot.locator_for(target.entity_id, target.required_role)
         if locator is None:
             return _unavailable(
                 SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
@@ -449,6 +529,7 @@ def _load_authority_registry(path: Path) -> dict[str, _AuthorityRule]:
 
 def _reviewed_authority_context(
     authorities: dict[str, _AuthorityRule],
+    locators: tuple[ReviewedLocator, ...] = (),
 ) -> ReviewedAuthorityContext:
     return ReviewedAuthorityContext(
         tuple(
@@ -458,10 +539,18 @@ def _reviewed_authority_context(
                 authority_tier=rule.authority_tier,
                 publisher_role=rule.publisher_role,
                 jurisdiction=rule.jurisdiction,
+                allowed_hosts=rule.allowed_hosts,
                 allowed_document_roles=rule.allowed_document_roles,
+                terms_review_required=rule.terms_review_required,
             )
             for rule in sorted(authorities.values(), key=lambda item: item.source_code)
-        )
+        ),
+        tuple(
+            sorted(
+                locators,
+                key=lambda item: (item.entity_id, item.required_role.value),
+            )
+        ),
     )
 
 
@@ -582,11 +671,18 @@ def _parse_reviewed_locator(value: object) -> _ReviewedLocator:
     if _JURISDICTION.fullmatch(jurisdiction) is None:
         raise _RegistryError
 
+    entity_type = _required_text(value, "entity_type")
+    binding_role = _required_text(value, "binding_role")
+    if entity_type not in ENTITY_TYPES:
+        raise _RegistryError
+    if binding_role == "subject_policy" and entity_type not in _POLICY_ENTITY_TYPES:
+        raise _RegistryError
+
     return _ReviewedLocator(
         entity_id=_required_text(value, "entity_id"),
-        entity_type=_required_text(value, "entity_type"),
+        entity_type=entity_type,
         required_role=required_role,
-        binding_role=_required_text(value, "binding_role"),
+        binding_role=binding_role,
         document_id=_required_text(value, "document_id"),
         source_code=_required_text(value, "source_code"),
         authority_tier=authority_tier,
@@ -637,6 +733,14 @@ def _validate_locator_for_target(
         raise _RegisteredResultError(
             SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
             "registered_document_role_not_allowed",
+        )
+    if (
+        locator.entity_id != target.entity_id
+        or locator.required_role is not target.required_role
+    ):
+        raise _RegisteredResultError(
+            SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
+            "registered_entity_binding_mismatch",
         )
     if (
         locator.entity_type != target.entity_type
@@ -698,7 +802,7 @@ def _validate_cutoff(locator: _ReviewedLocator, *, cutoff_date: date) -> None:
 
 
 def _preflight(
-    opener: object,
+    opener: NoRedirectHttpOpener,
     source_locator: str,
     *,
     allowed_hosts: frozenset[str],
@@ -790,7 +894,7 @@ def _sanitize_exact_host(locator: str, allowed_hosts: frozenset[str]) -> str:
     return sanitized
 
 
-def _open_no_redirect(opener: object, url: str) -> BinaryIO:
+def _open_no_redirect(opener: NoRedirectHttpOpener, url: str) -> BinaryIO:
     open_method = getattr(opener, "open_no_redirect", None)
     if not callable(open_method):
         raise TypeError("registered opener must provide open_no_redirect()")

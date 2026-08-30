@@ -23,6 +23,7 @@ from financial_agent.documents import (
 from .base import (
     DocumentDiscoveryContext,
     HttpStatusError,
+    NoRedirectHttpOpener,
     SourceAdapterResult,
     classify_access_error,
     sanitize_public_locator,
@@ -93,7 +94,7 @@ class DartDocumentSourceAdapter:
 
     source_code = "DART"
 
-    def __init__(self, opener: object) -> None:
+    def __init__(self, opener: NoRedirectHttpOpener) -> None:
         self._opener = opener
 
     def supports(self, target: DocumentSourceTarget) -> bool:
@@ -247,12 +248,14 @@ class DartDocumentSourceAdapter:
         )
 
 
-def _open_no_redirect(opener: object, url: str) -> BinaryIO:
+def _open_no_redirect(opener: NoRedirectHttpOpener, url: str) -> BinaryIO:
     open_method = getattr(opener, "open_no_redirect", None)
     if not callable(open_method):
         raise TypeError("DART opener must provide open_no_redirect()")
     return open_method(  # type: ignore[no-any-return]
         url,
+        method="GET",
+        headers={"Accept": "application/json", "Accept-Encoding": "identity"},
         timeout=_REQUEST_TIMEOUT_SECONDS,
     )
 
