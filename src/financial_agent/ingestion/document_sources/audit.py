@@ -576,6 +576,8 @@ def _sec_candidate_provenance_reason(
         or candidate.document_version != accession
     ):
         return "sec_candidate_identity_mismatch"
+    if candidate.target_entity_id != target.entity_id:
+        return "sec_candidate_target_mismatch"
     compact_accession = accession.replace("-", "")
     if _sec_archive_document_identity(
         candidate.source_locator,

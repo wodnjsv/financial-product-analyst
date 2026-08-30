@@ -290,6 +290,7 @@ def test_sec_returns_only_497k_bound_to_exact_series_and_class() -> None:
     )
     assert candidate.authority_tier is SourceAuthorityTier.TIER_1_REGULATORY
     assert candidate.publisher_role is PublisherRole.REGULATOR_DISCLOSURE
+    assert candidate.target_entity_id == "product-1"
     assert candidate.effective_from is None
     assert all(headers["User-Agent"] == _USER_AGENT for _, headers in opener.calls)
 

@@ -179,7 +179,14 @@ class SecDocumentSourceAdapter:
         return SourceAdapterResult(
             status=SourceAuditStatus.ELIGIBLE,
             reason_code=None,
-            candidates=tuple(_candidate(item, binding=binding) for item in selected),
+            candidates=tuple(
+                _candidate(
+                    item,
+                    binding=binding,
+                    target_entity_id=target.entity_id,
+                )
+                for item in selected
+            ),
         )
 
     def _filings(
@@ -623,6 +630,7 @@ def _candidate(
     item: _BoundFiling,
     *,
     binding: _Binding,
+    target_entity_id: str,
 ) -> DocumentSourceCandidate:
     filing = item.filing
     archive_base = _archive_base(binding, filing.accession)
@@ -655,6 +663,7 @@ def _candidate(
         effective_to=None,
         media_type=item.media_type,
         accession_or_receipt_id=filing.accession,
+        target_entity_id=target_entity_id,
     )
 
 

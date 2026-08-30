@@ -146,6 +146,7 @@ def _sec_candidate(**changes: object) -> DocumentSourceCandidate:
         "media_type": "text/html",
         "accession_or_receipt_id": accession,
         "document_version": accession,
+        "target_entity_id": "overseas-etf",
     }
     values.update(changes)
     return replace(
@@ -798,6 +799,36 @@ def test_dart_completeness_rejects_candidate_bound_to_another_product() -> None:
                 status=SourceAuditStatus.ELIGIBLE,
                 reason_code=None,
                 candidate=_dart_candidate(),
+            ),
+        ),
+    )
+
+    assert document_source_audit_passed(report) is False
+
+
+def test_sec_completeness_rejects_same_cik_candidate_bound_to_another_class(
+) -> None:
+    report = DocumentSourceAuditReport(
+        schema_version="1.0",
+        generated_at=_NOW,
+        cutoff_date=_CUTOFF,
+        dataset_version="2026-08-24",
+        entries=(
+            DocumentSourceAuditEntry(
+                target=_target(
+                    "overseas-etf-other-class",
+                    product_family="overseas_etf",
+                    identifiers=(
+                        _SEC_IDENTIFIERS[0],
+                        _SEC_IDENTIFIERS[1],
+                        ("SEC_CLASS_ID", "C000000002"),
+                    ),
+                ),
+                status=SourceAuditStatus.ELIGIBLE,
+                reason_code=None,
+                candidate=_sec_candidate(
+                    target_entity_id="overseas-etf-original-class"
+                ),
             ),
         ),
     )
