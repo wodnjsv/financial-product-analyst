@@ -17,6 +17,7 @@ from financial_agent.graph.contract import (
 from financial_agent.graph.exporter import (
     entity_iri,
     evidence_iri,
+    holding_weight_observation_iri,
     relation_iri,
     source_iri,
 )
@@ -45,6 +46,9 @@ def test_entity_iri_is_stable_while_record_iris_are_versioned() -> None:
     assert str(source_iri("version/1", "source/1")) == (
         "urn:financial-agent:source:version%2F1:source%2F1"
     )
+    assert str(holding_weight_observation_iri("version/1", "observation/1")) == (
+        "urn:financial-agent:holding-weight:version%2F1:observation%2F1"
+    )
     assert relation_iri("version/1", "relation/1") != relation_iri(
         "version/2", "relation/1"
     )
@@ -66,11 +70,13 @@ def test_entity_iri_is_stable_while_record_iris_are_versioned() -> None:
         lambda value: evidence_iri("version-1", value),
         lambda value: source_iri(value, "source-1"),
         lambda value: source_iri("version-1", value),
+        lambda value: holding_weight_observation_iri(value, "observation-1"),
+        lambda value: holding_weight_observation_iri("version-1", value),
     ],
 )
-@pytest.mark.parametrize("value", ["", "contains\x00nul"])
+@pytest.mark.parametrize("value", ["", "   ", "contains\x00nul"])
 def test_iri_helpers_reject_empty_and_nul_segments(build, value: str) -> None:
-    """Catches ambiguous empty segments and NUL-bearing opaque identifiers."""
+    """Catches ambiguous blank segments and NUL-bearing opaque identifiers."""
     with pytest.raises(ValueError, match="invalid_identifier"):
         build(value)
 
@@ -79,6 +85,7 @@ def test_projection_contract_is_frozen_and_preserves_exact_types() -> None:
     """Catches mutable boundary records or coercion of exact financial values."""
     metric = RelationMetricProjection(
         dataset_version="2026-08-24-v1",
+        observation_id="weight-observation-1",
         relation_id="relation-1",
         metric_id="krx_etf_holding_weight_pct",
         numeric_value=Decimal("27.40"),

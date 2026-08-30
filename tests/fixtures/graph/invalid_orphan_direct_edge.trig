@@ -1,0 +1,6 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:product a fp:FinancialProduct ; fp:managedBy fp:manager .
+  fp:manager a fp:AssetManager .
+}

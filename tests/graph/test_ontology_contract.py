@@ -74,6 +74,10 @@ def test_tbox_parses_and_matches_question_predicates() -> None:
     )
 
     assert domain_properties == APPROVED_PREDICATES
+    assert all(
+        (FP[property_id], RDF.type, OWL.ObjectProperty) in graph
+        for property_id in domain_properties
+    )
     assert question_predicates() <= APPROVED_PREDICATES
     assert APPROVED_PREDICATES - question_predicates() == {"containsSecurity"}
 
@@ -150,3 +154,74 @@ def test_exported_identifier_metadata_properties_are_typed_literals() -> None:
 
     assert (FP.evidenceId, RDFS.domain, FP.EvidenceRecord) in graph
     assert (FP.sourceId, RDFS.domain, FP.SourceRecord) in graph
+
+
+def test_document_and_chunk_provenance_properties_have_approved_types() -> None:
+    """Catches an ontology that names document classes but cannot express their provenance."""
+    graph = _tbox()
+
+    object_properties = {
+        FP.publisherOrganization: (FP.OfficialDocument, FP.Organization),
+        FP.documentChunk: (FP.RiskFactor, FP.DocumentChunk),
+        FP.evidenceRecord: (FP.DocumentChunk, FP.EvidenceRecord),
+    }
+    for property_, (domain, range_) in object_properties.items():
+        assert (property_, RDF.type, OWL.ObjectProperty) in graph
+        assert (property_, RDFS.domain, domain) in graph
+        assert (property_, RDFS.range, range_) in graph
+        assert (property_, RDF.type, FP.DomainPredicate) not in graph
+
+    datatype_properties = {
+        FP.effectiveFrom: (FP.OfficialDocument, XSD.date),
+        FP.effectiveTo: (FP.OfficialDocument, XSD.date),
+        FP.documentVersion: (FP.OfficialDocument, XSD.string),
+        FP.sourceObjectId: (FP.OfficialDocument, XSD.string),
+        FP.page: (FP.DocumentChunk, XSD.integer),
+        FP.section: (FP.DocumentChunk, XSD.string),
+        FP.sourceSpan: (FP.DocumentChunk, XSD.string),
+    }
+    for property_, (domain, range_) in datatype_properties.items():
+        assert (property_, RDF.type, OWL.DatatypeProperty) in graph
+        assert (property_, RDFS.domain, domain) in graph
+        assert (property_, RDFS.range, range_) in graph
+        assert (property_, RDF.type, FP.DomainPredicate) not in graph
+
+    for property_ in (FP.publishedAt, FP.availableAt):
+        assert (property_, RDF.type, OWL.DatatypeProperty) in graph
+        assert _property_classes(
+            graph,
+            str(property_).removeprefix(f"{ONTOLOGY_IRI}#"),
+            RDFS.domain,
+        ) == {"OfficialDocument", "RelationAssertion"}
+        assert (property_, RDFS.range, XSD.dateTime) in graph
+
+
+def test_holding_weight_observation_vocabulary_is_non_domain_metadata() -> None:
+    """Catches flattening a dated holding weight onto a relation assertion."""
+    graph = _tbox()
+
+    assert (FP.HoldingWeightObservation, RDF.type, OWL.Class) in graph
+    assert (
+        FP.holdingWeightObservation,
+        RDF.type,
+        OWL.ObjectProperty,
+    ) in graph
+    assert (FP.holdingWeightObservation, RDFS.domain, FP.RelationAssertion) in graph
+    assert (
+        FP.holdingWeightObservation,
+        RDFS.range,
+        FP.HoldingWeightObservation,
+    ) in graph
+    for property_, range_ in (
+        (FP.observationId, XSD.string),
+        (FP.holdingWeightPercentage, XSD.decimal),
+        (FP.applicableDate, XSD.date),
+    ):
+        assert (property_, RDF.type, OWL.DatatypeProperty) in graph
+        assert (property_, RDFS.domain, FP.HoldingWeightObservation) in graph
+        assert (property_, RDFS.range, range_) in graph
+    assert (
+        FP.holdingWeightObservation,
+        RDF.type,
+        FP.DomainPredicate,
+    ) not in graph

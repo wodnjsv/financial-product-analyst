@@ -1,0 +1,16 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:product a fp:FinancialProduct ; fp:documentedBy fp:document .
+  fp:publisher a fp:Organization .
+  fp:document a fp:OfficialDocument ; fp:publisherOrganization fp:publisher ;
+    fp:publishedAt "2026-08-20T00:00:00Z"^^xsd:dateTime ;
+    fp:effectiveFrom "2026-08-01"^^xsd:date ; fp:effectiveTo "2026-08-24"^^xsd:date ;
+    fp:availableAt "2026-08-20T00:00:00Z"^^xsd:dateTime ; fp:documentVersion "v1" .
+  fp:evidence a fp:EvidenceRecord ; fp:sourceRecord fp:source .
+  fp:source a fp:SourceRecord .
+  fp:relation a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:documentedBy ;
+    fp:object fp:document ; fp:relationId "missing-source-object" ;
+    fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+}

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
-from warnings import catch_warnings, simplefilter
+from decimal import Decimal
+from warnings import catch_warnings, filterwarnings
 
 import pytest
 from rdflib import Dataset, Literal, RDF, URIRef
@@ -12,6 +13,7 @@ from financial_agent.graph.contract import (
     EvidenceProjection,
     FP,
     GraphProjectionBatch,
+    RelationMetricProjection,
     RelationProjection,
     SourceProjection,
 )
@@ -82,6 +84,19 @@ def _exported_dataset() -> Dataset:
                 None,
                 None,
                 (f"evidence/{index}",),
+                (
+                    RelationMetricProjection(
+                        VERSION,
+                        "observation/holding-weight",
+                        relation_id,
+                        "official_holding_weight_pct",
+                        Decimal("25.00"),
+                        "percentage_point",
+                        CUTOFF,
+                    ),
+                )
+                if predicate_id == "holdsSecurity"
+                else (),
             )
             for index, (predicate_id, subject_id, object_id, relation_id) in enumerate(
                 RELATIONS, start=1
@@ -91,7 +106,16 @@ def _exported_dataset() -> Dataset:
     artifacts = build_graph_artifacts(batch)
     dataset = Dataset()
     with catch_warnings():
-        simplefilter("ignore", DeprecationWarning)
+        for module in (r"rdflib\.graph", r"rdflib\.plugins\.parsers\.nquads"):
+            filterwarnings(
+                "ignore",
+                message=(
+                    r"Dataset\.default_context is deprecated, use "
+                    r"Dataset\.default_graph instead\."
+                ),
+                category=DeprecationWarning,
+                module=module,
+            )
         dataset.parse(data=artifacts.data_nquads, format="nquads")
         dataset.parse(data=artifacts.evidence_nquads, format="nquads")
     return dataset

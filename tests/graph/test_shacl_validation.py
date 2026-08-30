@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from hashlib import sha256
 from pathlib import Path
-from warnings import catch_warnings, simplefilter
+from warnings import catch_warnings, filterwarnings
 
 import pytest
 from rdflib import Dataset
@@ -34,7 +34,21 @@ def test_valid_fixture_exercises_each_approved_predicate() -> None:
     fixture = FIXTURE_DIR / "valid_all_predicates.trig"
     graph = Dataset()
     with catch_warnings():
-        simplefilter("ignore", DeprecationWarning)
+        filterwarnings(
+            "ignore",
+            message=(
+                r"Dataset\.default_context is deprecated, use "
+                r"Dataset\.default_graph instead\."
+            ),
+            category=DeprecationWarning,
+            module=r"rdflib\.graph",
+        )
+        filterwarnings(
+            "ignore",
+            message=r"ConjunctiveGraph is deprecated, use Dataset instead\.",
+            category=DeprecationWarning,
+            module=r"rdflib\.plugins\.parsers\.trig",
+        )
         graph.parse(fixture, format="trig")
     asserted_predicates = {
         str(predicate).removeprefix(str(FP))
@@ -76,6 +90,78 @@ def test_cutoff_datetime_rejects_the_exclusive_seoul_next_day_boundary() -> None
     assert "SPARQLConstraintComponent" in result.report_text
 
 
+def test_document_and_risk_provenance_fixture_conforms() -> None:
+    """Catches provenance constraints that cannot accept a fully supported document span."""
+    result = validate_fixture("valid_document_risk_provenance.trig")
+
+    assert result.conforms is True, result.report_text
+
+
+def test_document_and_risk_provenance_requires_explicit_trusted_types() -> None:
+    """Catches property-range inference substituting for explicit provenance typing."""
+    result = validate_fixture("invalid_provenance_inferred_types.trig")
+
+    assert result.conforms is False
+    assert "ClassConstraintComponent" in result.report_text
+
+
+def test_document_provenance_requires_explicit_evidence_and_source_types() -> None:
+    """Catches Evidence/source ranges substituting for explicit provenance types."""
+    result = validate_fixture("invalid_document_inferred_evidence_types.trig")
+
+    assert result.conforms is False
+    assert "ClassConstraintComponent" in result.report_text
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    (
+        "invalid_assertion_inferred_evidence_types.trig",
+        "invalid_inferred_relation_assertion_type.trig",
+    ),
+)
+def test_relation_assertion_provenance_requires_explicit_trusted_types(
+    fixture: str,
+) -> None:
+    """Catches assertion or Evidence/source types supplied only by TBox inference."""
+    result = validate_fixture(fixture)
+
+    assert result.conforms is False
+    assert "ClassConstraintComponent" in result.report_text
+
+
+@pytest.mark.parametrize(
+    ("fixture", "expected_path"),
+    [
+        ("invalid_risk_missing_chunk.trig", "documentChunk"),
+        ("invalid_risk_missing_page.trig", "page"),
+        ("invalid_risk_missing_section.trig", "section"),
+        ("invalid_risk_missing_span.trig", "sourceSpan"),
+        ("invalid_risk_missing_evidence.trig", "evidenceRecord"),
+        ("invalid_document_missing_publisher.trig", "publisherOrganization"),
+        ("invalid_document_missing_version.trig", "documentVersion"),
+        ("invalid_document_missing_source_object.trig", "sourceObjectId"),
+    ],
+)
+def test_document_and_risk_provenance_missingness_is_rejected(
+    fixture: str,
+    expected_path: str,
+) -> None:
+    """Catches document or span facts becoming claim-eligible without required provenance."""
+    result = validate_fixture(fixture)
+
+    assert result.conforms is False
+    assert "MinCountConstraintComponent" in result.report_text
+    assert expected_path in result.report_text
+
+
+def test_multiple_holding_weight_observations_conform() -> None:
+    """Catches a shape that flattens or rejects independently dated holding observations."""
+    result = validate_fixture("valid_multiple_holding_weights.trig")
+
+    assert result.conforms is True, result.report_text
+
+
 @pytest.mark.parametrize("predicate", sorted(APPROVED_PREDICATES))
 def test_domain_range_requires_explicit_types_before_relation_entailment(
     predicate: str,
@@ -98,6 +184,16 @@ def test_domain_range_requires_explicit_types_before_relation_entailment(
         ("invalid_etf_etn.trig", "NotConstraintComponent"),
         ("invalid_grade_scheme.trig", "InConstraintComponent"),
         ("invalid_holding_weight.trig", "MinCountConstraintComponent"),
+        ("invalid_holding_weight_date.trig", "MinCountConstraintComponent"),
+        ("invalid_holding_weight_wrong_relation.trig", "SPARQLConstraintComponent"),
+        ("invalid_ambiguous_holding_observation.trig", "MaxCountConstraintComponent"),
+        ("invalid_holding_weight_same_date.trig", "SPARQLConstraintComponent"),
+        ("invalid_assertion_missing_direct_edge.trig", "SPARQLConstraintComponent"),
+        ("invalid_orphan_direct_edge.trig", "SPARQLConstraintComponent"),
+        ("invalid_blank_document_provenance.trig", "PatternConstraintComponent"),
+        ("invalid_blank_risk_span.trig", "PatternConstraintComponent"),
+        ("invalid_blank_holding_observation_id.trig", "PatternConstraintComponent"),
+        ("invalid_duplicate_holding_observation_id.trig", "SPARQLConstraintComponent"),
     ],
 )
 def test_invalid_fixture_is_rejected_by_its_stable_constraint_component(

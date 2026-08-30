@@ -7,7 +7,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping, Sequence
 
-from financial_agent.graph.contract import GraphArtifacts, GraphProjectionBatch
+from financial_agent.graph.contract import (
+    GRAPH_CONTRACT_RELATIVE_PATHS,
+    GraphArtifacts,
+    GraphProjectionBatch,
+)
+from financial_agent.graph.exporter import build_graph_artifacts
 from financial_agent.graph.validator import GraphValidationResult
 
 
@@ -77,6 +82,12 @@ def _ontology_hashes(paths: Sequence[Path]) -> Mapping[str, str]:
         if relative in resolved_paths:
             raise ValueError(f"duplicate ontology path: {relative}")
         resolved_paths[relative] = resolved
+    expected_paths = frozenset(GRAPH_CONTRACT_RELATIVE_PATHS)
+    actual_paths = frozenset(resolved_paths)
+    if actual_paths != expected_paths:
+        missing = ",".join(sorted(expected_paths - actual_paths)) or "none"
+        extra = ",".join(sorted(actual_paths - expected_paths)) or "none"
+        raise ValueError(f"contract path set mismatch: missing={missing}; extra={extra}")
     hashes = {
         relative: sha256(resolved.read_bytes()).hexdigest()
         for relative, resolved in resolved_paths.items()
@@ -93,15 +104,35 @@ def build_graph_manifest(
 ) -> GraphComponentManifest:
     if not validation.conforms:
         raise ValueError("graph validation must conform before manifest generation")
+    ontology_hashes = _ontology_hashes(ontology_paths)
+    data_nquads_hash = sha256(artifacts.data_nquads).hexdigest()
+    evidence_nquads_hash = sha256(artifacts.evidence_nquads).hexdigest()
+    if validation.validated_data_hash != data_nquads_hash:
+        raise ValueError("validated data artifact does not match manifest input")
+    if validation.validated_evidence_hash != evidence_nquads_hash:
+        raise ValueError("validated evidence artifact does not match manifest input")
+    if dict(validation.contract_hashes) != dict(ontology_hashes):
+        raise ValueError("validated contract does not match manifest input")
+    if validation.validated_cutoff_date != batch.cutoff_date.isoformat():
+        raise ValueError("validated cutoff does not match manifest input")
+    validation_report_hash = sha256(validation.report_ntriples).hexdigest()
+    if validation.report_hash != validation_report_hash:
+        raise ValueError("validation report hash does not match report bytes")
+    try:
+        expected_artifacts = build_graph_artifacts(batch)
+    except ValueError as error:
+        raise ValueError("graph artifacts do not match the projection batch") from error
+    if expected_artifacts != artifacts:
+        raise ValueError("graph artifacts do not match the projection batch")
     return GraphComponentManifest(
         schema_version="1",
         dataset_version=batch.dataset_version,
         cutoff_date=batch.cutoff_date.isoformat(),
         exporter_version=EXPORTER_VERSION,
-        ontology_hashes=_ontology_hashes(ontology_paths),
-        data_nquads_hash=sha256(artifacts.data_nquads).hexdigest(),
-        evidence_nquads_hash=sha256(artifacts.evidence_nquads).hexdigest(),
-        validation_report_hash=sha256(validation.report_ntriples).hexdigest(),
+        ontology_hashes=ontology_hashes,
+        data_nquads_hash=data_nquads_hash,
+        evidence_nquads_hash=evidence_nquads_hash,
+        validation_report_hash=validation_report_hash,
         entity_type_counts=MappingProxyType(
             dict(sorted(artifacts.entity_type_counts.items()))
         ),

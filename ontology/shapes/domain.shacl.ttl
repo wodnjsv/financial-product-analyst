@@ -14,6 +14,47 @@ fp:CreditGradeShape a sh:NodeShape ;
   sh:targetClass fp:CreditGrade ;
   sh:property [ sh:path fp:gradeScheme ; sh:minCount 1 ; sh:in ( "credit_grade_v1" ) ] .
 
+fp:ExplicitRelationAssertionProvenanceShape a sh:NodeShape ;
+  sh:targetSubjectsOf fp:predicate ;
+  sh:class fp:RelationAssertion ;
+  sh:property [ sh:path fp:supportedBy ; sh:minCount 1 ; sh:class fp:EvidenceRecord ] ;
+  sh:property [ sh:path ( fp:supportedBy fp:sourceRecord ) ; sh:minCount 1 ; sh:class fp:SourceRecord ] .
+
+fp:DirectDomainEdgeShape a sh:NodeShape ;
+  sh:targetSubjectsOf fp:managedBy, fp:issuedBy, fp:tracksIndex, fp:holdsSecurity,
+    fp:containsSecurity, fp:securityOfCompany, fp:controlsCompany, fp:listedOn,
+    fp:classifiedAsIndustry, fp:associatedWithTheme, fp:hasShareClass,
+    fp:documentedBy, fp:hasRiskFactor ;
+  sh:sparql [
+    sh:message "Every direct domain edge must have a matching Evidence-backed RelationAssertion." ;
+    sh:select """
+      SELECT $this ?predicate ?object WHERE {
+        $this ?predicate ?object .
+        FILTER(?predicate IN (
+          <urn:ontology:financial-product:v1#managedBy>,
+          <urn:ontology:financial-product:v1#issuedBy>,
+          <urn:ontology:financial-product:v1#tracksIndex>,
+          <urn:ontology:financial-product:v1#holdsSecurity>,
+          <urn:ontology:financial-product:v1#containsSecurity>,
+          <urn:ontology:financial-product:v1#securityOfCompany>,
+          <urn:ontology:financial-product:v1#controlsCompany>,
+          <urn:ontology:financial-product:v1#listedOn>,
+          <urn:ontology:financial-product:v1#classifiedAsIndustry>,
+          <urn:ontology:financial-product:v1#associatedWithTheme>,
+          <urn:ontology:financial-product:v1#hasShareClass>,
+          <urn:ontology:financial-product:v1#documentedBy>,
+          <urn:ontology:financial-product:v1#hasRiskFactor>
+        ))
+        FILTER NOT EXISTS {
+          ?assertion <urn:ontology:financial-product:v1#subject> $this ;
+                     <urn:ontology:financial-product:v1#predicate> ?predicate ;
+                     <urn:ontology:financial-product:v1#object> ?object ;
+                     <urn:ontology:financial-product:v1#supportedBy> ?evidence .
+        }
+      }
+    """
+  ] .
+
 fp:ManagedByAssertionShape a sh:NodeShape ;
   sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#managedBy> . }" ] ;
   sh:property [ sh:path fp:subject ; sh:class fp:FinancialProduct ] ;
@@ -33,7 +74,57 @@ fp:HoldsSecurityAssertionShape a sh:NodeShape ;
   sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#holdsSecurity> . }" ] ;
   sh:property [ sh:path fp:subject ; sh:or ( [ sh:class fp:ETF ] [ sh:class fp:PublicFund ] ) ] ;
   sh:property [ sh:path fp:object ; sh:class fp:Security ] ;
-  sh:property [ sh:path fp:holdingWeightPercentage ; sh:minCount 1 ; sh:datatype xsd:decimal ; sh:minInclusive 0 ; sh:maxInclusive 100 ] .
+  sh:property [ sh:path fp:holdingWeightObservation ; sh:minCount 1 ; sh:class fp:HoldingWeightObservation ] .
+
+fp:HoldingWeightObservationShape a sh:NodeShape ;
+  sh:targetClass fp:HoldingWeightObservation ;
+  sh:targetObjectsOf fp:holdingWeightObservation ;
+  sh:property [ sh:path fp:observationId ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minLength 1 ; sh:pattern "\\S" ] ;
+  sh:property [ sh:path fp:holdingWeightPercentage ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:decimal ; sh:minInclusive 0 ; sh:maxInclusive 100 ] ;
+  sh:property [ sh:path fp:applicableDate ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:date ] ;
+  sh:property [ sh:path [ sh:inversePath fp:holdingWeightObservation ] ; sh:minCount 1 ; sh:maxCount 1 ; sh:class fp:RelationAssertion ] ;
+  sh:sparql [
+    sh:message "HoldingWeightObservation must belong to a holdsSecurity assertion." ;
+    sh:select """
+      SELECT $this WHERE {
+        FILTER NOT EXISTS {
+          ?assertion <urn:ontology:financial-product:v1#holdingWeightObservation> $this ;
+                     <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#holdsSecurity> .
+        }
+      }
+    """
+  ] ;
+  sh:sparql [
+    sh:message "Holding-weight applicableDate must not be later than the validation cutoff." ;
+    sh:select """
+      SELECT $this ?value WHERE {
+        <urn:validation:financial-product:context> <urn:validation:financial-product#cutoffDate> ?cutoff .
+        $this <urn:ontology:financial-product:v1#applicableDate> ?value .
+        FILTER(DATATYPE(?value) = <http://www.w3.org/2001/XMLSchema#date> && ?value > ?cutoff)
+      }
+    """
+  ] ;
+  sh:sparql [
+    sh:message "A holdsSecurity assertion cannot have multiple weight observations for one applicableDate." ;
+    sh:select """
+      SELECT $this WHERE {
+        ?assertion <urn:ontology:financial-product:v1#holdingWeightObservation> $this, ?other .
+        $this <urn:ontology:financial-product:v1#applicableDate> ?date .
+        ?other <urn:ontology:financial-product:v1#applicableDate> ?date .
+        FILTER($this != ?other)
+      }
+    """
+  ] ;
+  sh:sparql [
+    sh:message "HoldingWeightObservation observationId must be unique within the validated graph." ;
+    sh:select """
+      SELECT $this WHERE {
+        $this <urn:ontology:financial-product:v1#observationId> ?observationId .
+        ?other <urn:ontology:financial-product:v1#observationId> ?observationId .
+        FILTER($this != ?other)
+      }
+    """
+  ] .
 
 fp:ContainsSecurityAssertionShape a sh:NodeShape ;
   sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#containsSecurity> . }" ] ;
@@ -73,9 +164,47 @@ fp:HasShareClassAssertionShape a sh:NodeShape ;
 fp:DocumentedByAssertionShape a sh:NodeShape ;
   sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#documentedBy> . }" ] ;
   sh:property [ sh:path fp:subject ; sh:or ( [ sh:class fp:FinancialProduct ] [ sh:class fp:Organization ] [ sh:class fp:PolicyProgram ] ) ] ;
-  sh:property [ sh:path fp:object ; sh:class fp:OfficialDocument ] .
+  sh:property [ sh:path fp:object ; sh:class fp:OfficialDocument ] ;
+  sh:property [ sh:path fp:supportedBy ; sh:minCount 1 ; sh:class fp:EvidenceRecord ] ;
+  sh:property [ sh:path ( fp:supportedBy fp:sourceRecord ) ; sh:minCount 1 ; sh:class fp:SourceRecord ] ;
+  sh:property [ sh:path ( fp:object fp:publisherOrganization ) ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ; sh:class fp:Organization ] ;
+  sh:property [ sh:path ( fp:object fp:publishedAt ) ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] ;
+  sh:property [ sh:path ( fp:object fp:effectiveFrom ) ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:date ] ;
+  sh:property [ sh:path ( fp:object fp:effectiveTo ) ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:date ] ;
+  sh:property [ sh:path ( fp:object fp:availableAt ) ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:dateTime ] ;
+  sh:property [ sh:path ( fp:object fp:documentVersion ) ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minLength 1 ; sh:pattern "\\S" ] ;
+  sh:property [ sh:path ( fp:object fp:sourceObjectId ) ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:string ; sh:minLength 1 ; sh:pattern "\\S" ] .
 
 fp:HasRiskFactorAssertionShape a sh:NodeShape ;
   sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#hasRiskFactor> . }" ] ;
   sh:property [ sh:path fp:subject ; sh:class fp:FinancialProduct ] ;
-  sh:property [ sh:path fp:object ; sh:class fp:RiskFactor ] .
+  sh:property [ sh:path fp:object ; sh:class fp:RiskFactor ] ;
+  sh:property [ sh:path fp:supportedBy ; sh:minCount 1 ; sh:class fp:EvidenceRecord ] ;
+  sh:property [ sh:path ( fp:supportedBy fp:sourceRecord ) ; sh:minCount 1 ; sh:class fp:SourceRecord ] ;
+  sh:property [ sh:path ( fp:object fp:documentChunk ) ; sh:minCount 1 ; sh:class fp:DocumentChunk ] ;
+  sh:property [ sh:path ( fp:object fp:documentChunk fp:page ) ; sh:minCount 1 ; sh:datatype xsd:integer ; sh:minInclusive 1 ] ;
+  sh:property [ sh:path ( fp:object fp:documentChunk fp:section ) ; sh:minCount 1 ; sh:datatype xsd:string ; sh:minLength 1 ; sh:pattern "\\S" ] ;
+  sh:property [ sh:path ( fp:object fp:documentChunk fp:sourceSpan ) ; sh:minCount 1 ; sh:datatype xsd:string ; sh:minLength 1 ; sh:pattern "\\S" ] ;
+  sh:property [ sh:path ( fp:object fp:documentChunk fp:evidenceRecord ) ; sh:minCount 1 ; sh:class fp:EvidenceRecord ] ;
+  sh:sparql [
+    sh:message "Risk-factor assertion and DocumentChunks must reference the same Evidence set." ;
+    sh:select """
+      SELECT $this WHERE {
+        {
+          $this <urn:ontology:financial-product:v1#object> ?risk ;
+                <urn:ontology:financial-product:v1#supportedBy> ?evidence .
+          FILTER NOT EXISTS {
+            ?risk <urn:ontology:financial-product:v1#documentChunk> ?chunk .
+            ?chunk <urn:ontology:financial-product:v1#evidenceRecord> ?evidence .
+          }
+        } UNION {
+          $this <urn:ontology:financial-product:v1#object> ?risk .
+          ?risk <urn:ontology:financial-product:v1#documentChunk> ?chunk .
+          ?chunk <urn:ontology:financial-product:v1#evidenceRecord> ?evidence .
+          FILTER NOT EXISTS {
+            $this <urn:ontology:financial-product:v1#supportedBy> ?evidence .
+          }
+        }
+      }
+    """
+  ] .

@@ -35,6 +35,7 @@ fp:OfficialDocument a owl:Class .
 fp:DocumentChunk a owl:Class .
 fp:RiskFactor a owl:Class .
 fp:RelationAssertion a owl:Class .
+fp:HoldingWeightObservation a owl:Class .
 fp:EvidenceRecord a owl:Class .
 fp:SourceRecord a owl:Class .
 
@@ -58,13 +59,25 @@ fp:object a owl:ObjectProperty ; rdfs:domain fp:RelationAssertion .
 fp:supportedBy a owl:ObjectProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range fp:EvidenceRecord .
 fp:sourceRecord a owl:ObjectProperty ; rdfs:domain fp:EvidenceRecord ; rdfs:range fp:SourceRecord .
 fp:documentChunk a owl:ObjectProperty ; rdfs:domain fp:RiskFactor ; rdfs:range fp:DocumentChunk .
+fp:publisherOrganization a owl:ObjectProperty ; rdfs:domain fp:OfficialDocument ; rdfs:range fp:Organization .
+fp:evidenceRecord a owl:ObjectProperty ; rdfs:domain fp:DocumentChunk ; rdfs:range fp:EvidenceRecord .
+fp:holdingWeightObservation a owl:ObjectProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range fp:HoldingWeightObservation .
 fp:entityId a owl:DatatypeProperty ; rdfs:range xsd:string .
 fp:relationId a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:string .
+fp:observationId a owl:DatatypeProperty ; rdfs:domain fp:HoldingWeightObservation ; rdfs:range xsd:string .
 fp:evidenceId a owl:DatatypeProperty ; rdfs:domain fp:EvidenceRecord ; rdfs:range xsd:string .
 fp:sourceId a owl:DatatypeProperty ; rdfs:domain fp:SourceRecord ; rdfs:range xsd:string .
 fp:datasetVersion a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:string .
 fp:validFrom a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:date .
 fp:validTo a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:date .
-fp:publishedAt a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:dateTime .
-fp:availableAt a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:dateTime .
-fp:holdingWeightPercentage a owl:DatatypeProperty ; rdfs:domain fp:RelationAssertion ; rdfs:range xsd:decimal .
+fp:publishedAt a owl:DatatypeProperty ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:RelationAssertion fp:OfficialDocument ) ] ; rdfs:range xsd:dateTime .
+fp:effectiveFrom a owl:DatatypeProperty ; rdfs:domain fp:OfficialDocument ; rdfs:range xsd:date .
+fp:effectiveTo a owl:DatatypeProperty ; rdfs:domain fp:OfficialDocument ; rdfs:range xsd:date .
+fp:availableAt a owl:DatatypeProperty ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:RelationAssertion fp:OfficialDocument ) ] ; rdfs:range xsd:dateTime .
+fp:documentVersion a owl:DatatypeProperty ; rdfs:domain fp:OfficialDocument ; rdfs:range xsd:string .
+fp:sourceObjectId a owl:DatatypeProperty ; rdfs:domain fp:OfficialDocument ; rdfs:range xsd:string .
+fp:page a owl:DatatypeProperty ; rdfs:domain fp:DocumentChunk ; rdfs:range xsd:integer .
+fp:section a owl:DatatypeProperty ; rdfs:domain fp:DocumentChunk ; rdfs:range xsd:string .
+fp:sourceSpan a owl:DatatypeProperty ; rdfs:domain fp:DocumentChunk ; rdfs:range xsd:string .
+fp:holdingWeightPercentage a owl:DatatypeProperty ; rdfs:domain fp:HoldingWeightObservation ; rdfs:range xsd:decimal .
+fp:applicableDate a owl:DatatypeProperty ; rdfs:domain fp:HoldingWeightObservation ; rdfs:range xsd:date .

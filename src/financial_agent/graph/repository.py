@@ -91,7 +91,11 @@ class GraphProjectionRepository:
         async with self._engine.connect() as connection:
             transaction = await connection.begin()
             try:
-                await connection.execute(sa.text("SET TRANSACTION READ ONLY"))
+                await connection.execute(
+                    sa.text(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                    )
+                )
                 batch = await self._load(connection, dataset_version)
             finally:
                 if transaction.is_active:
@@ -243,6 +247,7 @@ class GraphProjectionRepository:
         metric_rows = (
             await connection.execute(
                 sa.select(
+                    observation_record.c.observation_id,
                     observation_record.c.relation_id,
                     observation_record.c.metric_id,
                     observation_record.c.value_status,
@@ -395,19 +400,39 @@ def _build_batch(
             publisher_id=row.publisher,
         )
 
+    relation_predicates = {
+        row.relation_id: row.predicate_id for row in relation_rows
+    }
+    observation_ids: set[str] = set()
+    metric_dates_by_relation: dict[str, set[date]] = defaultdict(set)
     metrics_by_relation: dict[str, list[RelationMetricProjection]] = defaultdict(list)
     for row in metric_rows:
+        if row.observation_id in observation_ids:
+            _fail("duplicate_metric_observation", row.observation_id)
+        observation_ids.add(row.observation_id)
+        if relation_predicates.get(row.relation_id) != "holdsSecurity":
+            _fail("invalid_metric_relation", row.relation_id)
         if (
             row.value_kind != "numeric"
             or row.value_status not in {"present", "zero"}
             or not isinstance(row.numeric_value, Decimal)
             or not row.numeric_value.is_finite()
+            or row.numeric_value < Decimal("0")
+            or row.numeric_value > Decimal("100")
             or row.unit != "percentage_point"
         ):
             _fail("invalid_relation_metric", f"{row.relation_id}:{row.metric_id}")
+        if row.applicable_date is None:
+            _fail("missing_metric_date", row.observation_id)
+        if row.applicable_date > cutoff_date:
+            _fail("metric_after_cutoff", row.observation_id)
+        if row.applicable_date in metric_dates_by_relation[row.relation_id]:
+            _fail("ambiguous_metric_date", row.relation_id)
+        metric_dates_by_relation[row.relation_id].add(row.applicable_date)
         metrics_by_relation[row.relation_id].append(
             RelationMetricProjection(
                 dataset_version=dataset_version,
+                observation_id=row.observation_id,
                 relation_id=row.relation_id,
                 metric_id=row.metric_id,
                 numeric_value=row.numeric_value,
@@ -435,11 +460,13 @@ def _build_batch(
                 metrics_by_relation[row.relation_id],
                 key=lambda metric: (
                     metric.metric_id,
-                    metric.applicable_date or date.min,
-                    metric.numeric_value,
+                    metric.applicable_date,
+                    metric.observation_id,
                 ),
             )
         )
+        if row.predicate_id == "holdsSecurity" and not relation_metrics:
+            _fail("missing_holding_weight", row.relation_id)
         relations.append(
             RelationProjection(
                 dataset_version=dataset_version,

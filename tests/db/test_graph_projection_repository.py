@@ -266,11 +266,18 @@ def _seed_projection(database_url: str) -> str:
                 (%s, 'weight-approved', NULL, 'rel-a-holding',
                  'official_holding_weight_pct', %s, 'zero', 0,
                  'percentage_point', DATE '2026-08-23', %s, %s),
+                (%s, 'weight-approved-later', NULL, 'rel-a-holding',
+                 'official_holding_weight_pct', %s, 'present', 27.4,
+                 'percentage_point', DATE '2026-08-24', %s, %s),
                 (%s, 'weight-unapproved', NULL, 'rel-a-holding',
                  'holding_weight_like_but_unapproved', %s, 'present', 91,
                  'percentage_point', DATE '2026-08-23', %s, %s)
             """,
             (
+                dataset_version,
+                definition_version,
+                VALID_RECORD_HASH,
+                CREATED_AT,
                 dataset_version,
                 definition_version,
                 VALID_RECORD_HASH,
@@ -394,11 +401,21 @@ async def test_load_projects_one_version_with_exact_types_metrics_and_stable_sor
             (
                 RelationMetricProjection(
                     dataset_version,
+                    "weight-approved",
                     "rel-a-holding",
                     "official_holding_weight_pct",
                     Decimal("0E-12"),
                     "percentage_point",
                     datetime(2026, 8, 23, tzinfo=UTC).date(),
+                ),
+                RelationMetricProjection(
+                    dataset_version,
+                    "weight-approved-later",
+                    "rel-a-holding",
+                    "official_holding_weight_pct",
+                    Decimal("27.400000000000"),
+                    "percentage_point",
+                    datetime(2026, 8, 24, tzinfo=UTC).date(),
                 ),
             ),
         ),
@@ -413,14 +430,92 @@ async def test_load_projects_one_version_with_exact_types_metrics_and_stable_sor
             ("evidence-b",),
         ),
     )
-    assert statements[0].upper() == "SET TRANSACTION READ ONLY"
+    assert statements[0].upper() == (
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+    )
     assert all(
-        statement.upper().startswith(("SELECT ", "SET TRANSACTION READ ONLY"))
+        statement.upper().startswith(
+            ("SELECT ", "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        )
         for statement in statements
     )
     assert len(rollbacks) >= 2
     assert repository_engine.sync_engine.pool.checkedout() == 0
     assert _snapshot_operations(migrated_database_url) == before_operations
+
+
+async def test_load_uses_one_repeatable_read_snapshot_across_repository_selects(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+) -> None:
+    """Catches a relation/Evidence pair split across READ COMMITTED statements."""
+    dataset_version = _seed_projection(migrated_database_url)
+    inserted = False
+
+    def commit_pair_after_relation_select(
+        _connection,
+        _cursor,
+        statement,
+        _parameters,
+        _context,
+        _many,
+    ) -> None:
+        nonlocal inserted
+        normalized = " ".join(statement.split()).lower()
+        if inserted or "from relation.relation_record" not in normalized:
+            return
+        with psycopg.connect(
+            normalize_psycopg_url(migrated_database_url)
+        ) as writer:
+            _insert_relation_with_evidence(
+                writer,
+                dataset_version,
+                relation_id="rel-snapshot-committed",
+                subject_id="z-etf",
+                predicate_id="managedBy",
+                object_id="b-manager",
+                evidence_id="evidence-snapshot-committed",
+            )
+        inserted = True
+
+    event.listen(
+        repository_engine.sync_engine,
+        "after_cursor_execute",
+        commit_pair_after_relation_select,
+    )
+    try:
+        batch = await GraphProjectionRepository(repository_engine).load(dataset_version)
+    finally:
+        event.remove(
+            repository_engine.sync_engine,
+            "after_cursor_execute",
+            commit_pair_after_relation_select,
+        )
+
+    assert inserted is True
+    assert "rel-snapshot-committed" not in {
+        relation.relation_id for relation in batch.relations
+    }
+    assert "evidence-snapshot-committed" not in {
+        evidence.evidence_id for evidence in batch.evidences
+    }
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as verifier:
+        assert verifier.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM relation.relation_record AS relation
+                JOIN evidence.evidence_relation_origin AS origin
+                  ON origin.dataset_version = relation.dataset_version
+                 AND origin.relation_id = relation.relation_id
+                WHERE relation.dataset_version = %s
+                  AND relation.relation_id = 'rel-snapshot-committed'
+                  AND origin.evidence_id = 'evidence-snapshot-committed'
+            )
+            """,
+            (dataset_version,),
+        ).fetchone() == (True,)
+    assert repository_engine.sync_engine.pool.checkedout() == 0
 
 
 async def test_load_returns_an_empty_exact_version_and_rejects_a_missing_version(
@@ -467,6 +562,66 @@ async def test_load_rejects_a_non_finite_approved_relation_metric(
         )
 
     with pytest.raises(GraphProjectionLoadError, match="metric"):
+        await GraphProjectionRepository(repository_engine).load(dataset_version)
+    assert repository_engine.sync_engine.pool.checkedout() == 0
+
+
+async def test_load_rejects_an_approved_holding_weight_without_applicable_date(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+) -> None:
+    dataset_version = _seed_projection(migrated_database_url)
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        connection.execute(
+            """
+            UPDATE observation.observation_record
+            SET applicable_date = NULL
+            WHERE dataset_version = %s AND observation_id = 'weight-approved'
+            """,
+            (dataset_version,),
+        )
+
+    with pytest.raises(GraphProjectionLoadError, match="metric_date"):
+        await GraphProjectionRepository(repository_engine).load(dataset_version)
+    assert repository_engine.sync_engine.pool.checkedout() == 0
+
+
+async def test_load_rejects_an_approved_weight_on_a_non_holding_relation(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+) -> None:
+    dataset_version = _seed_projection(migrated_database_url)
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        connection.execute(
+            """
+            UPDATE observation.observation_record
+            SET relation_id = 'rel-b-share-class'
+            WHERE dataset_version = %s AND observation_id = 'weight-approved'
+            """,
+            (dataset_version,),
+        )
+
+    with pytest.raises(GraphProjectionLoadError, match="metric_relation"):
+        await GraphProjectionRepository(repository_engine).load(dataset_version)
+    assert repository_engine.sync_engine.pool.checkedout() == 0
+
+
+async def test_load_rejects_conflicting_holding_weights_on_the_same_date(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+) -> None:
+    dataset_version = _seed_projection(migrated_database_url)
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        connection.execute(
+            """
+            UPDATE observation.observation_record
+            SET applicable_date = DATE '2026-08-24'
+            WHERE dataset_version = %s AND observation_id = 'weight-approved'
+            """,
+            (dataset_version,),
+        )
+
+    with pytest.raises(GraphProjectionLoadError, match="ambiguous_metric_date"):
         await GraphProjectionRepository(repository_engine).load(dataset_version)
     assert repository_engine.sync_engine.pool.checkedout() == 0
 

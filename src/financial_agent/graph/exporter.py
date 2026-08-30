@@ -34,7 +34,7 @@ class GraphProjectionError(ValueError):
 
 
 def _encoded_segment(value: str) -> str:
-    if not isinstance(value, str) or not value or "\x00" in value:
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
         raise ValueError("invalid_identifier: identifiers must be non-empty and NUL-free")
     return quote(value, safe="")
 
@@ -61,6 +61,16 @@ def source_iri(dataset_version: str, source_id: str) -> URIRef:
     return URIRef(
         "urn:financial-agent:source:"
         f"{_encoded_segment(dataset_version)}:{_encoded_segment(source_id)}"
+    )
+
+
+def holding_weight_observation_iri(
+    dataset_version: str,
+    observation_id: str,
+) -> URIRef:
+    return URIRef(
+        "urn:financial-agent:holding-weight:"
+        f"{_encoded_segment(dataset_version)}:{_encoded_segment(observation_id)}"
     )
 
 
@@ -131,8 +141,14 @@ def _validate_relation(
     _validate_date(relation.valid_to, batch.cutoff_date, f"{relation.relation_id}.valid_to")
     _validate_interval(relation.valid_from, relation.valid_to, relation.relation_id)
 
+    if relation.predicate_id == "holdsSecurity" and not relation.metrics:
+        _fail("missing_holding_weight", relation.relation_id)
+    if relation.metrics and relation.predicate_id != "holdsSecurity":
+        _fail("invalid_metric_relation", relation.relation_id)
+
     for evidence_id in relation.evidence_ids:
         _validate_identifier(evidence_id, "relation.evidence_id")
+    metric_dates: set[date] = set()
     for metric in relation.metrics:
         if metric.relation_id != relation.relation_id:
             _fail("relation_metric_mismatch", metric.metric_id)
@@ -140,13 +156,21 @@ def _validate_relation(
             _fail("unknown_metric", metric.metric_id)
         if not isinstance(metric.numeric_value, Decimal) or not metric.numeric_value.is_finite():
             _fail("invalid_metric_value", metric.metric_id)
+        if metric.numeric_value < Decimal("0") or metric.numeric_value > Decimal("100"):
+            _fail("invalid_metric_value", metric.metric_id)
         if (
             RELATION_METRIC_PROPERTY_BY_ID[metric.metric_id]
             == "holdingWeightPercentage"
             and metric.unit != "percentage_point"
         ):
             _fail("invalid_metric_unit", metric.metric_id)
+        _validate_identifier(metric.observation_id, "metric.observation_id")
         _validate_identifier(metric.metric_id, "metric.metric_id")
+        if metric.applicable_date is None:
+            _fail("missing_metric_date", metric.observation_id)
+        if metric.applicable_date in metric_dates:
+            _fail("ambiguous_metric_date", relation.relation_id)
+        metric_dates.add(metric.applicable_date)
         _validate_date(
             metric.applicable_date,
             batch.cutoff_date,
@@ -171,6 +195,10 @@ def _validate_batch(batch: GraphProjectionBatch) -> None:
     _validate_unique_ids(
         (relation.relation_id for relation in batch.relations),
         "relation",
+    )
+    _validate_unique_ids(
+        (metric.observation_id for metric in metrics),
+        "holding_weight_observation",
     )
 
     entity_ids = frozenset(entity.entity_id for entity in batch.entities)
@@ -312,13 +340,37 @@ def build_graph_artifacts(batch: GraphProjectionBatch) -> GraphArtifacts:
                 (assertion, FP.validTo, Literal(relation.valid_to, datatype=XSD.date), data_graph)
             )
         for metric in relation.metrics:
-            property_ = FP[RELATION_METRIC_PROPERTY_BY_ID[metric.metric_id]]
-            data_quads.append(
+            observation = holding_weight_observation_iri(
+                batch.dataset_version,
+                metric.observation_id,
+            )
+            data_quads.extend(
                 (
-                    assertion,
-                    property_,
-                    Literal(metric.numeric_value, datatype=XSD.decimal),
-                    data_graph,
+                    (
+                        assertion,
+                        FP.holdingWeightObservation,
+                        observation,
+                        data_graph,
+                    ),
+                    (observation, RDF.type, FP.HoldingWeightObservation, data_graph),
+                    (
+                        observation,
+                        FP.observationId,
+                        Literal(metric.observation_id),
+                        data_graph,
+                    ),
+                    (
+                        observation,
+                        FP[RELATION_METRIC_PROPERTY_BY_ID[metric.metric_id]],
+                        Literal(metric.numeric_value, datatype=XSD.decimal),
+                        data_graph,
+                    ),
+                    (
+                        observation,
+                        FP.applicableDate,
+                        Literal(metric.applicable_date, datatype=XSD.date),
+                        data_graph,
+                    ),
                 )
             )
         evidence_quads.extend(

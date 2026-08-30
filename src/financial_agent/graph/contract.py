@@ -12,6 +12,19 @@ from rdflib import Namespace
 ONTOLOGY_IRI = "urn:ontology:financial-product:v1"
 FP = Namespace(f"{ONTOLOGY_IRI}#")
 
+TBOX_RELATIVE_PATHS = (
+    "ontology/common.ttl",
+    "ontology/bond_kr.ttl",
+    "ontology/etf_kr.ttl",
+    "ontology/etf_gl.ttl",
+    "ontology/fund_pub.ttl",
+)
+SHACL_RELATIVE_PATHS = (
+    "ontology/shapes/common.shacl.ttl",
+    "ontology/shapes/domain.shacl.ttl",
+)
+GRAPH_CONTRACT_RELATIVE_PATHS = TBOX_RELATIVE_PATHS + SHACL_RELATIVE_PATHS
+
 APPROVED_PREDICATES = frozenset(
     {
         "managedBy",
@@ -137,6 +150,7 @@ class EvidenceProjection:
 @dataclass(frozen=True, slots=True)
 class RelationMetricProjection:
     dataset_version: str
+    observation_id: str
     relation_id: str
     metric_id: str
     numeric_value: Decimal

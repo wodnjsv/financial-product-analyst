@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
-from warnings import catch_warnings, simplefilter
+from warnings import catch_warnings, filterwarnings
 
 import pytest
 from rdflib import Dataset, Literal, RDF, URIRef, XSD
@@ -23,6 +24,7 @@ from financial_agent.graph.exporter import (
     build_graph_artifacts,
     entity_iri,
     evidence_iri,
+    holding_weight_observation_iri,
     relation_iri,
     source_iri,
 )
@@ -42,6 +44,7 @@ SEOUL = timezone(timedelta(hours=9))
 def valid_batch() -> GraphProjectionBatch:
     metric = RelationMetricProjection(
         dataset_version=VERSION,
+        observation_id="weight/2026-08-24",
         relation_id="relation/보유",
         metric_id="krx_etf_holding_weight_pct",
         numeric_value=Decimal("27.40"),
@@ -104,7 +107,16 @@ def valid_batch() -> GraphProjectionBatch:
 def _dataset(*payloads: bytes) -> Dataset:
     dataset = Dataset()
     with catch_warnings():
-        simplefilter("ignore", DeprecationWarning)
+        for module in (r"rdflib\.graph", r"rdflib\.plugins\.parsers\.nquads"):
+            filterwarnings(
+                "ignore",
+                message=(
+                    r"Dataset\.default_context is deprecated, use "
+                    r"Dataset\.default_graph instead\."
+                ),
+                category=DeprecationWarning,
+                module=module,
+            )
         for payload in payloads:
             dataset.parse(data=payload, format="nquads")
     return dataset
@@ -121,6 +133,7 @@ def test_export_emits_direct_edge_assertion_evidence_sources_and_metric() -> Non
     subject = entity_iri("product/상품")
     object_ = entity_iri("security/1")
     assertion = relation_iri(VERSION, "relation/보유")
+    observation = holding_weight_observation_iri(VERSION, "weight/2026-08-24")
     evidence_nodes = {
         evidence_iri(VERSION, "evidence/1"),
         evidence_iri(VERSION, "evidence/2"),
@@ -133,11 +146,20 @@ def test_export_emits_direct_edge_assertion_evidence_sources_and_metric() -> Non
     assert (assertion, FP.object, object_) in data_graph
     assert (assertion, FP.relationId, Literal("relation/보유")) in data_graph
     assert (assertion, FP.datasetVersion, Literal(VERSION)) in data_graph
+    assert (assertion, FP.holdingWeightObservation, observation) in data_graph
+    assert (observation, RDF.type, FP.HoldingWeightObservation) in data_graph
+    assert (observation, FP.observationId, Literal("weight/2026-08-24")) in data_graph
     assert (
-        assertion,
+        observation,
         FP.holdingWeightPercentage,
         Literal(Decimal("27.40"), datatype=XSD.decimal),
     ) in data_graph
+    assert (
+        observation,
+        FP.applicableDate,
+        Literal(CUTOFF, datatype=XSD.date),
+    ) in data_graph
+    assert not list(data_graph.objects(assertion, FP.holdingWeightPercentage))
     assert set(evidence_graph.objects(assertion, FP.supportedBy)) == evidence_nodes
     for evidence_id, source_id in (("evidence/1", "source/1"), ("evidence/2", "source/2")):
         evidence = evidence_iri(VERSION, evidence_id)
@@ -407,6 +429,19 @@ def test_relation_metric_requires_a_finite_decimal(numeric_value) -> None:
         build_graph_artifacts(batch)
 
 
+@pytest.mark.parametrize("numeric_value", [Decimal("-0.01"), Decimal("100.01")])
+def test_holding_weight_value_stays_within_percentage_point_bounds(
+    numeric_value: Decimal,
+) -> None:
+    """Catches emitting an impossible percentage-point holding weight."""
+    batch = valid_batch()
+    metric = replace(batch.relations[0].metrics[0], numeric_value=numeric_value)
+    batch = replace(batch, relations=(replace(batch.relations[0], metrics=(metric,)),))
+
+    with pytest.raises(GraphProjectionError, match="invalid_metric_value"):
+        build_graph_artifacts(batch)
+
+
 @pytest.mark.parametrize("unit", [None, "percent", "ratio"])
 def test_holding_weight_metric_requires_percentage_point_unit(unit: str | None) -> None:
     """Catches projecting a numerically valid weight with incompatible units."""
@@ -418,6 +453,123 @@ def test_holding_weight_metric_requires_percentage_point_unit(unit: str | None) 
     )
 
     with pytest.raises(GraphProjectionError, match="invalid_metric_unit"):
+        build_graph_artifacts(batch)
+
+
+def test_holding_weight_requires_an_applicable_date() -> None:
+    """Catches projection of a weight whose value cannot be paired with an as-of date."""
+    batch = valid_batch()
+    metric = replace(batch.relations[0].metrics[0], applicable_date=None)
+    batch = replace(batch, relations=(replace(batch.relations[0], metrics=(metric,)),))
+
+    with pytest.raises(GraphProjectionError, match="missing_metric_date"):
+        build_graph_artifacts(batch)
+
+
+def test_holding_weight_is_rejected_on_a_non_holding_relation() -> None:
+    """Catches a valid numeric observation being attached to the wrong relation kind."""
+    batch = valid_batch()
+    batch = replace(
+        batch,
+        relations=(replace(batch.relations[0], predicate_id="issuedBy"),),
+    )
+
+    with pytest.raises(GraphProjectionError, match="invalid_metric_relation"):
+        build_graph_artifacts(batch)
+
+
+def test_holds_security_requires_at_least_one_weight_observation() -> None:
+    """Catches a holdings edge that loses the weight observation required by Phase 1."""
+    batch = valid_batch()
+    batch = replace(batch, relations=(replace(batch.relations[0], metrics=()),))
+
+    with pytest.raises(GraphProjectionError, match="missing_holding_weight"):
+        build_graph_artifacts(batch)
+
+
+def test_duplicate_holding_observation_ids_are_rejected() -> None:
+    """Catches two source observations coalescing into one RDF observation node."""
+    batch = valid_batch()
+    duplicate = replace(
+        batch.relations[0].metrics[0],
+        numeric_value=Decimal("12.30"),
+        applicable_date=date(2026, 8, 23),
+    )
+    batch = replace(
+        batch,
+        relations=(
+            replace(
+                batch.relations[0],
+                metrics=(*batch.relations[0].metrics, duplicate),
+            ),
+        ),
+    )
+
+    with pytest.raises(GraphProjectionError, match="duplicate_id"):
+        build_graph_artifacts(batch)
+
+
+def test_multiple_holding_observations_keep_unambiguous_value_date_pairs() -> None:
+    """Catches flattening multiple weights into independent relation-level value/date lists."""
+    batch = valid_batch()
+    second = replace(
+        batch.relations[0].metrics[0],
+        observation_id="weight/2026-08-23",
+        numeric_value=Decimal("12.30"),
+        applicable_date=date(2026, 8, 23),
+    )
+    batch = replace(
+        batch,
+        relations=(
+            replace(
+                batch.relations[0],
+                metrics=(second, *batch.relations[0].metrics),
+            ),
+        ),
+    )
+
+    artifacts = build_graph_artifacts(batch)
+    dataset = _dataset(artifacts.data_nquads)
+    data_graph = dataset.graph(URIRef("urn:data:financial-product:2026-08-24%2Fv1"))
+    assertion = relation_iri(VERSION, "relation/보유")
+    observations = set(data_graph.objects(assertion, FP.holdingWeightObservation))
+
+    assert observations == {
+        holding_weight_observation_iri(VERSION, "weight/2026-08-23"),
+        holding_weight_observation_iri(VERSION, "weight/2026-08-24"),
+    }
+    assert {
+        (
+            str(next(data_graph.objects(observation, FP.observationId))),
+            str(next(data_graph.objects(observation, FP.holdingWeightPercentage))),
+            str(next(data_graph.objects(observation, FP.applicableDate))),
+        )
+        for observation in observations
+    } == {
+        ("weight/2026-08-23", "12.30", "2026-08-23"),
+        ("weight/2026-08-24", "27.40", "2026-08-24"),
+    }
+
+
+def test_holding_observations_reject_conflicting_values_on_the_same_date() -> None:
+    """Catches two source observations claiming one relation/date with different weights."""
+    batch = valid_batch()
+    conflicting = replace(
+        batch.relations[0].metrics[0],
+        observation_id="weight/conflicting",
+        numeric_value=Decimal("12.30"),
+    )
+    batch = replace(
+        batch,
+        relations=(
+            replace(
+                batch.relations[0],
+                metrics=(*batch.relations[0].metrics, conflicting),
+            ),
+        ),
+    )
+
+    with pytest.raises(GraphProjectionError, match="ambiguous_metric_date"):
         build_graph_artifacts(batch)
 
 
@@ -564,3 +716,15 @@ def test_exported_nquads_parse_and_conform_to_current_shacl(tmp_path: Path) -> N
 
     assert sum(1 for _ in parsed.quads((None, None, None, None))) > 0
     assert result.conforms is True, result.report_text
+    assert result.validated_data_hash == sha256(artifacts.data_nquads).hexdigest()
+    assert result.validated_evidence_hash == sha256(artifacts.evidence_nquads).hexdigest()
+    assert result.validated_cutoff_date == CUTOFF.isoformat()
+    assert set(result.contract_hashes) == {
+        "ontology/common.ttl",
+        "ontology/bond_kr.ttl",
+        "ontology/etf_kr.ttl",
+        "ontology/etf_gl.ttl",
+        "ontology/fund_pub.ttl",
+        "ontology/shapes/common.shacl.ttl",
+        "ontology/shapes/domain.shacl.ttl",
+    }

@@ -112,6 +112,7 @@ def _synthetic_batch() -> GraphProjectionBatch:
             (
                 RelationMetricProjection(
                     VERSION,
+                    "observation/holding-weight",
                     relation_id,
                     "krx_etf_holding_weight_pct",
                     Decimal("25.00"),
