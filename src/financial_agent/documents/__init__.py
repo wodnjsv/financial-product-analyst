@@ -12,6 +12,14 @@ from .models import (
     SEARCHABLE_SECTION_TYPES,
     SectionType,
 )
+from .pdf_extraction import (
+    ExtractedPdfDocument,
+    PdfExtractionError,
+    PdfPageLayout,
+    PdfTableRow,
+    PdfTextLine,
+    assemble_pdf_sections,
+)
 from .policy import (
     admit_document,
     binding_roles_for_document_role,
@@ -44,6 +52,11 @@ __all__ = [
     "DocumentSourceAttempt",
     "DocumentSourceCandidate",
     "DocumentSourceTarget",
+    "ExtractedPdfDocument",
+    "PdfExtractionError",
+    "PdfPageLayout",
+    "PdfTableRow",
+    "PdfTextLine",
     "PublisherRole",
     "SEARCHABLE_SECTION_TYPES",
     "SectionType",
@@ -51,6 +64,7 @@ __all__ = [
     "SourceAuthorityTier",
     "admit_document",
     "binding_roles_for_document_role",
+    "assemble_pdf_sections",
     "document_types_for_role",
     "publisher_roles_for_document_role",
     "select_canonical_document",

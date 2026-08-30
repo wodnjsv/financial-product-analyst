@@ -14,6 +14,7 @@ dependencies = [
 dev = [
   "jsonschema>=4.23,<5",
   "pytest>=8,<9",
+  "reportlab>=4.4,<5",
 ]
 storage = [
   "SQLAlchemy[asyncio]>=2.0,<3",
@@ -25,6 +26,7 @@ storage = [
 ingestion = [
   "openpyxl>=3.1,<4",
   "boto3>=1.35,<2",
+  "pdfplumber>=0.11.9,<0.12",
 ]
 
 [tool.pytest.ini_options]
