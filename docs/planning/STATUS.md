@@ -15,7 +15,7 @@
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute·문서 provenance 경계 승인; TTL·SHACL·Evidence-bound ABox·읽기 전용 Fuseki를 포함한 Graph Phase 1 core 로컬 완료, Stage 04는 미완료 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
-| Intent Resolver Phase 1 | 온톨로지 기반 축 분해, 한국어 문맥 해소, OOD·검증·평가 경계를 설계 승인; 런타임 구현과 QueryPlan compiler·Orchestrator 설계는 아직 시작하지 않음 | [Intent Resolver Design](specs/2026-08-31-intent-resolver-design.md), [ADR-0022](decisions/ADR-0022-use-ontology-grounded-intent-resolution.md) |
+| Intent Resolver Phase 1 | 온톨로지 기반 축 분해, 한국어 문맥 해소, OOD·검증·평가 경계를 설계 승인하고 상세 구현 계획 작성; 실행 승인 대기, QueryPlan compiler·Orchestrator 설계는 아직 시작하지 않음 | [Intent Resolver Design](specs/2026-08-31-intent-resolver-design.md), [Implementation Plan](tasks/2026-08-31-stage-06-phase-1-intent-resolver-implementation-plan.md), [ADR-0022](decisions/ADR-0022-use-ontology-grounded-intent-resolution.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 | Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
 
@@ -140,7 +140,7 @@
 | 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | current organizer 로컬 결정성 검증 완료; current KRX holdings 로컬 통합과 나머지 공식 source 동결 대기; NCP acceptance는 Stage 08로 이연 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | Graph Phase 1 core 로컬 완료; Vector·실제 관계/문서·manifest 동일성·readiness/activation·NCP·23질문 커버리지 대기, Stage 04 미완료 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
-| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Phase 1 Intent Resolver 설계 승인; 구현·QueryPlan compiler·Orchestrator 설계 대기 |
+| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Phase 1 Intent Resolver 설계·상세 구현 계획 완료, 실행 승인 대기; QueryPlan compiler·Orchestrator 설계 대기 |
 | 07 | Verifier, Claim Gate Registry, Answer Composer, Renderer와 검증된 응답 캐시 | 대기 |
 | 08 | 공식 `GET /answer`, NCP 이중화·Load Balancer·모니터링·복구 | 대기 |
 | 09 | 52개 종합 평가, 제출 동결, 공식 평가 운영과 종료 기록 | 대기 |
@@ -191,5 +191,6 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 38. Stage 04 Graph Phase 1 core 로컬 구현·검증 완료; Vector·실제 관계/문서·manifest 동일성·readiness/activation을 완료한 뒤 로컬 평가 API까지 Stage 04~07 순차 구현
 39. Stage 08에서 최종 NCP 비활성 적재·Graph/Vector·권한·성능·복구·공개 API acceptance
 40. ~~Stage 06 Phase 1 Intent Resolver의 온톨로지 기반 분류·한국어 문맥 해소·OOD·검증·평가 설계 승인~~ — 2026-08-31 완료; 상세 구현 계획과 런타임 변경은 별도 승인 대기
+41. Stage 06 Phase 1 Intent Resolver 상세 구현 계획 작성 완료; 실행 방식과 live HCX 비용 호출은 별도 승인 대기
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

@@ -561,6 +561,8 @@ Phase 2가 archetype match, concept coverage, policy와 함께 결정한다.
 | CATALOG_VERSION_MISMATCH | catalog·ontology·dataset pin 불일치 | request 시작 전 reload만 허용 | internal invariant, 500 |
 | MODEL_TIMEOUT | provider timeout | transient budget 안에서 1회 | 소진 시 503 |
 | MODEL_RATE_LIMITED | provider rate limit | transient budget 안에서 1회 | 소진 시 503 |
+| MODEL_PROVIDER_UNAVAILABLE | connection failure 또는 provider 5xx | transient budget 안에서 1회 | 소진 시 503 |
+| MODEL_CONFIGURATION_INVALID | 인증·권한·지원하지 않는 model/요청 설정 | 재시도 금지 | internal invariant, 500 |
 | MODEL_SCHEMA_INVALID | JSON Schema 위반 | shared LLM repair 1회 가능 | 실패 시 planner contract, 503 |
 | MODEL_UNKNOWN_ID | 제공하지 않은 ID 생성 | shared LLM repair 1회 가능 | 실패 시 planner contract, 503 |
 | LITERAL_SPAN_MISMATCH | literal·evidence 원문 불일치 | shared LLM repair 1회 가능 | 실패 시 planner contract, 503 |
