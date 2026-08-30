@@ -108,9 +108,33 @@ def test_declared_classes_resolve_and_grade_classes_are_distinct() -> None:
     assert FP.CreditGrade in classes
     assert FP.ProductRiskGrade != FP.CreditGrade
 
+    class_references = set()
+    for predicate in (RDFS.subClassOf, OWL.disjointWith, RDFS.domain, RDFS.range):
+        for target in graph.objects(predicate=predicate):
+            if isinstance(target, URIRef) and str(target).startswith(f"{ONTOLOGY_IRI}#"):
+                class_references.add(target)
+            elif graph.value(target, OWL.unionOf) is not None:
+                class_references.update(
+                    item
+                    for item in graph.items(graph.value(target, OWL.unionOf))
+                    if isinstance(item, URIRef)
+                    and str(item).startswith(f"{ONTOLOGY_IRI}#")
+                )
 
-def test_each_tbox_has_at_most_one_ontology_declaration() -> None:
-    for path in TBOX_PATHS:
-        graph = Graph().parse(path, format="turtle")
-        declarations = tuple(graph.subjects(RDF.type, OWL.Ontology))
-        assert len(declarations) <= 1, path.name
+    assert class_references <= classes
+
+
+def test_common_tbox_owns_the_single_ontology_declaration() -> None:
+    declarations = frozenset(_tbox().subjects(RDF.type, OWL.Ontology))
+    assert declarations == {URIRef(ONTOLOGY_IRI)}
+
+    common_declarations = frozenset(
+        Graph().parse(TBOX_PATHS[0], format="turtle").subjects(RDF.type, OWL.Ontology)
+    )
+    assert common_declarations == {URIRef(ONTOLOGY_IRI)}
+
+    for path in TBOX_PATHS[1:]:
+        declarations = tuple(
+            Graph().parse(path, format="turtle").subjects(RDF.type, OWL.Ontology)
+        )
+        assert not declarations, path.name
