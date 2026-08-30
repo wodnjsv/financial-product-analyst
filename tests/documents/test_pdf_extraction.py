@@ -4,10 +4,6 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.pdfgen import canvas
-
 from financial_agent.documents.pdf_extraction import (
     PdfExtractionError,
     PdfPageLayout,
@@ -17,6 +13,7 @@ from financial_agent.documents.pdf_extraction import (
     extract_pdf_sections,
     read_pdf_layout,
 )
+from tests.fixtures.synthetic_pdf import write_synthetic_prospectus
 
 
 def line(
@@ -35,35 +32,7 @@ def line(
 
 
 def synthetic_prospectus(path: Path) -> Path:
-    pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
-    document = canvas.Canvas(str(path), pagesize=(595, 842))
-    document.setFont("HYSMyeongJo-Medium", 16)
-    document.drawString(50, 800, "요약정보")
-    document.setFont("HYSMyeongJo-Medium", 10)
-    document.rect(50, 650, 500, 100)
-    document.line(190, 650, 190, 750)
-    document.line(50, 700, 550, 700)
-    document.drawString(58, 720, "투자목적 및 투자전략")
-    document.drawString(198, 720, "KOSPI200 지수의 변동률을 추종합니다.")
-    document.drawString(58, 670, "투자비용")
-    document.drawString(198, 670, "보수와 수수료 정보")
-    document.showPage()
-
-    document.setFont("HYSMyeongJo-Medium", 14)
-    document.drawString(50, 800, "주요투자위험")
-    document.setFont("HYSMyeongJo-Medium", 10)
-    document.rect(50, 620, 500, 140)
-    document.line(190, 620, 190, 760)
-    document.line(50, 720, 550, 720)
-    document.line(50, 670, 550, 670)
-    document.drawString(58, 735, "구분")
-    document.drawString(198, 735, "투자위험의 주요내용")
-    document.drawString(58, 690, "상장폐지위험")
-    document.drawString(198, 690, "상장폐지로 손실이 발생할 수 있습니다.")
-    document.drawString(58, 640, "추적오차 발생위험")
-    document.drawString(198, 640, "지수와 수익률이 다를 수 있습니다.")
-    document.save()
-    return path
+    return write_synthetic_prospectus(path)
 
 
 def test_assembled_section_round_trips_to_canonical_document_text() -> None:

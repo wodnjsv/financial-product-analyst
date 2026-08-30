@@ -14,7 +14,6 @@ dependencies = [
 dev = [
   "jsonschema>=4.23,<5",
   "pytest>=8,<9",
-  "reportlab>=4.4,<5",
 ]
 storage = [
   "SQLAlchemy[asyncio]>=2.0,<3",

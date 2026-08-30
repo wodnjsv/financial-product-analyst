@@ -5,10 +5,6 @@ from dataclasses import replace
 import hashlib
 from pathlib import Path
 
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.pdfgen import canvas
-
 from financial_agent.db.repositories.documents import DocumentCorpusRepository
 from financial_agent.documents import DocumentRole, PublisherRole, SectionType
 from financial_agent.documents.chunking import WhitespaceTokenCounter
@@ -16,22 +12,11 @@ from financial_agent.ingestion.document_sources.dart_pipeline import (
     DartProspectusContext,
     process_dart_prospectus,
 )
+from tests.fixtures.synthetic_pdf import write_synthetic_prospectus
 
 
 def prospectus(path: Path) -> Path:
-    pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
-    document = canvas.Canvas(str(path), pagesize=(595, 842))
-    document.setFont("HYSMyeongJo-Medium", 14)
-    document.drawString(50, 800, "요약정보")
-    document.setFont("HYSMyeongJo-Medium", 10)
-    document.drawString(50, 760, "투자목적 및 투자전략")
-    document.drawString(50, 740, "KOSPI200 지수를 추종합니다.")
-    document.drawString(50, 700, "주요투자위험")
-    document.drawString(50, 680, "추적오차로 손실이 발생할 수 있습니다.")
-    document.drawString(50, 640, "투자비용")
-    document.drawString(50, 620, "제외할 비용 정보")
-    document.save()
-    return path
+    return write_synthetic_prospectus(path)
 
 
 def pipeline_context(checksum: str) -> DartProspectusContext:
