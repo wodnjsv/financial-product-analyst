@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-30
 
-**Status:** Approved direction 2026-08-30; written specification review pending
+**Status:** Approved 2026-08-30
 
 **Scope:** Vector 문서 코퍼스와 아직 확보되지 않은 공식 관계 데이터를 기다리지
 않고 구현할 수 있는 최소 TBox·SHACL·RDF ABox 투영·로컬 Fuseki/TDB2 검증
