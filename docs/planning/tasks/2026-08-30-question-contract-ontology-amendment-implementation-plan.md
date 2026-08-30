@@ -67,7 +67,7 @@ fingerprints
   `required_assertion_fields`.
 - Produces: one retrieval route for every string in each case's `subtasks`.
 
-- [ ] **Step 1: Add the immutable catalog and normalized-shape tests**
+- [x] **Step 1: Add the immutable catalog and normalized-shape tests**
 
 Add `hashlib` to the imports and add these constants below the fixture imports:
 
@@ -246,7 +246,7 @@ def test_question_contract_separates_grades_and_document_provenance() -> None:
     ]
 ```
 
-- [ ] **Step 2: Run the new tests and confirm the v1.2 catalog fails**
+- [x] **Step 2: Run the new tests and confirm the v1.2 catalog fails**
 
 Run:
 
@@ -261,7 +261,7 @@ PYTHONPATH=src \
 Expected: FAIL because the catalog still reports schema `1.2`, retains
 `required_relations`, and lacks the six `requirements` groups.
 
-- [ ] **Step 3: Convert the catalog to schema 1.3 without changing frozen fields**
+- [x] **Step 3: Convert the catalog to schema 1.3 without changing frozen fields**
 
 Change the top-level `schema_version` to `1.3`. For every one of the 52 cases:
 
@@ -356,7 +356,7 @@ Add:
 Set `requires_data` to `true` only for the 11 cases whose `support_level` is
 `requires_additional_data`.
 
-- [ ] **Step 4: Run JSON parsing and focused contract tests**
+- [x] **Step 4: Run JSON parsing and focused contract tests**
 
 Run:
 
@@ -378,7 +378,7 @@ PYTHONPATH=src \
 
 Expected: PASS. The fingerprint proves the forbidden fields did not change.
 
-- [ ] **Step 5: Inspect the normalized catalog mechanically**
+- [x] **Step 5: Inspect the normalized catalog mechanically**
 
 Run:
 
@@ -393,7 +393,7 @@ jq '{schema_version, cases: (.cases | length), requirement_keys:
 Expected: schema `1.3`, 52 cases, one six-key requirement shape, only the 13
 approved predicates or their used subset, and 11 `requires_data` cases.
 
-- [ ] **Step 6: Commit the normalized executable contract**
+- [x] **Step 6: Commit the normalized executable contract**
 
 Stage only:
 
@@ -429,7 +429,7 @@ git commit -m "test: normalize question capability contract"
 - Produces: a status record that marks logical normalization complete while
   keeping TTL and SHACL pending.
 
-- [ ] **Step 1: Update the ontology class and semantic-property boundaries**
+- [x] **Step 1: Update the ontology class and semantic-property boundaries**
 
 In `FINANCIAL_ONTOLOGY_ARCHITECTURE.md`:
 
@@ -452,7 +452,7 @@ In `FINANCIAL_ONTOLOGY_ARCHITECTURE.md`:
 8. Replace the old implementation-preflight item about mixed
    `required_relations` with the verified schema `1.3` requirement boundary.
 
-- [ ] **Step 2: Update evaluation and coverage contract descriptions**
+- [x] **Step 2: Update evaluation and coverage contract descriptions**
 
 In `core-evaluation-set.md`:
 
@@ -477,7 +477,7 @@ In `STATUS.md`:
 - Keep ontology TTL, SHACL, ABox, and Fuseki implementation pending.
 - Do not mark Stage 04 complete or change Stage 03 ingestion status.
 
-- [ ] **Step 3: Verify documentation consistency and forbidden terms**
+- [x] **Step 3: Verify documentation consistency and forbidden terms**
 
 Run:
 
@@ -504,7 +504,7 @@ rg -n 'PolicyProgram|ProductRiskGrade|CreditGrade|publisher_organization_id|requ
 Expected: every new semantic boundary appears in the architecture or contract
 documentation that owns it.
 
-- [ ] **Step 4: Run the complete non-live regression**
+- [x] **Step 4: Run the complete non-live regression**
 
 Run:
 
@@ -530,7 +530,7 @@ Inspect every changed path. Confirm there is no file under `data/`, no organizer
 PDF or workbook, no generated artifact, no secret, no Stage 03 ingestion file,
 and no Vector implementation file.
 
-- [ ] **Step 5: Commit the aligned logical documentation**
+- [x] **Step 5: Commit the aligned logical documentation**
 
 Stage only:
 
@@ -553,20 +553,20 @@ git commit -m "docs: align ontology with question contract"
 
 ## Final Acceptance
 
-- [ ] Schema `1.3` parses and contains exactly 52 cases.
-- [ ] Frozen case fingerprint remains
+- [x] Schema `1.3` parses and contains exactly 52 cases.
+- [x] Frozen case fingerprint remains
   `730ff0efdbe38a8899e52c7b5bbea6993cdfdeb704e3a1e86b1325169a52e761`.
-- [ ] All six requirement groups exist in every case.
-- [ ] Every subtask has exactly one explicit route.
-- [ ] Only the approved 13 predicates can appear in Graph requirements.
-- [ ] Product risk and credit grade are distinct controlled attributes.
-- [ ] Policy programs and document provenance are represented without a new
+- [x] All six requirement groups exist in every case.
+- [x] Every subtask has exactly one explicit route.
+- [x] Only the approved 13 predicates can appear in Graph requirements.
+- [x] Product risk and credit grade are distinct controlled attributes.
+- [x] Policy programs and document provenance are represented without a new
   domain predicate.
-- [ ] Support counts and dispositions are unchanged.
-- [ ] Complete non-live regression passes.
-- [ ] Final diff contains only the approved contract, test, architecture,
-  evaluation, coverage, and status files.
-- [ ] No TTL, SHACL, ABox, Fuseki, Vector, Stage 03 ingestion, database, cloud,
+- [x] Support counts and dispositions are unchanged.
+- [x] Complete non-live regression passes.
+- [x] Final diff contains only the approved decision, design, task plan,
+  contract, test, architecture, evaluation, coverage, and status files.
+- [x] No TTL, SHACL, ABox, Fuseki, Vector, Stage 03 ingestion, database, cloud,
   raw data, or secret change is present.
 
 After this plan completes, write a separate Stage 04 TTL and SHACL
