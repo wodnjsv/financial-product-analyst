@@ -57,6 +57,8 @@ class PublisherRole(str, Enum):
     INDEX_PROVIDER = "index_provider"
     POLICY_AUTHORITY = "policy_authority"
     POLICY_OPERATOR = "policy_operator"
+    EXCHANGE = "exchange"
+    INDUSTRY_ASSOCIATION = "industry_association"
 
 
 @dataclass(frozen=True, slots=True)

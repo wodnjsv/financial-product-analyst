@@ -76,10 +76,13 @@ def test_authority_helpers_expose_the_same_read_only_policy_matrices() -> None:
     ) == frozenset(
         {
             PublisherRole.REGULATOR_DISCLOSURE,
-            PublisherRole.ASSET_MANAGER,
-            PublisherRole.ISSUER,
+            PublisherRole.EXCHANGE,
+            PublisherRole.INDUSTRY_ASSOCIATION,
         }
     )
+    assert publisher_roles_for_document_role(
+        DocumentRole.PRODUCT_SUMMARY, "subject_product"
+    ) == frozenset({PublisherRole.REGULATOR_DISCLOSURE})
     assert publisher_roles_for_document_role(
         DocumentRole.OFFICIAL_UPDATE, "subject_index"
     ) == frozenset({PublisherRole.INDEX_PROVIDER})
@@ -140,6 +143,49 @@ def test_rejects_unapproved_publisher() -> None:
 
     assert decision.accepted is False
     assert decision.coverage_status is CoverageStatus.PUBLISHER_NOT_APPROVED
+
+
+@pytest.mark.parametrize(
+    "publisher_role",
+    (PublisherRole.ASSET_MANAGER, PublisherRole.ISSUER),
+)
+def test_product_document_rejects_manager_or_issuer_fallback(
+    publisher_role: PublisherRole,
+) -> None:
+    decision = admit_document(
+        candidate(
+            "direct-copy",
+            document_type="summary_prospectus",
+            publisher_role=publisher_role,
+            binding_role="subject_product",
+        ),
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert decision.accepted is False
+    assert decision.coverage_status is CoverageStatus.PUBLISHER_NOT_APPROVED
+    assert decision.reason_code == "publisher_role_not_approved"
+
+
+@pytest.mark.parametrize(
+    "publisher_role",
+    (PublisherRole.EXCHANGE, PublisherRole.INDUSTRY_ASSOCIATION),
+)
+def test_product_change_accepts_tier_three_claim_owner(
+    publisher_role: PublisherRole,
+) -> None:
+    decision = admit_document(
+        candidate(
+            "tier-three-update",
+            document_type="official_update",
+            publisher_role=publisher_role,
+            binding_role="subject_product",
+            claim_types={"official_update"},
+        ),
+        cutoff_date=date(2026, 8, 24),
+    )
+
+    assert decision.accepted is True
 
 
 def test_rejects_unknown_version() -> None:
@@ -449,6 +495,9 @@ def test_negative_coverage_requires_trimmed_scope_evidence_and_reason(
     ("document_type", "publisher_role", "binding_role"),
     [
         ("summary_prospectus", PublisherRole.POLICY_OPERATOR, "subject_product"),
+        ("summary_prospectus", PublisherRole.INDEX_PROVIDER, "subject_product"),
+        ("index_methodology", PublisherRole.EXCHANGE, "subject_index"),
+        ("policy_base", PublisherRole.EXCHANGE, "subject_policy"),
         ("index_methodology", PublisherRole.ISSUER, "subject_index"),
         ("policy_base", PublisherRole.ISSUER, "subject_policy"),
         ("official_update", PublisherRole.INDEX_PROVIDER, "subject_product"),
@@ -517,7 +566,7 @@ def test_incompatible_binding_role_fails_closed_for_admission_and_selection(
 @pytest.mark.parametrize(
     ("binding_role", "publisher_role"),
     [
-        ("subject_product", PublisherRole.ASSET_MANAGER),
+        ("subject_product", PublisherRole.REGULATOR_DISCLOSURE),
         ("subject_index", PublisherRole.INDEX_PROVIDER),
         ("subject_policy", PublisherRole.POLICY_AUTHORITY),
     ],

@@ -55,13 +55,7 @@ _REQUIRED_CLAIM_TYPES = {
         {"legal_structure", "investment_strategy"}
     ),
 }
-_PRODUCT_PUBLISHERS = frozenset(
-    {
-        PublisherRole.REGULATOR_DISCLOSURE,
-        PublisherRole.ASSET_MANAGER,
-        PublisherRole.ISSUER,
-    }
-)
+_PRODUCT_PUBLISHERS = frozenset({PublisherRole.REGULATOR_DISCLOSURE})
 _ROLE_PUBLISHERS = {
     DocumentRole.PRODUCT_SUMMARY: _PRODUCT_PUBLISHERS,
     DocumentRole.PRODUCT_FULL: _PRODUCT_PUBLISHERS,
@@ -71,7 +65,13 @@ _ROLE_PUBLISHERS = {
     ),
 }
 _OFFICIAL_UPDATE_PUBLISHERS = {
-    "subject_product": _PRODUCT_PUBLISHERS,
+    "subject_product": frozenset(
+        {
+            PublisherRole.REGULATOR_DISCLOSURE,
+            PublisherRole.EXCHANGE,
+            PublisherRole.INDUSTRY_ASSOCIATION,
+        }
+    ),
     "subject_index": frozenset({PublisherRole.INDEX_PROVIDER}),
     "subject_policy": frozenset(
         {PublisherRole.POLICY_AUTHORITY, PublisherRole.POLICY_OPERATOR}
