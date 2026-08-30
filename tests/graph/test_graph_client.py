@@ -197,6 +197,24 @@ def test_select_rejects_non_select_or_malformed_sparql_before_http(
         )
 
 
+def test_select_rejects_duplicate_projection_before_http(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches duplicate SELECT variables collapsing into one response binding key."""
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: pytest.fail("duplicate projection reached HTTP"),
+    )
+
+    with pytest.raises(GraphQueryError, match="duplicate_select_projection"):
+        FusekiGraphClient("http://graph.test/query").select(
+            query_id="duplicate-projection",
+            sparql="SELECT ?item ?item WHERE { ?item ?p ?o }",
+            dataset_version="dataset-version",
+            coverage_status="covered",
+        )
+
+
 def test_select_wraps_http_and_transport_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     """Catches leaking urllib exceptions through the read-only boundary."""
     failures = (

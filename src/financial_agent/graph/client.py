@@ -35,7 +35,10 @@ def _select_projection(sparql: str) -> tuple[str, ...]:
         raise GraphQueryError("invalid_select_query") from error
     if operation.name != "SelectQuery":
         raise GraphQueryError("non_select_query")
-    return tuple(str(variable) for variable in operation["PV"])
+    projection = tuple(str(variable) for variable in operation["PV"])
+    if len(projection) != len(set(projection)):
+        raise GraphQueryError("duplicate_select_projection")
+    return projection
 
 
 def _validate_endpoint(query_endpoint: str) -> None:
