@@ -16,6 +16,7 @@ from .dart_pipeline import (
     DartProspectusContext,
     DartProspectusProcessingResult,
     DartProspectusQualityReport,
+    assemble_captured_corpus,
     process_dart_prospectus,
 )
 
@@ -27,6 +28,7 @@ __all__ = [
     "DartProspectusContext",
     "DartProspectusProcessingResult",
     "DartProspectusQualityReport",
+    "assemble_captured_corpus",
     "process_dart_prospectus",
     "HttpStatusError",
     "MissingRequiredEnvironmentError",

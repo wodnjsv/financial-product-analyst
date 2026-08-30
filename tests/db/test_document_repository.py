@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from financial_agent.db.preflight import normalize_psycopg_url
 from financial_agent.db.repositories import documents as document_repository
 from financial_agent.db.repositories.documents import (
+    CapturedDocumentCorpus,
     DocumentCorpusConflict,
     DocumentCorpusRecord,
     DocumentCorpusRepository,
@@ -26,6 +27,7 @@ from financial_agent.db.repositories.documents import (
     DocumentProfileRecord,
     DocumentSourceArtifactRecord,
 )
+from financial_agent.contracts import SourceRecord
 from financial_agent.documents import (
     CoverageStatus,
     DocumentChunkDraft,
@@ -200,6 +202,47 @@ def _source_artifact(
     )
 
 
+def _source(corpus: DocumentCorpusRecord) -> SourceRecord:
+    return SourceRecord(
+        source_id=corpus.source_id,
+        publisher="publisher-one",
+        publisher_type="regulator",
+        source_title="Synthetic DART prospectus",
+        source_type="filing",
+        authority_tier="official_primary",
+        source_locator_root=(
+            "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260716000161"
+        ),
+        content_checksum=corpus.content_checksum,
+        license_or_usage_note="temporary local capture; metadata retained",
+        eligible_for_claim=True,
+    )
+
+
+def _artifact(corpus: DocumentCorpusRecord) -> DocumentSourceArtifactRecord:
+    base = _source_artifact()
+    artifact = replace(
+        base,
+        dataset_version=corpus.dataset_version,
+        source_id=corpus.source_id,
+        document_id=corpus.document_id,
+        source_checksum=corpus.content_checksum,
+    )
+    return replace(
+        artifact,
+        record_hash=document_repository._source_artifact_record_hash(artifact),
+    )
+
+
+def _captured(corpus: DocumentCorpusRecord) -> CapturedDocumentCorpus:
+    return CapturedDocumentCorpus(
+        source=_source(corpus),
+        corpus=corpus,
+        source_artifact=_artifact(corpus),
+        additional_coverages=(),
+    )
+
+
 def _negative_coverage(dataset_version: str, entity_id: str) -> DocumentCoverageDraft:
     return DocumentCoverageDraft(
         coverage_id="coverage-negative",
@@ -218,6 +261,7 @@ def _prepare_context(
     database_url: str,
     *,
     with_scope_evidence: bool = False,
+    with_source: bool = True,
 ) -> tuple[str, str]:
     token = _token()
     dataset_version = f"documents-{token}"
@@ -230,7 +274,8 @@ def _prepare_context(
             dataset_version=dataset_version,
             entity_id=entity_id,
         )
-        insert_source(connection, dataset_version=dataset_version)
+        if with_source:
+            insert_source(connection, dataset_version=dataset_version)
         if with_scope_evidence:
             insert_scope_evidence(
                 connection,
@@ -340,6 +385,207 @@ async def test_document_corpus_round_trips_idempotently(
         ).scalar_one()
     assert counts == (1, 1, 1, 1, 1)
     assert evidence_text_count == 0
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_captured_corpus_round_trips_atomically_with_multiple_products(
+    repository_engine: AsyncEngine,
+    migrated_database_url: str,
+) -> None:
+    dataset_version, entity_id = _prepare_context(
+        migrated_database_url, with_source=False
+    )
+    second_entity_id = f"product-{_token()}"
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        insert_entity(
+            connection,
+            dataset_version=dataset_version,
+            entity_id=second_entity_id,
+        )
+    corpus = _corpus(dataset_version=dataset_version, entity_id=entity_id)
+    second_binding = DocumentEntityBindingRecord(
+        dataset_version=dataset_version,
+        binding_id="binding-two",
+        document_id=corpus.document_id,
+        entity_id=second_entity_id,
+        binding_role="subject_product",
+        record_hash="9" * 64,
+    )
+    second_coverage = replace(
+        corpus.coverage,
+        coverage_id="coverage-two",
+        entity_id=second_entity_id,
+        record_hash="8" * 64,
+    )
+    corpus = replace(
+        corpus,
+        entity_bindings=(corpus.entity_bindings[0], second_binding),
+    )
+    captured = replace(
+        _captured(corpus), additional_coverages=(second_coverage,)
+    )
+    repository = DocumentCorpusRepository(repository_engine)
+
+    await repository.append_captured_corpus(captured)
+    await repository.append_captured_corpus(captured)
+
+    assert await repository.get_captured_corpus(
+        dataset_version, corpus.document_id
+    ) == captured
+    async with repository_engine.connect() as connection:
+        counts = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM evidence.source_record
+                         WHERE dataset_version = :dataset_version),
+                        (SELECT count(*) FROM document.document_record
+                         WHERE dataset_version = :dataset_version),
+                        (SELECT count(*) FROM document.document_source_artifact
+                         WHERE dataset_version = :dataset_version),
+                        (SELECT count(*) FROM document.document_entity_binding
+                         WHERE dataset_version = :dataset_version),
+                        (SELECT count(*) FROM document.document_chunk
+                         WHERE dataset_version = :dataset_version),
+                        (SELECT count(*) FROM document.document_coverage
+                         WHERE dataset_version = :dataset_version)
+                    """
+                ),
+                {"dataset_version": dataset_version},
+            )
+        ).one()
+    assert counts == (1, 1, 1, 2, 1, 2)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_group",
+    ("source", "document", "bindings", "chunks", "coverages", "artifact"),
+)
+async def test_captured_corpus_rolls_back_every_group_on_late_failure(
+    repository_engine: AsyncEngine,
+    migrated_database_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_group: str,
+) -> None:
+    dataset_version, entity_id = _prepare_context(
+        migrated_database_url, with_source=False
+    )
+    captured = _captured(
+        _corpus(dataset_version=dataset_version, entity_id=entity_id)
+    )
+
+    async def fail_after_group(_connection: object, group: str) -> None:
+        if group == failure_group:
+            raise RuntimeError("injected failure")
+
+    monkeypatch.setattr(
+        DocumentCorpusRepository,
+        "_after_insert_group",
+        staticmethod(fail_after_group),
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="injected failure"):
+        await DocumentCorpusRepository(repository_engine).append_captured_corpus(
+            captured
+        )
+
+    async with repository_engine.connect() as connection:
+        counts = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT
+                        (SELECT count(*) FROM evidence.source_record
+                         WHERE dataset_version = :dataset_version),
+                        (SELECT count(*) FROM document.document_record
+                         WHERE dataset_version = :dataset_version),
+                        (SELECT count(*) FROM document.document_chunk
+                         WHERE dataset_version = :dataset_version),
+                        (SELECT count(*) FROM document.document_source_artifact
+                         WHERE dataset_version = :dataset_version)
+                    """
+                ),
+                {"dataset_version": dataset_version},
+            )
+        ).one()
+    assert counts == (0, 0, 0, 0)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_captured_corpus_changed_file_provenance_conflicts(
+    repository_engine: AsyncEngine,
+    migrated_database_url: str,
+) -> None:
+    dataset_version, entity_id = _prepare_context(
+        migrated_database_url, with_source=False
+    )
+    captured = _captured(
+        _corpus(dataset_version=dataset_version, entity_id=entity_id)
+    )
+    repository = DocumentCorpusRepository(repository_engine)
+    await repository.append_captured_corpus(captured)
+    changed_artifact = replace(
+        captured.source_artifact,
+        original_filename="different-prospectus.pdf",
+    )
+    changed_artifact = replace(
+        changed_artifact,
+        record_hash=document_repository._source_artifact_record_hash(
+            changed_artifact
+        ),
+    )
+
+    with pytest.raises(DocumentCorpusConflict):
+        await repository.append_captured_corpus(
+            replace(captured, source_artifact=changed_artifact)
+        )
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_source_artifact_retention_transitions_are_read_back(
+    repository_engine: AsyncEngine,
+    migrated_database_url: str,
+) -> None:
+    dataset_version, entity_id = _prepare_context(
+        migrated_database_url, with_source=False
+    )
+    captured = _captured(
+        _corpus(dataset_version=dataset_version, entity_id=entity_id)
+    )
+    repository = DocumentCorpusRepository(repository_engine)
+    await repository.append_captured_corpus(captured)
+    verified_at = datetime(2026, 8, 31, 0, 2, tzinfo=UTC)
+    discarded_at = datetime(2026, 8, 31, 0, 3, tzinfo=UTC)
+
+    authorized = await repository.transition_source_retention(
+        dataset_version,
+        captured.corpus.document_id,
+        "delete_authorized",
+        occurred_at=verified_at,
+    )
+    deleted = await repository.transition_source_retention(
+        dataset_version,
+        captured.corpus.document_id,
+        "metadata_only_deleted",
+        occurred_at=discarded_at,
+    )
+
+    assert authorized.verified_at == verified_at
+    assert authorized.discarded_at is None
+    assert deleted.verified_at == verified_at
+    assert deleted.discarded_at == discarded_at
+    assert (
+        await repository.get_captured_corpus(
+            dataset_version, captured.corpus.document_id
+        )
+    ).source_artifact == deleted
 
 
 @pytest.mark.postgres
@@ -703,6 +949,34 @@ def test_corpus_rejects_naive_persisted_datetimes(field_name: str) -> None:
 
 def test_valid_pending_source_artifact_passes_validation() -> None:
     DocumentCorpusRepository.validate_source_artifact(_source_artifact())
+
+
+def test_valid_captured_corpus_passes_cross_record_validation() -> None:
+    DocumentCorpusRepository.validate_captured_corpus(_captured(_corpus()))
+
+
+@pytest.mark.parametrize(
+    "captured",
+    (
+        replace(
+            _captured(_corpus()),
+            source=_source(_corpus()).model_copy(
+                update={"source_id": "different-source"}
+            ),
+        ),
+        replace(
+            _captured(_corpus()),
+            source_artifact=replace(
+                _artifact(_corpus()), document_id="different-document"
+            ),
+        ),
+    ),
+)
+def test_captured_corpus_rejects_cross_record_identity_mismatch(
+    captured: CapturedDocumentCorpus,
+) -> None:
+    with pytest.raises(DocumentCorpusValidationError):
+        DocumentCorpusRepository.validate_captured_corpus(captured)
 
 
 @pytest.mark.parametrize(

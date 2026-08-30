@@ -5,11 +5,17 @@ from dataclasses import replace
 import hashlib
 from pathlib import Path
 
-from financial_agent.db.repositories.documents import DocumentCorpusRepository
+from financial_agent.contracts import SourceRecord
+from financial_agent.db.repositories import documents as document_repository
+from financial_agent.db.repositories.documents import (
+    DocumentCorpusRepository,
+    DocumentSourceArtifactRecord,
+)
 from financial_agent.documents import DocumentRole, PublisherRole, SectionType
 from financial_agent.documents.chunking import WhitespaceTokenCounter
 from financial_agent.ingestion.document_sources.dart_pipeline import (
     DartProspectusContext,
+    assemble_captured_corpus,
     process_dart_prospectus,
 )
 from tests.fixtures.synthetic_pdf import write_synthetic_prospectus
@@ -130,3 +136,74 @@ def test_pipeline_is_deterministic_and_rejects_wrong_source_checksum(
         assert str(error) == "DART_SOURCE_CHECKSUM_MISMATCH"
     else:
         raise AssertionError("wrong checksum must be rejected")
+
+
+def test_pipeline_assembles_source_file_provenance_with_the_corpus(
+    tmp_path: Path,
+) -> None:
+    pdf_path = prospectus(tmp_path / "kodex200.pdf")
+    checksum = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+    context = pipeline_context(checksum)
+    result = process_dart_prospectus(
+        pdf_path,
+        context=context,
+        requested_section_types=frozenset(
+            {SectionType.INVESTMENT_STRATEGY, SectionType.RISK_FACTOR}
+        ),
+        token_counter=WhitespaceTokenCounter(),
+        target_min=0,
+    )
+    source = SourceRecord(
+        source_id=context.source_id,
+        publisher=context.publisher_id,
+        publisher_type="regulator",
+        source_title=context.document_title,
+        source_type="filing",
+        authority_tier="official_primary",
+        source_locator_root=(
+            "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260716000161"
+        ),
+        content_checksum=checksum,
+        license_or_usage_note="metadata retained after local PDF deletion",
+        eligible_for_claim=True,
+    )
+    artifact = DocumentSourceArtifactRecord(
+        dataset_version=context.dataset_version,
+        source_artifact_id="artifact:dart:20260716000161",
+        source_id=context.source_id,
+        document_id=context.document_id,
+        receipt_id="20260716000161",
+        original_filename="KODEX 200 투자설명서.pdf",
+        filing_locator=source.source_locator_root,
+        attachment_locator=(
+            "https://dart.fss.or.kr/pdf/download/file.do?"
+            "rcp_no=20260716000161&dcm_no=1&fl_nm=1"
+        ),
+        media_type="application/pdf",
+        byte_count=pdf_path.stat().st_size,
+        source_checksum=result.report.source_checksum,
+        text_checksum=result.report.text_checksum,
+        page_count=result.report.page_count,
+        extraction_version="pdfplumber-layout-v1",
+        retention_disposition="pending_delete",
+        downloaded_at=datetime(2026, 8, 31, tzinfo=UTC),
+        persisted_at=datetime(2026, 8, 31, 0, 1, tzinfo=UTC),
+        verified_at=None,
+        discarded_at=None,
+        record_hash="0" * 64,
+    )
+    artifact = replace(
+        artifact,
+        record_hash=document_repository._source_artifact_record_hash(artifact),
+    )
+
+    captured = assemble_captured_corpus(
+        result,
+        source=source,
+        source_artifact=artifact,
+    )
+
+    assert captured.corpus == result.corpus
+    assert captured.source == source
+    assert captured.source_artifact == artifact
+    assert captured.additional_coverages == ()

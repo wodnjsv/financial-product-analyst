@@ -10,11 +10,14 @@ import json
 from pathlib import Path
 
 from financial_agent.db.repositories.documents import (
+    CapturedDocumentCorpus,
     DocumentCorpusRecord,
     DocumentCorpusRepository,
     DocumentEntityBindingRecord,
     DocumentProfileRecord,
+    DocumentSourceArtifactRecord,
 )
+from financial_agent.contracts import SourceRecord
 from financial_agent.documents import (
     CoverageStatus,
     DocumentChunkDraft,
@@ -94,6 +97,23 @@ class DartProspectusQualityReport:
 class DartProspectusProcessingResult:
     corpus: DocumentCorpusRecord
     report: DartProspectusQualityReport
+
+
+def assemble_captured_corpus(
+    result: DartProspectusProcessingResult,
+    *,
+    source: SourceRecord,
+    source_artifact: DocumentSourceArtifactRecord,
+    additional_coverages: tuple[DocumentCoverageDraft, ...] = (),
+) -> CapturedDocumentCorpus:
+    captured = CapturedDocumentCorpus(
+        source=source,
+        corpus=result.corpus,
+        source_artifact=source_artifact,
+        additional_coverages=additional_coverages,
+    )
+    DocumentCorpusRepository.validate_captured_corpus(captured)
+    return captured
 
 
 def process_dart_prospectus(

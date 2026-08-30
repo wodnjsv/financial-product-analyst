@@ -150,7 +150,7 @@ git commit -m "feat: track discarded DART source files"
 - Produces `append_captured_corpus(...)`, `get_captured_corpus(...)`, and
   `transition_source_retention(...)`.
 
-- [ ] **Step 1: Write failing atomicity and read-back tests**
+- [x] **Step 1: Write failing atomicity and read-back tests**
 
 Use one document bound to two organizer products. Assert one source, document,
 artifact, and chunk set with two bindings and two coverage rows. Inject a
@@ -160,7 +160,7 @@ An identical retry is a no-op. Any changed receipt, filename, locator, source or
 text checksum, page count, binding, chunk, or coverage must raise
 `DOCUMENT_CORPUS_CONFLICT`.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ~~~bash
 .venv/bin/python -m pytest \
@@ -169,7 +169,7 @@ text checksum, page count, binding, chunk, or coverage must raise
   -k 'captured or source_artifact or multiple_binding' -q
 ~~~
 
-- [ ] **Step 3: Implement the minimal transaction**
+- [x] **Step 3: Implement the minimal transaction**
 
 Insert the `SourceRecord`, document, profile, exact entity bindings, chunks,
 coverages, and source artifact through one SQLAlchemy connection and
@@ -185,7 +185,7 @@ delete_authorized -> metadata_only_deleted
 delete_authorized -> quarantined
 ~~~
 
-- [ ] **Step 4: Run focused tests and commit**
+- [x] **Step 4: Run focused tests and commit**
 
 ~~~bash
 .venv/bin/python -m pytest \

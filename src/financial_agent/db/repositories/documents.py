@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
 from enum import Enum
 from typing import Literal
@@ -19,8 +19,11 @@ from financial_agent.db.schema.document import (
     document_entity_binding,
     document_profile,
     document_record,
+    document_source_artifact,
 )
+from financial_agent.db.schema.evidence import source_record
 from financial_agent.db.schema.operations import dataset_version
+from financial_agent.contracts import SourceRecord, canonical_sha256
 from financial_agent.documents import (
     CoverageStatus,
     DocumentChunkDraft,
@@ -106,6 +109,14 @@ class DocumentCorpusRecord:
     chunks: tuple[DocumentChunkDraft, ...]
     required_document_role: DocumentRole
     coverage: DocumentCoverageDraft
+
+
+@dataclass(frozen=True, slots=True)
+class CapturedDocumentCorpus:
+    source: SourceRecord
+    corpus: DocumentCorpusRecord
+    source_artifact: DocumentSourceArtifactRecord
+    additional_coverages: tuple[DocumentCoverageDraft, ...]
 
 
 class DocumentCorpusError(RuntimeError):
@@ -208,6 +219,25 @@ def _source_artifact_record_hash(
     payload = _source_artifact_payload(artifact)
     payload.pop("record_hash")
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+
+
+def _captured_payload(captured: CapturedDocumentCorpus) -> dict[str, object]:
+    return {
+        "source": captured.source.model_dump(mode="json"),
+        "corpus": _corpus_payload(captured.corpus),
+        "source_artifact": _source_artifact_payload(captured.source_artifact),
+        "additional_coverages": [
+            _coverage_payload(coverage)
+            for coverage in sorted(
+                captured.additional_coverages,
+                key=lambda item: item.coverage_id,
+            )
+        ],
+    }
+
+
+def _captured_bytes(captured: CapturedDocumentCorpus) -> bytes:
+    return _canonical_bytes(_captured_payload(captured))
 
 
 def _corpus_payload(corpus: DocumentCorpusRecord) -> dict[str, object]:
@@ -445,6 +475,47 @@ class DocumentCorpusRepository:
         if artifact.record_hash != _source_artifact_record_hash(artifact):
             raise DocumentCorpusValidationError("record_hash")
 
+    @classmethod
+    def validate_captured_corpus(cls, captured: CapturedDocumentCorpus) -> None:
+        cls.validate_corpus(captured.corpus)
+        cls.validate_source_artifact(captured.source_artifact)
+        corpus = captured.corpus
+        artifact = captured.source_artifact
+        if captured.source.source_id != corpus.source_id:
+            raise DocumentCorpusValidationError("captured source_id")
+        if captured.source.content_checksum != corpus.content_checksum:
+            raise DocumentCorpusValidationError("captured source checksum")
+        for field_name, artifact_value, corpus_value in (
+            ("dataset_version", artifact.dataset_version, corpus.dataset_version),
+            ("source_id", artifact.source_id, corpus.source_id),
+            ("document_id", artifact.document_id, corpus.document_id),
+            ("source_checksum", artifact.source_checksum, corpus.content_checksum),
+        ):
+            if artifact_value != corpus_value:
+                raise DocumentCorpusValidationError(
+                    f"captured artifact {field_name}"
+                )
+        coverage_ids = {corpus.coverage.coverage_id}
+        bound_entities = {binding.entity_id for binding in corpus.entity_bindings}
+        previous_coverage_id = corpus.coverage.coverage_id
+        for coverage in captured.additional_coverages:
+            if (
+                coverage.dataset_version != corpus.dataset_version
+                or coverage.document_id != corpus.document_id
+                or coverage.required_document_role is not corpus.required_document_role
+                or coverage.coverage_status is not CoverageStatus.INDEXED
+                or coverage.entity_id not in bound_entities
+                or not _is_sha256(coverage.record_hash)
+            ):
+                raise DocumentCorpusValidationError("additional coverage")
+            if (
+                coverage.coverage_id in coverage_ids
+                or coverage.coverage_id <= previous_coverage_id
+            ):
+                raise DocumentCorpusValidationError("additional coverage order")
+            coverage_ids.add(coverage.coverage_id)
+            previous_coverage_id = coverage.coverage_id
+
     @staticmethod
     def validate_standalone_coverage(coverage: DocumentCoverageDraft) -> None:
         if coverage.coverage_status is CoverageStatus.INDEXED:
@@ -534,6 +605,241 @@ class DocumentCorpusRepository:
                 return
             raise DocumentCorpusConflict() from error
 
+    async def append_captured_corpus(
+        self, captured: CapturedDocumentCorpus
+    ) -> None:
+        self.validate_captured_corpus(captured)
+        corpus = captured.corpus
+        source_payload = captured.source.model_dump(mode="json")
+        created_at = datetime.now(UTC)
+        try:
+            async with self._engine.connect() as connection:
+                async with connection.begin():
+                    await self._require_building_dataset(
+                        connection, corpus.dataset_version
+                    )
+                    await self._validate_embedding_context(connection, corpus)
+                    await connection.execute(
+                        sa.insert(source_record).values(
+                            dataset_version=corpus.dataset_version,
+                            **source_payload,
+                            record_hash=canonical_sha256(captured.source),
+                            created_at=created_at,
+                        )
+                    )
+                    await self._after_insert_group(connection, "source")
+                    await connection.execute(
+                        sa.insert(document_record).values(
+                            dataset_version=corpus.dataset_version,
+                            document_id=corpus.document_id,
+                            source_id=corpus.source_id,
+                            document_title=corpus.document_title,
+                            document_type=corpus.document_type,
+                            object_key=corpus.object_key,
+                            content_checksum=corpus.content_checksum,
+                            published_at=(
+                                _utc_datetime(corpus.published_at, "published_at")
+                                if corpus.published_at is not None
+                                else None
+                            ),
+                            available_at=(
+                                _utc_datetime(corpus.available_at, "available_at")
+                                if corpus.available_at is not None
+                                else None
+                            ),
+                            record_hash=_document_record_hash(corpus),
+                            created_at=created_at,
+                        )
+                    )
+                    await connection.execute(
+                        sa.insert(document_profile).values(
+                            **_profile_payload(corpus.profile),
+                            created_at=created_at,
+                        )
+                    )
+                    await self._after_insert_group(connection, "document")
+                    for binding in sorted(
+                        corpus.entity_bindings, key=lambda item: item.binding_id
+                    ):
+                        await connection.execute(
+                            sa.insert(document_entity_binding).values(
+                                **_binding_payload(binding),
+                                created_at=created_at,
+                            )
+                        )
+                    await self._after_insert_group(connection, "bindings")
+                    for chunk in sorted(corpus.chunks, key=lambda item: item.ordinal):
+                        await connection.execute(
+                            sa.insert(document_chunk).values(
+                                **_chunk_payload(chunk),
+                                parent_chunk_id=None,
+                                section=chunk.section_path,
+                                sentence_start=None,
+                                sentence_end=None,
+                                created_at=created_at,
+                            )
+                        )
+                    await self._after_insert_group(connection, "chunks")
+                    coverages = (corpus.coverage, *captured.additional_coverages)
+                    for coverage in coverages:
+                        await connection.execute(
+                            sa.insert(document_coverage).values(
+                                **_coverage_payload(coverage),
+                                created_at=created_at,
+                            )
+                        )
+                    await self._after_insert_group(connection, "coverages")
+                    await connection.execute(
+                        sa.insert(document_source_artifact).values(
+                            **_source_artifact_payload(captured.source_artifact),
+                            created_at=created_at,
+                        )
+                    )
+                    await self._after_insert_group(connection, "artifact")
+                    await self._force_constraints(connection)
+        except IntegrityError as error:
+            if getattr(error.orig, "sqlstate", None) != "23505":
+                raise
+            try:
+                existing = await self.get_captured_corpus(
+                    corpus.dataset_version, corpus.document_id
+                )
+            except DocumentCorpusNotFound:
+                raise DocumentCorpusConflict() from error
+            if _captured_bytes(existing) == _captured_bytes(captured):
+                return
+            raise DocumentCorpusConflict() from error
+
+    async def get_captured_corpus(
+        self,
+        dataset_version_value: str,
+        document_id_value: str,
+    ) -> CapturedDocumentCorpus:
+        corpus = await self._find_corpus(
+            dataset_version_value, document_id_value
+        )
+        if corpus is None:
+            raise DocumentCorpusNotFound()
+        async with self._engine.connect() as connection:
+            source_row = (
+                await connection.execute(
+                    sa.select(source_record).where(
+                        source_record.c.dataset_version == dataset_version_value,
+                        source_record.c.source_id == corpus.source_id,
+                    )
+                )
+            ).mappings().one_or_none()
+            artifact_row = (
+                await connection.execute(
+                    sa.select(document_source_artifact).where(
+                        document_source_artifact.c.dataset_version
+                        == dataset_version_value,
+                        document_source_artifact.c.document_id
+                        == document_id_value,
+                    )
+                )
+            ).mappings().one_or_none()
+            coverage_rows = (
+                await connection.execute(
+                    sa.select(document_coverage)
+                    .where(
+                        document_coverage.c.dataset_version
+                        == dataset_version_value,
+                        document_coverage.c.document_id == document_id_value,
+                    )
+                    .order_by(document_coverage.c.coverage_id)
+                )
+            ).mappings().all()
+        if source_row is None or artifact_row is None or not coverage_rows:
+            raise DocumentCorpusNotFound()
+        coverages = tuple(
+            self._coverage_from_row(row) for row in coverage_rows
+        )
+        if coverages[0].coverage_id != corpus.coverage.coverage_id:
+            raise DocumentCorpusValidationError("primary coverage order")
+        return CapturedDocumentCorpus(
+            source=self._source_from_row(source_row),
+            corpus=corpus,
+            source_artifact=self._source_artifact_from_row(artifact_row),
+            additional_coverages=coverages[1:],
+        )
+
+    async def transition_source_retention(
+        self,
+        dataset_version_value: str,
+        document_id_value: str,
+        target: SourceArtifactRetentionDisposition,
+        *,
+        occurred_at: datetime,
+    ) -> DocumentSourceArtifactRecord:
+        transition_time = _utc_datetime(occurred_at, "occurred_at")
+        async with self._engine.connect() as connection:
+            async with connection.begin():
+                await self._require_building_dataset(
+                    connection, dataset_version_value
+                )
+                row = (
+                    await connection.execute(
+                        sa.select(document_source_artifact)
+                        .where(
+                            document_source_artifact.c.dataset_version
+                            == dataset_version_value,
+                            document_source_artifact.c.document_id
+                            == document_id_value,
+                        )
+                        .with_for_update()
+                    )
+                ).mappings().one_or_none()
+                if row is None:
+                    raise DocumentCorpusNotFound()
+                current = self._source_artifact_from_row(row)
+                allowed = {
+                    "pending_delete": {"delete_authorized", "quarantined"},
+                    "delete_authorized": {
+                        "metadata_only_deleted",
+                        "quarantined",
+                    },
+                }
+                if target not in allowed.get(current.retention_disposition, set()):
+                    raise DocumentCorpusValidationError("retention transition")
+                updated = replace(
+                    current,
+                    retention_disposition=target,
+                    verified_at=(
+                        transition_time
+                        if target == "delete_authorized"
+                        else current.verified_at
+                    ),
+                    discarded_at=(
+                        transition_time
+                        if target == "metadata_only_deleted"
+                        else None
+                    ),
+                    record_hash="0" * 64,
+                )
+                updated = replace(
+                    updated,
+                    record_hash=_source_artifact_record_hash(updated),
+                )
+                self.validate_source_artifact(updated)
+                await connection.execute(
+                    sa.update(document_source_artifact)
+                    .where(
+                        document_source_artifact.c.dataset_version
+                        == dataset_version_value,
+                        document_source_artifact.c.document_id
+                        == document_id_value,
+                    )
+                    .values(
+                        retention_disposition=updated.retention_disposition,
+                        verified_at=updated.verified_at,
+                        discarded_at=updated.discarded_at,
+                        record_hash=updated.record_hash,
+                    )
+                )
+                await self._force_constraints(connection)
+        return updated
+
     async def append_coverage(self, coverage: DocumentCoverageDraft) -> None:
         self.validate_standalone_coverage(coverage)
         try:
@@ -621,10 +927,14 @@ class DocumentCorpusRepository:
             ).mappings().all()
             coverage_row = (
                 await connection.execute(
-                    sa.select(document_coverage).where(
-                        document_coverage.c.dataset_version == dataset_version_value,
+                    sa.select(document_coverage)
+                    .where(
+                        document_coverage.c.dataset_version
+                        == dataset_version_value,
                         document_coverage.c.document_id == document_id_value,
                     )
+                    .order_by(document_coverage.c.coverage_id)
+                    .limit(1)
                 )
             ).mappings().one_or_none()
             if profile_row is None or not binding_rows or coverage_row is None:
@@ -741,7 +1051,8 @@ class DocumentCorpusRepository:
                     document_coverage.c.coverage_status
                     == CoverageStatus.INDEXED.value,
                 )
-                .distinct()
+                .order_by(document_coverage.c.coverage_id)
+                .limit(1)
             )
         ).one_or_none()
         rows = (
@@ -799,6 +1110,54 @@ class DocumentCorpusRepository:
             reason_code=row["reason_code"],
             record_hash=row["record_hash"],
         )
+
+    @staticmethod
+    def _source_from_row(row: sa.RowMapping) -> SourceRecord:
+        return SourceRecord(
+            source_id=row["source_id"],
+            publisher=row["publisher"],
+            publisher_type=row["publisher_type"],
+            source_title=row["source_title"],
+            source_type=row["source_type"],
+            authority_tier=row["authority_tier"],
+            source_locator_root=row["source_locator_root"],
+            content_checksum=row["content_checksum"],
+            license_or_usage_note=row["license_or_usage_note"],
+            eligible_for_claim=row["eligible_for_claim"],
+        )
+
+    @staticmethod
+    def _source_artifact_from_row(
+        row: sa.RowMapping,
+    ) -> DocumentSourceArtifactRecord:
+        return DocumentSourceArtifactRecord(
+            dataset_version=row["dataset_version"],
+            source_artifact_id=row["source_artifact_id"],
+            source_id=row["source_id"],
+            document_id=row["document_id"],
+            receipt_id=row["receipt_id"],
+            original_filename=row["original_filename"],
+            filing_locator=row["filing_locator"],
+            attachment_locator=row["attachment_locator"],
+            media_type=row["media_type"],
+            byte_count=row["byte_count"],
+            source_checksum=row["source_checksum"],
+            text_checksum=row["text_checksum"],
+            page_count=row["page_count"],
+            extraction_version=row["extraction_version"],
+            retention_disposition=row["retention_disposition"],
+            downloaded_at=row["downloaded_at"],
+            persisted_at=row["persisted_at"],
+            verified_at=row["verified_at"],
+            discarded_at=row["discarded_at"],
+            record_hash=row["record_hash"],
+        )
+
+    @staticmethod
+    async def _after_insert_group(
+        _connection: AsyncConnection, _group: str
+    ) -> None:
+        return None
 
     @staticmethod
     async def _validate_embedding_context(
