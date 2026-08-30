@@ -11,6 +11,7 @@ from financial_agent.documents import DocumentRole, PublisherRole
 from financial_agent.documents.source_manifest import (
     DocumentSourceAuditEntry,
     DocumentSourceAuditReport,
+    DocumentSourceAttempt,
     DocumentSourceCandidate,
     DocumentSourceTarget,
     SourceAuditStatus,
@@ -80,12 +81,18 @@ def _unavailable_entry(
     status: SourceAuditStatus,
     *,
     entity_id: str,
+    source_code: str = "DART",
 ) -> DocumentSourceAuditEntry:
     return DocumentSourceAuditEntry(
         target=_target(entity_id),
         status=status,
         reason_code=f"synthetic_{status.value}",
         candidate=None,
+        attempted_source=DocumentSourceAttempt(
+            source_code=source_code,
+            source_locator=None,
+            discovery_locator=None,
+        ),
     )
 
 
@@ -192,15 +199,17 @@ def test_incomplete_summary_has_exact_stable_status_order(
 ) -> None:
     _configure_environment(monkeypatch, tmp_path)
     statuses = (
-        SourceAuditStatus.VERSION_UNKNOWN,
-        SourceAuditStatus.ACCESS_DENIED,
         SourceAuditStatus.DOCUMENT_NOT_FOUND,
-        SourceAuditStatus.RATE_LIMITED,
         SourceAuditStatus.IDENTIFIER_MISSING,
-        SourceAuditStatus.AFTER_CUTOFF_ONLY,
+        SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
         SourceAuditStatus.CREDENTIALS_MISSING,
-        SourceAuditStatus.TERMS_REVIEW_REQUIRED,
+        SourceAuditStatus.ACCESS_DENIED,
+        SourceAuditStatus.RATE_LIMITED,
         SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
+        SourceAuditStatus.TERMS_REVIEW_REQUIRED,
+        SourceAuditStatus.AFTER_CUTOFF_ONLY,
+        SourceAuditStatus.VERSION_UNKNOWN,
+        SourceAuditStatus.MEDIA_TYPE_UNSUPPORTED,
     )
     report = _report(
         tuple(
@@ -222,12 +231,76 @@ def test_incomplete_summary_has_exact_stable_status_order(
 
     assert output.out == ""
     assert output.err == (
-        "DOCUMENT_SOURCE_AUDIT_INCOMPLETE targets=9 eligible=0 unavailable=9 "
-        "document_not_found=1 identifier_missing=1 credentials_missing=1 "
-        "access_denied=1 rate_limited=1 access_method_unverified=1 "
+        "DOCUMENT_SOURCE_AUDIT_INCOMPLETE targets=11 eligible=0 unavailable=11 "
+        "document_not_found=1 identifier_missing=1 ambiguous_entity_binding=1 "
+        "credentials_missing=1 access_denied=1 rate_limited=1 "
+        "access_method_unverified=1 "
         "terms_review_required=1 after_cutoff_only=1 version_unknown=1 "
+        "media_type_unsupported=1 sources=DART:11 "
         f"report_hash={report_hash}\n"
     )
+
+    non_complete = set(SourceAuditStatus) - {
+        SourceAuditStatus.ELIGIBLE,
+        SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE,
+    }
+    assert set(statuses) == non_complete
+    named_counts = {
+        status: int(
+            next(
+                token.split("=", 1)[1]
+                for token in output.err.split()
+                if token.startswith(f"{status.value}=")
+            )
+        )
+        for status in non_complete
+    }
+    unavailable_count = int(
+        next(
+            token.split("=", 1)[1]
+            for token in output.err.split()
+            if token.startswith("unavailable=")
+        )
+    )
+    assert sum(named_counts.values()) == unavailable_count
+
+
+def test_incomplete_summary_and_report_sort_exact_attempted_source_codes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    _configure_environment(monkeypatch, tmp_path)
+    source_codes = ("OFFICIAL_B", "SEC", "DART", "OFFICIAL_A")
+    report = _report(
+        tuple(
+            _unavailable_entry(
+                SourceAuditStatus.DOCUMENT_NOT_FOUND,
+                entity_id=f"product-{index}",
+                source_code=source_code,
+            )
+            for index, source_code in enumerate(source_codes)
+        )
+    )
+
+    async def fake_run(_configuration: object):
+        return _execution(report)
+
+    monkeypatch.setattr(cli, "_run_document_source_audit", fake_run)
+
+    assert cli.main(("audit-document-sources",)) == 2
+    output = capsys.readouterr()
+    payload = json.loads(
+        (tmp_path / "document-source-audit.json").read_text(encoding="utf-8")
+    )
+
+    assert "sources=DART:1,OFFICIAL_A:1,OFFICIAL_B:1,SEC:1" in output.err
+    assert sorted(
+        entry["attempted_source"]["source_code"]
+        for entry in payload["entries"]
+    ) == ["DART", "OFFICIAL_A", "OFFICIAL_B", "SEC"]
+    assert "SYNTHETIC-SECRET" not in output.err
+    assert "SYNTHETIC-SECRET" not in json.dumps(payload)
 
 
 @pytest.mark.parametrize(
@@ -237,8 +310,6 @@ def test_incomplete_summary_has_exact_stable_status_order(
         ("FINANCIAL_AGENT_DATASET_VERSION", "\t"),
         ("FINANCIAL_AGENT_DOCUMENT_AUDIT_OUTPUT_ROOT", ""),
         ("FINANCIAL_AGENT_DOCUMENT_LOCATOR_REGISTRY", "  "),
-        ("FINANCIAL_AGENT_DART_API_KEY", "\n"),
-        ("FINANCIAL_AGENT_SEC_USER_AGENT", " "),
     ),
 )
 def test_audit_cli_rejects_blank_configured_environment_values(
@@ -256,6 +327,41 @@ def test_audit_cli_rejects_blank_configured_environment_values(
 
     assert output.out == ""
     assert output.err == "CONFIGURATION_MISSING\n"
+
+
+@pytest.mark.parametrize(
+    "variable",
+    ("FINANCIAL_AGENT_DART_API_KEY", "FINANCIAL_AGENT_SEC_USER_AGENT"),
+)
+def test_blank_source_credentials_are_normalized_to_per_target_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    variable: str,
+) -> None:
+    _configure_environment(monkeypatch, tmp_path)
+    monkeypatch.setenv(variable, " \t ")
+    observed: dict[str, object] = {}
+    report = _report(
+        (
+            _unavailable_entry(
+                SourceAuditStatus.CREDENTIALS_MISSING,
+                entity_id="product-missing-credentials",
+            ),
+        )
+    )
+
+    async def fake_run(configuration: object):
+        observed["configuration"] = configuration
+        return _execution(report)
+
+    monkeypatch.setattr(cli, "_run_document_source_audit", fake_run)
+
+    assert cli.main(("audit-document-sources",)) == 2
+    configuration = observed["configuration"]
+    assert getattr(configuration, "dart_api_key") is None
+    assert getattr(configuration, "sec_user_agent") is None
+    assert "credentials_missing=1" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("relative_path", ("reports", "../reports"))
@@ -426,9 +532,37 @@ def _policy_locator(entity_id: str) -> dict[str, object]:
 
 
 @pytest.mark.asyncio
-async def test_policy_registry_adds_only_exact_entity_ids_present_in_postgresql(
+async def test_policy_registry_reconciles_missing_and_type_mismatched_entities(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    authority_registry = tmp_path / "authorities.json"
+    authority_registry.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "authorities": [
+                    {
+                        "source_code": "SYNTHETIC_POLICY_AUTHORITY",
+                        "authority_tier": "tier_2_claim_owner",
+                        "publisher_role": "policy_authority",
+                        "jurisdiction": "KR",
+                        "allowed_hosts": ["policy.example.invalid"],
+                        "allowed_document_roles": ["policy_base"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "_DOCUMENT_AUTHORITY_REGISTRY", authority_registry)
+    unreviewed_locator = _policy_locator("policy-unreviewed")
+    unreviewed_locator.update(
+        source_code="UNREVIEWED_AUTHORITY",
+        publisher_code="UNREVIEWED_AUTHORITY",
+        source_locator="https://unreviewed.example.invalid/policy.pdf",
+        discovery_locator="https://unreviewed.example.invalid/documents",
+    )
     registry = tmp_path / "locators.json"
     registry.write_text(
         json.dumps(
@@ -437,6 +571,8 @@ async def test_policy_registry_adds_only_exact_entity_ids_present_in_postgresql(
                 "locators": [
                     _policy_locator("policy-present"),
                     _policy_locator("policy-absent"),
+                    _policy_locator("policy-type-mismatch"),
+                    unreviewed_locator,
                 ],
             }
         ),
@@ -447,20 +583,106 @@ async def test_policy_registry_adds_only_exact_entity_ids_present_in_postgresql(
             {
                 "entity_id": "policy-present",
                 "canonical_name": "Present policy entity",
+                "entity_type": "policy",
+            },
+            {
+                "entity_id": "policy-type-mismatch",
+                "canonical_name": "Existing institution entity",
+                "entity_type": "institution",
             }
         ]
     )
 
-    targets = await cli._list_exact_policy_targets(  # type: ignore[attr-defined]
+    reconciliation = await cli._list_exact_policy_targets(  # type: ignore[attr-defined]
         connection,  # type: ignore[arg-type]
         dataset_version=_DATASET_VERSION,
         cutoff_date=_CUTOFF,
         locator_registry_path=registry,
     )
 
-    assert [(target.entity_id, target.canonical_name) for target in targets] == [
-        ("policy-present", "Present policy entity")
+    assert [
+        (target.entity_id, target.entity_type, target.canonical_name)
+        for target in reconciliation.targets
+    ] == [
+        ("policy-present", "policy", "Present policy entity")
     ]
+    assert [
+        (
+            entry.target.entity_id,
+            entry.target.entity_type,
+            entry.target.canonical_name,
+            entry.status,
+            entry.reason_code,
+        )
+        for entry in reconciliation.unavailable_entries
+    ] == [
+        (
+            "policy-absent",
+            "policy",
+            None,
+            SourceAuditStatus.IDENTIFIER_MISSING,
+            "policy_entity_missing",
+        ),
+        (
+            "policy-type-mismatch",
+            "institution",
+            "Existing institution entity",
+            SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
+            "policy_entity_type_mismatch",
+        ),
+        (
+            "policy-unreviewed",
+            "policy",
+            None,
+            SourceAuditStatus.IDENTIFIER_MISSING,
+            "policy_entity_missing",
+        ),
+    ]
+    assert [
+        entry.attempted_source.source_code
+        for entry in reconciliation.unavailable_entries
+        if entry.attempted_source is not None
+    ] == ["REGISTERED", "REGISTERED", "REGISTERED"]
+
+    configuration = cli._DocumentSourceAuditConfiguration(  # type: ignore[attr-defined]
+        database_url="postgresql://audit@localhost/financial_agent",
+        dataset_version=_DATASET_VERSION,
+        output_root=tmp_path,
+        dart_api_key=None,
+        sec_user_agent=None,
+        locator_registry_path=registry,
+    )
+    execution = cli._audit_document_targets(  # type: ignore[attr-defined]
+        (),
+        configuration=configuration,
+        opener=_NeverOpen(),
+        generated_at=_GENERATED_AT,
+        preliminary_entries=reconciliation.unavailable_entries,
+    )
+
+    assert [entry.status for entry in execution.report.entries] == [
+        SourceAuditStatus.IDENTIFIER_MISSING,
+        SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
+        SourceAuditStatus.IDENTIFIER_MISSING,
+    ]
+    assert [
+        entry.attempted_source.source_code
+        for entry in execution.report.entries
+        if entry.attempted_source is not None
+    ] == [
+        "SYNTHETIC_POLICY_AUTHORITY",
+        "SYNTHETIC_POLICY_AUTHORITY",
+        "REGISTERED",
+    ]
+    assert all(
+        entry.attempted_source is not None
+        and (
+            entry.attempted_source.source_locator is None
+            or "SYNTHETIC-SECRET" not in entry.attempted_source.source_locator
+        )
+        for entry in execution.report.entries
+    )
+    assert not cli.document_source_audit_passed(execution.report)
     assert all(
         getattr(statement, "is_select", False)
         for statement in connection.statements

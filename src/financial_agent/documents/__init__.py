@@ -22,6 +22,7 @@ from .policy import (
 from .source_manifest import (
     DocumentSourceAuditEntry,
     DocumentSourceAuditReport,
+    DocumentSourceAttempt,
     DocumentSourceCandidate,
     DocumentSourceTarget,
     SourceAuditStatus,
@@ -40,6 +41,7 @@ __all__ = [
     "DocumentRole",
     "DocumentSourceAuditEntry",
     "DocumentSourceAuditReport",
+    "DocumentSourceAttempt",
     "DocumentSourceCandidate",
     "DocumentSourceTarget",
     "PublisherRole",

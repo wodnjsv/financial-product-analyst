@@ -5,8 +5,9 @@ import asyncio
 import os
 import sys
 import tempfile
+from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 from urllib.error import HTTPError
@@ -28,11 +29,16 @@ from financial_agent.db.schema.operations import (
 )
 from financial_agent.documents import (
     DocumentRole,
+    DocumentSourceAuditEntry,
     DocumentSourceAuditReport,
+    DocumentSourceAttempt,
     DocumentSourceTarget,
     SourceAuditStatus,
 )
-from financial_agent.documents.source_manifest import write_document_source_report
+from financial_agent.documents.source_manifest import (
+    validate_document_source_report,
+    write_document_source_report,
+)
 from financial_agent.ingestion.capacity_probe import (
     CapacityProbeError,
     measure_database_acceptance,
@@ -126,6 +132,7 @@ _DOCUMENT_AUTHORITY_REGISTRY = (
 _AUDIT_STATUS_ORDER = (
     SourceAuditStatus.DOCUMENT_NOT_FOUND,
     SourceAuditStatus.IDENTIFIER_MISSING,
+    SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
     SourceAuditStatus.CREDENTIALS_MISSING,
     SourceAuditStatus.ACCESS_DENIED,
     SourceAuditStatus.RATE_LIMITED,
@@ -133,6 +140,7 @@ _AUDIT_STATUS_ORDER = (
     SourceAuditStatus.TERMS_REVIEW_REQUIRED,
     SourceAuditStatus.AFTER_CUTOFF_ONLY,
     SourceAuditStatus.VERSION_UNKNOWN,
+    SourceAuditStatus.MEDIA_TYPE_UNSUPPORTED,
 )
 
 
@@ -150,6 +158,12 @@ class _DocumentSourceAuditConfiguration:
 class _DocumentSourceAuditExecution:
     report: DocumentSourceAuditReport
     registered_authorities: ReviewedAuthorityContext | None
+
+
+@dataclass(frozen=True, slots=True)
+class _PolicyTargetReconciliation:
+    targets: tuple[DocumentSourceTarget, ...]
+    unavailable_entries: tuple[DocumentSourceAuditEntry, ...]
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -214,6 +228,11 @@ def _optional_nonblank_env(name: str) -> str | None:
     return value.strip()
 
 
+def _optional_source_credential_env(name: str) -> str | None:
+    value = os.getenv(name)
+    return value.strip() if value is not None and value.strip() else None
+
+
 def _validated_output_root(value: str) -> Path:
     root = Path(value)
     if not root.is_absolute() or root.is_symlink():
@@ -261,8 +280,10 @@ def _load_document_source_audit_configuration(
         database_url=database_url,
         dataset_version=dataset_version,
         output_root=output_root,
-        dart_api_key=_optional_nonblank_env("FINANCIAL_AGENT_DART_API_KEY"),
-        sec_user_agent=_optional_nonblank_env(
+        dart_api_key=_optional_source_credential_env(
+            "FINANCIAL_AGENT_DART_API_KEY"
+        ),
+        sec_user_agent=_optional_source_credential_env(
             "FINANCIAL_AGENT_SEC_USER_AGENT"
         ),
         locator_registry_path=locator_registry_path,
@@ -597,7 +618,7 @@ async def _list_exact_policy_targets(
     dataset_version: str,
     cutoff_date: date,
     locator_registry_path: Path,
-) -> tuple[DocumentSourceTarget, ...]:
+) -> _PolicyTargetReconciliation:
     try:
         locators = _load_locator_registry(locator_registry_path)
     except Exception:
@@ -611,48 +632,109 @@ async def _list_exact_policy_targets(
         and locator.binding_role == "subject_policy"
     )
     if not policy_locators:
-        return ()
+        return _PolicyTargetReconciliation((), ())
 
     entity_ids = tuple(sorted({locator.entity_id for locator in policy_locators}))
     result = await connection.execute(
-        sa.select(entity.c.entity_id, entity.c.canonical_name).where(
+        sa.select(
+            entity.c.entity_id,
+            entity.c.entity_type,
+            entity.c.canonical_name,
+        ).where(
             entity.c.dataset_version == dataset_version,
             entity.c.entity_id.in_(entity_ids),
         )
     )
-    names: dict[str, str] = {}
+    entities: dict[str, tuple[str, str]] = {}
     for row in result.mappings().all():
         entity_id = row.get("entity_id")
+        entity_type = row.get("entity_type")
         canonical_name = row.get("canonical_name")
         if (
             not isinstance(entity_id, str)
             or not entity_id.strip()
+            or not isinstance(entity_type, str)
+            or not entity_type.strip()
             or not isinstance(canonical_name, str)
             or not canonical_name.strip()
-            or entity_id in names
+            or entity_id in entities
         ):
             raise IngestionArgumentError()
-        names[entity_id] = canonical_name
+        entities[entity_id] = (entity_type, canonical_name)
 
-    return tuple(
-        sorted(
-            (
-                DocumentSourceTarget(
-                    dataset_version=dataset_version,
-                    entity_id=locator.entity_id,
-                    entity_type=locator.entity_type,
-                    canonical_name=names[locator.entity_id],
-                    product_family=None,
-                    required_role=locator.required_role,
-                    binding_role=locator.binding_role,
-                    identifiers=(),
-                    cutoff_date=cutoff_date,
+    targets: list[DocumentSourceTarget] = []
+    unavailable_entries: list[DocumentSourceAuditEntry] = []
+    for locator in sorted(
+        policy_locators,
+        key=lambda item: (item.entity_id, item.required_role.value),
+    ):
+        database_entity = entities.get(locator.entity_id)
+        if database_entity is None:
+            target = _policy_target(
+                locator,
+                dataset_version=dataset_version,
+                cutoff_date=cutoff_date,
+                entity_type=locator.entity_type,
+                canonical_name=None,
+            )
+            unavailable_entries.append(
+                DocumentSourceAuditEntry(
+                    target=target,
+                    status=SourceAuditStatus.IDENTIFIER_MISSING,
+                    reason_code="policy_entity_missing",
+                    candidate=None,
+                    attempted_source=DocumentSourceAttempt(
+                        "REGISTERED", None, None
+                    ),
                 )
-                for locator in policy_locators
-                if locator.entity_id in names
-            ),
-            key=lambda target: (target.entity_id, target.required_role.value),
+            )
+            continue
+        entity_type, canonical_name = database_entity
+        target = _policy_target(
+            locator,
+            dataset_version=dataset_version,
+            cutoff_date=cutoff_date,
+            entity_type=entity_type,
+            canonical_name=canonical_name,
         )
+        if entity_type != locator.entity_type or entity_type != "policy":
+            unavailable_entries.append(
+                DocumentSourceAuditEntry(
+                    target=target,
+                    status=SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
+                    reason_code="policy_entity_type_mismatch",
+                    candidate=None,
+                    attempted_source=DocumentSourceAttempt(
+                        "REGISTERED", None, None
+                    ),
+                )
+            )
+        else:
+            targets.append(target)
+    return _PolicyTargetReconciliation(
+        tuple(targets),
+        tuple(unavailable_entries),
+    )
+
+
+def _policy_target(
+    locator: object,
+    *,
+    dataset_version: str,
+    cutoff_date: date,
+    entity_type: str,
+    canonical_name: str | None,
+) -> DocumentSourceTarget:
+    return DocumentSourceTarget(
+        dataset_version=dataset_version,
+        entity_id=locator.entity_id,
+        entity_type=entity_type,
+        canonical_name=canonical_name,
+        product_family=None,
+        required_role=locator.required_role,
+        binding_role=locator.binding_role,
+        identifiers=(),
+        cutoff_date=cutoff_date,
     )
 
 
@@ -662,26 +744,55 @@ def _audit_document_targets(
     configuration: _DocumentSourceAuditConfiguration,
     opener: object,
     generated_at: datetime,
+    preliminary_entries: tuple[DocumentSourceAuditEntry, ...] = (),
 ) -> _DocumentSourceAuditExecution:
     registered_adapter = RegisteredDocumentSourceAdapter(
         opener,
         _DOCUMENT_AUTHORITY_REGISTRY,
     )
-    report = audit_document_sources(
-        targets,
-        (
-            DartDocumentSourceAdapter(opener),
-            SecDocumentSourceAdapter(opener),
-            registered_adapter,
-        ),
-        DocumentDiscoveryContext(
-            cutoff_date=_DOCUMENT_SOURCE_CUTOFF,
-            dart_api_key=configuration.dart_api_key,
-            sec_user_agent=configuration.sec_user_agent,
-            locator_registry_path=configuration.locator_registry_path,
-        ),
-        generated_at,
+    context = DocumentDiscoveryContext(
+        cutoff_date=_DOCUMENT_SOURCE_CUTOFF,
+        dart_api_key=configuration.dart_api_key,
+        sec_user_agent=configuration.sec_user_agent,
+        locator_registry_path=configuration.locator_registry_path,
     )
+    preliminary_entries = tuple(
+        replace(
+            entry,
+            attempted_source=registered_adapter.reviewed_attempt(
+                entry.target,
+                context,
+            ),
+        )
+        for entry in preliminary_entries
+    )
+    if targets:
+        report = audit_document_sources(
+            targets,
+            (
+                DartDocumentSourceAdapter(opener),
+                SecDocumentSourceAdapter(opener),
+                registered_adapter,
+            ),
+            context,
+            generated_at,
+        )
+        report = DocumentSourceAuditReport(
+            schema_version=report.schema_version,
+            generated_at=report.generated_at,
+            cutoff_date=report.cutoff_date,
+            dataset_version=report.dataset_version,
+            entries=(*report.entries, *preliminary_entries),
+        )
+    else:
+        report = DocumentSourceAuditReport(
+            schema_version="1.0",
+            generated_at=generated_at,
+            cutoff_date=_DOCUMENT_SOURCE_CUTOFF,
+            dataset_version=configuration.dataset_version,
+            entries=preliminary_entries,
+        )
+    validate_document_source_report(report)
     return _DocumentSourceAuditExecution(
         report=report,
         registered_authorities=registered_adapter.reviewed_authorities,
@@ -705,9 +816,9 @@ async def _run_document_source_audit(
                 configuration.dataset_version,
                 cutoff_date=cutoff_date,
             )
-            policy_targets: tuple[DocumentSourceTarget, ...] = ()
+            policy_reconciliation = _PolicyTargetReconciliation((), ())
             if configuration.locator_registry_path is not None:
-                policy_targets = await _list_exact_policy_targets(
+                policy_reconciliation = await _list_exact_policy_targets(
                     connection,
                     dataset_version=configuration.dataset_version,
                     cutoff_date=cutoff_date,
@@ -717,10 +828,11 @@ async def _run_document_source_audit(
         await engine.dispose()
 
     return _audit_document_targets(
-        (*targets, *policy_targets),
+        (*targets, *policy_reconciliation.targets),
         configuration=configuration,
         opener=_NoRedirectHttpOpener(),
         generated_at=generated_at,
+        preliminary_entries=policy_reconciliation.unavailable_entries,
     )
 
 
@@ -759,11 +871,29 @@ def _document_source_audit_summary(
         f"{status.value}={_audit_status_count(report, status)}"
         for status in _AUDIT_STATUS_ORDER
     )
+    source_counts = Counter(
+        entry.attempted_source.source_code
+        for entry in report.entries
+        if entry.status
+        not in {
+            SourceAuditStatus.ELIGIBLE,
+            SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE,
+        }
+        and entry.attempted_source is not None
+    )
+    sources = (
+        ",".join(
+            f"{source_code}:{source_counts[source_code]}"
+            for source_code in sorted(source_counts)
+        )
+        if source_counts
+        else "none"
+    )
     return (
         False,
         f"DOCUMENT_SOURCE_AUDIT_INCOMPLETE targets={target_count} "
         f"eligible={eligible_count} unavailable={unavailable_count} "
-        f"{counts} report_hash={report_hash}",
+        f"{counts} sources={sources} report_hash={report_hash}",
     )
 
 

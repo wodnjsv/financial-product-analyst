@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from financial_agent.documents.source_manifest import (
     DocumentSourceCandidate,
+    DocumentSourceAttempt,
     DocumentSourceTarget,
     SourceAuditStatus,
     _validate_locator,
@@ -31,6 +32,7 @@ class SourceAdapterResult:
     status: SourceAuditStatus
     reason_code: str | None
     candidates: tuple[DocumentSourceCandidate, ...]
+    attempted_source: DocumentSourceAttempt | None = None
 
 
 class DocumentSourceAdapter(Protocol):

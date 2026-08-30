@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from financial_agent.documents import (
     DocumentRole,
     DocumentSourceCandidate,
+    DocumentSourceAttempt,
     DocumentSourceTarget,
     PublisherRole,
     SourceAuditStatus,
@@ -139,6 +140,13 @@ class SecDocumentSourceAdapter:
             "User-Agent": user_agent.strip(),
             "Accept-Encoding": "identity",
         }
+        attempted_source = DocumentSourceAttempt(
+            source_code="SEC",
+            source_locator=None,
+            discovery_locator=(
+                f"{_SUBMISSIONS_ROOT}/CIK{binding.padded_cik}.json"
+            ),
+        )
         try:
             filings = self._filings(binding=binding, headers=headers)
             selected = self._discover_bound(
@@ -148,15 +156,24 @@ class SecDocumentSourceAdapter:
                 headers=headers,
             )
         except _SecResponseError as error:
-            return _unavailable(error.status, error.reason_code)
+            return _unavailable(
+                error.status,
+                error.reason_code,
+                attempted_source=attempted_source,
+            )
         except _SecMalformedResponse:
             return _unavailable(
                 SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
                 "sec_response_malformed",
+                attempted_source=attempted_source,
             )
         except Exception as error:
             status = classify_access_error(error)
-            return _unavailable(status, f"sec_{status.value}")
+            return _unavailable(
+                status,
+                f"sec_{status.value}",
+                attempted_source=attempted_source,
+            )
 
         return SourceAdapterResult(
             status=SourceAuditStatus.ELIGIBLE,
@@ -646,5 +663,13 @@ def _is_int(value: object) -> bool:
 def _unavailable(
     status: SourceAuditStatus,
     reason_code: str,
+    *,
+    attempted_source: DocumentSourceAttempt | None = None,
 ) -> SourceAdapterResult:
-    return SourceAdapterResult(status=status, reason_code=reason_code, candidates=())
+    return SourceAdapterResult(
+        status=status,
+        reason_code=reason_code,
+        candidates=(),
+        attempted_source=attempted_source
+        or DocumentSourceAttempt("SEC", None, None),
+    )

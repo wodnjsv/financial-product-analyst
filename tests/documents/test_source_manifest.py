@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, date, datetime
 from enum import Enum
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from financial_agent.documents import DocumentRole, PublisherRole
 from financial_agent.documents.source_manifest import (
     DocumentSourceAuditEntry,
     DocumentSourceAuditReport,
+    DocumentSourceAttempt,
     DocumentSourceCandidate,
     DocumentSourceTarget,
     SourceAuditStatus,
@@ -125,6 +127,61 @@ def test_unavailable_entry_requires_stable_reason_without_candidate() -> None:
         )
 
 
+def test_unavailable_entry_serializes_attempted_source_without_candidate(
+    tmp_path: Path,
+) -> None:
+    unavailable = DocumentSourceAuditEntry(
+        target=target(),
+        status=SourceAuditStatus.ACCESS_DENIED,
+        reason_code="dart_access_denied",
+        candidate=None,
+        attempted_source=DocumentSourceAttempt(
+            source_code="DART",
+            source_locator=None,
+            discovery_locator="https://dart.fss.or.kr/",
+        ),
+    )
+    destination = tmp_path / "report.json"
+
+    write_document_source_report(report(entries=(unavailable,)), destination)
+
+    entry = json.loads(destination.read_text(encoding="utf-8"))["entries"][0]
+    assert entry["candidate"] is None
+    assert entry["attempted_source"] == {
+        "discovery_locator": "https://dart.fss.or.kr/",
+        "source_code": "DART",
+        "source_locator": None,
+    }
+
+
+@pytest.mark.parametrize(
+    "locator",
+    (
+        "https://dart.fss.or.kr/?api_key=SYNTHETIC-SECRET",
+        "https://user:password@dart.fss.or.kr/",
+        "http://dart.fss.or.kr/",
+    ),
+)
+def test_attempted_source_rejects_unsafe_public_locator(locator: str) -> None:
+    with pytest.raises(ValueError, match="locator"):
+        DocumentSourceAttempt(
+            source_code="DART",
+            source_locator=locator,
+            discovery_locator=None,
+        )
+
+
+def test_audit_entry_rejects_untyped_attempted_source() -> None:
+    with pytest.raises(ValueError, match="attempted_source"):
+        DocumentSourceAuditEntry(
+            target=target(),
+            status=SourceAuditStatus.ACCESS_DENIED,
+            reason_code="dart_access_denied",
+            candidate=None,
+            attempted_source="DART",  # type: ignore[arg-type]
+        )
+
+
 def test_report_rejects_duplicate_target_role_keys() -> None:
     with pytest.raises(ValueError, match="duplicate audit target"):
         validate_document_source_report(
@@ -135,6 +192,44 @@ def test_report_rejects_duplicate_target_role_keys() -> None:
 def test_target_rejects_noncanonical_cutoff() -> None:
     with pytest.raises(ValueError, match="cutoff"):
         target(cutoff_date=date(2026, 8, 23))
+
+
+def test_unresolved_policy_target_allows_truthful_missing_name(
+    tmp_path: Path,
+) -> None:
+    unresolved_target = replace(
+        target(
+            entity_id="policy-missing",
+            entity_type="policy",
+            product_family=None,
+            required_role=DocumentRole.POLICY_BASE,
+            identifiers=(),
+            binding_role="subject_policy",
+        ),
+        canonical_name=None,
+    )
+    unavailable = DocumentSourceAuditEntry(
+        target=unresolved_target,
+        status=SourceAuditStatus.IDENTIFIER_MISSING,
+        reason_code="policy_entity_missing",
+        candidate=None,
+        attempted_source=DocumentSourceAttempt(
+            source_code="POLICY_AUTHORITY",
+            source_locator=None,
+            discovery_locator=None,
+        ),
+    )
+    destination = tmp_path / "report.json"
+
+    write_document_source_report(report(entries=(unavailable,)), destination)
+
+    payload = json.loads(destination.read_text(encoding="utf-8"))
+    assert payload["entries"][0]["target"]["canonical_name"] is None
+
+
+def test_non_policy_target_still_requires_canonical_name() -> None:
+    with pytest.raises(ValueError, match="canonical_name"):
+        replace(target(), canonical_name=None)
 
 
 @pytest.mark.parametrize("entity_id", ("", " ", "\t"))

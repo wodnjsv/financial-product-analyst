@@ -12,6 +12,7 @@ from financial_agent.documents import (
     DocumentSourceAuditEntry,
     DocumentSourceAuditReport,
     DocumentSourceCandidate,
+    DocumentSourceAttempt,
     DocumentSourceTarget,
     PublisherRole,
     SourceAuditStatus,
@@ -164,6 +165,7 @@ def _audit_target(
             target,
             SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
             "duplicate_target_definition_conflict",
+            attempted_source=_attempt_for_route(_route_key(target)),
         )
     if _is_domestic_bond(target):
         return _unavailable_entry(
@@ -176,6 +178,7 @@ def _audit_target(
             target,
             SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
             "binding_role_incompatible_with_document_role",
+            attempted_source=_attempt_for_route(_route_key(target)),
         )
 
     route_key = _route_key(target)
@@ -192,12 +195,14 @@ def _audit_target(
             target,
             SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
             f"{route_key.lower()}_adapter_missing",
+            attempted_source=_attempt_for_route(route_key),
         )
     if len(route_adapters) != 1:
         return _unavailable_entry(
             target,
             SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
             f"{route_key.lower()}_adapter_registration_ambiguous",
+            attempted_source=_attempt_for_route(route_key),
         )
 
     adapter = route_adapters[0]
@@ -209,6 +214,7 @@ def _audit_target(
                 target,
                 SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
                 "registered_authority_context_missing",
+                attempted_source=_attempt_for_route(route_key),
             )
         registered_authorities = value
     try:
@@ -217,6 +223,7 @@ def _audit_target(
                 target,
                 SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
                 f"{route_key.lower()}_target_not_supported",
+                attempted_source=_attempt_for_route(route_key),
             )
         result = adapter.discover(target, context)
     except Exception as error:
@@ -225,6 +232,7 @@ def _audit_target(
             target,
             status,
             f"{route_key.lower()}_{status.value}",
+            attempted_source=_attempt_for_route(route_key),
         )
     return _entry_from_result(
         target,
@@ -246,17 +254,38 @@ def _entry_from_result(
             target,
             SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
             f"{route_key.lower()}_adapter_result_invalid",
+            attempted_source=_attempt_for_route(route_key),
         )
     assert isinstance(result, SourceAdapterResult)
+    attempted_source = _validated_attempted_source(
+        result.attempted_source,
+        route_key=route_key,
+        registered_authorities=registered_authorities,
+    )
+    if result.attempted_source is not None and attempted_source is None:
+        return _unavailable_entry(
+            target,
+            SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
+            f"{route_key.lower()}_attempted_source_invalid",
+            attempted_source=_attempt_for_route(route_key),
+        )
+    if attempted_source is None:
+        attempted_source = _attempt_for_route(route_key)
     if result.status is SourceAuditStatus.NOT_APPLICABLE_CURRENT_SCOPE:
         return _unavailable_entry(
             target,
             SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
             f"{route_key.lower()}_target_not_supported",
+            attempted_source=attempted_source,
         )
     if result.status is not SourceAuditStatus.ELIGIBLE:
         assert result.reason_code is not None
-        return _unavailable_entry(target, result.status, result.reason_code)
+        return _unavailable_entry(
+            target,
+            result.status,
+            result.reason_code,
+            attempted_source=attempted_source,
+        )
 
     candidates = tuple(sorted(result.candidates, key=_source_candidate_key))
     document_ids = [candidate.document_id for candidate in candidates]
@@ -265,6 +294,7 @@ def _entry_from_result(
             target,
             SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
             f"{route_key.lower()}_duplicate_document_id",
+            attempted_source=attempted_source,
         )
     provenance_reasons = tuple(
         reason
@@ -284,6 +314,7 @@ def _entry_from_result(
             target,
             SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
             min(provenance_reasons),
+            attempted_source=attempted_source,
         )
 
     selection = _select_source_candidate(candidates, target=target)
@@ -299,6 +330,12 @@ def _entry_from_result(
         status=selection.status,
         reason_code=selection.reason_code,
         candidate=selection.candidate,
+        attempted_source=(
+            _attempt_from_candidate(selection.candidate)
+            if selection.status is not SourceAuditStatus.ELIGIBLE
+            and selection.candidate is not None
+            else None
+        ),
     )
 
 
@@ -473,6 +510,10 @@ def _adapter_result_is_valid(result: object) -> bool:
         return False
     if not isinstance(result.candidates, tuple):
         return False
+    if result.attempted_source is not None and not isinstance(
+        result.attempted_source, DocumentSourceAttempt
+    ):
+        return False
     try:
         for candidate in result.candidates:
             validate_document_source_candidate(candidate)
@@ -569,7 +610,7 @@ def _target_sort_key(target: DocumentSourceTarget) -> tuple[object, ...]:
         target.dataset_version,
         target.entity_id,
         target.entity_type,
-        target.canonical_name,
+        target.canonical_name or "",
         target.product_family or "",
         target.required_role.value,
         target.binding_role,
@@ -606,12 +647,63 @@ def _unavailable_entry(
     target: DocumentSourceTarget,
     status: SourceAuditStatus,
     reason_code: str,
+    *,
+    attempted_source: DocumentSourceAttempt | None = None,
 ) -> DocumentSourceAuditEntry:
     return DocumentSourceAuditEntry(
         target=target,
         status=status,
         reason_code=reason_code,
         candidate=None,
+        attempted_source=attempted_source,
+    )
+
+
+def _attempt_for_route(route_key: str) -> DocumentSourceAttempt | None:
+    if route_key not in {"DART", "SEC", "REGISTERED"}:
+        return None
+    return DocumentSourceAttempt(
+        source_code=route_key,
+        source_locator=None,
+        discovery_locator=None,
+    )
+
+
+def _attempt_from_candidate(
+    candidate: DocumentSourceCandidate,
+) -> DocumentSourceAttempt:
+    return DocumentSourceAttempt(
+        source_code=candidate.source_code,
+        source_locator=candidate.source_locator,
+        discovery_locator=candidate.discovery_locator,
+    )
+
+
+def _validated_attempted_source(
+    attempt: DocumentSourceAttempt | None,
+    *,
+    route_key: str,
+    registered_authorities: ReviewedAuthorityContext | None,
+) -> DocumentSourceAttempt | None:
+    if attempt is None:
+        return None
+    if route_key in {"DART", "SEC"}:
+        return attempt if attempt.source_code == route_key else None
+    if route_key != "REGISTERED":
+        return None
+    if attempt.source_code == "REGISTERED":
+        return (
+            attempt
+            if attempt.source_locator is None
+            and attempt.discovery_locator is None
+            else None
+        )
+    if registered_authorities is None:
+        return None
+    return (
+        attempt
+        if registered_authorities.authority_for(attempt.source_code) is not None
+        else None
     )
 
 

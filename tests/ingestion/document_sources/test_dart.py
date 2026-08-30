@@ -365,6 +365,10 @@ def test_dart_missing_api_key_is_per_target_credentials_missing(
     assert result.status is SourceAuditStatus.CREDENTIALS_MISSING
     assert result.reason_code == "dart_api_key_missing"
     assert result.candidates == ()
+    assert result.attempted_source is not None
+    assert result.attempted_source.source_code == "DART"
+    assert result.attempted_source.source_locator is None
+    assert result.attempted_source.discovery_locator is None
     assert opener.calls == []
 
 

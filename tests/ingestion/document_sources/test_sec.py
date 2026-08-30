@@ -319,6 +319,10 @@ def test_sec_missing_or_invalid_user_agent_fails_before_network(
     assert result.status is SourceAuditStatus.CREDENTIALS_MISSING
     assert result.reason_code == "sec_user_agent_missing"
     assert result.candidates == ()
+    assert result.attempted_source is not None
+    assert result.attempted_source.source_code == "SEC"
+    assert result.attempted_source.source_locator is None
+    assert result.attempted_source.discovery_locator is None
     assert opener.calls == []
 
 
@@ -642,6 +646,10 @@ def test_sec_maps_403_and_429_without_reading_response_body(
 
     assert result.status is expected
     assert result.reason_code == reason
+    assert result.attempted_source is not None
+    assert result.attempted_source.source_code == "SEC"
+    assert result.attempted_source.source_locator is None
+    assert result.attempted_source.discovery_locator == _SUBMISSIONS_URL
     assert opener.opened_responses[0].read_sizes == []
 
 

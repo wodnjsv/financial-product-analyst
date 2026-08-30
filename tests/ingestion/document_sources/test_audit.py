@@ -9,6 +9,7 @@ from financial_agent.documents import (
     DocumentRole,
     DocumentSourceAuditEntry,
     DocumentSourceAuditReport,
+    DocumentSourceAttempt,
     DocumentSourceCandidate,
     DocumentSourceTarget,
     PublisherRole,
@@ -192,6 +193,125 @@ def test_audit_does_not_fallback_after_tier_one_product_failure() -> None:
     assert dart.calls == [report.entries[0].target]
     assert manager.calls == []
     assert document_source_audit_passed(report) is False
+
+
+@pytest.mark.parametrize(
+    ("source_code", "target"),
+    (
+        ("DART", _target("domestic-etf")),
+        (
+            "SEC",
+            _target(
+                "overseas-etf",
+                product_family="overseas_etf",
+                identifiers=_SEC_IDENTIFIERS,
+            ),
+        ),
+    ),
+)
+def test_unavailable_regulator_result_retains_exact_attempted_source(
+    source_code: str,
+    target: DocumentSourceTarget,
+) -> None:
+    adapter = _StubAdapter(
+        source_code,
+        SourceAdapterResult(
+            status=SourceAuditStatus.CREDENTIALS_MISSING,
+            reason_code=f"{source_code.lower()}_credentials_missing",
+            candidates=(),
+            attempted_source=DocumentSourceAttempt(
+                source_code=source_code,
+                source_locator=None,
+                discovery_locator=None,
+            ),
+        ),
+    )
+
+    report = audit_document_sources(
+        targets=(target,),
+        adapters=(adapter,),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert report.entries[0].attempted_source == DocumentSourceAttempt(
+        source_code=source_code,
+        source_locator=None,
+        discovery_locator=None,
+    )
+
+
+def test_unavailable_registered_results_retain_distinct_reviewed_authorities() -> None:
+    authorities = ReviewedAuthorityContext(
+        tuple(
+            ReviewedAuthority(
+                source_code=source_code,
+                publisher_code=source_code,
+                authority_tier=SourceAuthorityTier.TIER_2_CLAIM_OWNER,
+                publisher_role=PublisherRole.INDEX_PROVIDER,
+                jurisdiction="KR",
+                allowed_document_roles=frozenset(
+                    {DocumentRole.INDEX_METHODOLOGY}
+                ),
+            )
+            for source_code in ("OFFICIAL_A", "OFFICIAL_B")
+        )
+    )
+
+    @dataclass
+    class RegisteredAdapter:
+        source_code: str = "REGISTERED"
+        reviewed_authorities: ReviewedAuthorityContext = authorities
+
+        def supports(self, _target: DocumentSourceTarget) -> bool:
+            return True
+
+        def discover(
+            self,
+            target: DocumentSourceTarget,
+            _context: DocumentDiscoveryContext,
+        ) -> SourceAdapterResult:
+            source_code = (
+                "OFFICIAL_A" if target.entity_id == "index-a" else "OFFICIAL_B"
+            )
+            return SourceAdapterResult(
+                status=SourceAuditStatus.ACCESS_DENIED,
+                reason_code="registered_access_denied",
+                candidates=(),
+                attempted_source=DocumentSourceAttempt(
+                    source_code=source_code,
+                    source_locator=(
+                        "https://official.example.invalid/"
+                        f"{target.entity_id}.pdf"
+                    ),
+                    discovery_locator="https://official.example.invalid/documents",
+                ),
+            )
+
+    targets = tuple(
+        _target(
+            entity_id,
+            entity_type="index",
+            product_family=None,
+            required_role=DocumentRole.INDEX_METHODOLOGY,
+            binding_role="subject_index",
+        )
+        for entity_id in ("index-b", "index-a")
+    )
+
+    report = audit_document_sources(
+        targets=targets,
+        adapters=(RegisteredAdapter(),),
+        context=_context(),
+        generated_at=_NOW,
+    )
+
+    assert [
+        (entry.target.entity_id, entry.attempted_source.source_code)
+        for entry in report.entries
+        if entry.attempted_source is not None
+    ] == [("index-a", "OFFICIAL_A"), ("index-b", "OFFICIAL_B")]
+    assert "SYNTHETIC-SECRET" not in repr(report)
 
 
 def test_domestic_bond_is_not_applicable_without_adapter_calls() -> None:

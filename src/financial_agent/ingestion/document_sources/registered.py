@@ -13,6 +13,7 @@ from urllib.parse import urljoin, urlparse
 from financial_agent.documents import (
     DocumentRole,
     DocumentSourceCandidate,
+    DocumentSourceAttempt,
     DocumentSourceTarget,
     PublisherRole,
     SourceAuditStatus,
@@ -259,6 +260,49 @@ class RegisteredDocumentSourceAdapter:
             return False
         return target.binding_role in allowed_bindings
 
+    def reviewed_attempt(
+        self,
+        target: DocumentSourceTarget,
+        context: DocumentDiscoveryContext,
+    ) -> DocumentSourceAttempt:
+        """Return only locally reviewed source metadata without network access."""
+
+        fallback = DocumentSourceAttempt("REGISTERED", None, None)
+        if context.locator_registry_path is None:
+            return fallback
+        try:
+            locators = _load_locator_registry(context.locator_registry_path)
+            locator = locators[(target.entity_id, target.required_role)]
+            authority = self._authorities[locator.source_code]
+        except Exception:
+            return fallback
+        source_only = DocumentSourceAttempt(authority.source_code, None, None)
+        declared_target = DocumentSourceTarget(
+            dataset_version=target.dataset_version,
+            entity_id=locator.entity_id,
+            entity_type=locator.entity_type,
+            canonical_name=target.canonical_name,
+            product_family=None,
+            required_role=locator.required_role,
+            binding_role=locator.binding_role,
+            identifiers=(),
+            cutoff_date=target.cutoff_date,
+        )
+        try:
+            _validate_locator_for_target(
+                locator,
+                authority=authority,
+                target=declared_target,
+            )
+            _validate_cutoff(locator, cutoff_date=context.cutoff_date)
+            return DocumentSourceAttempt(
+                source_code=authority.source_code,
+                source_locator=locator.source_locator,
+                discovery_locator=locator.discovery_locator,
+            )
+        except Exception:
+            return source_only
+
     def discover(
         self,
         target: DocumentSourceTarget,
@@ -308,16 +352,33 @@ class RegisteredDocumentSourceAdapter:
                 "registered_source_code_unknown",
             )
 
+        attempted_source = DocumentSourceAttempt(
+            source_code=authority.source_code,
+            source_locator=None,
+            discovery_locator=None,
+        )
+
         try:
             _validate_locator_for_target(locator, authority=authority, target=target)
             _validate_cutoff(locator, cutoff_date=context.cutoff_date)
         except _RegisteredResultError as error:
-            return _unavailable(error.status, error.reason_code)
+            return _unavailable(
+                error.status,
+                error.reason_code,
+                attempted_source=attempted_source,
+            )
+
+        attempted_source = DocumentSourceAttempt(
+            source_code=authority.source_code,
+            source_locator=locator.source_locator,
+            discovery_locator=locator.discovery_locator,
+        )
 
         if authority.terms_review_required:
             return _unavailable(
                 SourceAuditStatus.TERMS_REVIEW_REQUIRED,
                 "registered_terms_review_required",
+                attempted_source=attempted_source,
             )
 
         try:
@@ -328,20 +389,34 @@ class RegisteredDocumentSourceAdapter:
                 expected_media_type=locator.media_type,
             )
         except _RegisteredResultError as error:
-            return _unavailable(error.status, error.reason_code)
+            return _unavailable(
+                error.status,
+                error.reason_code,
+                attempted_source=attempted_source,
+            )
         except DocumentSourceAccessError:
             return _unavailable(
                 SourceAuditStatus.ACCESS_DENIED,
                 "registered_locator_unsafe",
+                attempted_source=DocumentSourceAttempt(
+                    source_code=authority.source_code,
+                    source_locator=None,
+                    discovery_locator=None,
+                ),
             )
         except _MalformedResponse:
             return _unavailable(
                 SourceAuditStatus.ACCESS_METHOD_UNVERIFIED,
                 "registered_response_malformed",
+                attempted_source=attempted_source,
             )
         except Exception as error:
             status = classify_access_error(error)
-            return _unavailable(status, f"registered_{status.value}")
+            return _unavailable(
+                status,
+                f"registered_{status.value}",
+                attempted_source=attempted_source,
+            )
 
         return SourceAdapterResult(
             status=SourceAuditStatus.ELIGIBLE,
@@ -827,5 +902,16 @@ def _date_value(value: object, *, optional: bool) -> date | None:
     return date.fromisoformat(value)
 
 
-def _unavailable(status: SourceAuditStatus, reason_code: str) -> SourceAdapterResult:
-    return SourceAdapterResult(status=status, reason_code=reason_code, candidates=())
+def _unavailable(
+    status: SourceAuditStatus,
+    reason_code: str,
+    *,
+    attempted_source: DocumentSourceAttempt | None = None,
+) -> SourceAdapterResult:
+    return SourceAdapterResult(
+        status=status,
+        reason_code=reason_code,
+        candidates=(),
+        attempted_source=attempted_source
+        or DocumentSourceAttempt("REGISTERED", None, None),
+    )

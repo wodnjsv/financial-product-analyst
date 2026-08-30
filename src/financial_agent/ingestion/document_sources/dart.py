@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from financial_agent.documents import (
     DocumentRole,
     DocumentSourceCandidate,
+    DocumentSourceAttempt,
     DocumentSourceTarget,
     PublisherRole,
     SourceAuditStatus,
@@ -645,4 +646,9 @@ def _unavailable(
     status: SourceAuditStatus,
     reason_code: str,
 ) -> SourceAdapterResult:
-    return SourceAdapterResult(status=status, reason_code=reason_code, candidates=())
+    return SourceAdapterResult(
+        status=status,
+        reason_code=reason_code,
+        candidates=(),
+        attempted_source=DocumentSourceAttempt("DART", None, None),
+    )

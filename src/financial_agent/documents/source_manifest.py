@@ -23,6 +23,7 @@ _CUTOFF_DATE = date(2026, 8, 24)
 _ASIA_SEOUL = timezone(timedelta(hours=9))
 _PUBLIC_QUERY_KEYS = frozenset({"rcpNo", "CIK", "accession_number"})
 _REASON_CODE = re.compile(r"^[a-z][a-z0-9_]*$")
+_SOURCE_CODE = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
 
 
 class SourceAuthorityTier(str, Enum):
@@ -52,7 +53,7 @@ class DocumentSourceTarget:
     dataset_version: str
     entity_id: str
     entity_type: str
-    canonical_name: str
+    canonical_name: str | None
     product_family: str | None
     required_role: DocumentRole
     binding_role: str
@@ -63,7 +64,16 @@ class DocumentSourceTarget:
         _require_text(self.dataset_version, "dataset_version")
         _require_text(self.entity_id, "entity_id")
         _require_text(self.entity_type, "entity_type")
-        _require_text(self.canonical_name, "canonical_name")
+        if self.canonical_name is not None:
+            _require_text(self.canonical_name, "canonical_name")
+        elif not (
+            self.entity_type == "policy"
+            and self.product_family is None
+            and self.required_role
+            in {DocumentRole.POLICY_BASE, DocumentRole.OFFICIAL_UPDATE}
+            and self.binding_role == "subject_policy"
+        ):
+            raise ValueError("canonical_name is required for resolved targets")
         _require_text(self.binding_role, "binding_role")
         if self.product_family is not None:
             _require_text(self.product_family, "product_family")
@@ -136,21 +146,45 @@ def validate_document_source_candidate(candidate: DocumentSourceCandidate) -> No
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentSourceAttempt:
+    source_code: str
+    source_locator: str | None
+    discovery_locator: str | None
+
+    def __post_init__(self) -> None:
+        _require_text(self.source_code, "source_code")
+        if _SOURCE_CODE.fullmatch(self.source_code) is None:
+            raise ValueError("source_code must be a stable public code")
+        for locator in (self.source_locator, self.discovery_locator):
+            if locator is not None:
+                _validate_locator(locator)
+
+
+@dataclass(frozen=True, slots=True)
 class DocumentSourceAuditEntry:
     target: DocumentSourceTarget
     status: SourceAuditStatus
     reason_code: str | None
     candidate: DocumentSourceCandidate | None
+    attempted_source: DocumentSourceAttempt | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, SourceAuditStatus):
             raise ValueError("audit entry status must be an approved status")
+        if self.attempted_source is not None and not isinstance(
+            self.attempted_source, DocumentSourceAttempt
+        ):
+            raise ValueError("attempted_source must be typed public metadata")
         if self.reason_code is not None:
             _require_text(self.reason_code, "reason_code")
             if _REASON_CODE.fullmatch(self.reason_code) is None:
                 raise ValueError("reason_code must be a stable code")
         if self.status is SourceAuditStatus.ELIGIBLE:
-            if self.candidate is None or self.reason_code is not None:
+            if (
+                self.candidate is None
+                or self.reason_code is not None
+                or self.attempted_source is not None
+            ):
                 raise ValueError("eligible audit entry requires only a candidate")
             return
         if self.candidate is None and self.reason_code is None:
@@ -255,6 +289,11 @@ def _canonical_report_bytes(report: DocumentSourceAuditReport) -> bytes:
 
 def _entry_mapping(entry: DocumentSourceAuditEntry) -> dict[str, object]:
     return {
+        "attempted_source": (
+            _attempt_mapping(entry.attempted_source)
+            if entry.attempted_source is not None
+            else None
+        ),
         "candidate": (
             _candidate_mapping(entry.candidate)
             if entry.candidate is not None
@@ -276,6 +315,14 @@ def _entry_mapping(entry: DocumentSourceAuditEntry) -> dict[str, object]:
             "product_family": entry.target.product_family,
             "required_role": entry.target.required_role.value,
         },
+    }
+
+
+def _attempt_mapping(attempt: DocumentSourceAttempt) -> dict[str, object]:
+    return {
+        "discovery_locator": attempt.discovery_locator,
+        "source_code": attempt.source_code,
+        "source_locator": attempt.source_locator,
     }
 
 

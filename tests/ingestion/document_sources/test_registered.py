@@ -630,6 +630,16 @@ def test_terms_flag_returns_review_required_without_accepting_or_opening(
 
     assert result.status is SourceAuditStatus.TERMS_REVIEW_REQUIRED
     assert result.reason_code == "registered_terms_review_required"
+    assert result.attempted_source is not None
+    assert result.attempted_source.source_code == "SYNTHETIC_INDEX_PROVIDER"
+    assert (
+        result.attempted_source.source_locator
+        == "https://index.example.invalid/methodology.pdf"
+    )
+    assert (
+        result.attempted_source.discovery_locator
+        == "https://index.example.invalid/documents"
+    )
     assert opener.calls == []
 
 
