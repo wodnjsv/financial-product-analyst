@@ -40,6 +40,10 @@ from .source_manifest import (
     validate_document_source_report,
     write_document_source_report,
 )
+from .section_selection import (
+    SectionSelectionResult,
+    select_canonical_claim_sections,
+)
 
 __all__ = [
     "AdmissionDecision",
@@ -62,6 +66,7 @@ __all__ = [
     "PublisherRole",
     "SEARCHABLE_SECTION_TYPES",
     "SectionType",
+    "SectionSelectionResult",
     "SourceAuditStatus",
     "SourceAuthorityTier",
     "admit_document",
@@ -72,6 +77,7 @@ __all__ = [
     "publisher_roles_for_document_role",
     "read_pdf_layout",
     "select_canonical_document",
+    "select_canonical_claim_sections",
     "validate_document_source_report",
     "write_document_source_report",
 ]

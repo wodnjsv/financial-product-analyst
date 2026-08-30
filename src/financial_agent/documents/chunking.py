@@ -106,9 +106,9 @@ _EXCLUDED_HEADINGS = frozenset(
 
 _SECTION_ALIASES: tuple[tuple[SectionType, frozenset[str]], ...] = (
     (SectionType.REBALANCING, frozenset({"rebalancing", "reconstitution", "리밸런싱", "정기 변경", "정기변경"})),
-    (SectionType.RISK_FACTOR, frozenset({"principal risks", "principal risk", "risk factors", "investment risks", "투자 위험", "투자위험", "위험 요인", "위험요인"})),
-    (SectionType.INVESTMENT_STRATEGY, frozenset({"principal investment strategies", "principal investment strategy", "investment strategy", "investment strategies", "투자 전략", "투자전략", "투자 목적 및 투자 전략", "투자목적 및 투자전략"})),
-    (SectionType.INVESTMENT_OBJECTIVE, frozenset({"investment objective", "investment objectives", "investment goal", "투자 목적", "투자목적"})),
+    (SectionType.RISK_FACTOR, frozenset({"principal risks", "principal risk", "risk factors", "investment risks", "투자 위험", "투자위험", "주요투자 위험", "주요 투자위험", "집합투자기구의 투자위험", "위험 요인", "위험요인"})),
+    (SectionType.INVESTMENT_STRATEGY, frozenset({"principal investment strategies", "principal investment strategy", "investment strategy", "investment strategies", "투자 전략", "투자전략", "투자 목적 및 투자 전략", "투자목적 및 투자전략", "집합투자기구의 투자전략"})),
+    (SectionType.INVESTMENT_OBJECTIVE, frozenset({"investment objective", "investment objectives", "investment goal", "투자 목적", "투자목적", "집합투자기구의 투자목적"})),
     (SectionType.INDEX_METHODOLOGY, frozenset({"index methodology", "index methodologies", "지수 방법론", "지수 산출 방법", "지수산출방법"})),
     (SectionType.THEME_DEFINITION, frozenset({"theme definition", "investment theme", "테마 정의"})),
     (SectionType.SELECTION_RULES, frozenset({"selection rules", "selection rule", "eligibility rules", "constituent selection", "편입 기준", "종목 선정", "종목선정"})),
@@ -278,7 +278,20 @@ def _validate_section(section: ExtractedSection) -> None:
 
 
 def _normalized_heading_path(heading_path: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(" ".join(unicodedata.normalize("NFKC", heading).split()).casefold() for heading in heading_path)
+    return tuple(
+        _strip_structural_numbering(
+            " ".join(unicodedata.normalize("NFKC", heading).split()).casefold()
+        )
+        for heading in heading_path
+    )
+
+
+def _strip_structural_numbering(heading: str) -> str:
+    return re.sub(
+        r"^(?:제\s*\d+\s*부[.]?\s*|\(?\d+\)?[.)]\s*|[가-힣][.)]\s*)",
+        "",
+        heading,
+    ).strip()
 
 
 def _is_excluded_heading(headings: tuple[str, ...]) -> bool:
