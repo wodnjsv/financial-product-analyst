@@ -16,6 +16,21 @@ temporary storage, and produces complete coverage and failure accounting.
 
 ## 2. Scope
 
+### Organizer-authoritative target gate
+
+The organizer's `2026-08-24` product data is the sole source of the target
+population. Build and freeze an input inventory from its domestic ETF and
+public-fund rows before any DART request. Every download request must carry an
+existing organizer `entity_id`, the relevant organizer product identifier, the
+canonical organizer name, and an exact verified publisher binding.
+
+DART is a document source for those products, not a product-discovery source.
+A filing found only in DART cannot add a product, create an Entity, or enter the
+competition corpus. A name-only, substring, fuzzy, or Vector match cannot make
+a filing eligible. The batch report must reconcile its indexed, failed, and
+not-applicable counts back to the frozen organizer target inventory with no
+unaccounted target and no extra DART product.
+
 ### Included
 
 - All 1,780 domestic ETF rows in the current organizer workbook.
@@ -47,8 +62,10 @@ Download the OpenDART corporation-code file once, normalize reviewed publisher
 names, and resolve each manager to one DART publisher code. Group product
 targets by that verified publisher and retrieve eligible filing windows once
 per publisher instead of once per product. Match filings to products only with
-the existing exact normalized identity rules and stable organizer identifiers.
-Ambiguous or missing bindings fail closed.
+the frozen organizer target key, stable organizer identifiers, and the existing
+exact normalized identity rules. Ambiguous or missing bindings fail closed.
+Unmatched filings are counted only as rejected discovery results and are never
+downloaded.
 
 This avoids thousands of duplicate API requests while preserving the source
 authority and product-binding rules in ADR-0021.
@@ -148,6 +165,10 @@ to the `source_id` and source artifact; it does not recreate the discarded PDF.
 
 ### Synthetic and repository tests
 
+- a DART filing absent from the organizer target inventory is rejected before
+  attachment download and cannot create a product Entity;
+- every frozen organizer target receives exactly one final disposition and the
+  report rejects any extra target or missing target;
 - publisher-batched discovery returns the same exact candidate as the current
   per-target selector while reducing duplicate requests;
 - correction, cutoff, identity mismatch, ambiguity, pagination, rate limit,

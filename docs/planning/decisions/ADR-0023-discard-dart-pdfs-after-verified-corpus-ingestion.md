@@ -34,6 +34,14 @@ download. The system must therefore describe retained DART sources as
 
 ## Decision
 
+- Derive the only permitted target universe from the organizer's authoritative
+  `2026-08-24` domestic ETF and public-fund data. A DART filing cannot create a
+  new product Entity, expand the target population, or replace an organizer
+  identifier.
+- Require an exact organizer Entity and identifier binding before download.
+  Product-name normalization is a secondary equality check within the already
+  verified publisher context; substring, fuzzy, or Vector similarity cannot
+  establish eligibility.
 - Download at most one bounded DART prospectus at a time to an ignored local
   temporary path.
 - Verify the official DART binding, cutoff, media type, byte count, PDF SHA-256,
@@ -90,3 +98,5 @@ the stored corpus and provenance.
   retained in Object Storage or locally available.
 - The final dataset remains inactive until the existing PostgreSQL, Evidence,
   retrieval, Graph, and Vector readiness gates pass.
+- DART-only products and unmatched filings remain outside the competition
+  corpus even when their documents are otherwise official and readable.
