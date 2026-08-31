@@ -109,6 +109,28 @@ def test_view_rejects_dataset_manifest_mismatch(
         build_resolver_view(**resolver_inputs)
 
 
+@pytest.mark.parametrize(
+    "field,wrong_value",
+    [
+        ("schema_version", "2.0"),
+        ("normalizer_version", "different-normalizer"),
+        ("candidate_policy_version", "different-policy"),
+        ("resolver_schema_version", "2.0"),
+        ("prompt_version", "different-prompt"),
+        ("adapter_version", "different-adapter"),
+    ],
+)
+def test_view_rejects_manifest_code_version_mismatch(
+    resolver_inputs: dict[str, object], field: str, wrong_value: str
+) -> None:
+    """Catches a stale code-version manifest reaching a resolver view."""
+    manifest = resolver_inputs["manifest"]
+    resolver_inputs["manifest"] = manifest.model_copy(update={field: wrong_value})
+
+    with pytest.raises(ResolverInvariantError, match="CATALOG_VERSION_MISMATCH"):
+        build_resolver_view(**resolver_inputs)
+
+
 def test_manifest_uses_the_complete_catalog_and_graph_contract(
     resolver_inputs: dict[str, object],
 ) -> None:

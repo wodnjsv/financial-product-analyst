@@ -230,6 +230,11 @@ def _validate_pins(
         or manifest.overlay_version != catalog.overlay_version
         or manifest.overlay_hash != catalog.overlay_hash
         or manifest.ontology_hashes != catalog_hashes
+        or manifest.schema_version != RESOLVER_SCHEMA_VERSION
+        or any(
+            getattr(manifest, field_name) != expected
+            for field_name, expected in _VERSION_FIELDS.items()
+        )
     ):
         raise ResolverInvariantError("CATALOG_VERSION_MISMATCH")
 
