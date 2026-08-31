@@ -50,7 +50,13 @@ class EntityCandidateRepository:
             candidates: dict[str, list[EntityCandidate]] = {
                 mention_id: [] for mention_id in mention_ids
             }
+            dataset_available = False
             for row in rows:
+                if row["is_dataset_status"]:
+                    if not row["dataset_exists"]:
+                        raise ResolverCatalogUnavailable()
+                    dataset_available = True
+                    continue
                 candidates[str(row["mention_id"])].append(
                     EntityCandidate(
                         entity_id=str(row["entity_id"]),
@@ -66,6 +72,8 @@ class EntityCandidateRepository:
                         source_id=str(row["source_id"]),
                     )
                 )
+            if not dataset_available:
+                raise ResolverCatalogUnavailable()
         except (KeyError, SQLAlchemyError, ValidationError) as error:
             raise ResolverCatalogUnavailable() from error
         return MappingProxyType(
@@ -95,6 +103,9 @@ def _search_statement(
             SELECT cutoff_date
             FROM operations.dataset_version
             WHERE dataset_version = :dataset_version
+        ),
+        dataset_status AS (
+            SELECT EXISTS (SELECT 1 FROM dataset) AS dataset_exists
         ),
         candidates AS (
             SELECT m.mention_id, entity.entity_id, entity.canonical_name,
@@ -196,11 +207,21 @@ def _search_statement(
             FROM best_entity_matches
             WHERE entity_rank = 1
         )
+        SELECT NULL::text AS mention_id, NULL::text AS entity_id,
+               NULL::text AS canonical_name, NULL::text AS entity_type,
+               NULL::text AS product_family, NULL::text AS match_kind,
+               NULL::integer AS score, NULL::text AS source_id,
+               dataset_exists, true AS is_dataset_status, 0::integer AS output_rank
+        FROM dataset_status
+
+        UNION ALL
+
         SELECT mention_id, entity_id, canonical_name, entity_type, product_family,
-               match_kind, score, source_id
+               match_kind, score, source_id, true AS dataset_exists,
+               false AS is_dataset_status, mention_rank AS output_rank
         FROM ranked_matches
         WHERE mention_rank <= {MAX_ENTITY_CANDIDATES_PER_MENTION}
-        ORDER BY mention_id ASC, mention_rank ASC
+        ORDER BY is_dataset_status DESC, mention_id ASC, output_rank ASC
         """
     )
     return statement, parameters

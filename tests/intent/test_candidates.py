@@ -122,3 +122,49 @@ def test_semantic_candidate_limits_keep_exact_candidates_first() -> None:
         for group in result.by_mention
         for item in group.items
     )
+
+
+def test_semantic_fuzzy_score_and_exact_deduplication() -> None:
+    """Catches non-Jaccard fuzzy scores or a trigram displacing an exact match."""
+    snapshot = SemanticCatalogSnapshot(
+        catalog_version="test-v1",
+        catalog_hash="a" * 64,
+        overlay_version="test-v1",
+        overlay_hash="b" * 64,
+        product_family_ids=(),
+        action_ids=(),
+        entity_type_ids=(),
+        concepts_by_id={},
+        alias_candidates={
+            "abcdef": ("metric-one",),
+            "abcdefg": ("metric-one",),
+        },
+        alias_kinds={"abcdef": "direct", "abcdefg": "direct"},
+        ontology_hashes={},
+    )
+    created_at = datetime(2026, 8, 31, tzinfo=timezone.utc)
+
+    def request(question_id: str, question: str):
+        context = RequestContext(
+            request_key=build_request_key(question_id, question, "dataset-v1", "1.0"),
+            run_id=f"run-{question_id}",
+            dataset_version="dataset-v1",
+            producer="test",
+            created_at=created_at,
+            question_id=question_id,
+            question=question,
+            segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+            deadline_at=created_at + timedelta(seconds=10),
+        )
+        return normalize_request(context)
+
+    fuzzy = generate_semantic_candidates(request("q4", "abcdeg"), snapshot)
+    exact = generate_semantic_candidates(request("q5", "abcdef"), snapshot)
+
+    fuzzy_item = _items_for(fuzzy, "abcdeg")[0]
+    assert fuzzy_item.semantic_id == "metric-one"
+    assert fuzzy_item.match_kind == "trigram"
+    assert fuzzy_item.score == 600_000
+    assert [item.match_kind for item in _items_for(exact, "abcdef")] == [
+        "direct_alias"
+    ]

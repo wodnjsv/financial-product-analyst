@@ -13,7 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from financial_agent.db.preflight import normalize_psycopg_url
 from financial_agent.intent.candidates import Mention
-from financial_agent.intent.entity_repository import EntityCandidateRepository
+from financial_agent.intent.entity_repository import (
+    EntityCandidateRepository,
+    ResolverCatalogUnavailable,
+)
 from tests.fixtures.db.synthetic_dataset import (
     CREATED_AT,
     VALID_RECORD_HASH,
@@ -140,7 +143,12 @@ def seeded_entities(migrated_database_url: str) -> SeededEntities:
         _insert_alias(
             connection, seeded.dataset_version, "alias-beta", "entity-beta", "동일명"
         )
-        _insert_entity(connection, seeded.dataset_version, "entity-old", "구명칭")
+        _insert_entity(
+            connection,
+            seeded.dataset_version,
+            "entity-old",
+            "이전명칭의현재이름",
+        )
         _insert_alias(
             connection,
             seeded.dataset_version,
@@ -149,6 +157,29 @@ def seeded_entities(migrated_database_url: str) -> SeededEntities:
             "구명칭",
             valid_to=date(2026, 8, 23),
         )
+        _insert_entity(
+            connection,
+            seeded.dataset_version,
+            "entity-fuzzy",
+            "Fuzzy Product",
+        )
+        _insert_alias(
+            connection,
+            seeded.dataset_version,
+            "alias-fuzzy",
+            "entity-fuzzy",
+            "Samsung Electronics ETF",
+        )
+        for index in range(6):
+            entity_id = f"entity-limit-{index}"
+            _insert_entity(connection, seeded.dataset_version, entity_id, f"Limit {index}")
+            _insert_alias(
+                connection,
+                seeded.dataset_version,
+                f"alias-limit-{index}",
+                entity_id,
+                "many candidates",
+            )
     return seeded
 
 
@@ -191,6 +222,8 @@ async def test_entity_search_batches_mentions_and_pins_dataset(
                 mention("m2", "삼성전자"),
                 mention("m3", "동일명"),
                 mention("m4", "구명칭"),
+                mention("m5", "Samsung Electronix ETF"),
+                mention("m6", "many candidates"),
             ),
         )
     finally:
@@ -208,4 +241,26 @@ async def test_entity_search_batches_mentions_and_pins_dataset(
         "entity-beta",
     ]
     assert result["m4"] == ()
+    assert result["m5"][0].entity_id == "entity-fuzzy"
+    assert result["m5"][0].match_kind == "trigram"
+    assert [item.entity_id for item in result["m6"]] == [
+        "entity-limit-0",
+        "entity-limit-1",
+        "entity-limit-2",
+        "entity-limit-3",
+        "entity-limit-4",
+    ]
     assert all(len(items) <= 5 for items in result.values())
+
+
+async def test_entity_search_rejects_an_unknown_dataset(
+    migrated_engine: AsyncEngine,
+) -> None:
+    """Catches treating an unavailable dataset as an empty candidate result."""
+    with pytest.raises(ResolverCatalogUnavailable) as error:
+        await EntityCandidateRepository(migrated_engine).search_batch(
+            "dataset-does-not-exist",
+            (mention("m1", "005930"),),
+        )
+
+    assert str(error.value) == "RESOLVER_CATALOG_UNAVAILABLE"
