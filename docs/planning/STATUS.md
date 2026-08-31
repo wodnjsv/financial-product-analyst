@@ -133,19 +133,21 @@
   strict HCX adapter, semantic/context validator, one-call service, 불변
   `intent_resolution` 저장, 160-case held-out evaluation과 fail-closed promotion
   판정 경계를 구현했다.
-- 2026-09-01 hardening 후 로컬 검증은 Intent `192 passed, 1 deselected`, evaluation
+- 2026-09-01 hardening 후 로컬 검증은 Intent `202 passed, 1 deselected`, evaluation
   `46 passed`, contracts `225 passed`, PostgreSQL 15.19 DB `492 passed,
-  5 deselected`, broad non-live `1161 passed, 1 expected skip, 376 deselected`와
+  5 deselected`, broad non-live `1171 passed, 1 expected skip, 376 deselected`와
   두 schema freshness·migration no-drift·DB object manifest를 통과했다.
 - PostgreSQL 수치는 최초 Task 12의 폐기 가능 DB 실측이며 promotion/container
   hardening fix에서는 DB 동작이 바뀌지 않아 재실행하지 않았다. Fix code revision
-  `8abd38f...`에서 focused `40 passed`, fixture freeze `2 passed`, deterministic
+  `4d41325...`에서 focused `50 passed`, fixture freeze `2 passed`, deterministic
   CLI와 두 schema check를 다시 확인했다.
 - 결정론적 candidate reproducibility는 `155/155`지만 recall@5는 `118/196`
   (`60.2040816%`)로 승인된 `>=99%` gate에 미달한다. live/stored validation,
   first-pass, frame, context, OOD metric도 미측정이므로 default 승격은
   fail-closed 상태다. Promotion 증거는 frozen v3 SHA와 exact full population에
   결합되며 부분 `1/1` 표본이나 잘못된 denominator/coverage는 `unmeasured`다.
+  `model_copy`·`model_construct`로 우회 생성된 기존 증거도 exact type·stored field
+  keys·strict JSON 재검증을 통과하지 못하면 판정 전에 예외로 차단한다.
 - 이 호스트에는 Docker 계열 runtime이 없어 Linux/amd64 build/run/Compose는
   실행하지 않았다. live HCX/NCP도 호출하지 않았고 latency·token·repair·비용은
   측정하지 않았다.

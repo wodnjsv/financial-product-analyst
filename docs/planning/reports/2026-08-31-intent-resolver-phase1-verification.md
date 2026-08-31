@@ -4,7 +4,7 @@
 
 **Resolver implementation base:** `397b731ba60cd4fee9532962a6a19287cc0643dc`
 
-**Measured hardened code revision:** `8abd38f6f09fbe2538b84d7161e04a89e2b0399a`
+**Measured hardened code revision:** `4d41325f47c36318820bb950335c234728604936`
 
 **Status:** Phase 1 implemented; promotion blocked
 
@@ -62,12 +62,27 @@ manifest 순서의 한정된 실패 전파 체인만 허용한다. 정책은 `sh
 token 비교로 조기 `exit`, 세미콜론, pipe/background, `||`, gate 누락·순서 변경·
 중복·조건 반전·추가 명령을 거부한다.
 
+### Review fix round 2
+
+후속 리뷰는 Pydantic `model_copy`·`model_construct`로 validation을 우회한 기존
+`PromotionEvidence` 인스턴스가 판정기에 직접 전달될 수 있음을 확인했다. 새
+focused RED는 `9 failed, 41 passed`였다. Top-level extra, nested float·bool·string,
+음수·분자 초과, invalid coverage, 잘못된 nested type, subclass가 정상 계약 경계로
+재검증되지 않는 실패를 재현했다.
+
+판정기 입구는 exact `PromotionEvidence` type과 actual stored field key 집합을 먼저
+검사한 뒤, declared stored value를 primitive JSON으로 직렬화하고 strict
+`model_validate_json` 경계를 다시 통과시킨다. Pydantic typed serializer가 우회
+저장된 bool을 `1/0`으로 바꾸는 중간 실패 `2 failed, 48 passed`도 확인해 raw
+stored primitive를 보존하는 JSON encoder로 보정했다. 최종 focused GREEN은
+`50 passed`다. Invalid evidence는 승격 결과를 반환하지 않고 예외로 fail-closed한다.
+
 ## 3. 재현 가능한 로컬 검증
 
 | Gate | 실행 명령 요약 | 측정 결과 |
 | --- | --- | --- |
-| Container/promotion focused | `pytest tests/intent/test_container_verification.py -q` | `40 passed` |
-| Intent non-live | `pytest tests/intent -m 'not clova_integration' -q` | `192 passed, 1 deselected` |
+| Container/promotion focused | `pytest tests/intent/test_container_verification.py -q` | `50 passed` |
+| Intent non-live | `pytest tests/intent -m 'not clova_integration' -q` | `202 passed, 1 deselected` |
 | Evaluation | `pytest tests/evaluation/intent -q` | `46 passed` |
 | Runtime contracts | `pytest tests/contracts -q` | `225 passed` |
 | Contract schema freshness | `python scripts/export_contract_schemas.py --check` | exit `0` |
@@ -76,7 +91,7 @@ token 비교로 조기 `exit`, 세미콜론, pipe/background, `||`, gate 누락�
 | Migration cycle | `python scripts/verify_database_migrations.py` | prior Task 12: head `0007`, exit `0`; fix round not rerun |
 | Database non-live | `pytest tests/db -m 'not performance and not ncp_integration' -q` | prior Task 12: `492 passed, 5 deselected`; fix round not rerun |
 | Database object manifest | `python scripts/export_database_objects.py --check --database-url-env FINANCIAL_AGENT_TEST_DATABASE_URL` | prior Task 12: exit `0`; fix round not rerun |
-| Broad non-live | approved seven-marker exclusion command | `1161 passed, 1 expected PostgreSQL skip, 376 deselected` |
+| Broad non-live | approved seven-marker exclusion command | `1171 passed, 1 expected PostgreSQL skip, 376 deselected` |
 | Deterministic evaluation CLI | `scripts/evaluate_intent_resolver.py --mode deterministic` | exit `0` |
 | Fixture/label freeze | literal hashes and v2→v3 candidate-label preservation | `2 passed` |
 
@@ -84,10 +99,10 @@ Broad non-live 명령은 `postgres`, `organizer_data`, `object_storage`,
 `official_data`, `ncp_integration`, `jena_integration`, `clova_integration`
 marker를 제외했다. 이 제외된 범위를 통과로 해석하지 않는다.
 
-Fix round는 promotion 판정과 container policy/Docker CMD만 변경했다. Migration,
-repository, SQL, Alembic, DB manifest 동작은 변경하지 않았으므로 disposable
-PostgreSQL을 재기동하지 않았다. 아래 PostgreSQL 결과는 최초 Task 12의 실측이며
-fix round의 새 실행으로 표현하지 않는다.
+두 fix round는 promotion 판정·container policy/Docker CMD·focused test만
+변경했다. Migration, repository, SQL, Alembic, DB manifest 동작은 변경하지
+않았으므로 disposable PostgreSQL을 재기동하지 않았다. 아래 PostgreSQL 결과는
+최초 Task 12의 실측이며 fix round의 새 실행으로 표현하지 않는다.
 
 ### PostgreSQL 생명주기
 
@@ -115,19 +130,20 @@ triggers `62`, views `1`이다. PostgreSQL을 초기화한 실행은 종료 trap
 | Build manifest hash | `378c49ca88dff4d6bab61bdf86eb3f236afa4489fb4547b37c601e640587ba91` |
 | Dataset | `intent-resolver-heldout-ko-v3`, 160 cases |
 | Dataset SHA-256 | `f0cb6313d7954a9f75d1fe1c691a2021c0b2e53d6681f07eb0f3e2787a9944b4` |
-| Measured build revision | `8abd38f6f09fbe2538b84d7161e04a89e2b0399a` |
-| Deterministic report hash | `467429f2fcc44a464c0bd723cc62408814511fe55b60f3be1980ff00dbe9a521` |
+| Measured build revision | `4d41325f47c36318820bb950335c234728604936` |
+| Deterministic report hash | `82de4aceadb2372f1e90bd5e6b2348af21d8d2bc852b6d8caa59ef2199dc6e04` |
 | Prompt/adapter/model | deterministic mode에서 not applicable; live 미실행 |
 
 결정론적 report는 `build_revision`을 provenance에 포함한다. 이전 Task 12의
 `0cd299812c4457ce9311e57542106a0e8740ffdfd31820612e67cce0fc63417c`
 hash는 당시 측정 HEAD `397b731ba60cd4fee9532962a6a19287cc0643dc`에
-결합됐다. Fix round 코드·테스트·Dockerfile을 먼저 `8abd38f...`로 커밋한 뒤
-그 code revision에서 fresh CLI를 실행했으므로 새 report는 해당 SHA를
+결합됐다. Round 1 code revision `8abd38f...`의 report hash는 `467429f...`였다.
+Round 2 promotion trust-boundary 코드·테스트를 먼저 `4d41325...`로 커밋한 뒤 그
+clean code revision에서 fresh CLI를 실행했으므로 최신 report는 해당 SHA를
 `build_revision`으로 기록한다. 이 provenance 변화로 report hash가 바뀌었고,
-candidate 결과와 catalog·ontology·dataset·build manifest hash는 변하지
-않았다. 이 보고서 자체의 revision은 Git 이력으로 식별하며 measured code
-revision과 구분한다.
+candidate 결과와 catalog·ontology·dataset·build manifest hash는 변하지 않았다.
+이 보고서 자체의 revision은 Git 이력으로 식별하며 measured code revision과
+구분한다.
 
 Ontology hashes는 build manifest에 결합되어 있으며 개별 값은 다음과 같다.
 
@@ -208,8 +224,9 @@ model cache·build/raw-response/credential 경로 검사는 일치 항목이 없
 생성된 deterministic JSON report는 기존 `build/` ignore 경계에 남기고
 stage하지 않았다.
 
-Fix round는 code commit에 Dockerfile·promotion evaluator·focused test 세 경로만,
-documentation commit에 이 보고서와 STATUS 두 경로만 stage했다. 두 staged diff의
+Round 1 code commit에는 Dockerfile·promotion evaluator·focused test 세 경로만,
+Round 2 code commit에는 promotion evaluator·focused test 두 경로만 stage했다.
+Documentation commit은 이 보고서와 STATUS 두 경로뿐이다. 각 staged diff의
 `--check`는 exit `0`이었고 동일한 secret·data/generated-path scan은 일치 항목이
 없었다. Ignored progress/task report와 generated deterministic JSON은 tracked
 commit에 포함하지 않았다.
@@ -217,8 +234,8 @@ commit에 포함하지 않았다.
 ## 8. 결론
 
 Intent Resolver Phase 1 구현은 로컬 비라이브·PostgreSQL 경계에서 검증됐다.
-Fix round는 고정 모집단 promotion 판정과 container 실패 전파 정책을 추가로
-검증했지만 Docker runtime은 여전히 없어 Linux/amd64 실행은 하지 않았다.
-Default 승격은 `candidate_recall_at_5` 실패와 여섯 required gate의 미측정
-상태로 차단된다. 다음 상태는 live HCX checkpoint이며, 별도 사용자 승인 없이는
-호출하지 않는다.
+Fix round는 고정 모집단 promotion 판정, invalid existing-instance 재검증,
+container 실패 전파 정책을 추가로 검증했지만 Docker runtime은 여전히 없어
+Linux/amd64 실행은 하지 않았다. Default 승격은 `candidate_recall_at_5` 실패와
+여섯 required gate의 미측정 상태로 차단된다. 다음 상태는 live HCX
+checkpoint이며, 별도 사용자 승인 없이는 호출하지 않는다.
