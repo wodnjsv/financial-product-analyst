@@ -498,6 +498,39 @@ def test_unknown_storage_entity_type_cannot_be_selected_as_an_ontology_type(
         validate_semantics(draft=draft, **inputs.rest)
 
 
+def test_unknown_storage_entity_type_cannot_bypass_empty_constraints(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches selected raw candidate types when no compatibility constraint is present."""
+    group = validation_inputs.view.entity_candidates[0]
+    unknown_candidate = group.items[0].model_copy(
+        update={"entity_type": "UnknownStorageCategory"}
+    )
+    view = validation_inputs.view.model_copy(
+        update={
+            "entity_candidates": (
+                group.model_copy(update={"items": (unknown_candidate, *group.items[1:])}),
+            )
+        }
+    )
+    inputs = replace(validation_inputs, view=view)
+    draft_with_hint = _draft_with_entity_hint(
+        inputs.draft,
+        _entity_hint(
+            candidate_ids=("entity-product",),
+            selected_ids=("entity-product",),
+            expected_type_ids=(),
+        ),
+    )
+    first = draft_with_hint.intent_frames[0].model_copy(update={"entity_type_ids": ()})
+    draft = draft_with_hint.model_copy(
+        update={"intent_frames": (first, *draft_with_hint.intent_frames[1:])}
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_ID"):
+        validate_semantics(draft=draft, **inputs.rest)
+
+
 def test_relation_direction_must_satisfy_the_catalog_endpoint_types(
     validation_inputs: ValidationInputs,
 ) -> None:

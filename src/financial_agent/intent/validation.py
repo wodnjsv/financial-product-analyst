@@ -265,6 +265,8 @@ def _validate_selected_entity_types(
     )
     for entity_id in hint.selected_candidate_ids:
         candidate_type = candidates[entity_id].entity_type
+        if candidate_type not in catalog.class_ancestor_ids:
+            raise ResolverContractError("MODEL_UNKNOWN_ID")
         if expected_types and not _type_is_compatible(
             candidate_type, expected_types, catalog
         ):
