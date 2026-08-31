@@ -97,7 +97,7 @@ class ClovaStructuredOutputAdapter:
 
 def _parse_success(response: httpx.Response) -> ModelInvocationResult:
     try:
-        payload = response.json()
+        payload = _strict_json_loads(response.content)
         result = payload["result"]
         message = result["message"]
         content = message["content"]
@@ -106,7 +106,7 @@ def _parse_success(response: httpx.Response) -> ModelInvocationResult:
             raise TypeError
         if not isinstance(content, str) or not isinstance(usage, dict):
             raise TypeError
-        parsed_content = json.loads(content)
+        parsed_content = _strict_json_loads(content)
         if not isinstance(parsed_content, dict):
             raise TypeError
         parsed_usage = {
@@ -121,3 +121,16 @@ def _parse_success(response: httpx.Response) -> ModelInvocationResult:
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         raise ModelInvocationError(MODEL_SCHEMA_INVALID) from None
     return ModelInvocationResult(content=content, usage=parsed_usage)
+
+
+def _strict_json_loads(payload: str | bytes) -> object:
+    return json.loads(payload, object_pairs_hook=_reject_duplicate_keys)
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result

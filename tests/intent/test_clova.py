@@ -247,3 +247,42 @@ async def test_clova_adapter_rejects_invalid_usage_counts() -> None:
         await adapter.invoke(make_prompt(), timeout_seconds=4.0)
 
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_clova_adapter_rejects_duplicate_provider_response_keys() -> None:
+    calls: list[httpx.Request] = []
+    payload = provider_payload()
+    result = payload['result']
+    assert isinstance(result, dict)
+    raw_response = json.dumps({'result': result})[:-1] + f', "result": {json.dumps(result)}}}'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, content=raw_response, request=request)
+
+    adapter = ClovaStructuredOutputAdapter(make_config(), transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ModelInvocationError, match='MODEL_SCHEMA_INVALID') as failure:
+        await adapter.invoke(make_prompt(), timeout_seconds=4.0)
+
+    assert len(calls) == 1
+    assert raw_response not in str(failure.value)
+
+
+@pytest.mark.asyncio
+async def test_clova_adapter_rejects_duplicate_model_content_keys() -> None:
+    calls: list[httpx.Request] = []
+    duplicate_content = '{"evidence_spans":[],"evidence_spans":[]}'
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json=provider_payload(duplicate_content), request=request)
+
+    adapter = ClovaStructuredOutputAdapter(make_config(), transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ModelInvocationError, match='MODEL_SCHEMA_INVALID') as failure:
+        await adapter.invoke(make_prompt(), timeout_seconds=4.0)
+
+    assert len(calls) == 1
+    assert duplicate_content not in str(failure.value)
