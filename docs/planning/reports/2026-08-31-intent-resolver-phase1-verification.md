@@ -1,8 +1,10 @@
 # Intent Resolver Phase 1 비라이브 검증 보고서
 
-**Measured:** 2026-09-01
+**Measured:** 2026-09-01; promotion/container hardening fix reverified 2026-09-01
 
 **Resolver implementation base:** `397b731ba60cd4fee9532962a6a19287cc0643dc`
+
+**Measured hardened code revision:** `8abd38f6f09fbe2538b84d7161e04a89e2b0399a`
 
 **Status:** Phase 1 implemented; promotion blocked
 
@@ -44,25 +46,48 @@ coverage/metric denominator 불일치를 각각 거부하는 추가 RED는 `6 fa
 2로 가정하던 DB 테스트의 RED `1 failed`도 기존 `postgres`와 `db-check`를
 각각 검사하도록 최소 수정했다.
 
+### Review fix round 1
+
+리뷰에서 promotion 증거가 고정 평가 모집단에 결합되지 않아 작은 완벽 표본으로
+통과할 수 있고, Docker CMD 정책이 승인 명령의 존재만 검사해 조기 성공·pipe·순서
+변경을 허용할 수 있음이 확인됐다. 회귀 테스트를 먼저 추가한 focused RED는
+`14 failed, 26 passed`였다. 실패는 runtime contracts gate 누락 1건,
+`exit 0;`·`| true`·gate 순서/중복·DB 조건 반전 5건, 작은 모집단·누락/오류 dataset
+SHA·고정 모집단 불일치 8건이었다.
+
+최소 수정 후 focused GREEN은 `40 passed`다. Promotion 판정은 frozen v3 dataset
+SHA와 정확한 metric·coverage 모집단을 함께 요구한다. Docker CMD는 schema 두 개,
+intent/evaluation, runtime contracts, 선택적 DB migration·정확한 DB test·object
+manifest 순서의 한정된 실패 전파 체인만 허용한다. 정책은 `sh -n`과 semantic
+token 비교로 조기 `exit`, 세미콜론, pipe/background, `||`, gate 누락·순서 변경·
+중복·조건 반전·추가 명령을 거부한다.
+
 ## 3. 재현 가능한 로컬 검증
 
 | Gate | 실행 명령 요약 | 측정 결과 |
 | --- | --- | --- |
-| Container/promotion focused | `pytest tests/intent/test_container_verification.py -q` | `19 passed` |
-| Intent non-live | `pytest tests/intent -m 'not clova_integration' -q` | `171 passed, 1 deselected` |
+| Container/promotion focused | `pytest tests/intent/test_container_verification.py -q` | `40 passed` |
+| Intent non-live | `pytest tests/intent -m 'not clova_integration' -q` | `192 passed, 1 deselected` |
 | Evaluation | `pytest tests/evaluation/intent -q` | `46 passed` |
 | Runtime contracts | `pytest tests/contracts -q` | `225 passed` |
 | Contract schema freshness | `python scripts/export_contract_schemas.py --check` | exit `0` |
 | Intent schema freshness | `python scripts/export_intent_schemas.py --check` | exit `0` |
-| Migration cycle | `python scripts/verify_database_migrations.py` | head `0007`, exit `0` |
-| Database non-live | `pytest tests/db -m 'not performance and not ncp_integration' -q` | `492 passed, 5 deselected` |
-| Database object manifest | `python scripts/export_database_objects.py --check --database-url-env FINANCIAL_AGENT_TEST_DATABASE_URL` | exit `0` |
-| Broad non-live | approved seven-marker exclusion command | `1140 passed, 1 expected PostgreSQL skip, 376 deselected` |
+| Python compile | `python -m compileall -q src tests/intent tests/evaluation/intent` | exit `0` |
+| Migration cycle | `python scripts/verify_database_migrations.py` | prior Task 12: head `0007`, exit `0`; fix round not rerun |
+| Database non-live | `pytest tests/db -m 'not performance and not ncp_integration' -q` | prior Task 12: `492 passed, 5 deselected`; fix round not rerun |
+| Database object manifest | `python scripts/export_database_objects.py --check --database-url-env FINANCIAL_AGENT_TEST_DATABASE_URL` | prior Task 12: exit `0`; fix round not rerun |
+| Broad non-live | approved seven-marker exclusion command | `1161 passed, 1 expected PostgreSQL skip, 376 deselected` |
 | Deterministic evaluation CLI | `scripts/evaluate_intent_resolver.py --mode deterministic` | exit `0` |
+| Fixture/label freeze | literal hashes and v2→v3 candidate-label preservation | `2 passed` |
 
 Broad non-live 명령은 `postgres`, `organizer_data`, `object_storage`,
 `official_data`, `ncp_integration`, `jena_integration`, `clova_integration`
 marker를 제외했다. 이 제외된 범위를 통과로 해석하지 않는다.
+
+Fix round는 promotion 판정과 container policy/Docker CMD만 변경했다. Migration,
+repository, SQL, Alembic, DB manifest 동작은 변경하지 않았으므로 disposable
+PostgreSQL을 재기동하지 않았다. 아래 PostgreSQL 결과는 최초 Task 12의 실측이며
+fix round의 새 실행으로 표현하지 않는다.
 
 ### PostgreSQL 생명주기
 
@@ -90,8 +115,19 @@ triggers `62`, views `1`이다. PostgreSQL을 초기화한 실행은 종료 trap
 | Build manifest hash | `378c49ca88dff4d6bab61bdf86eb3f236afa4489fb4547b37c601e640587ba91` |
 | Dataset | `intent-resolver-heldout-ko-v3`, 160 cases |
 | Dataset SHA-256 | `f0cb6313d7954a9f75d1fe1c691a2021c0b2e53d6681f07eb0f3e2787a9944b4` |
-| Deterministic report hash | `0cd299812c4457ce9311e57542106a0e8740ffdfd31820612e67cce0fc63417c` |
+| Measured build revision | `8abd38f6f09fbe2538b84d7161e04a89e2b0399a` |
+| Deterministic report hash | `467429f2fcc44a464c0bd723cc62408814511fe55b60f3be1980ff00dbe9a521` |
 | Prompt/adapter/model | deterministic mode에서 not applicable; live 미실행 |
+
+결정론적 report는 `build_revision`을 provenance에 포함한다. 이전 Task 12의
+`0cd299812c4457ce9311e57542106a0e8740ffdfd31820612e67cce0fc63417c`
+hash는 당시 측정 HEAD `397b731ba60cd4fee9532962a6a19287cc0643dc`에
+결합됐다. Fix round 코드·테스트·Dockerfile을 먼저 `8abd38f...`로 커밋한 뒤
+그 code revision에서 fresh CLI를 실행했으므로 새 report는 해당 SHA를
+`build_revision`으로 기록한다. 이 provenance 변화로 report hash가 바뀌었고,
+candidate 결과와 catalog·ontology·dataset·build manifest hash는 변하지
+않았다. 이 보고서 자체의 revision은 Git 이력으로 식별하며 measured code
+revision과 구분한다.
 
 Ontology hashes는 build manifest에 결합되어 있으며 개별 값은 다음과 같다.
 
@@ -107,8 +143,13 @@ Ontology hashes는 build manifest에 결합되어 있으며 개별 값은 다음
 
 ## 5. Promotion 판정
 
-모든 gate는 측정되고 threshold를 만족해야 한다. `0/0`과 누락된 metric은
-통과가 아니라 `unmeasured`다.
+모든 gate는 frozen v3 dataset SHA와 그 fixture에서 파생된 정확한 모집단에
+결합되고 threshold를 만족해야 한다. Unknown/invalid probe denominator는 각각
+`10`, probe coverage는 `20/20`, candidate reproducibility와 coverage는
+`155/155`, recall@5 denominator는 `196`, first-pass denominator는 `155`,
+frame/context denominator는 각각 `160`, OOD denominator는 `30`이다. 다른 SHA,
+다른 모집단, 불완전 coverage, `0/0`, 누락 metric은 통과가 아니라
+`unmeasured`다.
 
 | Stable gate name | Threshold | Evidence | Status |
 | --- | --- | --- | --- |
@@ -167,9 +208,17 @@ model cache·build/raw-response/credential 경로 검사는 일치 항목이 없
 생성된 deterministic JSON report는 기존 `build/` ignore 경계에 남기고
 stage하지 않았다.
 
+Fix round는 code commit에 Dockerfile·promotion evaluator·focused test 세 경로만,
+documentation commit에 이 보고서와 STATUS 두 경로만 stage했다. 두 staged diff의
+`--check`는 exit `0`이었고 동일한 secret·data/generated-path scan은 일치 항목이
+없었다. Ignored progress/task report와 generated deterministic JSON은 tracked
+commit에 포함하지 않았다.
+
 ## 8. 결론
 
 Intent Resolver Phase 1 구현은 로컬 비라이브·PostgreSQL 경계에서 검증됐다.
-그러나 default 승격은 `candidate_recall_at_5` 실패와 여섯 live/stored-only
-gate의 미측정 상태로 차단된다. 다음 상태는 live HCX checkpoint이며, 별도
-사용자 승인 없이는 호출하지 않는다.
+Fix round는 고정 모집단 promotion 판정과 container 실패 전파 정책을 추가로
+검증했지만 Docker runtime은 여전히 없어 Linux/amd64 실행은 하지 않았다.
+Default 승격은 `candidate_recall_at_5` 실패와 여섯 required gate의 미측정
+상태로 차단된다. 다음 상태는 live HCX checkpoint이며, 별도 사용자 승인 없이는
+호출하지 않는다.
