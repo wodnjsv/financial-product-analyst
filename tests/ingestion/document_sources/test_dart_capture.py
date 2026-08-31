@@ -179,6 +179,35 @@ def test_capture_selects_bound_full_attachment_not_generated_report(
     )
 
 
+def test_capture_accepts_exact_etf_name_before_abbreviated_legal_suffix(
+    tmp_path: Path,
+) -> None:
+    opener = _opener(
+        _row(
+            (
+                "(44a5)kbrise200totalreturn증권상장지수(주식)"
+                "투자설명서-260129.pdf"
+            ),
+            (
+                f"/pdf/download/file.do?rcp_no={_RECEIPT}"
+                "&dcm_id=10611&dcm_seq=249&fl_nm=rise.pdf"
+            ),
+        )
+    )
+
+    captured = capture_dart_full_prospectus(
+        opener,
+        candidate=_candidate(),
+        canonical_name=(
+            "KB RISE 200 Total Return증권상장지수투자신탁(주식)"
+        ),
+        destination=tmp_path / "prospectus.pdf",
+        maximum_bytes=1024,
+    )
+
+    assert captured.object_name.startswith("(44a5)kbrise200totalreturn")
+
+
 def test_capture_rejects_attachment_for_a_different_product(
     tmp_path: Path,
 ) -> None:

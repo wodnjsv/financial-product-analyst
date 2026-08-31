@@ -475,16 +475,31 @@ git commit -m "feat: add resumable DART corpus command"
 - Real tests require explicit `RUN_DOCUMENT_DATA_TESTS=1` and environment paths.
   Missing configuration after opt-in is a hard failure.
 
-- [ ] **Step 1: Run KODEX 200 through PostgreSQL 15**
+- [x] **Step 1: Run KODEX 200 through PostgreSQL 15**
 
 Require 68 text pages, one strategy chunk, five separate risk chunks, complete
 artifact metadata, identical read-back hash, and no PDF after success.
+
+Completed on 2026-08-31 against the frozen organizer dataset: receipt
+`20260716000161` produced six selected chunks across 68 pages, persisted and
+read back with complete source-artifact metadata, and the successful temporary
+PDF was deleted. The earlier failed-attempt PDF remains quarantined outside Git
+and is not treated as a successful source copy.
 
 - [ ] **Step 2: Run another-manager ETF and a multi-class public fund**
 
 The ETF must use an independently resolved publisher. The fund must bind
 multiple organizer Entities to one document and one chunk set. Neither may use
 fuzzy identity.
+
+ETF half completed on 2026-08-31 with KB RISE 200 Total Return, independently
+bound to KB Asset Management and DART receipt `20260129000025`. The 50-page
+document produced 20 Claim-selected chunks and 1,737 provisional whitespace
+tokens; PostgreSQL read-back passed and the successful 1,989,863-byte temporary
+PDF was deleted. The public-fund half remains open: all 13,789 frozen
+public-fund targets have zero organizer-authoritative DART publisher bindings,
+so the approved no-inference policy forbids selecting a multi-class fund from
+DART at this gate.
 
 - [ ] **Step 3: Run the 100-unique-document capacity gate**
 

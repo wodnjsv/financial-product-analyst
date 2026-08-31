@@ -37,6 +37,7 @@ from financial_agent.ingestion.document_sources.dart_targets import (
     OrganizerDartTarget,
 )
 from financial_agent.ingestion.official import OfficialObjectManifest
+from financial_agent.ingestion.sources import SourceVerificationError
 from tests.fixtures.synthetic_pdf import write_synthetic_prospectus
 
 
@@ -366,6 +367,53 @@ async def test_ingestion_stops_before_a_sixth_quarantined_pdf(
 
     assert raised.value.code == "dart_quarantine_limit_reached"
     assert len(tuple(request.run_root.rglob("*.pdf"))) == 5
+
+
+@pytest.mark.asyncio
+async def test_ingestion_reuses_only_an_empty_receipt_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_capture(monkeypatch)
+    request = _request(tmp_path)
+    receipt_root = request.run_root / f"dart-{RECEIPT}"
+    receipt_root.mkdir(parents=True)
+
+    result = await ingest_one_dart_document(
+        _MemoryRepository(),
+        object(),
+        request=request,
+        now=lambda: datetime(2026, 8, 31, tzinfo=UTC),
+    )
+
+    assert result.retention_disposition == "metadata_only_deleted"
+    assert not receipt_root.exists()
+
+
+@pytest.mark.asyncio
+async def test_ingestion_removes_empty_directory_after_capture_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _request(tmp_path)
+    receipt_root = request.run_root / f"dart-{RECEIPT}"
+
+    def failed_capture(*args, **kwargs):
+        del args, kwargs
+        raise SourceVerificationError("TEST_CAPTURE_FAILED", "synthetic")
+
+    monkeypatch.setattr(
+        "financial_agent.ingestion.document_sources.dart_ingestion."
+        "capture_dart_full_prospectus",
+        failed_capture,
+    )
+
+    with pytest.raises(SourceVerificationError, match="synthetic"):
+        await ingest_one_dart_document(
+            _MemoryRepository(), object(), request=request
+        )
+
+    assert not receipt_root.exists()
 
 
 @pytest.mark.asyncio

@@ -561,6 +561,31 @@ def test_dart_product_identity_allows_whitespace_presence_only_difference() -> N
     assert result.candidates[0].accession_or_receipt_id == "20260805000047"
 
 
+def test_dart_publisher_binding_parses_one_balanced_parenthesized_product() -> None:
+    target_name = "KB RISE 200 Total Return증권상장지수투자신탁(주식)"
+    adapter, _ = _adapter(
+        [
+            _filing(
+                "20260129000025",
+                "20260129",
+                corp_name="한빛자산운용",
+                report_name=(
+                    "투자설명서(집합투자증권)"
+                    "(KBRISE200TotalReturn증권상장지수투자신탁(주식))"
+                ),
+            )
+        ]
+    )
+
+    result = adapter.discover(
+        _publisher_target(canonical_name=target_name),
+        _context(),
+    )
+
+    assert result.status is SourceAuditStatus.ELIGIBLE
+    assert result.candidates[0].accession_or_receipt_id == "20260129000025"
+
+
 def test_dart_publisher_binding_requires_exact_approved_publisher_name() -> None:
     adapter, _ = _adapter(
         [

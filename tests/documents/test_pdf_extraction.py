@@ -343,6 +343,46 @@ def test_table_of_contents_pages_do_not_create_claim_sections() -> None:
     assert result.sections[0].exact_text == "실제 투자목적입니다."
 
 
+def test_table_of_contents_ends_when_boundary_starts_a_long_table_cell() -> None:
+    pages = (
+        PdfPageLayout(
+            1,
+            (
+                line("[ 목 차 ]", top=10.0),
+                line("7. 집합투자기구의 투자목적", top=20.0),
+            ),
+            (),
+        ),
+        PdfPageLayout(
+            2,
+            (
+                line(
+                    "투자결정시 유의사항 안내 1. 투자설명서를 참고하십시오.",
+                    top=10.0,
+                ),
+            ),
+            (),
+        ),
+        PdfPageLayout(
+            3,
+            (
+                line("7. 집합투자기구의 투자목적", top=10.0),
+                line("실제 투자목적입니다.", top=20.0),
+            ),
+            (),
+        ),
+    )
+
+    result = assemble_pdf_sections(
+        pages,
+        source_checksum="7" * 64,
+        extraction_version="pdfplumber-layout-v1",
+    )
+
+    assert len(result.sections) == 1
+    assert result.sections[0].page_start == 3
+
+
 def test_numbered_sibling_closes_full_prospectus_claim_section() -> None:
     pages = (
         PdfPageLayout(
@@ -366,6 +406,38 @@ def test_numbered_sibling_closes_full_prospectus_claim_section() -> None:
 
     assert len(result.sections) == 1
     assert result.sections[0].exact_text == "1)\nKOSPI200 지수를 추종합니다."
+
+
+def test_numbered_full_prospectus_claim_headings_are_recognized() -> None:
+    pages = (
+        PdfPageLayout(
+            1,
+            (
+                line("7. 집합투자기구의 투자목적", top=10.0),
+                line("KOSPI200 TR 지수를 추종합니다.", top=20.0),
+                line(
+                    "9. 집합투자기구의 투자전략, 투자방침 및 수익구조",
+                    top=30.0,
+                ),
+                line("완전복제 방식으로 운용합니다.", top=40.0),
+                line("10. 집합투자기구의 투자위험", top=50.0),
+                line("원금 손실이 발생할 수 있습니다.", top=60.0),
+            ),
+            (),
+        ),
+    )
+
+    result = assemble_pdf_sections(
+        pages,
+        source_checksum="6" * 64,
+        extraction_version="pdfplumber-layout-v1",
+    )
+
+    assert tuple(section.heading_path[-1] for section in result.sections) == (
+        "집합투자기구의 투자목적",
+        "집합투자기구의 투자전략",
+        "집합투자기구의 투자위험",
+    )
 
 
 def test_top_level_part_clears_summary_heading_context() -> None:

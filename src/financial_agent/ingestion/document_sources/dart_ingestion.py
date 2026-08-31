@@ -142,18 +142,26 @@ async def ingest_one_dart_document(
     else:
         if pdf_path.exists():
             raise DartCorpusIngestionError("dart_ingestion_untracked_pdf")
+        _remove_empty_directory(document_root)
+        if document_root.exists():
+            raise DartCorpusIngestionError("dart_ingestion_untracked_path")
         _reserve_quarantine_capacity(request)
         document_root.mkdir(parents=True, exist_ok=False)
 
     captured_at = now()
     if existing is None:
-        captured_file = capture_dart_full_prospectus(
-            opener,
-            candidate=request.candidate,
-            canonical_name=request.target.canonical_name,
-            destination=pdf_path,
-            maximum_bytes=request.maximum_bytes,
-        )
+        try:
+            captured_file = capture_dart_full_prospectus(
+                opener,
+                candidate=request.candidate,
+                canonical_name=request.target.canonical_name,
+                destination=pdf_path,
+                maximum_bytes=request.maximum_bytes,
+            )
+        except Exception:
+            if not pdf_path.exists():
+                _remove_empty_directory(document_root)
+            raise
         context = replace(
             request.context,
             source_object_key=captured_file.object_key,

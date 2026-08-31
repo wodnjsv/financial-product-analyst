@@ -168,6 +168,65 @@ def test_one_publisher_page_serves_multiple_organizer_targets() -> None:
     } == {target.representative_entity_id for target in inventory.targets}
 
 
+def test_publisher_search_continues_past_unparseable_other_product() -> None:
+    exact = _filing(
+        "한빛 성장 펀드",
+        "20260205000001",
+        receipt_date="20260205",
+    )
+    ambiguous = _filing(
+        "한빛 성장 펀드] [다른 펀드",
+        "20260820000001",
+    )
+
+    class WindowedPublisherOpener:
+        def __init__(self) -> None:
+            self.windows: list[tuple[str, str]] = []
+
+        def open_no_redirect(
+            self,
+            url: str,
+            *,
+            method: str,
+            headers: Mapping[str, str],
+            timeout: float,
+        ) -> _Response:
+            del method, headers, timeout
+            query = parse_qs(urlparse(url).query)
+            window = (query["bgn_de"][0], query["end_de"][0])
+            self.windows.append(window)
+            filings = (
+                [ambiguous]
+                if window == ("20260224", "20260824")
+                else [exact]
+            )
+            return _Response(json.dumps({
+                "status": "000",
+                "message": "정상",
+                "page_no": 1,
+                "page_count": 100,
+                "total_count": 1,
+                "total_page": 1,
+                "list": filings,
+            }).encode())
+
+    opener = WindowedPublisherOpener()
+    result = DartDocumentSourceAdapter(opener).discover_publisher_targets(
+        corp_code="00123456",
+        publisher_name="한빛자산운용",
+        targets=(("target-one", "한빛 성장 펀드", "product-one"),),
+        context=_context(),
+    )
+
+    assert result.target_results[0][1].candidates[0].accession_or_receipt_id == (
+        "20260205000001"
+    )
+    assert opener.windows == [
+        ("20260224", "20260824"),
+        ("20250823", "20260223"),
+    ]
+
+
 def test_dart_only_filing_never_expands_inventory_or_reaches_attachment_access() -> None:
     inventory = _inventory()
     opener = _PublisherOpener(

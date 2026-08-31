@@ -32,6 +32,10 @@ _CLAIM_HEADINGS = frozenset(
         "집합투자기구의 투자위험",
     }
 )
+_EXPANDED_CLAIM_HEADINGS = {
+    "집합투자기구의 투자전략, 투자방침 및 수익구조": "집합투자기구의 투자전략",
+    "집합투자기구의 투자전략, 위험관리 및 수익구조": "집합투자기구의 투자전략",
+}
 _BOUNDARY_HEADINGS = frozenset(
     {
         "분류",
@@ -317,7 +321,7 @@ def _sections(
     for span in spans:
         if span.page_number in toc_pages:
             continue
-        heading = _normalized_heading(span.text)
+        heading = _normalized_claim_heading(span.text)
         if re.match(r"^제\s*\d+\s*부(?:[.]|\s|$)", heading):
             if current is not None:
                 _close_section(canonical_text, spans, current, span.start, sections)
@@ -367,6 +371,17 @@ def _normalized_heading(text: str) -> str:
     return normalized
 
 
+def _normalized_claim_heading(text: str) -> str:
+    normalized = _normalized_heading(text)
+    if normalized in _CLAIM_HEADINGS:
+        return normalized
+    without_number = re.sub(r"^\d+[.]\s*", "", normalized)
+    expanded = _EXPANDED_CLAIM_HEADINGS.get(without_number)
+    if expanded is not None:
+        return expanded
+    return without_number if without_number in _CLAIM_HEADINGS else normalized
+
+
 def _is_boundary_heading(heading: str) -> bool:
     if heading in _BOUNDARY_HEADINGS:
         return True
@@ -390,11 +405,14 @@ def _table_of_contents_pages(spans: tuple[_LineSpan, ...]) -> frozenset[int]:
     for page_number, first_heading in first_by_page.items():
         if first_heading.replace(" ", "") == "목차":
             in_toc = True
-        elif in_toc and first_heading in {
-            "투자결정시 유의사항 안내",
-            "요약정보",
-            "간이투자설명서",
-        }:
+        elif in_toc and any(
+            first_heading.startswith(boundary)
+            for boundary in (
+                "투자결정시 유의사항 안내",
+                "요약정보",
+                "간이투자설명서",
+            )
+        ):
             in_toc = False
         if in_toc:
             toc_pages.add(page_number)

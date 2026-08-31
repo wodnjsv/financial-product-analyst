@@ -250,13 +250,12 @@ def _select_attachment(
 ) -> tuple[str, str]:
     parser = _DownloadTableParser()
     parser.feed(payload)
-    target_identity = _identity(canonical_name)
     matches: list[tuple[str, str]] = []
     for row_text, hrefs in parser.rows:
         if (
             "투자설명서" not in row_text
             or "간이투자설명서" in row_text
-            or target_identity not in _identity(row_text)
+            or not _matches_canonical_product(row_text, canonical_name)
         ):
             continue
         for href in hrefs:
@@ -290,6 +289,18 @@ def _select_attachment(
 def _identity(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).casefold()
     return "".join(character for character in normalized if character.isalnum())
+
+
+def _matches_canonical_product(row_text: str, canonical_name: str) -> bool:
+    row_identity = _identity(row_text)
+    target_identity = _identity(canonical_name)
+    if target_identity in row_identity:
+        return True
+    marker = "증권상장지수"
+    marker_index = target_identity.find(marker)
+    if marker_index < 6:
+        return False
+    return target_identity[:marker_index] in row_identity
 
 
 def _open(

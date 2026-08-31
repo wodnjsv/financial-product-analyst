@@ -42,9 +42,8 @@ _CORRECTION_MARKER = re.compile(
     r"^\[(정정|기재정정|첨부정정|첨부추가|정정명령부과|정정제출요구)\]\s*"
 )
 _UNRESOLVED_MARKERS = frozenset({"정정명령부과", "정정제출요구"})
-_PUBLISHER_PRODUCT_SUFFIX = re.compile(
+_PUBLISHER_PRODUCT_PREFIX = re.compile(
     r"^(?:간이)?투자설명서\(집합투자증권(?:-[^)]+)?\)\s*"
-    r"(?:\[(?P<bracket>[^\[\]]+)\]|\((?P<parenthesis>[^()]+)\))$"
 )
 _MAX_LIST_PAGES = 100
 _PAGE_COUNT = 100
@@ -223,6 +222,7 @@ class DartDocumentSourceAdapter:
                         )
                     except _DartResponseError as error:
                         if error.reason_code in {
+                            "dart_product_metadata_ambiguous",
                             "dart_product_name_mismatch",
                             "dart_prospectus_not_found",
                         }:
@@ -833,11 +833,33 @@ def _report_metadata(report_name: str) -> tuple[str, tuple[str, ...]]:
 
 
 def _publisher_product_name(report_identity: str) -> str | None:
-    match = _PUBLISHER_PRODUCT_SUFFIX.fullmatch(report_identity)
+    match = _PUBLISHER_PRODUCT_PREFIX.match(report_identity)
     if match is None:
         return None
-    product_name = match.group("bracket") or match.group("parenthesis")
+    product_name = _single_balanced_wrapper(report_identity[match.end() :].strip())
+    if product_name is None:
+        return None
     return _normalize_whitespace(product_name)
+
+
+def _single_balanced_wrapper(value: str) -> str | None:
+    if len(value) < 3 or value[0] not in {"(", "["}:
+        return None
+    pairs = {"(": ")", "[": "]"}
+    closing = frozenset(pairs.values())
+    stack: list[str] = []
+    for index, character in enumerate(value):
+        if character in pairs:
+            stack.append(pairs[character])
+        elif character in closing:
+            if not stack or stack.pop() != character:
+                return None
+            if not stack and index != len(value) - 1:
+                return None
+    if stack:
+        return None
+    product_name = value[1:-1]
+    return product_name if product_name.strip() else None
 
 
 def _normalize_whitespace(value: str) -> str:
