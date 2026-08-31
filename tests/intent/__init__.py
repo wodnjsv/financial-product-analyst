@@ -1,0 +1,1 @@
+"""Intent resolver contract tests."""
