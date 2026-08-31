@@ -664,3 +664,12 @@ def test_validation_stage_and_status_orders_are_frozen() -> None:
         ResolutionStatus.AMBIGUOUS,
         ResolutionStatus.RESOLVED,
     )
+
+
+def test_semantic_state_carries_only_offered_target_mentions(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches context validation accepting a mention absent from the ResolverView."""
+    state = validate_semantics(draft=validation_inputs.draft, **validation_inputs.rest)
+
+    assert state.offered_target_mention_ids == ("mention-entity",)

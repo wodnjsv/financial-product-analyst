@@ -103,3 +103,27 @@ def test_request_marks_explicit_korean_reference_surfaces_with_original_spans() 
         20,
     ]
     assert [candidate.end_char for candidate in request.reference_candidates] == [5, 11, 15, 19, 22]
+
+
+def test_request_marks_context_reference_stems_longest_first_without_overlap() -> None:
+    text = "그 운용사는? 각 상품의 수익률은? 그 결과의 근거는? 나머지 상품은? 이거는?"
+    context = context_factory(question=text).model_copy(
+        update={"segments": (Segment(segment_id="s1", ordinal=0, text=text),)}
+    )
+
+    request = normalize_request(context)
+
+    assert [candidate.text for candidate in request.reference_candidates] == [
+        "그 운용사",
+        "각 상품",
+        "그 결과",
+        "나머지 상품",
+        "이거",
+    ]
+    assert [text[candidate.start_char:candidate.end_char] for candidate in request.reference_candidates] == [
+        "그 운용사",
+        "각 상품",
+        "그 결과",
+        "나머지 상품",
+        "이거",
+    ]

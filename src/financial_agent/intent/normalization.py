@@ -10,8 +10,12 @@ MAX_QUESTION_CODE_POINTS = 4_096
 MAX_SEGMENTS = 16
 
 _REFERENCE_SURFACES = (
+    "나머지 상품",
     "그 상품들",
     "위 상품들",
+    "그 운용사",
+    "그 결과",
+    "각 상품",
     "이 상품",
     "그 상품",
     "해당 상품",
@@ -19,6 +23,7 @@ _REFERENCE_SURFACES = (
     "후자",
     "나머지",
     "각각",
+    "이거",
 )
 
 

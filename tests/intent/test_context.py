@@ -6,12 +6,15 @@ from datetime import datetime, timezone
 import pytest
 
 from financial_agent.contracts.enums import Cardinality, IntentType, ProductFamily, ReferenceMentionType
+from financial_agent.contracts.canonical import build_request_key
+from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.context import (
     SLOT_PRECEDENCE,
     ResolutionFinalizationMetadata,
     finalize_resolution,
     validate_context_graph,
 )
+from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.draft import (
     ActionChoice,
     ContextLinkHint,
@@ -92,6 +95,7 @@ def _reference(
     target_kind: ReferenceTargetKind = ReferenceTargetKind.RESULT_SET,
     cardinality: Cardinality = Cardinality.MANY,
     candidates: tuple[str, ...] = ("f1",),
+    candidate_mentions: tuple[str, ...] = (),
     status: str = "resolved",
 ) -> ReferenceHint:
     return ReferenceHint(
@@ -104,7 +108,7 @@ def _reference(
         expected_target_kind=(target_kind,),
         expected_cardinality=(cardinality,),
         candidate_target_frame_ids=candidates,
-        candidate_target_mention_ids=(),
+        candidate_target_mention_ids=candidate_mentions,
         status=status,
         reason_code="explicit",
     )
@@ -234,32 +238,36 @@ def test_plural_followup_consumes_prior_top_k(context_inputs: ContextInputs) -> 
 
 
 @pytest.mark.parametrize(
-    ("surface", "reference", "link", "roles"),
+    ("surface", "candidate_text", "reference", "link", "roles"),
     [
-        ("연간수익률은?", _reference(form=ReferenceForm.ZERO_ANAPHORA), _link(), (SourceRole.TOP_K_PRODUCTS,)),
-        ("위험등급도 보여줘", _reference(form=ReferenceForm.ZERO_ANAPHORA), _link(), (SourceRole.TOP_K_PRODUCTS,)),
+        ("연간수익률은?", None, _reference(form=ReferenceForm.ZERO_ANAPHORA), _link(), (SourceRole.TOP_K_PRODUCTS,)),
+        ("위험등급도 보여줘", None, _reference(form=ReferenceForm.ZERO_ANAPHORA), _link(), (SourceRole.TOP_K_PRODUCTS,)),
         (
             "그 운용사는?",
+            "그 운용사",
             _reference(form=ReferenceForm.BRIDGING, number="singular", target_kind=ReferenceTargetKind.RELATED_ENTITY, cardinality=Cardinality.ONE),
             _link(link_type=ContextLinkType.DERIVE_ENTITY, role=SourceRole.RELATION_TARGET, selector=()),
             (SourceRole.RELATION_TARGET,),
         ),
         (
             "전자는?",
+            "전자",
             _reference(number="singular", target_kind=ReferenceTargetKind.ENTITY, cardinality=Cardinality.ONE),
             _link(link_type=ContextLinkType.CONSUME_SINGLE_RESULT, role=SourceRole.CANDIDATES, selector=(Selector.FORMER,)),
             (SourceRole.CANDIDATES,),
         ),
         (
             "후자는?",
+            "후자",
             _reference(number="singular", target_kind=ReferenceTargetKind.ENTITY, cardinality=Cardinality.ONE),
             _link(link_type=ContextLinkType.CONSUME_SINGLE_RESULT, role=SourceRole.CANDIDATES, selector=(Selector.LATTER,)),
             (SourceRole.CANDIDATES,),
         ),
-        ("나머지 상품은?", _reference(), _link(role=SourceRole.CANDIDATES, selector=(Selector.REMAINING,)), (SourceRole.CANDIDATES,)),
-        ("각 상품의 수익률은?", _reference(), _link(role=SourceRole.CANDIDATES, selector=(Selector.EACH,)), (SourceRole.CANDIDATES,)),
+        ("나머지 상품은?", "나머지 상품", _reference(), _link(role=SourceRole.CANDIDATES, selector=(Selector.REMAINING,)), (SourceRole.CANDIDATES,)),
+        ("각 상품의 수익률은?", "각 상품", _reference(), _link(role=SourceRole.CANDIDATES, selector=(Selector.EACH,)), (SourceRole.CANDIDATES,)),
         (
             "그 결과의 근거는?",
+            "그 결과",
             _reference(form=ReferenceForm.DISCOURSE_DEIXIS, target_kind=ReferenceTargetKind.EVIDENCE_RECORDS, cardinality=Cardinality.MANY),
             _link(link_type=ContextLinkType.REFER_EVIDENCE, role=SourceRole.EVIDENCE_RECORDS, selector=(Selector.ALL,)),
             (SourceRole.EVIDENCE_RECORDS,),
@@ -267,10 +275,26 @@ def test_plural_followup_consumes_prior_top_k(context_inputs: ContextInputs) -> 
     ],
 )
 def test_korean_context_forms_preserve_registered_typed_dependencies(
-    context_inputs: ContextInputs, surface: str, reference: ReferenceHint,
+    context_inputs: ContextInputs, surface: str, candidate_text: str | None, reference: ReferenceHint,
     link: ContextLinkHint, roles: tuple[SourceRole, ...],
 ) -> None:
-    """Catches Korean reference forms being treated as free-text inference."""
+    """Catches Korean context hints detached from real normalized text."""
+    created_at = datetime(2026, 8, 31, tzinfo=timezone.utc)
+    context = RequestContext(
+        request_key=build_request_key("q-korean-context", surface, "dataset-v1", "1.0"),
+        run_id="run-korean-context",
+        dataset_version="dataset-v1",
+        producer="test",
+        created_at=created_at,
+        question_id="q-korean-context",
+        question=surface,
+        segments=(Segment(segment_id="s1", ordinal=0, text=surface),),
+        deadline_at=created_at.replace(second=10),
+    )
+    normalized = normalize_request(context)
+    assert [candidate.text for candidate in normalized.reference_candidates] == (
+        [] if candidate_text is None else [candidate_text]
+    )
     state = _state(frames=(_frame("f1", 0, roles=roles), _frame("f2", 1)), references=(reference,), links=(link,))
 
     resolution = _finalize(state, context_inputs)
@@ -356,6 +380,22 @@ def test_producer_role_must_be_actually_produced(context_inputs: ContextInputs) 
 
 def test_singular_demonstrative_with_two_candidates_is_ambiguous(context_inputs: ContextInputs) -> None:
     """Catches choosing one antecedent for 이 상품 without a typed selector."""
+    surface = "이거는?"
+    created_at = datetime(2026, 8, 31, tzinfo=timezone.utc)
+    normalized = normalize_request(
+        RequestContext(
+            request_key=build_request_key("q-singular", surface, "dataset-v1", "1.0"),
+            run_id="run-singular",
+            dataset_version="dataset-v1",
+            producer="test",
+            created_at=created_at,
+            question_id="q-singular",
+            question=surface,
+            segments=(Segment(segment_id="s1", ordinal=0, text=surface),),
+            deadline_at=created_at.replace(second=10),
+        )
+    )
+    assert [candidate.text for candidate in normalized.reference_candidates] == ["이거"]
     state = _state(references=(_reference(number="singular", target_kind=ReferenceTargetKind.ENTITY, cardinality=Cardinality.ONE, candidates=("f1", "f2")),))
 
     resolution = _finalize(state, context_inputs)
@@ -397,7 +437,15 @@ def test_registered_slot_mutations_are_frozen_into_frames(context_inputs: Contex
     source = ("f1",) if mutation_kind is SlotMutationKind.CARRYOVER else ()
     frames = (
         _frame("f1", 0, roles=(SourceRole.TOP_K_PRODUCTS,), slots=(_slot("slot-f1", SlotKind.METRIC, "aum"),)),
-        _frame("f2", 1),
+        _frame(
+            "f2",
+            1,
+            slots=(
+                (_slot("slot-f2", SlotKind.METRIC, "return"),)
+                if mutation_kind is SlotMutationKind.UPDATE
+                else ()
+            ),
+        ),
     )
     state = _state(frames=frames, mutations=(_mutation(mutation_kind, source=source),))
 
@@ -420,3 +468,178 @@ def test_slot_precedence_is_frozen_and_finalization_keeps_metadata_pins(context_
     assert resolution.draft_hash == "b" * 64
     assert resolution.build_manifest.catalog_hash == "c" * 64
     assert resolution.active_dataset_manifest_hash == "f" * 64
+
+
+def test_reference_candidate_mentions_must_have_been_offered(context_inputs: ContextInputs) -> None:
+    """Catches a model inventing a mention antecedent outside the ResolverView."""
+    state = _state(
+        references=(_reference(candidates=(), candidate_mentions=("invented-mention",)),),
+    )
+
+    with pytest.raises(ResolverContractError, match="INVALID_CONTEXT_GRAPH"):
+        _finalize(state, context_inputs)
+
+
+def test_resolved_reference_without_target_or_dependency_becomes_unresolved(
+    context_inputs: ContextInputs,
+) -> None:
+    """Catches retaining resolved status when the reference has no usable target."""
+    state = _state(references=(_reference(candidates=()),))
+
+    resolution = _finalize(state, context_inputs)
+
+    assert resolution.context_links == ()
+    assert resolution.resolution_status is ResolutionStatus.CONTEXT_UNRESOLVED
+
+
+def test_ambiguous_reference_omits_all_model_links_and_blocks_only_consumers(
+    context_inputs: ContextInputs,
+) -> None:
+    """Catches retaining a guessed link or marking antecedent producers blocked."""
+    frames = (
+        _frame("f1", 0, roles=(SourceRole.CANDIDATES,)),
+        _frame("f2", 1, roles=(SourceRole.CANDIDATES,)),
+        _frame("f3", 2),
+    )
+    state = _state(
+        frames=frames,
+        references=(_reference(number="singular", target_kind=ReferenceTargetKind.ENTITY, cardinality=Cardinality.ONE, candidates=("f1", "f2")),),
+        links=(
+            _link(link_id="link-1", link_type=ContextLinkType.CONSUME_SINGLE_RESULT, role=SourceRole.CANDIDATES, selector=(Selector.FIRST,), producer="f1", consumer="f3"),
+            _link(link_id="link-2", link_type=ContextLinkType.CONSUME_SINGLE_RESULT, role=SourceRole.CANDIDATES, selector=(Selector.FIRST,), producer="f2", consumer="f3"),
+        ),
+    )
+
+    resolution = _finalize(state, context_inputs)
+
+    assert resolution.context_links == ()
+    assert [frame.frame_status for frame in resolution.canonical_frames] == [
+        ResolutionStatus.RESOLVED,
+        ResolutionStatus.RESOLVED,
+        ResolutionStatus.AMBIGUOUS,
+    ]
+
+
+def test_model_marked_ambiguous_reference_omits_its_link(
+    context_inputs: ContextInputs,
+) -> None:
+    """Catches escalating a semantic ambiguity to a graph failure through its link."""
+    state = _state(
+        frames=(_frame("f1", 0, roles=(SourceRole.CANDIDATES,)), _frame("f2", 1)),
+        references=(
+            _reference(
+                number="singular",
+                target_kind=ReferenceTargetKind.ENTITY,
+                cardinality=Cardinality.ONE,
+                status="ambiguous",
+            ),
+        ),
+        links=(
+            _link(
+                link_type=ContextLinkType.CONSUME_SINGLE_RESULT,
+                role=SourceRole.CANDIDATES,
+                selector=(Selector.FIRST,),
+            ),
+        ),
+    )
+
+    resolution = _finalize(state, context_inputs)
+
+    assert resolution.context_links == ()
+    assert resolution.resolution_status is ResolutionStatus.AMBIGUOUS
+
+
+@pytest.mark.parametrize(
+    ("link_type", "role", "reference_kind", "reference_cardinality"),
+    (
+        (ContextLinkType.CONSUME_RESULT_SET, SourceRole.EXCLUDED_PRODUCTS, ReferenceTargetKind.EXCLUSION_SET, Cardinality.MANY),
+        (ContextLinkType.INHERIT_SCOPE, SourceRole.EVIDENCE_RECORDS, ReferenceTargetKind.EVIDENCE_RECORDS, Cardinality.MANY),
+    ),
+)
+def test_context_link_matrix_rejects_incompatible_many_source_shapes(
+    context_inputs: ContextInputs,
+    link_type: ContextLinkType,
+    role: SourceRole,
+    reference_kind: ReferenceTargetKind,
+    reference_cardinality: Cardinality,
+) -> None:
+    """Catches conflating result, exclusion, and evidence collections."""
+    state = _state(
+        frames=(_frame("f1", 0, roles=(role,)), _frame("f2", 1)),
+        references=(_reference(target_kind=reference_kind, cardinality=reference_cardinality),),
+        links=(_link(link_type=link_type, role=role),),
+    )
+
+    with pytest.raises(ResolverContractError, match="INVALID_CONTEXT_GRAPH"):
+        _finalize(state, context_inputs)
+
+
+def test_update_rejects_unknown_source_even_when_not_carryover(context_inputs: ContextInputs) -> None:
+    """Catches an UPDATE smuggling an unknown source frame through an optional field."""
+    state = _state(mutations=(_mutation(SlotMutationKind.UPDATE, source=("unknown-frame",)),))
+
+    with pytest.raises(ResolverContractError, match="INVALID_CONTEXT_GRAPH"):
+        _finalize(state, context_inputs)
+
+
+def test_update_requires_current_explicit_assignment(context_inputs: ContextInputs) -> None:
+    """Catches UPDATE without a concrete current slot value to update."""
+    state = _state(mutations=(_mutation(SlotMutationKind.UPDATE, source=()),))
+
+    with pytest.raises(ResolverContractError, match="INVALID_CONTEXT_GRAPH"):
+        _finalize(state, context_inputs)
+
+
+def test_duplicate_consumer_slot_mutations_are_contract_failure(context_inputs: ContextInputs) -> None:
+    """Catches two mutations competing for one consumer slot."""
+    frames = (
+        _frame("f1", 0, slots=(_slot("slot-f1", SlotKind.METRIC, "aum"),)),
+        _frame("f2", 1, slots=(_slot("slot-f2", SlotKind.METRIC, "return"),)),
+    )
+    state = _state(
+        frames=frames,
+        mutations=(
+            _mutation(SlotMutationKind.CARRYOVER, mutation_id="mutation-1"),
+            _mutation(SlotMutationKind.UPDATE, mutation_id="mutation-2", source=()),
+        ),
+    )
+
+    with pytest.raises(ResolverContractError, match="INVALID_CONTEXT_GRAPH"):
+        _finalize(state, context_inputs)
+
+
+def test_replace_slot_conflict_with_current_evidence_is_ambiguous(
+    context_inputs: ContextInputs,
+) -> None:
+    """Catches a replace-slot dependency silently overriding current evidence."""
+    frames = (
+        _frame("f1", 0, roles=(SourceRole.METRIC_VALUE,)),
+        _frame("f2", 1, slots=(_slot("slot-f2", SlotKind.METRIC, "return"),)),
+    )
+    state = _state(
+        frames=frames,
+        references=(_reference(target_kind=ReferenceTargetKind.METRIC_VALUE, cardinality=Cardinality.ONE),),
+        links=(_link(link_type=ContextLinkType.REPLACE_SLOT, role=SourceRole.METRIC_VALUE, selector=(), target_slot=(SlotKind.METRIC,)),),
+    )
+
+    resolution = _finalize(state, context_inputs)
+
+    assert resolution.context_links[0].link_type is ContextLinkType.REPLACE_SLOT
+    assert resolution.resolution_status is ResolutionStatus.AMBIGUOUS
+    assert {issue.code for issue in resolution.issues} == {"AMBIGUITY_UNRESOLVED"}
+
+
+def test_empty_similarity_anchor_is_context_unresolved(context_inputs: ContextInputs) -> None:
+    """Catches treating an empty anchor assignment as an executable anchor."""
+    empty_anchor = SlotAssignment(
+        slot_assignment_id="slot-anchor",
+        slot_kind=SlotKind.SIMILARITY_ANCHOR,
+        value_ids=(),
+        evidence_span_ids=("span-1",),
+        reason_code="explicit",
+    )
+    state = _state(frames=(_frame("f1", 0, action=IntentType.SIMILAR, roles=(), slots=(empty_anchor,)),))
+
+    resolution = _finalize(state, context_inputs)
+
+    assert resolution.resolution_status is ResolutionStatus.CONTEXT_UNRESOLVED

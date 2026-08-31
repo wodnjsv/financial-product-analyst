@@ -75,6 +75,7 @@ class SemanticValidationState:
     issues: tuple[ResolutionIssue, ...]
     validation_events: tuple[ValidationEvent, ...]
     literal_kinds_by_id: tuple[tuple[str, str], ...] = ()
+    offered_target_mention_ids: tuple[str, ...] = ()
 
 
 def validate_semantics(
@@ -111,6 +112,14 @@ def validate_semantics(
         literal_kinds_by_id=tuple(
             (literal.literal_id, literal.kind)
             for literal in sorted(view.literal_candidates, key=lambda item: item.literal_id)
+        ),
+        offered_target_mention_ids=tuple(
+            sorted(
+                {
+                    group.mention_id
+                    for group in (*view.semantic_candidates, *view.entity_candidates)
+                }
+            )
         ),
     )
 

@@ -61,6 +61,7 @@ class ContextValidationState:
     issues: tuple[ResolutionIssue, ...]
     resolution_status: ResolutionStatus
     validation_events: tuple[ValidationEvent, ...]
+    frame_statuses: tuple[tuple[str, ResolutionStatus], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,21 +92,33 @@ def validate_context_graph(state: SemanticValidationState) -> ContextValidationS
 
     frames_by_id = {frame.frame_id: frame for frame in state.canonical_frames}
     references_by_id = {hint.reference_id: hint for hint in state.draft.reference_hints}
-    _validate_reference_frame_ids(references_by_id.values(), frames_by_id)
+    blocked_reference_ids = _validate_reference_targets(
+        references_by_id.values(),
+        frames_by_id,
+        set(state.offered_target_mention_ids),
+    )
     links = tuple(
         _validate_link(hint, references_by_id, frames_by_id, dict(state.literal_kinds_by_id))
         for hint in state.draft.context_link_hints
+        if hint.reference_id not in blocked_reference_ids
     )
     _validate_acyclic(links)
     _validate_mutations(state.draft.slot_mutations, frames_by_id)
 
-    issues = _append_context_issues(state, links, frames_by_id, references_by_id)
+    issues = _append_context_issues(
+        state,
+        links,
+        frames_by_id,
+        references_by_id,
+        blocked_reference_ids,
+    )
     return ContextValidationState(
         semantic_state=state,
         context_links=tuple(sorted(links, key=lambda link: link.context_link_id)),
         issues=issues,
         resolution_status=_resolution_status(issues),
         validation_events=(*state.validation_events, *_context_events()),
+        frame_statuses=_frame_statuses(state, issues, frames_by_id, references_by_id),
     )
 
 
@@ -127,7 +140,11 @@ def finalize_resolution(
             )
         )
     canonical_frames = tuple(
-        _validated_frame(frame, mutations_by_frame.get(frame.frame_id, ()), context_state.issues)
+        _validated_frame(
+            frame,
+            mutations_by_frame.get(frame.frame_id, ()),
+            dict(context_state.frame_statuses).get(frame.frame_id, ResolutionStatus.RESOLVED),
+        )
         for frame in context_state.semantic_state.canonical_frames
     )
     return ValidatedIntentResolution(
@@ -151,12 +168,28 @@ def finalize_resolution(
     )
 
 
-def _validate_reference_frame_ids(
-    references: object, frames_by_id: dict[str, IntentFrameDraft]
-) -> None:
+def _validate_reference_targets(
+    references: object,
+    frames_by_id: dict[str, IntentFrameDraft],
+    offered_target_mention_ids: set[str],
+) -> frozenset[str]:
+    blocked: set[str] = set()
     for reference in references:  # type: ignore[union-attr]
         if not set(reference.candidate_target_frame_ids) <= set(frames_by_id):
             _invalid_graph()
+        if not set(reference.candidate_target_mention_ids) <= offered_target_mention_ids:
+            _invalid_graph()
+        if reference.status != "resolved":
+            blocked.add(reference.reference_id)
+        if (
+            reference.status == "resolved"
+            and reference.grammatical_number == ("singular",)
+            and len(
+                (*reference.candidate_target_frame_ids, *reference.candidate_target_mention_ids)
+            ) > 1
+        ):
+            blocked.add(reference.reference_id)
+    return frozenset(blocked)
 
 
 def _validate_link(
@@ -203,33 +236,63 @@ def _link_target(
     hint: ContextLinkHint, source: _RoleShape
 ) -> tuple[ReferenceTargetKind, Cardinality]:
     if hint.link_type is ContextLinkType.CONSUME_SINGLE_RESULT:
-        if source.target_kind is not ReferenceTargetKind.RESULT_SET:
+        if source != _RoleShape(ReferenceTargetKind.RESULT_SET, Cardinality.MANY):
             _invalid_graph()
         return ReferenceTargetKind.ENTITY, Cardinality.ONE
-    if hint.link_type in {ContextLinkType.CONSUME_RESULT_SET, ContextLinkType.INHERIT_SCOPE}:
-        if source.cardinality is not Cardinality.MANY:
+    if hint.link_type is ContextLinkType.CONSUME_RESULT_SET:
+        if source != _RoleShape(ReferenceTargetKind.RESULT_SET, Cardinality.MANY):
             _invalid_graph()
-        return source.target_kind, Cardinality.MANY
+        return ReferenceTargetKind.RESULT_SET, Cardinality.MANY
     if hint.link_type is ContextLinkType.DERIVE_ENTITY:
-        if source.target_kind not in {ReferenceTargetKind.RELATED_ENTITY, ReferenceTargetKind.ENTITY}:
+        if source != _RoleShape(ReferenceTargetKind.RELATED_ENTITY, Cardinality.ONE):
             _invalid_graph()
-        return source.target_kind, Cardinality.ONE
+        return ReferenceTargetKind.RELATED_ENTITY, Cardinality.ONE
     if hint.link_type is ContextLinkType.DERIVE_METRIC_VALUE:
-        if source.target_kind is not ReferenceTargetKind.METRIC_VALUE:
+        if source != _RoleShape(ReferenceTargetKind.METRIC_VALUE, Cardinality.ONE):
             _invalid_graph()
-        return source.target_kind, Cardinality.ONE
+        return ReferenceTargetKind.METRIC_VALUE, Cardinality.ONE
+    if hint.link_type is ContextLinkType.INHERIT_SCOPE:
+        if source not in {
+            _RoleShape(ReferenceTargetKind.ENTITY, Cardinality.ONE),
+            _RoleShape(ReferenceTargetKind.RESULT_SET, Cardinality.MANY),
+        }:
+            _invalid_graph()
+        return source.target_kind, source.cardinality
     if hint.link_type is ContextLinkType.REFER_EXCLUSION_SET:
-        if source.target_kind is not ReferenceTargetKind.EXCLUSION_SET:
+        if source != _RoleShape(ReferenceTargetKind.EXCLUSION_SET, Cardinality.MANY):
             _invalid_graph()
-        return source.target_kind, Cardinality.MANY
+        return ReferenceTargetKind.EXCLUSION_SET, Cardinality.MANY
     if hint.link_type is ContextLinkType.REFER_EVIDENCE:
-        if source.target_kind is not ReferenceTargetKind.EVIDENCE_RECORDS:
+        if source != _RoleShape(ReferenceTargetKind.EVIDENCE_RECORDS, Cardinality.MANY):
             _invalid_graph()
-        return source.target_kind, Cardinality.MANY
+        return ReferenceTargetKind.EVIDENCE_RECORDS, Cardinality.MANY
     if hint.link_type is ContextLinkType.REPLACE_SLOT:
         if not hint.target_slot_kind:
             _invalid_graph()
-        return source.target_kind, source.cardinality
+        if (
+            hint.target_slot_kind == (SlotKind.ENTITY,)
+            and source
+            in {
+                _RoleShape(ReferenceTargetKind.ENTITY, Cardinality.ONE),
+                _RoleShape(ReferenceTargetKind.RELATED_ENTITY, Cardinality.ONE),
+            }
+        ):
+            return source.target_kind, source.cardinality
+        if (
+            hint.target_slot_kind == (SlotKind.METRIC,)
+            and source == _RoleShape(ReferenceTargetKind.METRIC_VALUE, Cardinality.ONE)
+        ):
+            return source.target_kind, source.cardinality
+        if (
+            hint.target_slot_kind == (SlotKind.SIMILARITY_ANCHOR,)
+            and source
+            in {
+                _RoleShape(ReferenceTargetKind.ENTITY, Cardinality.ONE),
+                _RoleShape(ReferenceTargetKind.RELATED_ENTITY, Cardinality.ONE),
+            }
+        ):
+            return source.target_kind, source.cardinality
+        _invalid_graph()
     _invalid_graph()
     raise AssertionError("unreachable")
 
@@ -290,19 +353,35 @@ def _validate_acyclic(links: tuple[ValidatedContextLink, ...]) -> None:
 def _validate_mutations(
     mutations: tuple[SlotMutation, ...], frames_by_id: dict[str, IntentFrameDraft]
 ) -> None:
+    mutated_slots: set[tuple[str, SlotKind]] = set()
     for mutation in mutations:
         consumer = frames_by_id.get(mutation.consumer_frame_id)
         source_id = mutation.source_frame_id[0] if mutation.source_frame_id else None
         source = frames_by_id.get(source_id) if source_id is not None else None
-        if consumer is None:
+        key = (mutation.consumer_frame_id, mutation.slot_kind)
+        if consumer is None or not mutation.evidence_span_ids or key in mutated_slots:
             _invalid_graph()
-        if mutation.mutation_kind is SlotMutationKind.CARRYOVER:
+        mutated_slots.add(key)
+        if source_id is not None:
             if source is None or source.ordinal >= consumer.ordinal:
                 _invalid_graph()
-            if not any(slot.slot_kind is mutation.slot_kind for slot in source.slot_assignments):
+            if not _has_explicit_slot(source, mutation.slot_kind):
                 _invalid_graph()
-        elif source is not None:
+        if mutation.mutation_kind is SlotMutationKind.CARRYOVER and source is None:
             _invalid_graph()
+        if mutation.mutation_kind is SlotMutationKind.UPDATE and not _has_explicit_slot(
+            consumer, mutation.slot_kind
+        ):
+            _invalid_graph()
+
+
+def _has_explicit_slot(frame: IntentFrameDraft, slot_kind: SlotKind) -> bool:
+    return any(
+        assignment.slot_kind is slot_kind
+        and bool(assignment.value_ids)
+        and bool(assignment.evidence_span_ids)
+        for assignment in frame.slot_assignments
+    )
 
 
 def _append_context_issues(
@@ -310,14 +389,31 @@ def _append_context_issues(
     links: tuple[ValidatedContextLink, ...],
     frames_by_id: dict[str, IntentFrameDraft],
     references_by_id: dict[str, ReferenceHint],
+    blocked_reference_ids: frozenset[str],
 ) -> tuple[ResolutionIssue, ...]:
     records: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
     linked_reference_ids = {link.reference_id for link in links}
     for reference in references_by_id.values():
-        candidate_ids = reference.candidate_target_frame_ids
-        if reference.status == "resolved" and reference.grammatical_number == ("singular",) and len(candidate_ids) > 1:
-            records.append(("REFERENCE_AMBIGUOUS", (reference.reference_id, *candidate_ids), reference.evidence_span_ids))
-        elif reference.status == "resolved" and not candidate_ids and reference.reference_id not in linked_reference_ids:
+        if reference.reference_id in blocked_reference_ids:
+            records.append(
+                (
+                    "REFERENCE_AMBIGUOUS"
+                    if reference.status == "ambiguous"
+                    or (
+                        reference.status == "resolved"
+                        and reference.grammatical_number == ("singular",)
+                    )
+                    else "REFERENCE_UNRESOLVED",
+                    (reference.reference_id,),
+                    reference.evidence_span_ids,
+                )
+            )
+        elif (
+            reference.status == "resolved"
+            and not reference.candidate_target_frame_ids
+            and not reference.candidate_target_mention_ids
+            and reference.reference_id not in linked_reference_ids
+        ):
             records.append(("REFERENCE_UNRESOLVED", (reference.reference_id,), reference.evidence_span_ids))
     linked_anchor_frames = {
         link.consumer_frame_id
@@ -328,14 +424,62 @@ def _append_context_issues(
         if frame.action_choice.selected_ids == (IntentType.SIMILAR,) and not _has_similarity_anchor(frame) and frame.frame_id not in linked_anchor_frames:
             records.append(("REFERENCE_UNRESOLVED", (frame.frame_id,), frame.evidence_span_ids))
     for mutation in state.draft.slot_mutations:
-        if mutation.mutation_kind is not SlotMutationKind.CARRYOVER:
-            continue
         consumer = frames_by_id[mutation.consumer_frame_id]
-        source = frames_by_id[mutation.source_frame_id[0]]
-        current_slots = [slot for slot in consumer.slot_assignments if slot.slot_kind is mutation.slot_kind]
-        source_slots = [slot for slot in source.slot_assignments if slot.slot_kind is mutation.slot_kind]
-        if current_slots and source_slots and any(current.value_ids != source_slots[0].value_ids for current in current_slots):
-            records.append(("AMBIGUITY_UNRESOLVED", (mutation.slot_mutation_id, consumer.frame_id, source.frame_id), mutation.evidence_span_ids))
+        current_slots = [
+            slot for slot in consumer.slot_assignments if slot.slot_kind is mutation.slot_kind
+        ]
+        if mutation.mutation_kind is SlotMutationKind.CARRYOVER:
+            source = frames_by_id[mutation.source_frame_id[0]]
+            source_slots = [
+                slot for slot in source.slot_assignments if slot.slot_kind is mutation.slot_kind
+            ]
+            if current_slots and source_slots and any(
+                current.value_ids != source_slots[0].value_ids for current in current_slots
+            ):
+                records.append(
+                    (
+                        "AMBIGUITY_UNRESOLVED",
+                        (mutation.slot_mutation_id, consumer.frame_id),
+                        mutation.evidence_span_ids,
+                    )
+                )
+        elif mutation.mutation_kind in {SlotMutationKind.DELETE, SlotMutationKind.DONTCARE} and current_slots:
+            records.append(
+                (
+                    "AMBIGUITY_UNRESOLVED",
+                    (mutation.slot_mutation_id, consumer.frame_id),
+                    mutation.evidence_span_ids,
+                )
+            )
+    for link in links:
+        if (
+            link.link_type is ContextLinkType.REPLACE_SLOT
+            and link.target_slot_kind
+            and _has_explicit_slot(frames_by_id[link.consumer_frame_id], link.target_slot_kind[0])
+        ):
+            records.append(
+                (
+                    "AMBIGUITY_UNRESOLVED",
+                    (link.context_link_id, link.consumer_frame_id),
+                    references_by_id[link.reference_id].evidence_span_ids,
+                )
+            )
+    for link in links:
+        if link.link_type is not ContextLinkType.REPLACE_SLOT or not link.target_slot_kind:
+            continue
+        if any(
+            mutation.consumer_frame_id == link.consumer_frame_id
+            and mutation.slot_kind is link.target_slot_kind[0]
+            and mutation.mutation_kind is SlotMutationKind.CARRYOVER
+            for mutation in state.draft.slot_mutations
+        ):
+            records.append(
+                (
+                    "AMBIGUITY_UNRESOLVED",
+                    (link.context_link_id, link.consumer_frame_id),
+                    references_by_id[link.reference_id].evidence_span_ids,
+                )
+            )
     existing = {(issue.code, issue.related_ids, issue.evidence_span_ids) for issue in state.issues}
     appended = [record for record in records if record not in existing]
     return (*state.issues, *(
@@ -350,7 +494,7 @@ def _append_context_issues(
 
 
 def _has_similarity_anchor(frame: IntentFrameDraft) -> bool:
-    return any(slot.slot_kind is SlotKind.SIMILARITY_ANCHOR for slot in frame.slot_assignments)
+    return _has_explicit_slot(frame, SlotKind.SIMILARITY_ANCHOR)
 
 
 def _resolution_status(issues: tuple[ResolutionIssue, ...]) -> ResolutionStatus:
@@ -368,9 +512,8 @@ def _resolution_status(issues: tuple[ResolutionIssue, ...]) -> ResolutionStatus:
 def _validated_frame(
     frame: IntentFrameDraft,
     mutations: list[ValidatedSlotMutation] | tuple[ValidatedSlotMutation, ...],
-    issues: tuple[ResolutionIssue, ...],
+    frame_status: ResolutionStatus,
 ) -> ValidatedIntentFrame:
-    frame_status = _frame_status(frame.frame_id, issues)
     return ValidatedIntentFrame(
         frame_id=frame.frame_id,
         ordinal=frame.ordinal,
@@ -387,9 +530,57 @@ def _validated_frame(
     )
 
 
-def _frame_status(frame_id: str, issues: tuple[ResolutionIssue, ...]) -> ResolutionStatus:
-    relevant = tuple(issue for issue in issues if frame_id in issue.related_ids)
-    return _resolution_status(relevant)
+def _frame_statuses(
+    state: SemanticValidationState,
+    issues: tuple[ResolutionIssue, ...],
+    frames_by_id: dict[str, IntentFrameDraft],
+    references_by_id: dict[str, ReferenceHint],
+) -> tuple[tuple[str, ResolutionStatus], ...]:
+    codes_by_frame: dict[str, set[str]] = {frame_id: set() for frame_id in frames_by_id}
+    raw_links_by_reference: dict[str, set[str]] = {}
+    for link in state.draft.context_link_hints:
+        if link.consumer_frame_id in frames_by_id:
+            raw_links_by_reference.setdefault(link.reference_id, set()).add(
+                link.consumer_frame_id
+            )
+    mutations_by_id = {
+        mutation.slot_mutation_id: mutation for mutation in state.draft.slot_mutations
+    }
+    for issue in issues:
+        affected = {related_id for related_id in issue.related_ids if related_id in frames_by_id}
+        for related_id in issue.related_ids:
+            affected.update(raw_links_by_reference.get(related_id, ()))
+            mutation = mutations_by_id.get(related_id)
+            if mutation is not None:
+                affected.add(mutation.consumer_frame_id)
+        if issue.code in {"REFERENCE_UNRESOLVED", "REFERENCE_AMBIGUOUS"}:
+            for related_id in issue.related_ids:
+                reference = references_by_id.get(related_id)
+                if reference is not None and not raw_links_by_reference.get(related_id):
+                    affected.update(
+                        frame.frame_id
+                        for frame in frames_by_id.values()
+                        if reference.segment_id in frame.segment_ids
+                    )
+        for frame_id in affected:
+            codes_by_frame[frame_id].add(issue.code)
+    return tuple(
+        (
+            frame_id,
+            _resolution_status(
+                tuple(
+                    ResolutionIssue(
+                        issue_id=f"frame-status-{frame_id}-{code.lower()}",
+                        code=code,
+                        related_ids=(frame_id,),
+                        evidence_span_ids=(),
+                    )
+                    for code in sorted(codes)
+                )
+            ),
+        )
+        for frame_id, codes in sorted(codes_by_frame.items())
+    )
 
 
 def _context_events() -> tuple[ValidationEvent, ...]:
