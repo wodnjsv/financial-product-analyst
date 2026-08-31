@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -15,6 +16,7 @@ from financial_agent.intent.context import (
     validate_context_graph,
 )
 from financial_agent.intent.normalization import normalize_request
+from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.draft import (
     ActionChoice,
     ContextLinkHint,
@@ -40,6 +42,11 @@ from financial_agent.intent.types import (
     SourceRole,
 )
 from financial_agent.intent.validation import SemanticValidationState
+from financial_agent.intent.validation import validate_semantics
+from financial_agent.intent.view import ActiveDatasetPin, ResolverView
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _choice(value: IntentType | ProductFamily) -> ActionChoice | ProductFamilyChoice:
@@ -221,6 +228,109 @@ def _finalize(state: SemanticValidationState, context_inputs: ContextInputs):
     return finalize_resolution(validate_context_graph(state), context_inputs.metadata)
 
 
+def _semantic_korean_state(
+    context_inputs: ContextInputs,
+    *,
+    surface: str,
+    reference_text: str,
+    reference: ReferenceHint,
+    link: ContextLinkHint,
+    roles: tuple[SourceRole, ...],
+    evidence_text: str | None = None,
+) -> tuple[SemanticValidationState, object]:
+    created_at = datetime(2026, 8, 31, tzinfo=timezone.utc)
+    context = RequestContext(
+        request_key=build_request_key("q-korean-context", surface, "dataset-v1", "1.0"),
+        run_id="run-korean-context",
+        dataset_version="dataset-v1",
+        producer="test",
+        created_at=created_at,
+        question_id="q-korean-context",
+        question=surface,
+        segments=(Segment(segment_id="s1", ordinal=0, text=surface),),
+        deadline_at=created_at.replace(second=10),
+    )
+    normalized = normalize_request(context)
+    start = surface.index(reference_text)
+    end = start + len(reference_text)
+    span_text = evidence_text or reference_text
+    spans = (
+        EvidenceSpan(span_id="span-f1", segment_id="s1", start_char=start, end_char=end, text=span_text),
+        EvidenceSpan(span_id="span-ref", segment_id="s1", start_char=start, end_char=end, text=span_text),
+    )
+    frames = (
+        IntentFrameDraft(
+            frame_id="f1",
+            ordinal=0,
+            segment_ids=("s1",),
+            evidence_span_ids=("span-f1",),
+            normalized_intent_argument="Korean antecedent",
+            action_choice=ActionChoice(state=ChoiceState.SELECTED, selected_ids=(IntentType.RANK,), evidence_span_ids=("span-f1",), reason_code="explicit"),
+            product_family_choice=ProductFamilyChoice(state=ChoiceState.SELECTED, selected_ids=(ProductFamily.DOMESTIC_ETF,), evidence_span_ids=("span-f1",), reason_code="explicit"),
+            entity_type_ids=(),
+            entity_hint_ids=(),
+            slot_assignments=(),
+            produced_result_hints=roles,
+        ),
+        IntentFrameDraft(
+            frame_id="f2",
+            ordinal=1,
+            segment_ids=("s1",),
+            evidence_span_ids=("span-ref",),
+            normalized_intent_argument="Korean follow-up",
+            action_choice=ActionChoice(state=ChoiceState.SELECTED, selected_ids=(IntentType.RANK,), evidence_span_ids=("span-ref",), reason_code="explicit"),
+            product_family_choice=ProductFamilyChoice(state=ChoiceState.SELECTED, selected_ids=(ProductFamily.DOMESTIC_ETF,), evidence_span_ids=("span-ref",), reason_code="explicit"),
+            entity_type_ids=(),
+            entity_hint_ids=(),
+            slot_assignments=(),
+            produced_result_hints=(),
+        ),
+    )
+    draft = IntentResolutionDraft(
+        evidence_spans=spans,
+        intent_frames=frames,
+        entity_hints=(),
+        reference_hints=(
+            reference.model_copy(
+                update={
+                    "segment_id": "s1",
+                    "evidence_span_ids": ("span-ref",),
+                    "surface_presence": (
+                        ReferenceMentionType.ELLIPSIS
+                        if reference.reference_form is ReferenceForm.ZERO_ANAPHORA
+                        else ReferenceMentionType.EXPLICIT
+                    ),
+                }
+            ),
+        ),
+        context_link_hints=(link,),
+        slot_mutations=(),
+        semantic_flag_hints=(),
+        frame_limit_exceeded=False,
+    )
+    view = ResolverView(
+        build_manifest=context_inputs.metadata.build_manifest,
+        active_dataset_pin=ActiveDatasetPin(dataset_version="dataset-v1", manifest_hash="f" * 64),
+        product_family_ids=("domestic_etf",),
+        action_ids=("rank",),
+        semantic_candidates=(),
+        concept_definitions=(),
+        relation_definitions=(),
+        literal_candidates=(),
+        entity_candidates=(),
+    )
+    return (
+        validate_semantics(
+            draft=draft,
+            context=context,
+            normalized=normalized,
+            view=view,
+            catalog=load_catalog(PROJECT_ROOT),
+        ),
+        normalized,
+    )
+
+
 def test_plural_followup_consumes_prior_top_k(context_inputs: ContextInputs) -> None:
     """Catches losing the typed all-products dependency in a top-k follow-up."""
     state = _state(references=(_reference(),), links=(_link(),))
@@ -238,12 +348,13 @@ def test_plural_followup_consumes_prior_top_k(context_inputs: ContextInputs) -> 
 
 
 @pytest.mark.parametrize(
-    ("surface", "candidate_text", "reference", "link", "roles"),
+    ("surface", "candidate_text", "reference_text", "reference", "link", "roles"),
     [
-        ("연간수익률은?", None, _reference(form=ReferenceForm.ZERO_ANAPHORA), _link(), (SourceRole.TOP_K_PRODUCTS,)),
-        ("위험등급도 보여줘", None, _reference(form=ReferenceForm.ZERO_ANAPHORA), _link(), (SourceRole.TOP_K_PRODUCTS,)),
+        ("연간수익률은?", None, "연간수익률", _reference(form=ReferenceForm.ZERO_ANAPHORA), _link(), (SourceRole.TOP_K_PRODUCTS,)),
+        ("위험등급도 보여줘", None, "위험등급", _reference(form=ReferenceForm.ZERO_ANAPHORA), _link(), (SourceRole.TOP_K_PRODUCTS,)),
         (
             "그 운용사는?",
+            "그 운용사",
             "그 운용사",
             _reference(form=ReferenceForm.BRIDGING, number="singular", target_kind=ReferenceTargetKind.RELATED_ENTITY, cardinality=Cardinality.ONE),
             _link(link_type=ContextLinkType.DERIVE_ENTITY, role=SourceRole.RELATION_TARGET, selector=()),
@@ -252,6 +363,7 @@ def test_plural_followup_consumes_prior_top_k(context_inputs: ContextInputs) -> 
         (
             "전자는?",
             "전자",
+            "전자",
             _reference(number="singular", target_kind=ReferenceTargetKind.ENTITY, cardinality=Cardinality.ONE),
             _link(link_type=ContextLinkType.CONSUME_SINGLE_RESULT, role=SourceRole.CANDIDATES, selector=(Selector.FORMER,)),
             (SourceRole.CANDIDATES,),
@@ -259,14 +371,16 @@ def test_plural_followup_consumes_prior_top_k(context_inputs: ContextInputs) -> 
         (
             "후자는?",
             "후자",
+            "후자",
             _reference(number="singular", target_kind=ReferenceTargetKind.ENTITY, cardinality=Cardinality.ONE),
             _link(link_type=ContextLinkType.CONSUME_SINGLE_RESULT, role=SourceRole.CANDIDATES, selector=(Selector.LATTER,)),
             (SourceRole.CANDIDATES,),
         ),
-        ("나머지 상품은?", "나머지 상품", _reference(), _link(role=SourceRole.CANDIDATES, selector=(Selector.REMAINING,)), (SourceRole.CANDIDATES,)),
-        ("각 상품의 수익률은?", "각 상품", _reference(), _link(role=SourceRole.CANDIDATES, selector=(Selector.EACH,)), (SourceRole.CANDIDATES,)),
+        ("나머지 상품은?", "나머지 상품", "나머지 상품", _reference(), _link(role=SourceRole.CANDIDATES, selector=(Selector.REMAINING,)), (SourceRole.CANDIDATES,)),
+        ("각 상품의 수익률은?", "각 상품", "각 상품", _reference(), _link(role=SourceRole.CANDIDATES, selector=(Selector.EACH,)), (SourceRole.CANDIDATES,)),
         (
             "그 결과의 근거는?",
+            "그 결과",
             "그 결과",
             _reference(form=ReferenceForm.DISCOURSE_DEIXIS, target_kind=ReferenceTargetKind.EVIDENCE_RECORDS, cardinality=Cardinality.MANY),
             _link(link_type=ContextLinkType.REFER_EVIDENCE, role=SourceRole.EVIDENCE_RECORDS, selector=(Selector.ALL,)),
@@ -275,27 +389,21 @@ def test_plural_followup_consumes_prior_top_k(context_inputs: ContextInputs) -> 
     ],
 )
 def test_korean_context_forms_preserve_registered_typed_dependencies(
-    context_inputs: ContextInputs, surface: str, candidate_text: str | None, reference: ReferenceHint,
+    context_inputs: ContextInputs, surface: str, candidate_text: str | None, reference_text: str, reference: ReferenceHint,
     link: ContextLinkHint, roles: tuple[SourceRole, ...],
 ) -> None:
     """Catches Korean context hints detached from real normalized text."""
-    created_at = datetime(2026, 8, 31, tzinfo=timezone.utc)
-    context = RequestContext(
-        request_key=build_request_key("q-korean-context", surface, "dataset-v1", "1.0"),
-        run_id="run-korean-context",
-        dataset_version="dataset-v1",
-        producer="test",
-        created_at=created_at,
-        question_id="q-korean-context",
-        question=surface,
-        segments=(Segment(segment_id="s1", ordinal=0, text=surface),),
-        deadline_at=created_at.replace(second=10),
+    state, normalized = _semantic_korean_state(
+        context_inputs,
+        surface=surface,
+        reference_text=reference_text,
+        reference=reference,
+        link=link,
+        roles=roles,
     )
-    normalized = normalize_request(context)
     assert [candidate.text for candidate in normalized.reference_candidates] == (
         [] if candidate_text is None else [candidate_text]
     )
-    state = _state(frames=(_frame("f1", 0, roles=roles), _frame("f2", 1)), references=(reference,), links=(link,))
 
     resolution = _finalize(state, context_inputs)
 
@@ -643,3 +751,76 @@ def test_empty_similarity_anchor_is_context_unresolved(context_inputs: ContextIn
     resolution = _finalize(state, context_inputs)
 
     assert resolution.resolution_status is ResolutionStatus.CONTEXT_UNRESOLVED
+
+
+def test_mutation_evidence_must_belong_to_its_consumer_frame(
+    context_inputs: ContextInputs,
+) -> None:
+    """Catches carryover evidence borrowed from an earlier unrelated frame."""
+    frames = (
+        _frame("f1", 0, slots=(_slot("slot-f1", SlotKind.METRIC, "aum"),)),
+        _frame("f2", 1),
+    )
+    state = _state(frames=frames, mutations=(_mutation(SlotMutationKind.CARRYOVER),))
+    second_span = EvidenceSpan(
+        span_id="span-2", segment_id="s2", start_char=0, end_char=2, text="후속"
+    )
+    consumer = frames[1].model_copy(update={"segment_ids": ("s2",), "evidence_span_ids": ("span-2",)})
+    draft = state.draft.model_copy(
+        update={"evidence_spans": (state.draft.evidence_spans[0], second_span), "intent_frames": (frames[0], consumer)}
+    )
+    state = replace(state, draft=draft, canonical_frames=(frames[0], consumer))
+
+    with pytest.raises(ResolverContractError, match="INVALID_CONTEXT_GRAPH"):
+        _finalize(state, context_inputs)
+
+
+def test_korean_context_evidence_span_must_match_its_source(
+    context_inputs: ContextInputs,
+) -> None:
+    """Catches a Korean reference hint whose exact Task 7 evidence slice is forged."""
+    with pytest.raises(ResolverContractError, match="LITERAL_SPAN_MISMATCH"):
+        _semantic_korean_state(
+            context_inputs,
+            surface="그 운용사는?",
+            reference_text="그 운용사",
+            evidence_text="그 결과",
+            reference=_reference(
+                form=ReferenceForm.BRIDGING,
+                number="singular",
+                target_kind=ReferenceTargetKind.RELATED_ENTITY,
+                cardinality=Cardinality.ONE,
+            ),
+            link=_link(
+                link_type=ContextLinkType.DERIVE_ENTITY,
+                role=SourceRole.RELATION_TARGET,
+                selector=(),
+            ),
+            roles=(SourceRole.RELATION_TARGET,),
+        )
+
+
+def test_blocked_reference_does_not_hide_a_forward_link(context_inputs: ContextInputs) -> None:
+    """Catches skipping structural validation just because a reference is ambiguous."""
+    state = _state(
+        references=(
+            _reference(
+                number="singular",
+                target_kind=ReferenceTargetKind.ENTITY,
+                cardinality=Cardinality.ONE,
+                candidates=("f1", "f2"),
+            ),
+        ),
+        links=(
+            _link(
+                link_type=ContextLinkType.CONSUME_SINGLE_RESULT,
+                role=SourceRole.CANDIDATES,
+                selector=(Selector.FIRST,),
+                producer="f2",
+                consumer="f1",
+            ),
+        ),
+    )
+
+    with pytest.raises(ResolverContractError, match="INVALID_CONTEXT_GRAPH"):
+        _finalize(state, context_inputs)

@@ -97,12 +97,14 @@ def validate_context_graph(state: SemanticValidationState) -> ContextValidationS
         frames_by_id,
         set(state.offered_target_mention_ids),
     )
-    links = tuple(
+    raw_links = tuple(
         _validate_link(hint, references_by_id, frames_by_id, dict(state.literal_kinds_by_id))
         for hint in state.draft.context_link_hints
-        if hint.reference_id not in blocked_reference_ids
     )
-    _validate_acyclic(links)
+    _validate_acyclic(raw_links)
+    links = tuple(
+        link for link in raw_links if link.reference_id not in blocked_reference_ids
+    )
     _validate_mutations(state.draft.slot_mutations, frames_by_id)
 
     issues = _append_context_issues(
@@ -204,7 +206,7 @@ def _validate_link(
     if reference is None or producer is None or consumer is None:
         _invalid_graph()
     assert reference is not None and producer is not None and consumer is not None
-    if reference.status != "resolved" or hint.producer_frame_id not in reference.candidate_target_frame_ids:
+    if hint.producer_frame_id not in reference.candidate_target_frame_ids:
         _invalid_graph()
     if producer.ordinal >= consumer.ordinal or hint.source_role not in producer.produced_result_hints:
         _invalid_graph()
@@ -359,7 +361,12 @@ def _validate_mutations(
         source_id = mutation.source_frame_id[0] if mutation.source_frame_id else None
         source = frames_by_id.get(source_id) if source_id is not None else None
         key = (mutation.consumer_frame_id, mutation.slot_kind)
-        if consumer is None or not mutation.evidence_span_ids or key in mutated_slots:
+        if (
+            consumer is None
+            or not mutation.evidence_span_ids
+            or not set(mutation.evidence_span_ids) <= set(consumer.evidence_span_ids)
+            or key in mutated_slots
+        ):
             _invalid_graph()
         mutated_slots.add(key)
         if source_id is not None:
