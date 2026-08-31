@@ -508,6 +508,15 @@ chunk, provisional-token, PostgreSQL-growth, cleanup, quarantine, and failure
 counts. Continue only with no extra DART product, unsafe deletion, partial
 transaction, unexpected remaining PDF, or disk blocker.
 
+Partial gate on 2026-08-31 reached 23 persisted DART documents and 220 chunks;
+the chunk rows occupied approximately 471 KiB and successful temporary PDFs
+were deleted. The gate remains open because the five-PDF quarantine limit
+stopped the run before 100 documents. Among the five unique reviewed failures,
+three exceeded the approved 20-chunk soft limit at 23, 32, and 39 chunks while
+remaining between 2,019 and 2,370 provisional whitespace tokens, and two failed
+closed with `PDF_TEXT_LAYER_MISSING`. Do not raise the chunk limit, add OCR, or
+discard these failed PDFs without a separately approved policy decision.
+
 - [ ] **Step 4: Run the remaining organizer universe**
 
 Process unique documents sequentially and resume across rate-limit windows. Do

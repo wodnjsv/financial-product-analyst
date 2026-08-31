@@ -27,6 +27,7 @@ from financial_agent.documents import (
     CoverageStatus,
     DocumentCoverageDraft,
     DocumentSourceCandidate,
+    PdfExtractionError,
     SectionType,
 )
 from financial_agent.documents.chunking import TokenCounter
@@ -175,18 +176,21 @@ async def ingest_one_dart_document(
             source_content_checksum=existing.source_artifact.source_checksum,
         )
 
-    processing = process_dart_prospectus(
-        pdf_path,
-        context=context,
-        requested_section_types=request.requested_section_types,
-        token_counter=request.token_counter,
-        target_min=request.target_min,
-        target_max=request.target_max,
-        overlap=request.overlap,
-        soft_limit=request.soft_limit,
-        selected_token_soft_limit=request.selected_token_soft_limit,
-        extraction_version=request.extraction_version,
-    )
+    try:
+        processing = process_dart_prospectus(
+            pdf_path,
+            context=context,
+            requested_section_types=request.requested_section_types,
+            token_counter=request.token_counter,
+            target_min=request.target_min,
+            target_max=request.target_max,
+            overlap=request.overlap,
+            soft_limit=request.soft_limit,
+            selected_token_soft_limit=request.selected_token_soft_limit,
+            extraction_version=request.extraction_version,
+        )
+    except PdfExtractionError as error:
+        raise DartCorpusIngestionError(error.code) from error
     if not processing.report.passed:
         raise DartCorpusIngestionError(
             "dart_corpus_quality_review_required"

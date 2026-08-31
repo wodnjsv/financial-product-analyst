@@ -16,6 +16,7 @@ from financial_agent.db.repositories.documents import (
 from financial_agent.documents import (
     DocumentRole,
     DocumentSourceCandidate,
+    PdfExtractionError,
     PublisherRole,
     SectionType,
     SourceAuthorityTier,
@@ -435,6 +436,33 @@ async def test_ingestion_does_not_persist_a_document_over_the_token_review_gate(
 
     assert raised.value.code == "dart_corpus_quality_review_required"
     assert repository.captured is None
+    assert len(tuple(request.run_root.rglob("*.pdf"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_ingestion_reports_pdf_extraction_failure_per_document(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_capture(monkeypatch)
+    request = _request(tmp_path)
+
+    def failed_processing(*args, **kwargs):
+        del args, kwargs
+        raise PdfExtractionError("PDF_TEXT_LAYER_MISSING")
+
+    monkeypatch.setattr(
+        "financial_agent.ingestion.document_sources.dart_ingestion."
+        "process_dart_prospectus",
+        failed_processing,
+    )
+
+    with pytest.raises(DartCorpusIngestionError) as raised:
+        await ingest_one_dart_document(
+            _MemoryRepository(), object(), request=request
+        )
+
+    assert raised.value.code == "PDF_TEXT_LAYER_MISSING"
     assert len(tuple(request.run_root.rglob("*.pdf"))) == 1
 
 
