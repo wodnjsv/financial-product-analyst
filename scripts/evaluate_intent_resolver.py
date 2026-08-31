@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 from typing import Any
@@ -91,10 +92,13 @@ class EvaluationCliError(ValueError):
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    report_directory_fd: int | None = None
     try:
         _validate_mode_arguments(args)
         supplied_inputs = _supplied_inputs(args)
-        output = _safe_output_path(Path(args.output), supplied_inputs)
+        report_directory_fd, output_name = _safe_output_path(
+            Path(args.output), supplied_inputs
+        )
         if args.mode == "live":
             raise EvaluationCliError("LIVE_EVALUATION_NOT_AUTHORIZED", exit_code=3)
 
@@ -232,7 +236,9 @@ def main(argv: list[str] | None = None) -> int:
             "metrics": metrics,
         }
         payload["report_hash"] = _sha256(canonical_json_bytes(payload))
-        _atomic_write(output, canonical_json_bytes(payload) + b"\n")
+        _atomic_write(
+            report_directory_fd, output_name, canonical_json_bytes(payload) + b"\n"
+        )
         return 0
     except EvaluationCliError as error:
         print(error.code, file=sys.stderr)
@@ -240,6 +246,9 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValidationError, ValueError):
         print("EVALUATION_INPUT_INVALID", file=sys.stderr)
         return 2
+    finally:
+        if report_directory_fd is not None:
+            os.close(report_directory_fd)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -298,7 +307,9 @@ def _supplied_inputs(args: argparse.Namespace) -> tuple[Path, ...]:
     )
 
 
-def _safe_output_path(output: Path, supplied_inputs: tuple[Path, ...]) -> Path:
+def _safe_output_path(
+    output: Path, supplied_inputs: tuple[Path, ...]
+) -> tuple[int, str]:
     absolute = output if output.is_absolute() else PROJECT_ROOT / output
     report_path = PROJECT_ROOT / "build" / "reports"
     report_path.mkdir(parents=True, exist_ok=True)
@@ -312,9 +323,47 @@ def _safe_output_path(output: Path, supplied_inputs: tuple[Path, ...]) -> Path:
         raise EvaluationCliError("EVALUATION_FIXTURE_OVERWRITE_REFUSED")
     if resolved.parent != REPORT_DIRECTORY or absolute.parent.resolve() != REPORT_DIRECTORY:
         raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
-    if resolved.suffix != ".json" or (resolved.exists() and not resolved.is_file()):
+    if resolved.suffix != ".json":
         raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
-    return resolved
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    directory_fd = os.open(report_path, flags)
+    try:
+        opened = os.fstat(directory_fd)
+        expected = os.stat(REPORT_DIRECTORY, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (expected.st_dev, expected.st_ino)
+        ):
+            raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
+        output_stat = _entry_stat(resolved.name, directory_fd)
+        if output_stat is not None and not stat.S_ISREG(output_stat.st_mode):
+            raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
+        if output_stat is not None and any(
+            _same_inode(output_stat, path) for path in protected
+        ):
+            raise EvaluationCliError("EVALUATION_FIXTURE_OVERWRITE_REFUSED")
+        return directory_fd, resolved.name
+    except BaseException:
+        os.close(directory_fd)
+        raise
+
+
+def _entry_stat(name: str, directory_fd: int) -> os.stat_result | None:
+    try:
+        return os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+
+
+def _same_inode(output_stat: os.stat_result, path: Path) -> bool:
+    try:
+        return os.path.samestat(output_stat, path.stat())
+    except OSError:
+        return False
 
 
 def _same_file_if_present(left: Path, right: Path) -> bool:
@@ -324,24 +373,33 @@ def _same_file_if_present(left: Path, right: Path) -> bool:
         return False
 
 
-def _atomic_write(output: Path, payload: bytes) -> None:
-    temporary = REPORT_DIRECTORY / f".intent-eval-{uuid.uuid4().hex}.tmp"
+def _atomic_write(directory_fd: int, output_name: str, payload: bytes) -> None:
+    temporary_name = f".intent-eval-{uuid.uuid4().hex}.tmp"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor: int | None = None
     try:
-        descriptor = os.open(temporary, flags, 0o600)
+        descriptor = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
         with os.fdopen(descriptor, "wb") as stream:
             descriptor = None
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, output)
+        os.replace(
+            temporary_name,
+            output_name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        os.fsync(directory_fd)
     finally:
         if descriptor is not None:
             os.close(descriptor)
-        temporary.unlink(missing_ok=True)
+        try:
+            os.unlink(temporary_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
 
 
 def _read_bundle[T](path: Path, model: type[T]) -> tuple[bytes, T, bytes]:
@@ -489,14 +547,31 @@ def _validate_artifact_presence(
     )
     for case in dataset.cases:
         pre_model = case.expected_pipeline_outcome == "pre_model_rejected"
-        artifacts = (view_index[case.case_id], draft_index[case.case_id])
-        if resolution_index is not None:
-            artifacts = (*artifacts, resolution_index[case.case_id])
+        view = view_index[case.case_id]
+        draft = draft_index[case.case_id]
+        resolution = (
+            None if resolution_index is None else resolution_index[case.case_id]
+        )
         trace = trace_index[case.case_id]
         if pre_model:
-            if any(item is not None for item in artifacts) or trace.model_event != "model_not_called":
+            if (
+                view is not None
+                or draft is not None
+                or resolution is not None
+                or trace.model_event != "model_not_called"
+            ):
                 raise EvaluationCliError("EVALUATION_PIPELINE_OUTCOME_MISMATCH")
-        elif any(item is None for item in artifacts) or trace.model_event != "model_called":
+        elif trace.repair_event == "failed":
+            if view is None or trace.model_event != "model_called":
+                raise EvaluationCliError("EVALUATION_PIPELINE_OUTCOME_MISMATCH")
+            if draft is not None or resolution is not None:
+                raise EvaluationCliError("EVALUATION_TRACE_MISMATCH")
+        elif (
+            view is None
+            or draft is None
+            or (resolution_index is not None and resolution is None)
+            or trace.model_event != "model_called"
+        ):
             raise EvaluationCliError("EVALUATION_PIPELINE_OUTCOME_MISMATCH")
 
 
@@ -531,6 +606,15 @@ def _project_stored_predictions(
             continue
         view = view_index[case.case_id]
         draft = draft_index[case.case_id]
+        if trace.repair_event == "failed":
+            if (
+                view is None
+                or draft is not None
+                or resolution_index.get(case.case_id) is not None
+            ):
+                raise EvaluationCliError("EVALUATION_PIPELINE_OUTCOME_MISMATCH")
+            projected.append(_failed_prediction(case.case_id, view, trace))
+            continue
         if view is None or draft is None:
             raise EvaluationCliError("EVALUATION_PIPELINE_OUTCOME_MISMATCH")
         resolution = resolution_index.get(case.case_id)
@@ -552,14 +636,14 @@ def _project_stored_predictions(
             mutations = _mutations_from_resolution(resolution)
             tags = tuple(sorted(tag.value for tag in resolution.final_tags))
             status = resolution.resolution_status.value
-            blocking = tuple(sorted(issue.code for issue in resolution.issues))
+            blocking = tuple(sorted({issue.code for issue in resolution.issues}))
         else:
             frames = _frames_from_drafts(context_state.semantic_state.canonical_frames)
             links = _links_from_context_state(context_state.context_links)
             mutations = _mutations_from_draft(draft)
             tags = tuple(sorted(tag.value for tag in semantic.final_tags))
             status = context_state.resolution_status.value
-            blocking = tuple(sorted(issue.code for issue in context_state.issues))
+            blocking = tuple(sorted({issue.code for issue in context_state.issues}))
         _validate_trace_against_artifacts(trace, draft, resolution)
         probes = replay_validation_probes(
             case, draft, context, normalized, view, catalog
@@ -568,7 +652,7 @@ def _project_stored_predictions(
             EvaluationPrediction(
                 case_id=case.case_id,
                 candidate_groups=_candidate_groups_from_view(view),
-                candidate_reproducible=True,
+                candidate_reproducible=None,
                 frames=frames,
                 references=_references_from_draft(draft),
                 context_links=links,
@@ -666,8 +750,12 @@ def _validate_trace_against_artifacts(
             raise EvaluationCliError("EVALUATION_TRACE_MISMATCH")
     else:
         if (
-            trace.repair_attempt is None
+            trace.first_attempt is None
+            or trace.repair_attempt is None
             or trace.repair_attempt.parsed_draft_sha256 != draft_hash
+            or trace.first_attempt.payload_sha256
+            == trace.repair_attempt.payload_sha256
+            or trace.first_attempt.parsed_draft_sha256 == draft_hash
         ):
             raise EvaluationCliError("EVALUATION_TRACE_MISMATCH")
     if resolution is not None:
@@ -688,7 +776,7 @@ def _pre_model_prediction(case_id: str, trace: IntentRunTrace) -> EvaluationPred
     return EvaluationPrediction(
         case_id=case_id,
         candidate_groups=(),
-        candidate_reproducible=True,
+        candidate_reproducible=None,
         frames=(),
         references=(),
         context_links=(),
@@ -708,6 +796,32 @@ def _pre_model_prediction(case_id: str, trace: IntentRunTrace) -> EvaluationPred
         latency_ms=trace.latency_ms,
         prompt_tokens=0,
         completion_tokens=0,
+        stable_error_codes=trace.stable_error_codes,
+    )
+
+
+def _failed_prediction(
+    case_id: str, view: ResolverView, trace: IntentRunTrace
+) -> EvaluationPrediction:
+    return EvaluationPrediction(
+        case_id=case_id,
+        candidate_groups=_candidate_groups_from_view(view),
+        candidate_reproducible=None,
+        frames=(),
+        references=(),
+        context_links=(),
+        slot_mutations=(),
+        resolution_status="unmapped",
+        pipeline_outcome="model_resolution_failed",
+        predicted_ood_type=None,
+        tags=(),
+        blocking_issue_codes=trace.stable_error_codes,
+        first_pass_schema=_first_pass_outcome(trace),
+        repair=_repair_outcome(trace),
+        validation_probe_outcomes=(),
+        latency_ms=trace.latency_ms,
+        prompt_tokens=trace.prompt_tokens,
+        completion_tokens=trace.completion_tokens,
         stable_error_codes=trace.stable_error_codes,
     )
 
@@ -874,7 +988,7 @@ def _deterministic_predictions(
             pipeline_outcome = "semantic_resolution"
         except RequestNormalizationError:
             candidate_groups = ()
-            reproducible = True
+            reproducible = None
             stable_error_codes = ("REQUEST_CONTRACT_INVALID",)
             pipeline_outcome = "pre_model_rejected"
         predictions.append(

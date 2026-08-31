@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 
@@ -679,7 +680,9 @@ def test_v3_preserves_v2_candidate_gold_and_uses_representative_executable_probe
     assert v3.schema_version == "3.0"
     assert set(v2_by_id) == {case.case_id for case in v3.cases}
     assert all(
-        case.expected_candidate_ids == v2_by_id[case.case_id].expected_candidate_ids
+        case.question == v2_by_id[case.case_id].question
+        and case.expected_candidate_ids
+        == v2_by_id[case.case_id].expected_candidate_ids
         for case in v3.cases
     )
     assert Counter(
@@ -895,6 +898,24 @@ def _report_path(tmp_path: Path, name: str) -> Path:
     return path
 
 
+def _cli_namespace() -> dict[str, object]:
+    return runpy.run_path(str(SCRIPT_PATH), run_name="intent_evaluation_cli_test")
+
+
+def _resolver_manifest() -> object:
+    catalog = load_catalog(PROJECT_ROOT)
+    return build_manifest(
+        catalog,
+        {
+            "normalizer_version": NORMALIZER_VERSION,
+            "candidate_policy_version": CANDIDATE_POLICY_VERSION,
+            "resolver_schema_version": RESOLVER_SCHEMA_VERSION,
+            "prompt_version": PROMPT_VERSION,
+            "adapter_version": ADAPTER_VERSION,
+        },
+    )
+
+
 def test_deterministic_cli_is_reproducible_aggregate_only_and_provenanced(
     tmp_path: Path,
 ) -> None:
@@ -931,6 +952,11 @@ def test_deterministic_cli_is_reproducible_aggregate_only_and_provenanced(
     assert report["provenance"]["prompt_version"] is None
     assert report["provenance"]["adapter_version"] is None
     assert report["provenance"]["model_id"] is None
+    assert report["metrics"]["candidate"]["reproducibility"]["numerator"] == 155
+    assert report["metrics"]["candidate"]["reproducibility"]["denominator"] == 155
+    assert report["metrics"]["candidate"]["reproducibility_coverage"][
+        "evidence_sufficient"
+    ] is True
     serialized = first.read_text(encoding="utf-8").lower()
     assert "question" not in serialized
     assert "raw_model" not in serialized
@@ -1400,6 +1426,11 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
         ).hexdigest()
         assert report["provenance"]["producer_manifest_matches_current"] is True
         assert report["metrics"]["candidate"]["recall_at_1"]["numerator"] == 1
+        assert report["metrics"]["candidate"]["reproducibility"]["denominator"] == 0
+        assert report["metrics"]["candidate"]["reproducibility"]["defined"] is False
+        assert report["metrics"]["candidate"]["reproducibility_coverage"][
+            "evidence_sufficient"
+        ] is False
         assert report["metrics"]["frame"]["joint_exact_match"]["numerator"] == 2
         assert report["metrics"]["validation"]["unknown_id_acceptance"][
             "denominator"
@@ -2153,3 +2184,324 @@ def test_cli_enforces_exact_mode_specific_arguments(tmp_path: Path) -> None:
     for result in (deterministic_extra, full_missing, full_extra):
         assert result.returncode == 2
         assert "EVALUATION_MODE_ARGUMENT_INVALID" in result.stderr
+
+
+def test_round3_report_directory_swap_cannot_write_through_new_symlink(
+    tmp_path: Path,
+) -> None:
+    test_root = tmp_path / "project"
+    report_dir = test_root / "build" / "reports"
+    report_dir.mkdir(parents=True)
+    held_directory = tmp_path / "held-reports"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    output_name = "report.json"
+    namespace = _cli_namespace()
+    cli_main = namespace["main"]
+    globals_ = cli_main.__globals__
+    globals_["PROJECT_ROOT"] = test_root
+    globals_["REPORT_DIRECTORY"] = report_dir.resolve()
+    globals_["FIXTURE_DIRECTORY"] = HELDOUT_PATH.parent
+    globals_["load_catalog"] = lambda _: load_catalog(PROJECT_ROOT)
+    generate = globals_["_deterministic_predictions"]
+
+    def swap_parent(dataset: object, catalog: object) -> object:
+        report_dir.rename(held_directory)
+        report_dir.symlink_to(outside, target_is_directory=True)
+        return generate(dataset, catalog)
+
+    globals_["_deterministic_predictions"] = swap_parent
+    try:
+        result = cli_main(
+            [
+                "--mode",
+                "deterministic",
+                "--dataset",
+                str(HELDOUT_PATH),
+                "--output",
+                str(report_dir / output_name),
+            ]
+        )
+
+        assert result == 0
+        assert not (outside / output_name).exists()
+        assert (held_directory / output_name).is_file()
+    finally:
+        (outside / output_name).unlink(missing_ok=True)
+        if report_dir.is_symlink():
+            report_dir.unlink()
+        if held_directory.exists():
+            held_directory.rename(report_dir)
+
+
+def test_round3_repair_attempt_must_have_distinct_payload_and_draft_hashes() -> None:
+    rejected = AttemptTrace(
+        payload_sha256="a" * 64,
+        payload_size_bytes=20,
+        parser_event="draft_parsed",
+        validator_event="validator_rejected",
+        stable_code="MODEL_UNKNOWN_ID",
+        parsed_draft_sha256="b" * 64,
+    )
+    accepted = rejected.model_copy(
+        update={
+            "validator_event": "validated",
+            "stable_code": "RESOLUTION_VALIDATED",
+        }
+    )
+
+    with pytest.raises(ValidationError, match="repair attempt evidence must differ"):
+        IntentRunTrace(
+            case_id="same-attempt",
+            model_event="model_called",
+            first_attempt=rejected,
+            repair_attempt=accepted,
+            repair_event="succeeded",
+            latency_ms=2,
+            prompt_tokens=2,
+            completion_tokens=2,
+            stable_error_codes=("MODEL_UNKNOWN_ID",),
+        )
+
+
+def test_round3_repaired_artifact_must_match_only_the_repair_attempt() -> None:
+    manifest = _resolver_manifest()
+    _, _, drafts, _, _ = _stored_artifacts(manifest)
+    draft = drafts.cases[0].artifact
+    assert draft is not None
+    final_hash = canonical_sha256(draft)
+    first = AttemptTrace(
+        payload_sha256="a" * 64,
+        payload_size_bytes=20,
+        parser_event="draft_parsed",
+        validator_event="validator_rejected",
+        stable_code="MODEL_UNKNOWN_ID",
+        parsed_draft_sha256="c" * 64,
+    )
+    repaired = AttemptTrace(
+        payload_sha256="b" * 64,
+        payload_size_bytes=21,
+        parser_event="draft_parsed",
+        validator_event="validated",
+        stable_code="RESOLUTION_VALIDATED",
+        parsed_draft_sha256=final_hash,
+    )
+    valid_trace = IntentRunTrace(
+        case_id="stored-001",
+        model_event="model_called",
+        first_attempt=first,
+        repair_attempt=repaired,
+        repair_event="succeeded",
+        latency_ms=2,
+        prompt_tokens=2,
+        completion_tokens=2,
+        stable_error_codes=("MODEL_UNKNOWN_ID",),
+    )
+    spoofed = valid_trace.model_copy(
+        update={
+            "first_attempt": first.model_copy(
+                update={"parsed_draft_sha256": final_hash}
+            )
+        }
+    )
+    check = _cli_namespace()["_validate_trace_against_artifacts"]
+
+    with pytest.raises(ValueError, match="EVALUATION_TRACE_MISMATCH"):
+        check(spoofed, draft, None)
+
+
+def test_round3_candidate_reproducibility_scores_only_actual_second_views() -> None:
+    first_case = _synthetic_cases()[0]
+    second_case = _synthetic_cases()[1]
+    measured = _synthetic_predictions()[0]
+    payload = _synthetic_predictions()[1].model_dump(mode="json")
+    payload["candidate_reproducible"] = None
+    unmeasured = EvaluationPrediction.model_validate_json(json.dumps(payload))
+
+    metrics = evaluate_candidates((first_case, second_case), (measured, unmeasured))
+
+    assert (metrics.reproducibility.numerator, metrics.reproducibility.denominator) == (
+        1,
+        1,
+    )
+    assert (
+        metrics.reproducibility_coverage.numerator,
+        metrics.reproducibility_coverage.denominator,
+    ) == (1, 2)
+    assert metrics.reproducibility_coverage.evidence_sufficient is False
+
+
+def test_round3_projection_deduplicates_repeated_production_issue_codes() -> None:
+    manifest = _resolver_manifest()
+    dataset, views, drafts, _, traces = _stored_artifacts(manifest)
+    case = dataset.cases[0]
+    view = views.cases[0].artifact
+    draft = drafts.cases[0].artifact
+    trace = traces.cases[0]
+    assert view is not None and draft is not None
+    references = tuple(
+        ReferenceHint(
+            reference_id=f"unresolved-{index}",
+            segment_id="s1",
+            evidence_span_ids=("span-1",),
+            surface_presence=ReferenceMentionType.EXPLICIT,
+            reference_form=ReferenceForm.DEMONSTRATIVE,
+            grammatical_number=("plural",),
+            expected_target_kind=(ReferenceTargetKind.RESULT_SET,),
+            expected_cardinality=(Cardinality.MANY,),
+            candidate_target_frame_ids=("f1",),
+            candidate_target_mention_ids=(),
+            status="unresolved",
+            reason_code="explicit",
+        )
+        for index in range(2)
+    )
+    unresolved_draft = draft.model_copy(update={"reference_hints": references})
+    created_at = datetime(2026, 8, 31, tzinfo=UTC)
+    context = RequestContext(
+        request_key=build_request_key(
+            case.case_id, case.question, "synthetic-dataset-v3", "1.0"
+        ),
+        run_id=f"eval-{case.case_id}",
+        dataset_version="synthetic-dataset-v3",
+        producer="intent-evaluator",
+        created_at=created_at,
+        question_id=case.case_id,
+        question=case.question,
+        segments=(Segment(segment_id="s1", ordinal=0, text=case.question),),
+        deadline_at=created_at + timedelta(seconds=55),
+    )
+    semantic = validate_semantics(
+        unresolved_draft,
+        context,
+        normalize_request(context),
+        view,
+        load_catalog(PROJECT_ROOT),
+    )
+    state = validate_context_graph(semantic)
+    assert [issue.code for issue in state.issues].count("REFERENCE_UNRESOLVED") == 2
+    unresolved_drafts = drafts.model_copy(
+        update={
+            "cases": (
+                drafts.cases[0].model_copy(update={"artifact": unresolved_draft}),
+                *drafts.cases[1:],
+            )
+        }
+    )
+    changed_trace = trace.model_copy(
+        update={
+            "first_attempt": trace.first_attempt.model_copy(
+                update={"parsed_draft_sha256": canonical_sha256(unresolved_draft)}
+            )
+        }
+    )
+    changed_traces = traces.model_copy(
+        update={"cases": (changed_trace, *traces.cases[1:])}
+    )
+    project = _cli_namespace()["_project_stored_predictions"]
+
+    projected = project(
+        dataset=dataset,
+        views=views,
+        drafts=unresolved_drafts,
+        traces=changed_traces,
+        resolutions=None,
+        catalog=load_catalog(PROJECT_ROOT),
+        dataset_version="synthetic-dataset-v3",
+    )
+
+    assert projected[0].blocking_issue_codes == ("REFERENCE_UNRESOLVED",)
+
+
+def test_round3_terminal_repair_failure_remains_in_all_metrics() -> None:
+    manifest = _resolver_manifest()
+    dataset, views, drafts, resolutions, traces = _stored_artifacts(manifest)
+    failed_trace = IntentRunTrace(
+        case_id=dataset.cases[0].case_id,
+        model_event="model_called",
+        first_attempt=AttemptTrace(
+            payload_sha256="e" * 64,
+            payload_size_bytes=40,
+            parser_event="schema_rejected",
+            validator_event="not_run",
+            stable_code="MODEL_SCHEMA_INVALID",
+            parsed_draft_sha256=None,
+        ),
+        repair_attempt=AttemptTrace(
+            payload_sha256="f" * 64,
+            payload_size_bytes=41,
+            parser_event="schema_rejected",
+            validator_event="not_run",
+            stable_code="MODEL_SCHEMA_INVALID",
+            parsed_draft_sha256=None,
+        ),
+        repair_event="failed",
+        latency_ms=25,
+        prompt_tokens=60,
+        completion_tokens=30,
+        stable_error_codes=("MODEL_SCHEMA_INVALID",),
+    )
+    failed_drafts = drafts.model_copy(
+        update={
+            "cases": (
+                drafts.cases[0].model_copy(update={"artifact": None}),
+                *drafts.cases[1:],
+            )
+        }
+    )
+    failed_resolutions = resolutions.model_copy(
+        update={
+            "cases": (
+                resolutions.cases[0].model_copy(update={"artifact": None}),
+                *resolutions.cases[1:],
+            )
+        }
+    )
+    failed_traces = traces.model_copy(
+        update={"cases": (failed_trace, *traces.cases[1:])}
+    )
+    namespace = _cli_namespace()
+    validate_presence = namespace["_validate_artifact_presence"]
+    project = namespace["_project_stored_predictions"]
+
+    for final_resolutions in (None, failed_resolutions):
+        validate_presence(
+            dataset, views, failed_drafts, failed_traces, final_resolutions
+        )
+        predictions = project(
+            dataset=dataset,
+            views=views,
+            drafts=failed_drafts,
+            traces=failed_traces,
+            resolutions=final_resolutions,
+            catalog=load_catalog(PROJECT_ROOT),
+            dataset_version="synthetic-dataset-v3",
+        )
+        failed = predictions[0]
+        report = evaluate_predictions(dataset.cases, predictions)
+
+        assert failed.pipeline_outcome == "model_resolution_failed"
+        assert failed.candidate_groups
+        assert failed.candidate_reproducible is None
+        assert failed.frames == failed.references == failed.context_links == ()
+        assert failed.slot_mutations == failed.tags == ()
+        assert failed.repair.status == "failed"
+        assert failed.validation_probe_outcomes == ()
+        assert report.candidate.recall_at_1.numerator == 1
+        assert report.candidate.reproducibility.denominator == 0
+        assert report.frame.joint_exact_match.numerator == 1
+        assert report.context.reference_exact_match.numerator == 1
+        assert report.context.link_exact_match.numerator == 1
+        assert report.context.mutation_exact_match.numerator == 1
+        assert report.diagnostics.resolution_status_exact.numerator == 1
+        assert report.diagnostics.tags_exact.numerator == 1
+        assert report.diagnostics.pipeline_outcome_exact.numerator == 1
+        assert report.validation.unknown_id_acceptance.denominator == 0
+        assert report.validation.unknown_id_acceptance.defined is False
+        assert (
+            report.validation.probe_coverage.numerator,
+            report.validation.probe_coverage.denominator,
+        ) == (0, 1)
+        assert report.validation.probe_coverage.evidence_sufficient is False
+        assert report.runtime.prompt_tokens == 60
+        assert report.runtime.completion_tokens == 30

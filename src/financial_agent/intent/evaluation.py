@@ -32,7 +32,10 @@ from .view import MAX_CANDIDATES_PER_MENTION, ResolverView
 ResolutionStatusLabel = Literal[
     "resolved", "ambiguous", "unmapped", "context_unresolved"
 ]
-PipelineOutcome = Literal["semantic_resolution", "pre_model_rejected"]
+ExpectedPipelineOutcome = Literal["semantic_resolution", "pre_model_rejected"]
+ActualPipelineOutcome = Literal[
+    "semantic_resolution", "pre_model_rejected", "model_resolution_failed"
+]
 OodType = Literal["combination", "vocabulary", "domain", "context"]
 EvaluationMode = Literal["decoupled", "full"]
 ProbeKind = Literal["unknown_id", "invalid_context_graph"]
@@ -196,7 +199,7 @@ class EvaluationCase(ContractModel):
     expected_slot_mutations: tuple[ExpectedSlotMutation, ...]
     expected_resolution_status: ResolutionStatusLabel
     expected_tags: tuple[Identifier, ...]
-    expected_pipeline_outcome: PipelineOutcome
+    expected_pipeline_outcome: ExpectedPipelineOutcome
     validation_probes: tuple[EvaluationProbe, ...]
     ood_type: OodType | None = None
 
@@ -322,13 +325,13 @@ class ValidationProbeOutcome(ContractModel):
 class EvaluationPrediction(ContractModel):
     case_id: Identifier
     candidate_groups: tuple[CandidateGroup, ...]
-    candidate_reproducible: bool
+    candidate_reproducible: bool | None
     frames: tuple[EvaluationFrame, ...]
     references: tuple[ExpectedReference, ...]
     context_links: tuple[ExpectedContextLink, ...]
     slot_mutations: tuple[ExpectedSlotMutation, ...]
     resolution_status: ResolutionStatusLabel
-    pipeline_outcome: PipelineOutcome
+    pipeline_outcome: ActualPipelineOutcome
     predicted_ood_type: OodType | None = None
     tags: tuple[Identifier, ...]
     blocking_issue_codes: tuple[Identifier, ...]
@@ -368,6 +371,11 @@ class EvaluationPrediction(ContractModel):
             (item.probe_id for item in self.validation_probe_outcomes),
             "prediction probe outcome IDs",
         )
+        if (
+            self.pipeline_outcome == "pre_model_rejected"
+            and self.candidate_reproducible is not None
+        ):
+            raise ValueError("pre-model prediction cannot claim candidate reproducibility")
         return self
 
 
@@ -490,6 +498,17 @@ class IntentRunTrace(ContractModel):
             self.repair_attempt.validator_event == "validated"
         ):
             raise ValueError("repair trace is contradictory")
+        if self.repair_event != "not_attempted" and self.repair_attempt is not None:
+            if self.first_attempt.payload_sha256 == self.repair_attempt.payload_sha256:
+                raise ValueError("repair attempt evidence must differ")
+            first_draft = self.first_attempt.parsed_draft_sha256
+            repair_draft = self.repair_attempt.parsed_draft_sha256
+            if (
+                first_draft is not None
+                and repair_draft is not None
+                and first_draft == repair_draft
+            ):
+                raise ValueError("repair attempt evidence must differ")
         rejected_codes = {
             attempt.stable_code
             for attempt in (self.first_attempt, self.repair_attempt)
@@ -621,6 +640,13 @@ class CountMetric(ContractModel):
         return self.denominator > 0
 
 
+class CoverageMetric(CountMetric):
+    @computed_field
+    @property
+    def evidence_sufficient(self) -> bool:
+        return self.denominator > 0 and self.numerator == self.denominator
+
+
 class PrecisionRecallF1(ContractModel):
     precision: CountMetric
     recall: CountMetric
@@ -632,6 +658,7 @@ class CandidateMetrics(ContractModel):
     recall_at_3: CountMetric
     recall_at_5: CountMetric
     reproducibility: CountMetric
+    reproducibility_coverage: CoverageMetric
 
 
 class FrameMetrics(ContractModel):
@@ -666,6 +693,7 @@ class ValidationMetrics(ContractModel):
     unknown_id_acceptance: CountMetric
     invalid_graph_acceptance: CountMetric
     repair_rate: CountMetric
+    probe_coverage: CoverageMetric
 
 
 class DiagnosticMetrics(ContractModel):
@@ -743,15 +771,30 @@ def evaluate_candidates(
             hits += len(set(case.expected_candidate_ids) & selected)
         return CountMetric(numerator=hits, denominator=total_gold)
 
+    eligible_reproducibility = tuple(
+        (case, prediction)
+        for case, prediction in aligned
+        if case.expected_pipeline_outcome == "semantic_resolution"
+    )
+    attempted_reproducibility = tuple(
+        prediction
+        for _, prediction in eligible_reproducibility
+        if prediction.candidate_reproducible is not None
+    )
     return CandidateMetrics(
         recall_at_1=recall_at(1),
         recall_at_3=recall_at(3),
         recall_at_5=recall_at(5),
         reproducibility=CountMetric(
             numerator=sum(
-                prediction.candidate_reproducible for _, prediction in aligned
+                prediction.candidate_reproducible is True
+                for prediction in attempted_reproducibility
             ),
-            denominator=len(aligned),
+            denominator=len(attempted_reproducibility),
+        ),
+        reproducibility_coverage=CoverageMetric(
+            numerator=len(attempted_reproducibility),
+            denominator=len(eligible_reproducibility),
         ),
     )
 
@@ -762,7 +805,7 @@ def evaluate_frames(
 ) -> FrameMetrics:
     aligned = _align(cases, predictions)
     return FrameMetrics(
-        joint_exact_match=_exact_match(
+        joint_exact_match=_semantic_exact_match(
             aligned,
             lambda case: _frame_signatures(case.expected_frames),
             lambda prediction: _frame_signatures(prediction.frames),
@@ -798,12 +841,12 @@ def evaluate_context(
 ) -> ContextMetrics:
     aligned = _align(cases, predictions)
     return ContextMetrics(
-        reference_exact_match=_exact_match(
+        reference_exact_match=_semantic_exact_match(
             aligned,
             lambda case: _reference_signatures(case.expected_references),
             lambda prediction: _reference_signatures(prediction.references),
         ),
-        link_exact_match=_exact_match(
+        link_exact_match=_semantic_exact_match(
             aligned,
             lambda case: _context_link_signatures(
                 case.expected_frames,
@@ -820,7 +863,7 @@ def evaluate_context(
                 include_cardinality=True,
             ),
         ),
-        selector_exact_match=_exact_match(
+        selector_exact_match=_semantic_exact_match(
             aligned,
             lambda case: _context_link_signatures(
                 case.expected_frames,
@@ -837,7 +880,7 @@ def evaluate_context(
                 include_cardinality=False,
             ),
         ),
-        cardinality_exact_match=_exact_match(
+        cardinality_exact_match=_semantic_exact_match(
             aligned,
             lambda case: _context_link_signatures(
                 case.expected_frames,
@@ -854,7 +897,7 @@ def evaluate_context(
                 include_cardinality=True,
             ),
         ),
-        mutation_exact_match=_exact_match(
+        mutation_exact_match=_semantic_exact_match(
             aligned,
             lambda case: _mutation_signatures(case.expected_frames, case.expected_slot_mutations),
             lambda prediction: _mutation_signatures(prediction.frames, prediction.slot_mutations),
@@ -900,10 +943,16 @@ def evaluate_predictions(
     for case, prediction in aligned:
         _validate_evidence_alignment(case, prediction)
     values = tuple(prediction for _, prediction in aligned)
+    expected_probes = tuple(
+        probe
+        for case, _ in aligned
+        for probe in case.validation_probes
+    )
     probes = tuple(
-        (probe, _probe_index(prediction)[probe.probe_id])
+        (probe, outcome)
         for case, prediction in aligned
         for probe in case.validation_probes
+        if (outcome := _probe_index(prediction).get(probe.probe_id)) is not None
     )
     unknown = tuple(item for item in probes if item[0].kind == "unknown_id")
     invalid_graph = tuple(
@@ -942,14 +991,17 @@ def evaluate_predictions(
                     item.first_pass_schema.status != "not_attempted" for item in values
                 ),
             ),
+            probe_coverage=CoverageMetric(
+                numerator=len(probes), denominator=len(expected_probes)
+            ),
         ),
         diagnostics=DiagnosticMetrics(
-            resolution_status_exact=_exact_match(
+            resolution_status_exact=_semantic_exact_match(
                 aligned,
                 lambda case: case.expected_resolution_status,
                 lambda prediction: prediction.resolution_status,
             ),
-            tags_exact=_exact_match(
+            tags_exact=_semantic_exact_match(
                 aligned,
                 lambda case: case.expected_tags,
                 lambda prediction: prediction.tags,
@@ -983,9 +1035,14 @@ def _validate_evidence_alignment(
 ) -> None:
     expected = {item.probe_id: item for item in case.validation_probes}
     actual = _probe_index(prediction)
-    if set(expected) != set(actual):
+    if prediction.pipeline_outcome == "model_resolution_failed":
+        if actual:
+            raise ValueError("EVALUATION_VALIDATION_PROBE_SET_MISMATCH")
+    elif set(expected) != set(actual):
         raise ValueError("EVALUATION_VALIDATION_PROBE_SET_MISMATCH")
     for probe_id, probe in expected.items():
+        if probe_id not in actual:
+            continue
         outcome = actual[probe_id]
         if (
             probe.kind != outcome.kind
@@ -1137,6 +1194,21 @@ def _exact_match[T, U, V](
 ) -> CountMetric:
     return CountMetric(
         numerator=sum(expected(case) == predicted(prediction) for case, prediction in aligned),
+        denominator=len(aligned),
+    )
+
+
+def _semantic_exact_match[V](
+    aligned: Sequence[tuple[EvaluationCase, EvaluationPrediction]],
+    expected: Callable[[EvaluationCase], V],
+    predicted: Callable[[EvaluationPrediction], V],
+) -> CountMetric:
+    return CountMetric(
+        numerator=sum(
+            prediction.pipeline_outcome != "model_resolution_failed"
+            and expected(case) == predicted(prediction)
+            for case, prediction in aligned
+        ),
         denominator=len(aligned),
     )
 
