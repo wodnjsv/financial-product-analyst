@@ -101,7 +101,7 @@ def validate_semantics(
 
     canonical_frames = tuple(_canonical_frame(frame) for frame in draft.intent_frames)
     issues = _issues(draft)
-    final_tags = _derive_tags(draft, catalog)
+    final_tags = derive_semantic_tags(draft, catalog)
     return SemanticValidationState(
         draft=draft,
         canonical_frames=canonical_frames,
@@ -478,9 +478,10 @@ def _sorted_unique(values: tuple[object, ...]) -> tuple[object, ...]:
     return tuple(sorted(set(values), key=lambda item: str(getattr(item, "value", item))))
 
 
-def _derive_tags(
+def derive_semantic_tags(
     draft: IntentResolutionDraft, catalog: SemanticCatalogSnapshot
 ) -> tuple[SemanticTag, ...]:
+    """Return the runtime's deterministic tags for a validated draft shape."""
     tags: set[SemanticTag] = set()
     families = {
         family

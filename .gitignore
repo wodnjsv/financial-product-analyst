@@ -41,7 +41,6 @@ __pycache__/
 node_modules/
 dist/
 build/
-build/reports/
 
 # Logs and temporary output
 *.log
