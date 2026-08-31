@@ -671,9 +671,13 @@ PromotionGateName = Literal[
 ]
 PromotionGateStatus = Literal["passed", "failed", "unmeasured"]
 PromotionComparison = Literal["equal", "at_least", "at_most"]
+_FROZEN_PROMOTION_DATASET_SHA256 = (
+    "f0cb6313d7954a9f75d1fe1c691a2021c0b2e53d6681f07eb0f3e2787a9944b4"
+)
 
 
 class PromotionEvidence(ContractModel):
+    evaluation_dataset_sha256: Sha256Hex | None = None
     unknown_registered_id_acceptance: CountMetric | None = None
     invalid_context_graph_acceptance: CountMetric | None = None
     validation_probe_coverage: CoverageMetric | None = None
@@ -752,26 +756,46 @@ _PROMOTION_GATE_DEFINITIONS: tuple[
     ),
     ("ood_false_fast_rate", "at_most", Decimal("0.02"), None),
 )
+_PROMOTION_GATE_POPULATIONS: dict[PromotionGateName, int] = {
+    "unknown_registered_id_acceptance": 10,
+    "invalid_context_graph_acceptance": 10,
+    "deterministic_candidate_reproducibility": 155,
+    "candidate_recall_at_5": 196,
+    "first_pass_structured_output_validity": 155,
+    "held_out_joint_frame_exact_match": 160,
+    "held_out_context_link_exact_match": 160,
+    "ood_false_fast_rate": 30,
+}
+_PROMOTION_COVERAGE_POPULATIONS = {
+    "validation_probe_coverage": 20,
+    "deterministic_candidate_reproducibility_coverage": 155,
+}
 
 
 def assess_promotion(evidence: PromotionEvidence) -> PromotionDecision:
     """Require complete measured evidence for every approved promotion gate."""
     gates: list[PromotionGateResult] = []
+    dataset_matches = (
+        evidence.evaluation_dataset_sha256 == _FROZEN_PROMOTION_DATASET_SHA256
+    )
     for name, comparison, threshold, coverage_name in _PROMOTION_GATE_DEFINITIONS:
         metric = getattr(evidence, name)
         coverage = None if coverage_name is None else getattr(evidence, coverage_name)
-        sufficient = metric is not None and metric.evidence_sufficient
+        sufficient = (
+            dataset_matches
+            and metric is not None
+            and metric.evidence_sufficient
+            and metric.denominator == _PROMOTION_GATE_POPULATIONS[name]
+        )
         if coverage_name is not None:
             sufficient = (
                 sufficient
                 and coverage is not None
                 and coverage.evidence_sufficient
-                and _promotion_coverage_matches(
-                    evidence,
-                    name=name,
-                    metric=metric,
-                    coverage=coverage,
-                )
+                and coverage.numerator
+                == _PROMOTION_COVERAGE_POPULATIONS[coverage_name]
+                and coverage.denominator
+                == _PROMOTION_COVERAGE_POPULATIONS[coverage_name]
             )
         if not sufficient:
             status: PromotionGateStatus = "unmeasured"
@@ -796,26 +820,6 @@ def assess_promotion(evidence: PromotionEvidence) -> PromotionDecision:
         eligible=not blocking,
         blocking_gate_names=blocking,
         gates=tuple(gates),
-    )
-
-
-def _promotion_coverage_matches(
-    evidence: PromotionEvidence,
-    *,
-    name: PromotionGateName,
-    metric: CountMetric | None,
-    coverage: CoverageMetric | None,
-) -> bool:
-    if metric is None or coverage is None:
-        return False
-    if name == "deterministic_candidate_reproducibility":
-        return coverage.numerator == metric.denominator
-    unknown = evidence.unknown_registered_id_acceptance
-    invalid_graph = evidence.invalid_context_graph_acceptance
-    return (
-        unknown is not None
-        and invalid_graph is not None
-        and coverage.numerator == unknown.denominator + invalid_graph.denominator
     )
 
 
