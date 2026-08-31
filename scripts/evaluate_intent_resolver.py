@@ -6,23 +6,36 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime, timedelta
 import hashlib
+import os
 from pathlib import Path
 import subprocess
 import sys
 from typing import Any
+import uuid
 
 from pydantic import ValidationError
 
-from financial_agent.contracts.canonical import build_request_key, canonical_json_bytes
+from financial_agent.contracts.canonical import (
+    build_request_key,
+    canonical_json_bytes,
+    canonical_sha256,
+)
 from financial_agent.contracts.request import RequestContext, Segment
-from financial_agent.intent.candidates import SemanticCandidateSet, generate_semantic_candidates
+from financial_agent.intent.candidates import generate_semantic_candidates
 from financial_agent.intent.catalog import SemanticCatalogSnapshot, load_catalog
 from financial_agent.intent.evaluation import (
     CandidateGroup,
     EvaluationDataset,
+    EvaluationFrame,
     EvaluationPrediction,
+    ExpectedContextLink,
+    ExpectedReference,
+    ExpectedSlot,
+    ExpectedSlotMutation,
     FirstPassSchemaOutcome,
     IntentDraftBundle,
+    IntentRunTrace,
+    IntentRunTraceBundle,
     PredictionDataset,
     RepairOutcome,
     ResolverViewBundle,
@@ -30,16 +43,28 @@ from financial_agent.intent.evaluation import (
     evaluate_candidates,
     evaluate_predictions,
     parse_strict_json,
+    replay_validation_probes,
 )
+from financial_agent.intent.context import (
+    ResolutionFinalizationMetadata,
+    finalize_resolution,
+    validate_context_graph,
+)
+from financial_agent.intent.errors import ResolverContractError
+from financial_agent.intent.literals import extract_literals
 from financial_agent.intent.normalization import RequestNormalizationError, normalize_request
 from financial_agent.intent.resolution import ResolverBuildManifest
+from financial_agent.intent.validation import validate_semantics
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
     CANDIDATE_POLICY_VERSION,
     NORMALIZER_VERSION,
     PROMPT_VERSION,
     RESOLVER_SCHEMA_VERSION,
+    ActiveDatasetPin,
+    ResolverView,
     build_manifest,
+    build_resolver_view,
 )
 
 
@@ -50,10 +75,10 @@ DEFAULT_DATASET = (
     / "tests"
     / "evaluation"
     / "intent"
-    / "intent_resolution_heldout_ko_v2.json"
+    / "intent_resolution_heldout_ko_v3.json"
 )
 FIXTURE_DIRECTORY = DEFAULT_DATASET.parent
-SYNTHETIC_DATASET_VERSION = "synthetic-intent-eval-v2"
+SYNTHETIC_DATASET_VERSION = "synthetic-intent-eval-v3"
 FIXED_CREATED_AT = datetime(2026, 8, 31, tzinfo=UTC)
 
 
@@ -87,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
             "draft_bundle_canonical_sha256": None,
             "resolution_bundle_raw_sha256": None,
             "resolution_bundle_canonical_sha256": None,
+            "run_trace_bundle_raw_sha256": None,
+            "run_trace_bundle_canonical_sha256": None,
         }
 
         if args.mode == "deterministic":
@@ -113,13 +140,19 @@ def main(argv: list[str] | None = None) -> int:
                 prediction_bundle=prediction_bundle,
                 current_manifest=current_manifest,
             )
+            view_raw, view_bundle, view_canonical = _read_bundle(
+                Path(args.bounded_views), ResolverViewBundle
+            )
+            draft_raw, draft_bundle, draft_canonical = _read_bundle(
+                Path(args.drafts), IntentDraftBundle
+            )
+            trace_raw, trace_bundle, trace_canonical = _read_bundle(
+                Path(args.run_traces), IntentRunTraceBundle
+            )
+            resolution_bundle: ValidatedResolutionBundle | None = None
+            resolution_raw: bytes | None = None
+            resolution_canonical: bytes | None = None
             if args.mode == "decoupled":
-                view_raw, view_bundle, view_canonical = _read_bundle(
-                    Path(args.bounded_views), ResolverViewBundle
-                )
-                draft_raw, draft_bundle, draft_canonical = _read_bundle(
-                    Path(args.drafts), IntentDraftBundle
-                )
                 _validate_decoupled_evidence(
                     dataset,
                     prediction_bundle,
@@ -129,14 +162,9 @@ def main(argv: list[str] | None = None) -> int:
                     view_canonical,
                     draft_raw,
                     draft_canonical,
-                )
-                evidence_hashes.update(
-                    {
-                        "bounded_view_bundle_raw_sha256": _sha256(view_raw),
-                        "bounded_view_bundle_canonical_sha256": _sha256(view_canonical),
-                        "draft_bundle_raw_sha256": _sha256(draft_raw),
-                        "draft_bundle_canonical_sha256": _sha256(draft_canonical),
-                    }
+                    trace_bundle,
+                    trace_raw,
+                    trace_canonical,
                 )
             else:
                 resolution_raw, resolution_bundle, resolution_canonical = _read_bundle(
@@ -145,22 +173,52 @@ def main(argv: list[str] | None = None) -> int:
                 _validate_full_evidence(
                     dataset,
                     prediction_bundle,
+                    view_bundle,
+                    draft_bundle,
                     resolution_bundle,
+                    trace_bundle,
+                    view_raw,
+                    view_canonical,
+                    draft_raw,
+                    draft_canonical,
                     resolution_raw,
                     resolution_canonical,
+                    trace_raw,
+                    trace_canonical,
                 )
-                evidence_hashes.update(
-                    {
-                        "resolution_bundle_raw_sha256": _sha256(resolution_raw),
-                        "resolution_bundle_canonical_sha256": _sha256(resolution_canonical),
-                    }
-                )
-            metrics = evaluate_predictions(
-                dataset.cases, prediction_bundle.predictions
-            ).model_dump(mode="json")
+            evidence_hashes.update(
+                {
+                    "bounded_view_bundle_raw_sha256": _sha256(view_raw),
+                    "bounded_view_bundle_canonical_sha256": _sha256(view_canonical),
+                    "draft_bundle_raw_sha256": _sha256(draft_raw),
+                    "draft_bundle_canonical_sha256": _sha256(draft_canonical),
+                    "resolution_bundle_raw_sha256": (
+                        None if resolution_raw is None else _sha256(resolution_raw)
+                    ),
+                    "resolution_bundle_canonical_sha256": (
+                        None
+                        if resolution_canonical is None
+                        else _sha256(resolution_canonical)
+                    ),
+                    "run_trace_bundle_raw_sha256": _sha256(trace_raw),
+                    "run_trace_bundle_canonical_sha256": _sha256(trace_canonical),
+                }
+            )
+            predictions = _project_stored_predictions(
+                dataset=dataset,
+                views=view_bundle,
+                drafts=draft_bundle,
+                traces=trace_bundle,
+                resolutions=resolution_bundle,
+                catalog=catalog,
+                dataset_version=prediction_bundle.dataset_version,
+            )
+            metrics = evaluate_predictions(dataset.cases, predictions).model_dump(
+                mode="json"
+            )
 
         payload: dict[str, Any] = {
-            "schema_version": "2.0",
+            "schema_version": "3.0",
             "mode": args.mode,
             "provenance": _provenance(
                 mode=args.mode,
@@ -174,8 +232,7 @@ def main(argv: list[str] | None = None) -> int:
             "metrics": metrics,
         }
         payload["report_hash"] = _sha256(canonical_json_bytes(payload))
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(canonical_json_bytes(payload) + b"\n")
+        _atomic_write(output, canonical_json_bytes(payload) + b"\n")
         return 0
     except EvaluationCliError as error:
         print(error.code, file=sys.stderr)
@@ -197,6 +254,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--bounded-views")
     parser.add_argument("--drafts")
     parser.add_argument("--resolutions")
+    parser.add_argument("--run-traces")
     parser.add_argument("--output", required=True)
     return parser
 
@@ -207,12 +265,19 @@ def _validate_mode_arguments(args: argparse.Namespace) -> None:
         "bounded_views": args.bounded_views is not None,
         "drafts": args.drafts is not None,
         "resolutions": args.resolutions is not None,
+        "run_traces": args.run_traces is not None,
     }
     expected = {
         "deterministic": set(),
         "live": set(),
-        "decoupled": {"predictions", "bounded_views", "drafts"},
-        "full": {"predictions", "resolutions"},
+        "decoupled": {"predictions", "bounded_views", "drafts", "run_traces"},
+        "full": {
+            "predictions",
+            "bounded_views",
+            "drafts",
+            "resolutions",
+            "run_traces",
+        },
     }[args.mode]
     if {name for name, present in supplied.items() if present} != expected:
         raise EvaluationCliError("EVALUATION_MODE_ARGUMENT_INVALID")
@@ -227,6 +292,7 @@ def _supplied_inputs(args: argparse.Namespace) -> tuple[Path, ...]:
             args.bounded_views,
             args.drafts,
             args.resolutions,
+            args.run_traces,
         )
         if value is not None
     )
@@ -234,21 +300,48 @@ def _supplied_inputs(args: argparse.Namespace) -> tuple[Path, ...]:
 
 def _safe_output_path(output: Path, supplied_inputs: tuple[Path, ...]) -> Path:
     absolute = output if output.is_absolute() else PROJECT_ROOT / output
-    if absolute.is_symlink():
+    report_path = PROJECT_ROOT / "build" / "reports"
+    report_path.mkdir(parents=True, exist_ok=True)
+    if report_path.is_symlink() or report_path.resolve(strict=True) != REPORT_DIRECTORY:
+        raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
+    if absolute.is_symlink() or absolute.parent.is_symlink():
         raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
     resolved = absolute.resolve(strict=False)
-    if resolved in supplied_inputs:
+    protected = (*supplied_inputs, *FIXTURE_DIRECTORY.glob("*.json"))
+    if any(_same_file_if_present(resolved, path) for path in protected):
         raise EvaluationCliError("EVALUATION_FIXTURE_OVERWRITE_REFUSED")
-    fixtures = {path.resolve() for path in FIXTURE_DIRECTORY.glob("*.json")}
-    if resolved in fixtures:
-        raise EvaluationCliError("EVALUATION_FIXTURE_OVERWRITE_REFUSED")
-    try:
-        resolved.relative_to(REPORT_DIRECTORY)
-    except ValueError as error:
-        raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID") from error
+    if resolved.parent != REPORT_DIRECTORY or absolute.parent.resolve() != REPORT_DIRECTORY:
+        raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
     if resolved.suffix != ".json" or (resolved.exists() and not resolved.is_file()):
         raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
     return resolved
+
+
+def _same_file_if_present(left: Path, right: Path) -> bool:
+    try:
+        return left.exists() and right.exists() and os.path.samefile(left, right)
+    except OSError:
+        return False
+
+
+def _atomic_write(output: Path, payload: bytes) -> None:
+    temporary = REPORT_DIRECTORY / f".intent-eval-{uuid.uuid4().hex}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(temporary, flags, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = None
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, output)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
 
 
 def _read_bundle[T](path: Path, model: type[T]) -> tuple[bytes, T, bytes]:
@@ -272,7 +365,6 @@ def _validate_prediction_bundle(
         or prediction_bundle.build_manifest != current_manifest
     ):
         raise EvaluationCliError("EVALUATION_INPUT_MISMATCH")
-    _require_case_set(dataset, prediction_bundle.predictions)
 
 
 def _validate_decoupled_evidence(
@@ -284,51 +376,128 @@ def _validate_decoupled_evidence(
     view_canonical: bytes,
     draft_raw: bytes,
     draft_canonical: bytes,
+    traces: IntentRunTraceBundle,
+    trace_raw: bytes,
+    trace_canonical: bytes,
 ) -> None:
     if (
         views.dataset_id != dataset.split_id
         or drafts.dataset_id != dataset.split_id
+        or traces.dataset_id != dataset.split_id
         or _sha256(view_raw) != predictions.bounded_view_bundle_raw_sha256
         or _sha256(view_canonical) != predictions.bounded_view_bundle_canonical_sha256
         or _sha256(draft_raw) != predictions.draft_bundle_raw_sha256
         or _sha256(draft_canonical) != predictions.draft_bundle_canonical_sha256
+        or _sha256(trace_raw) != predictions.run_trace_bundle_raw_sha256
+        or _sha256(trace_canonical) != predictions.run_trace_bundle_canonical_sha256
     ):
         raise EvaluationCliError("EVALUATION_EVIDENCE_HASH_MISMATCH")
     _require_case_set(dataset, views.cases)
     _require_case_set(dataset, drafts.cases)
+    _require_case_set(dataset, traces.cases)
     if any(
-        item.artifact.build_manifest != predictions.build_manifest
-        or item.artifact.active_dataset_pin.dataset_version != predictions.dataset_version
-        or item.artifact.active_dataset_pin.manifest_hash
-        != predictions.dataset_manifest_hash
+        item.artifact is not None
+        and (
+            item.artifact.build_manifest != predictions.build_manifest
+            or item.artifact.active_dataset_pin.dataset_version
+            != predictions.dataset_version
+            or item.artifact.active_dataset_pin.manifest_hash
+            != predictions.dataset_manifest_hash
+        )
         for item in views.cases
     ):
         raise EvaluationCliError("EVALUATION_INPUT_MISMATCH")
+    _validate_artifact_presence(dataset, views, drafts, traces, None)
 
 
 def _validate_full_evidence(
     dataset: EvaluationDataset,
     predictions: PredictionDataset,
+    views: ResolverViewBundle,
+    drafts: IntentDraftBundle,
     resolutions: ValidatedResolutionBundle,
+    traces: IntentRunTraceBundle,
+    view_raw: bytes,
+    view_canonical: bytes,
+    draft_raw: bytes,
+    draft_canonical: bytes,
     resolution_raw: bytes,
     resolution_canonical: bytes,
+    trace_raw: bytes,
+    trace_canonical: bytes,
 ) -> None:
     if (
-        resolutions.dataset_id != dataset.split_id
+        views.dataset_id != dataset.split_id
+        or drafts.dataset_id != dataset.split_id
+        or resolutions.dataset_id != dataset.split_id
+        or traces.dataset_id != dataset.split_id
+        or _sha256(view_raw) != predictions.bounded_view_bundle_raw_sha256
+        or _sha256(view_canonical) != predictions.bounded_view_bundle_canonical_sha256
+        or _sha256(draft_raw) != predictions.draft_bundle_raw_sha256
+        or _sha256(draft_canonical) != predictions.draft_bundle_canonical_sha256
         or _sha256(resolution_raw) != predictions.resolution_bundle_raw_sha256
         or _sha256(resolution_canonical)
         != predictions.resolution_bundle_canonical_sha256
+        or _sha256(trace_raw) != predictions.run_trace_bundle_raw_sha256
+        or _sha256(trace_canonical) != predictions.run_trace_bundle_canonical_sha256
     ):
         raise EvaluationCliError("EVALUATION_EVIDENCE_HASH_MISMATCH")
+    _require_case_set(dataset, views.cases)
+    _require_case_set(dataset, drafts.cases)
     _require_case_set(dataset, resolutions.cases)
+    _require_case_set(dataset, traces.cases)
     if any(
-        item.artifact.build_manifest != predictions.build_manifest
-        or item.artifact.dataset_version != predictions.dataset_version
-        or item.artifact.active_dataset_manifest_hash
-        != predictions.dataset_manifest_hash
+        item.artifact is not None
+        and (
+            item.artifact.build_manifest != predictions.build_manifest
+            or item.artifact.dataset_version != predictions.dataset_version
+            or item.artifact.active_dataset_manifest_hash
+            != predictions.dataset_manifest_hash
+        )
         for item in resolutions.cases
     ):
         raise EvaluationCliError("EVALUATION_INPUT_MISMATCH")
+    if any(
+        item.artifact is not None
+        and (
+            item.artifact.build_manifest != predictions.build_manifest
+            or item.artifact.active_dataset_pin.dataset_version
+            != predictions.dataset_version
+            or item.artifact.active_dataset_pin.manifest_hash
+            != predictions.dataset_manifest_hash
+        )
+        for item in views.cases
+    ):
+        raise EvaluationCliError("EVALUATION_INPUT_MISMATCH")
+    _validate_artifact_presence(dataset, views, drafts, traces, resolutions)
+
+
+def _validate_artifact_presence(
+    dataset: EvaluationDataset,
+    views: ResolverViewBundle,
+    drafts: IntentDraftBundle,
+    traces: IntentRunTraceBundle,
+    resolutions: ValidatedResolutionBundle | None,
+) -> None:
+    view_index = {item.case_id: item.artifact for item in views.cases}
+    draft_index = {item.case_id: item.artifact for item in drafts.cases}
+    trace_index = {item.case_id: item for item in traces.cases}
+    resolution_index = (
+        None
+        if resolutions is None
+        else {item.case_id: item.artifact for item in resolutions.cases}
+    )
+    for case in dataset.cases:
+        pre_model = case.expected_pipeline_outcome == "pre_model_rejected"
+        artifacts = (view_index[case.case_id], draft_index[case.case_id])
+        if resolution_index is not None:
+            artifacts = (*artifacts, resolution_index[case.case_id])
+        trace = trace_index[case.case_id]
+        if pre_model:
+            if any(item is not None for item in artifacts) or trace.model_event != "model_not_called":
+                raise EvaluationCliError("EVALUATION_PIPELINE_OUTCOME_MISMATCH")
+        elif any(item is None for item in artifacts) or trace.model_event != "model_called":
+            raise EvaluationCliError("EVALUATION_PIPELINE_OUTCOME_MISMATCH")
 
 
 def _require_case_set(dataset: EvaluationDataset, items: Any) -> None:
@@ -336,6 +505,338 @@ def _require_case_set(dataset: EvaluationDataset, items: Any) -> None:
     actual = {item.case_id for item in items}
     if expected != actual or len(actual) != len(items):
         raise EvaluationCliError("EVALUATION_CASE_SET_MISMATCH")
+
+
+def _project_stored_predictions(
+    *,
+    dataset: EvaluationDataset,
+    views: ResolverViewBundle,
+    drafts: IntentDraftBundle,
+    traces: IntentRunTraceBundle,
+    resolutions: ValidatedResolutionBundle | None,
+    catalog: SemanticCatalogSnapshot,
+    dataset_version: str,
+) -> tuple[EvaluationPrediction, ...]:
+    view_index = {item.case_id: item.artifact for item in views.cases}
+    draft_index = {item.case_id: item.artifact for item in drafts.cases}
+    trace_index = {item.case_id: item for item in traces.cases}
+    resolution_index = (
+        {} if resolutions is None else {item.case_id: item.artifact for item in resolutions.cases}
+    )
+    projected: list[EvaluationPrediction] = []
+    for case in dataset.cases:
+        trace = trace_index[case.case_id]
+        if case.expected_pipeline_outcome == "pre_model_rejected":
+            projected.append(_pre_model_prediction(case.case_id, trace))
+            continue
+        view = view_index[case.case_id]
+        draft = draft_index[case.case_id]
+        if view is None or draft is None:
+            raise EvaluationCliError("EVALUATION_PIPELINE_OUTCOME_MISMATCH")
+        resolution = resolution_index.get(case.case_id)
+        context = _case_context(case, dataset_version, resolution)
+        try:
+            normalized = normalize_request(context)
+            semantic = validate_semantics(draft, context, normalized, view, catalog)
+            context_state = validate_context_graph(semantic)
+        except (RequestNormalizationError, ResolverContractError, ValueError) as error:
+            raise EvaluationCliError("EVALUATION_ARTIFACT_VALIDATION_FAILED") from error
+        if resolution is not None:
+            _validate_resolution_projection(
+                draft=draft,
+                context_state=context_state,
+                resolution=resolution,
+            )
+            frames = _frames_from_resolution(resolution)
+            links = _links_from_resolution(resolution)
+            mutations = _mutations_from_resolution(resolution)
+            tags = tuple(sorted(tag.value for tag in resolution.final_tags))
+            status = resolution.resolution_status.value
+            blocking = tuple(sorted(issue.code for issue in resolution.issues))
+        else:
+            frames = _frames_from_drafts(context_state.semantic_state.canonical_frames)
+            links = _links_from_context_state(context_state.context_links)
+            mutations = _mutations_from_draft(draft)
+            tags = tuple(sorted(tag.value for tag in semantic.final_tags))
+            status = context_state.resolution_status.value
+            blocking = tuple(sorted(issue.code for issue in context_state.issues))
+        _validate_trace_against_artifacts(trace, draft, resolution)
+        probes = replay_validation_probes(
+            case, draft, context, normalized, view, catalog
+        )
+        projected.append(
+            EvaluationPrediction(
+                case_id=case.case_id,
+                candidate_groups=_candidate_groups_from_view(view),
+                candidate_reproducible=True,
+                frames=frames,
+                references=_references_from_draft(draft),
+                context_links=links,
+                slot_mutations=mutations,
+                resolution_status=status,
+                pipeline_outcome="semantic_resolution",
+                predicted_ood_type=None,
+                tags=tags,
+                blocking_issue_codes=blocking,
+                first_pass_schema=_first_pass_outcome(trace),
+                repair=_repair_outcome(trace),
+                validation_probe_outcomes=probes,
+                latency_ms=trace.latency_ms,
+                prompt_tokens=trace.prompt_tokens,
+                completion_tokens=trace.completion_tokens,
+                stable_error_codes=trace.stable_error_codes,
+            )
+        )
+    return tuple(projected)
+
+
+def _case_context(
+    case: Any,
+    dataset_version: str,
+    resolution: Any | None,
+) -> RequestContext:
+    request_key = build_request_key(case.case_id, case.question, dataset_version, "1.0")
+    if resolution is not None and resolution.request_key != request_key:
+        raise EvaluationCliError("EVALUATION_INPUT_MISMATCH")
+    created_at = FIXED_CREATED_AT if resolution is None else resolution.created_at
+    return RequestContext(
+        request_key=request_key,
+        run_id=f"eval-{case.case_id}" if resolution is None else resolution.run_id,
+        dataset_version=dataset_version,
+        producer="intent-evaluator" if resolution is None else resolution.producer,
+        created_at=created_at,
+        question_id=case.case_id,
+        question=case.question,
+        segments=tuple(
+            Segment(
+                segment_id=segment.segment_id,
+                ordinal=segment.ordinal,
+                text=segment.text,
+            )
+            for segment in case.segments
+        ),
+        deadline_at=created_at + timedelta(seconds=55),
+    )
+
+
+def _validate_resolution_projection(
+    *, draft: Any, context_state: Any, resolution: Any
+) -> None:
+    draft_hash = canonical_sha256(draft)
+    if resolution.draft_hash != draft_hash:
+        raise EvaluationCliError("EVALUATION_ARTIFACT_MISMATCH")
+    expected = finalize_resolution(
+        context_state,
+        ResolutionFinalizationMetadata(
+            request_key=resolution.request_key,
+            run_id=resolution.run_id,
+            dataset_version=resolution.dataset_version,
+            producer=resolution.producer,
+            created_at=resolution.created_at,
+            resolution_id=resolution.resolution_id,
+            draft_hash=draft_hash,
+            build_manifest=resolution.build_manifest,
+            active_dataset_manifest_hash=resolution.active_dataset_manifest_hash,
+        ),
+    )
+    fields = (
+        "canonical_frames",
+        "context_links",
+        "final_tags",
+        "resolution_status",
+        "issues",
+        "validation_events",
+    )
+    if any(getattr(expected, field) != getattr(resolution, field) for field in fields):
+        raise EvaluationCliError("EVALUATION_ARTIFACT_MISMATCH")
+
+
+def _validate_trace_against_artifacts(
+    trace: IntentRunTrace, draft: Any, resolution: Any | None
+) -> None:
+    draft_hash = canonical_sha256(draft)
+    if trace.repair_event == "failed":
+        raise EvaluationCliError("EVALUATION_TRACE_MISMATCH")
+    if trace.repair_event == "not_attempted":
+        if (
+            trace.first_attempt is None
+            or trace.first_attempt.validator_event != "validated"
+            or trace.first_attempt.parsed_draft_sha256 != draft_hash
+        ):
+            raise EvaluationCliError("EVALUATION_TRACE_MISMATCH")
+    else:
+        if (
+            trace.repair_attempt is None
+            or trace.repair_attempt.parsed_draft_sha256 != draft_hash
+        ):
+            raise EvaluationCliError("EVALUATION_TRACE_MISMATCH")
+    if resolution is not None:
+        repair_used = trace.repair_event == "succeeded"
+        expected_hashes = (
+            (trace.first_attempt.payload_sha256,)
+            if repair_used and trace.first_attempt is not None
+            else ()
+        )
+        if (
+            resolution.repair_used != repair_used
+            or resolution.invalid_attempt_hashes != expected_hashes
+        ):
+            raise EvaluationCliError("EVALUATION_TRACE_MISMATCH")
+
+
+def _pre_model_prediction(case_id: str, trace: IntentRunTrace) -> EvaluationPrediction:
+    return EvaluationPrediction(
+        case_id=case_id,
+        candidate_groups=(),
+        candidate_reproducible=True,
+        frames=(),
+        references=(),
+        context_links=(),
+        slot_mutations=(),
+        resolution_status="unmapped",
+        pipeline_outcome="pre_model_rejected",
+        predicted_ood_type="context",
+        tags=(),
+        blocking_issue_codes=("REQUEST_CONTRACT_INVALID",),
+        first_pass_schema=FirstPassSchemaOutcome(
+            status="not_attempted", validator_event_code="SCHEMA_NOT_ATTEMPTED"
+        ),
+        repair=RepairOutcome(
+            status="not_attempted", validator_event_code="REPAIR_NOT_ATTEMPTED"
+        ),
+        validation_probe_outcomes=(),
+        latency_ms=trace.latency_ms,
+        prompt_tokens=0,
+        completion_tokens=0,
+        stable_error_codes=trace.stable_error_codes,
+    )
+
+
+def _candidate_groups_from_view(view: ResolverView) -> tuple[CandidateGroup, ...]:
+    return tuple(
+        CandidateGroup(
+            mention_id=group.mention_id,
+            candidate_ids=tuple(item.semantic_id for item in group.items),
+        )
+        for group in view.semantic_candidates
+    )
+
+
+def _frames_from_drafts(frames: Any) -> tuple[EvaluationFrame, ...]:
+    return tuple(
+        EvaluationFrame(
+            frame_id=frame.frame_id,
+            ordinal=frame.ordinal,
+            action_ids=tuple(sorted(item.value for item in frame.action_choice.selected_ids)),
+            product_family_ids=tuple(
+                sorted(item.value for item in frame.product_family_choice.selected_ids)
+            ),
+            entity_type_ids=tuple(sorted(frame.entity_type_ids)),
+            slots=tuple(
+                ExpectedSlot(
+                    slot_kind=assignment.slot_kind.value,
+                    value_ids=tuple(sorted(assignment.value_ids)),
+                )
+                for assignment in sorted(
+                    frame.slot_assignments, key=lambda item: item.slot_kind.value
+                )
+            ),
+        )
+        for frame in frames
+    )
+
+
+def _frames_from_resolution(resolution: Any) -> tuple[EvaluationFrame, ...]:
+    return _frames_from_drafts(resolution.canonical_frames)
+
+
+def _references_from_draft(draft: Any) -> tuple[ExpectedReference, ...]:
+    return tuple(
+        ExpectedReference(
+            reference_id=item.reference_id,
+            reference_form=item.reference_form.value,
+            status=item.status,
+        )
+        for item in draft.reference_hints
+    )
+
+
+def _links_from_context_state(links: Any) -> tuple[ExpectedContextLink, ...]:
+    return tuple(
+        ExpectedContextLink(
+            context_link_id=item.context_link_id,
+            reference_id=item.reference_id,
+            link_type=item.link_type.value,
+            source_role=item.source_role.value,
+            selector=_single_enum(item.selector),
+            producer_frame_id=item.producer_frame_id,
+            consumer_frame_id=item.consumer_frame_id,
+            target_cardinality=_single_enum(item.target_cardinality),
+        )
+        for item in links
+    )
+
+
+def _links_from_resolution(resolution: Any) -> tuple[ExpectedContextLink, ...]:
+    return _links_from_context_state(resolution.context_links)
+
+
+def _mutations_from_draft(draft: Any) -> tuple[ExpectedSlotMutation, ...]:
+    return tuple(
+        ExpectedSlotMutation(
+            slot_mutation_id=item.slot_mutation_id,
+            consumer_frame_id=item.consumer_frame_id,
+            slot_kind=item.slot_kind.value,
+            mutation_kind=item.mutation_kind.value,
+            source_frame_id=_single_value(item.source_frame_id),
+        )
+        for item in draft.slot_mutations
+    )
+
+
+def _mutations_from_resolution(resolution: Any) -> tuple[ExpectedSlotMutation, ...]:
+    items = tuple(
+        mutation
+        for frame in resolution.canonical_frames
+        for mutation in frame.slot_mutations
+    )
+    return tuple(
+        ExpectedSlotMutation(
+            slot_mutation_id=item.slot_mutation_id,
+            consumer_frame_id=item.consumer_frame_id,
+            slot_kind=item.slot_kind.value,
+            mutation_kind=item.mutation_kind.value,
+            source_frame_id=_single_value(item.source_frame_id),
+        )
+        for item in items
+    )
+
+
+def _single_enum(values: tuple[Any, ...]) -> str | None:
+    value = _single_value(values)
+    return None if value is None else value.value
+
+
+def _single_value(values: tuple[Any, ...]) -> Any | None:
+    return None if not values else values[0]
+
+
+def _first_pass_outcome(trace: IntentRunTrace) -> FirstPassSchemaOutcome:
+    assert trace.first_attempt is not None
+    if trace.first_attempt.parser_event == "schema_rejected":
+        return FirstPassSchemaOutcome(
+            status="invalid", validator_event_code="SCHEMA_INVALID"
+        )
+    return FirstPassSchemaOutcome(status="valid", validator_event_code="SCHEMA_VALID")
+
+
+def _repair_outcome(trace: IntentRunTrace) -> RepairOutcome:
+    event = {
+        "not_attempted": "REPAIR_NOT_ATTEMPTED",
+        "succeeded": "REPAIR_SUCCEEDED",
+        "failed": "REPAIR_FAILED",
+    }[trace.repair_event]
+    return RepairOutcome(status=trace.repair_event, validator_event_code=event)
 
 
 def _deterministic_predictions(
@@ -365,9 +866,9 @@ def _deterministic_predictions(
         )
         try:
             normalized = normalize_request(context)
-            first = generate_semantic_candidates(normalized, catalog)
-            second = generate_semantic_candidates(normalized, catalog)
-            candidate_groups = _candidate_groups(first)
+            first = _deterministic_view(context, normalized, catalog)
+            second = _deterministic_view(context, normalized, catalog)
+            candidate_groups = _candidate_groups_from_view(first)
             reproducible = canonical_json_bytes(first) == canonical_json_bytes(second)
             stable_error_codes: tuple[str, ...] = ()
             pipeline_outcome = "semantic_resolution"
@@ -391,7 +892,8 @@ def _deterministic_predictions(
                 tags=(),
                 blocking_issue_codes=stable_error_codes,
                 first_pass_schema=FirstPassSchemaOutcome(
-                    status="valid", validator_event_code="SCHEMA_VALID"
+                    status="not_attempted",
+                    validator_event_code="SCHEMA_NOT_ATTEMPTED",
                 ),
                 repair=RepairOutcome(
                     status="not_attempted",
@@ -407,13 +909,23 @@ def _deterministic_predictions(
     return tuple(predictions)
 
 
-def _candidate_groups(candidate_set: SemanticCandidateSet) -> tuple[CandidateGroup, ...]:
-    return tuple(
-        CandidateGroup(
-            mention_id=group.mention.mention_id,
-            candidate_ids=tuple(item.semantic_id for item in group.items),
-        )
-        for group in candidate_set.by_mention
+def _deterministic_view(
+    context: RequestContext,
+    normalized: Any,
+    catalog: SemanticCatalogSnapshot,
+) -> ResolverView:
+    return build_resolver_view(
+        context=context,
+        normalized=normalized,
+        literals=extract_literals(normalized),
+        semantic_candidates=generate_semantic_candidates(normalized, catalog),
+        entity_candidates={},
+        manifest=_current_manifest(catalog),
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version=SYNTHETIC_DATASET_VERSION,
+            manifest_hash="0" * 64,
+        ),
+        catalog=catalog,
     )
 
 
@@ -494,6 +1006,8 @@ def _provenance(
             "prompt_version",
             "resolution_bundle_canonical_sha256",
             "resolution_bundle_raw_sha256",
+            "run_trace_bundle_canonical_sha256",
+            "run_trace_bundle_raw_sha256",
         ]
         if deterministic
         else []

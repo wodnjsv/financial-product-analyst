@@ -28,6 +28,9 @@ from financial_agent.intent.evaluation import (
     FirstPassSchemaOutcome,
     IntentDraftBundle,
     IntentDraftCaseArtifact,
+    IntentRunTrace,
+    IntentRunTraceBundle,
+    AttemptTrace,
     PredictionDataset,
     RegressionDataset,
     RepairOutcome,
@@ -42,9 +45,19 @@ from financial_agent.intent.evaluation import (
     evaluate_ood,
     evaluate_predictions,
     parse_strict_json,
+    replay_validation_probes,
 )
-from financial_agent.contracts.canonical import build_request_key, canonical_json_bytes
-from financial_agent.contracts.enums import IntentType, ProductFamily
+from financial_agent.contracts.canonical import (
+    build_request_key,
+    canonical_json_bytes,
+    canonical_sha256,
+)
+from financial_agent.contracts.enums import (
+    Cardinality,
+    IntentType,
+    ProductFamily,
+    ReferenceMentionType,
+)
 from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.candidates import generate_semantic_candidates
 from financial_agent.intent.draft import (
@@ -54,22 +67,29 @@ from financial_agent.intent.draft import (
     IntentFrameDraft,
     IntentResolutionDraft,
     ProductFamilyChoice,
+    ReferenceHint,
     SemanticFlagHint,
     SlotAssignment,
 )
+from financial_agent.intent.errors import ResolverContractError
 from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.context import (
+    ResolutionFinalizationMetadata,
+    finalize_resolution,
+    validate_context_graph,
+)
 from financial_agent.intent.normalization import normalize_request
-from financial_agent.intent.resolution import ValidatedIntentResolution
 from financial_agent.intent.types import (
     ChoiceState,
     ContextLinkType,
-    ResolutionStatus,
+    ReferenceForm,
+    ReferenceTargetKind,
     Selector,
     SemanticTag,
     SlotKind,
     SourceRole,
 )
-from financial_agent.intent.validation import derive_semantic_tags
+from financial_agent.intent.validation import derive_semantic_tags, validate_semantics
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
     ActiveDatasetPin,
@@ -78,6 +98,9 @@ from financial_agent.intent.view import (
     PROMPT_VERSION,
     RESOLVER_SCHEMA_VERSION,
     ResolverView,
+    ResolverViewConcept,
+    ResolverViewSemanticCandidate,
+    ResolverViewSemanticCandidateGroup,
     build_manifest,
 )
 
@@ -85,12 +108,14 @@ from financial_agent.intent.view import (
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REGRESSION_PATH = Path(__file__).with_name("intent_resolution_regression.json")
 HELDOUT_V1_PATH = Path(__file__).with_name("intent_resolution_heldout_ko.json")
-HELDOUT_PATH = Path(__file__).with_name("intent_resolution_heldout_ko_v2.json")
+HELDOUT_V2_PATH = Path(__file__).with_name("intent_resolution_heldout_ko_v2.json")
+HELDOUT_PATH = Path(__file__).with_name("intent_resolution_heldout_ko_v3.json")
 GOLD_PATH = PROJECT_ROOT / "tests" / "gold" / "core_questions.json"
 SCRIPT_PATH = PROJECT_ROOT / "scripts" / "evaluate_intent_resolver.py"
 REGRESSION_SHA256 = "5f917cbd326d4b4a27d260aecaf63460dffa4302dcabd5e9599efe7c90b1b18b"
 HELDOUT_V1_SHA256 = "d23eae797026ed66fa2f52ae49a602f991bd9b6d02b890c799342c0a6145f63e"
-HELDOUT_SHA256 = "de015673ad4fa327ed3369997120f8465fb9b14e4998a924a8b90eaf45c450fb"
+HELDOUT_V2_SHA256 = "de015673ad4fa327ed3369997120f8465fb9b14e4998a924a8b90eaf45c450fb"
+HELDOUT_SHA256 = "f0cb6313d7954a9f75d1fe1c691a2021c0b2e53d6681f07eb0f3e2787a9944b4"
 
 
 def _frame(
@@ -618,18 +643,23 @@ def test_heldout_fixture_has_frozen_distribution_and_safe_synthetic_content() ->
 def test_fixture_hashes_are_literal_and_frozen() -> None:
     assert REGRESSION_SHA256 != "TO_BE_FROZEN"
     assert HELDOUT_V1_SHA256 != "TO_BE_FROZEN"
+    assert HELDOUT_V2_SHA256 != "TO_BE_FROZEN"
     assert HELDOUT_SHA256 != "TO_BE_FROZEN"
     assert hashlib.sha256(REGRESSION_PATH.read_bytes()).hexdigest() == REGRESSION_SHA256
     assert (
         hashlib.sha256(HELDOUT_V1_PATH.read_bytes()).hexdigest()
         == HELDOUT_V1_SHA256
     )
+    assert (
+        hashlib.sha256(HELDOUT_V2_PATH.read_bytes()).hexdigest()
+        == HELDOUT_V2_SHA256
+    )
     assert hashlib.sha256(HELDOUT_PATH.read_bytes()).hexdigest() == HELDOUT_SHA256
 
 
 def test_v2_preserves_v1_questions_and_candidate_gold_without_tuning() -> None:
     v1 = _load_json(HELDOUT_V1_PATH)
-    v2 = parse_strict_json(HELDOUT_PATH.read_bytes(), EvaluationDataset)
+    v2 = parse_strict_json(HELDOUT_V2_PATH.read_bytes(), EvaluationDataset)
     v1_by_id = {case["case_id"]: case for case in v1["cases"]}
 
     assert set(v1_by_id) == {case.case_id for case in v2.cases}
@@ -638,6 +668,31 @@ def test_v2_preserves_v1_questions_and_candidate_gold_without_tuning() -> None:
         assert list(case.expected_candidate_ids) == v1_by_id[case.case_id][
             "expected_candidate_ids"
         ]
+
+
+def test_v3_preserves_v2_candidate_gold_and_uses_representative_executable_probes(
+) -> None:
+    v2 = parse_strict_json(HELDOUT_V2_PATH.read_bytes(), EvaluationDataset)
+    v3 = parse_strict_json(HELDOUT_PATH.read_bytes(), EvaluationDataset)
+    v2_by_id = {case.case_id: case for case in v2.cases}
+
+    assert v3.schema_version == "3.0"
+    assert set(v2_by_id) == {case.case_id for case in v3.cases}
+    assert all(
+        case.expected_candidate_ids == v2_by_id[case.case_id].expected_candidate_ids
+        for case in v3.cases
+    )
+    assert Counter(
+        probe.kind for case in v3.cases for probe in case.validation_probes
+    ) == {"unknown_id": 10, "invalid_context_graph": 10}
+    assert all(
+        probe.executable for case in v3.cases for probe in case.validation_probes
+    )
+    assert all(
+        not case.validation_probes
+        for case in v3.cases
+        if case.expected_pipeline_outcome == "pre_model_rejected"
+    )
 
 
 _POLICY_TAGS_BY_CASE = {
@@ -732,7 +787,7 @@ def _tag_draft(case: EvaluationCase) -> IntentResolutionDraft:
 
 
 def test_v2_tags_match_the_runtime_deterministic_authority_for_all_cases() -> None:
-    dataset = parse_strict_json(HELDOUT_PATH.read_bytes(), EvaluationDataset)
+    dataset = parse_strict_json(HELDOUT_V2_PATH.read_bytes(), EvaluationDataset)
     catalog = load_catalog(PROJECT_ROOT)
     for case in dataset.cases:
         if case.expected_pipeline_outcome == "pre_model_rejected":
@@ -745,7 +800,7 @@ def test_v2_tags_match_the_runtime_deterministic_authority_for_all_cases() -> No
 
 def test_v2_compound_dependencies_and_literal_limits_are_independently_adjudicated(
 ) -> None:
-    dataset = parse_strict_json(HELDOUT_PATH.read_bytes(), EvaluationDataset)
+    dataset = parse_strict_json(HELDOUT_V2_PATH.read_bytes(), EvaluationDataset)
     cases = {case.case_id: case for case in dataset.cases}
     dependent = {
         *(f"HKO-CMP-{number:03d}" for number in range(1, 10)),
@@ -780,7 +835,7 @@ def test_v2_compound_dependencies_and_literal_limits_are_independently_adjudicat
 
 
 def test_v2_oversized_cases_are_pre_model_rejections_not_semantic_ood() -> None:
-    dataset = parse_strict_json(HELDOUT_PATH.read_bytes(), EvaluationDataset)
+    dataset = parse_strict_json(HELDOUT_V2_PATH.read_bytes(), EvaluationDataset)
     oversized = [
         case for case in dataset.cases if case.subcategory == "oversized_boundary"
     ]
@@ -928,29 +983,199 @@ def test_cli_refuses_overwriting_a_supplied_dataset(tmp_path: Path) -> None:
     assert supplied.read_bytes() == HELDOUT_PATH.read_bytes()
 
 
+def test_round2_prediction_bundle_rejects_semantic_self_report() -> None:
+    """A producer cannot smuggle perfect metrics beside unrelated sidecars."""
+
+    catalog = load_catalog(PROJECT_ROOT)
+    manifest = build_manifest(
+        catalog,
+        {
+            "normalizer_version": NORMALIZER_VERSION,
+            "candidate_policy_version": CANDIDATE_POLICY_VERSION,
+            "resolver_schema_version": RESOLVER_SCHEMA_VERSION,
+            "prompt_version": PROMPT_VERSION,
+            "adapter_version": ADAPTER_VERSION,
+        },
+    )
+    payload = {
+        "schema_version": "2.0",
+        "mode": "decoupled",
+        "dataset_id": "synthetic-cli",
+        "evaluation_dataset_sha256": "a" * 64,
+        "dataset_version": "synthetic-dataset-v3",
+        "dataset_manifest_hash": "d" * 64,
+        "build_manifest": manifest,
+        "model_id": "stored-model-v3",
+        "bounded_view_bundle_raw_sha256": "b" * 64,
+        "bounded_view_bundle_canonical_sha256": "c" * 64,
+        "draft_bundle_raw_sha256": "e" * 64,
+        "draft_bundle_canonical_sha256": "f" * 64,
+        "predictions": (_synthetic_predictions()[0],),
+    }
+
+    with pytest.raises(ValidationError, match="predictions"):
+        PredictionDataset.model_validate(payload)
+
+
+def test_round2_output_hardlink_cannot_modify_supplied_input(tmp_path: Path) -> None:
+    report_dir = PROJECT_ROOT / "build" / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    supplied = tmp_path / "hardlinked-dataset.json"
+    supplied.write_bytes(HELDOUT_PATH.read_bytes())
+    original = supplied.read_bytes()
+    output = report_dir / f"pytest-{tmp_path.name}-hardlink.json"
+    output.unlink(missing_ok=True)
+    os.link(supplied, output)
+    try:
+        result = _run_cli(
+            "--mode",
+            "deterministic",
+            "--dataset",
+            str(supplied),
+            "--output",
+            str(output),
+        )
+
+        assert result.returncode == 2
+        assert "EVALUATION_FIXTURE_OVERWRITE_REFUSED" in result.stderr
+        assert supplied.read_bytes() == original
+    finally:
+        output.unlink(missing_ok=True)
+
+
 def _stored_artifacts(
-    cases: tuple[EvaluationCase, ...],
     manifest: object,
-) -> tuple[ResolverViewBundle, IntentDraftBundle, ValidatedResolutionBundle]:
-    dataset_version = "synthetic-dataset-v2"
+) -> tuple[
+    EvaluationDataset,
+    ResolverViewBundle,
+    IntentDraftBundle,
+    ValidatedResolutionBundle,
+    IntentRunTraceBundle,
+]:
+    dataset_version = "synthetic-dataset-v3"
     dataset_manifest_hash = "d" * 64
+    question = "국내 ETF 순자산을 비교해줘"
+    case = _synthetic_cases()[0].model_copy(
+        update={
+            "case_id": "stored-001",
+            "question": question,
+            "segments": (
+                EvaluationSegment(segment_id="s1", ordinal=0, text=question),
+            ),
+            "expected_candidate_ids": ("aum",),
+            "expected_frames": (
+                EvaluationFrame(
+                    frame_id="f1",
+                    ordinal=0,
+                    action_ids=("compare",),
+                    product_family_ids=("domestic_etf",),
+                    entity_type_ids=("FinancialProduct",),
+                    slots=(ExpectedSlot(slot_kind="metric", value_ids=("aum",)),),
+                ),
+            ),
+            "expected_references": (),
+            "expected_context_links": (),
+            "expected_slot_mutations": (),
+            "expected_resolution_status": "resolved",
+            "expected_tags": (),
+            "validation_probes": (
+                EvaluationProbe(
+                    probe_id="probe-unknown-stored",
+                    kind="unknown_id",
+                    subject_id="unknown:stored",
+                    frame_ordinal=0,
+                    slot_kind="metric",
+                    expected_rejection_code="MODEL_UNKNOWN_ID",
+                ),
+            ),
+            "ood_type": None,
+        }
+    )
+    heldout = parse_strict_json(HELDOUT_PATH.read_bytes(), EvaluationDataset)
+    pre_model_case = next(
+        item for item in heldout.cases if item.case_id == "HKO-NEG-LEN-001"
+    )
+    dataset = EvaluationDataset(
+        split_id="synthetic-cli", cases=(case, pre_model_case)
+    )
+    catalog = load_catalog(PROJECT_ROOT)
+    concept = catalog.concepts_by_id["aum"]
     view = ResolverView(
         build_manifest=manifest,
         active_dataset_pin=ActiveDatasetPin(
             dataset_version=dataset_version,
             manifest_hash=dataset_manifest_hash,
         ),
-        product_family_ids=(),
-        action_ids=(),
-        semantic_candidates=(),
-        concept_definitions=(),
+        product_family_ids=("domestic_etf",),
+        action_ids=("compare",),
+        semantic_candidates=(
+            ResolverViewSemanticCandidateGroup(
+                mention_id="mention-aum",
+                items=(
+                    ResolverViewSemanticCandidate(
+                        semantic_id="aum",
+                        match_kind="direct_alias",
+                        score=1_000_000,
+                    ),
+                ),
+            ),
+        ),
+        concept_definitions=(
+            ResolverViewConcept(
+                concept_id=concept.id,
+                kind=concept.kind,
+                definition_ko=concept.definition_ko,
+                value_kind=concept.value_kind,
+                allowed_product_families=tuple(sorted(concept.allowed_product_families)),
+                allowed_ontology_types=tuple(sorted(concept.allowed_ontology_types)),
+                required_qualifiers=tuple(sorted(concept.required_qualifiers)),
+                allowed_operators=tuple(sorted(concept.allowed_operators)),
+                missingness_sensitive=concept.missingness_sensitive,
+                normalization_rule=concept.normalization_rule,
+            ),
+        ),
         relation_definitions=(),
         literal_candidates=(),
         entity_candidates=(),
     )
+    span = EvidenceSpan(
+        span_id="span-1", segment_id="s1", start_char=0, end_char=2, text="국내"
+    )
     draft = IntentResolutionDraft(
-        evidence_spans=(),
-        intent_frames=(),
+        evidence_spans=(span,),
+        intent_frames=(
+            IntentFrameDraft(
+                frame_id="f1",
+                ordinal=0,
+                segment_ids=("s1",),
+                evidence_span_ids=("span-1",),
+                normalized_intent_argument=question,
+                action_choice=ActionChoice(
+                    state=ChoiceState.SELECTED,
+                    selected_ids=(IntentType.COMPARE,),
+                    evidence_span_ids=("span-1",),
+                    reason_code="explicit",
+                ),
+                product_family_choice=ProductFamilyChoice(
+                    state=ChoiceState.SELECTED,
+                    selected_ids=(ProductFamily.DOMESTIC_ETF,),
+                    evidence_span_ids=("span-1",),
+                    reason_code="explicit",
+                ),
+                entity_type_ids=("FinancialProduct",),
+                entity_hint_ids=(),
+                slot_assignments=(
+                    SlotAssignment(
+                        slot_assignment_id="slot-aum",
+                        slot_kind=SlotKind.METRIC,
+                        value_ids=("aum",),
+                        evidence_span_ids=("span-1",),
+                        reason_code="explicit",
+                    ),
+                ),
+                produced_result_hints=(SourceRole.CANDIDATES,),
+            ),
+        ),
         entity_hints=(),
         reference_hints=(),
         context_link_hints=(),
@@ -958,48 +1183,97 @@ def _stored_artifacts(
         semantic_flag_hints=(),
         frame_limit_exceeded=False,
     )
-    resolutions = tuple(
-        ValidatedResolutionCaseArtifact(
-            case_id=case.case_id,
-            artifact=ValidatedIntentResolution(
-                request_key="1" * 64,
-                run_id=f"run-{case.case_id}",
-                dataset_version=dataset_version,
-                producer="evaluation-test",
-                created_at=datetime(2026, 8, 31, tzinfo=UTC),
-                resolution_id=f"resolution-{case.case_id}",
-                draft_hash="e" * 64,
-                canonical_frames=(),
-                context_links=(),
-                final_tags=(),
-                resolution_status=ResolutionStatus.UNMAPPED,
-                issues=(),
-                validation_events=(),
-                build_manifest=manifest,
-                active_dataset_manifest_hash=dataset_manifest_hash,
-                repair_used=False,
-                invalid_attempt_hashes=(),
-            ),
-        )
-        for case in cases
+    created_at = datetime(2026, 8, 31, tzinfo=UTC)
+    context = RequestContext(
+        request_key=build_request_key(case.case_id, question, dataset_version, "1.0"),
+        run_id="run-stored-001",
+        dataset_version=dataset_version,
+        producer="evaluation-test",
+        created_at=created_at,
+        question_id=case.case_id,
+        question=question,
+        segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+        deadline_at=created_at + timedelta(seconds=55),
+    )
+    semantic = validate_semantics(
+        draft, context, normalize_request(context), view, catalog
+    )
+    resolution = finalize_resolution(
+        validate_context_graph(semantic),
+        ResolutionFinalizationMetadata(
+            request_key=context.request_key,
+            run_id=context.run_id,
+            dataset_version=dataset_version,
+            producer=context.producer,
+            created_at=created_at,
+            resolution_id="resolution-stored-001",
+            draft_hash=canonical_sha256(draft),
+            build_manifest=manifest,
+            active_dataset_manifest_hash=dataset_manifest_hash,
+        ),
+    )
+    trace = IntentRunTrace(
+        case_id=case.case_id,
+        model_event="model_called",
+        first_attempt=AttemptTrace(
+            payload_sha256="a" * 64,
+            payload_size_bytes=128,
+            parser_event="draft_parsed",
+            validator_event="validated",
+            stable_code="RESOLUTION_VALIDATED",
+            parsed_draft_sha256=canonical_sha256(draft),
+        ),
+        repair_attempt=None,
+        repair_event="not_attempted",
+        latency_ms=12,
+        prompt_tokens=40,
+        completion_tokens=20,
+        stable_error_codes=(),
+    )
+    pre_model_trace = IntentRunTrace(
+        case_id=pre_model_case.case_id,
+        model_event="model_not_called",
+        first_attempt=None,
+        repair_attempt=None,
+        repair_event="not_attempted",
+        latency_ms=1,
+        prompt_tokens=0,
+        completion_tokens=0,
+        stable_error_codes=("REQUEST_CONTRACT_INVALID",),
     )
     return (
+        dataset,
         ResolverViewBundle(
             dataset_id="synthetic-cli",
-            cases=tuple(
-                ResolverViewCaseArtifact(case_id=case.case_id, artifact=view)
-                for case in cases
+            cases=(
+                ResolverViewCaseArtifact(case_id=case.case_id, artifact=view),
+                ResolverViewCaseArtifact(
+                    case_id=pre_model_case.case_id, artifact=None
+                ),
             ),
         ),
         IntentDraftBundle(
             dataset_id="synthetic-cli",
-            cases=tuple(
-                IntentDraftCaseArtifact(case_id=case.case_id, artifact=draft)
-                for case in cases
+            cases=(
+                IntentDraftCaseArtifact(case_id=case.case_id, artifact=draft),
+                IntentDraftCaseArtifact(
+                    case_id=pre_model_case.case_id, artifact=None
+                ),
             ),
         ),
         ValidatedResolutionBundle(
-            dataset_id="synthetic-cli", cases=resolutions
+            dataset_id="synthetic-cli",
+            cases=(
+                ValidatedResolutionCaseArtifact(
+                    case_id=case.case_id, artifact=resolution
+                ),
+                ValidatedResolutionCaseArtifact(
+                    case_id=pre_model_case.case_id, artifact=None
+                ),
+            ),
+        ),
+        IntentRunTraceBundle(
+            dataset_id="synthetic-cli", cases=(trace, pre_model_trace)
         ),
     )
 
@@ -1013,11 +1287,6 @@ def _write_contract(path: Path, value: object) -> bytes:
 def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
     tmp_path: Path,
 ) -> None:
-    cases = _synthetic_cases()[:2]
-    predictions = _synthetic_predictions()[:2]
-    dataset = EvaluationDataset(split_id="synthetic-cli", cases=cases)
-    dataset_path = tmp_path / "dataset.json"
-    dataset_bytes = _write_contract(dataset_path, dataset)
     catalog = load_catalog(PROJECT_ROOT)
     manifest = build_manifest(
         catalog,
@@ -1029,13 +1298,19 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
             "adapter_version": ADAPTER_VERSION,
         },
     )
-    view_bundle, draft_bundle, resolution_bundle = _stored_artifacts(cases, manifest)
+    dataset, view_bundle, draft_bundle, resolution_bundle, trace_bundle = (
+        _stored_artifacts(manifest)
+    )
+    dataset_path = tmp_path / "dataset.json"
+    dataset_bytes = _write_contract(dataset_path, dataset)
     view_path = tmp_path / "views.json"
     draft_path = tmp_path / "drafts.json"
     resolution_path = tmp_path / "resolutions.json"
+    trace_path = tmp_path / "traces.json"
     view_raw = _write_contract(view_path, view_bundle)
     draft_raw = _write_contract(draft_path, draft_bundle)
     resolution_raw = _write_contract(resolution_path, resolution_bundle)
+    trace_raw = _write_contract(trace_path, trace_bundle)
     sidecar_values = {
         "bounded_view_bundle_raw_sha256": hashlib.sha256(view_raw).hexdigest(),
         "bounded_view_bundle_canonical_sha256": hashlib.sha256(
@@ -1049,36 +1324,30 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
         "resolution_bundle_canonical_sha256": hashlib.sha256(
             canonical_json_bytes(resolution_bundle)
         ).hexdigest(),
+        "run_trace_bundle_raw_sha256": hashlib.sha256(trace_raw).hexdigest(),
+        "run_trace_bundle_canonical_sha256": hashlib.sha256(
+            canonical_json_bytes(trace_bundle)
+        ).hexdigest(),
     }
     for mode in ("decoupled", "full"):
         bundle = PredictionDataset(
             mode=mode,
             dataset_id="synthetic-cli",
             evaluation_dataset_sha256=hashlib.sha256(dataset_bytes).hexdigest(),
-            dataset_version="synthetic-dataset-v2",
+            dataset_version="synthetic-dataset-v3",
             dataset_manifest_hash="d" * 64,
             build_manifest=manifest,
             model_id="stored-model-v2",
-            bounded_view_bundle_raw_sha256=(
-                sidecar_values["bounded_view_bundle_raw_sha256"]
-                if mode == "decoupled"
-                else None
-            ),
-            bounded_view_bundle_canonical_sha256=(
-                sidecar_values["bounded_view_bundle_canonical_sha256"]
-                if mode == "decoupled"
-                else None
-            ),
-            draft_bundle_raw_sha256=(
-                sidecar_values["draft_bundle_raw_sha256"]
-                if mode == "decoupled"
-                else None
-            ),
-            draft_bundle_canonical_sha256=(
-                sidecar_values["draft_bundle_canonical_sha256"]
-                if mode == "decoupled"
-                else None
-            ),
+            bounded_view_bundle_raw_sha256=sidecar_values[
+                "bounded_view_bundle_raw_sha256"
+            ],
+            bounded_view_bundle_canonical_sha256=sidecar_values[
+                "bounded_view_bundle_canonical_sha256"
+            ],
+            draft_bundle_raw_sha256=sidecar_values["draft_bundle_raw_sha256"],
+            draft_bundle_canonical_sha256=sidecar_values[
+                "draft_bundle_canonical_sha256"
+            ],
             resolution_bundle_raw_sha256=(
                 sidecar_values["resolution_bundle_raw_sha256"]
                 if mode == "full"
@@ -1089,7 +1358,12 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
                 if mode == "full"
                 else None
             ),
-            predictions=predictions,
+            run_trace_bundle_raw_sha256=sidecar_values[
+                "run_trace_bundle_raw_sha256"
+            ],
+            run_trace_bundle_canonical_sha256=sidecar_values[
+                "run_trace_bundle_canonical_sha256"
+            ],
         )
         predictions_path = tmp_path / f"{mode}-predictions.json"
         prediction_raw = _write_contract(predictions_path, bundle)
@@ -1101,14 +1375,16 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
             str(dataset_path),
             "--predictions",
             str(predictions_path),
+            "--bounded-views",
+            str(view_path),
+            "--drafts",
+            str(draft_path),
+            "--run-traces",
+            str(trace_path),
             "--output",
             str(output),
         ]
-        if mode == "decoupled":
-            arguments.extend(
-                ["--bounded-views", str(view_path), "--drafts", str(draft_path)]
-            )
-        else:
+        if mode == "full":
             arguments.extend(["--resolutions", str(resolution_path)])
         result = _run_cli(*arguments)
         assert result.returncode == 0, result.stderr
@@ -1117,12 +1393,78 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
         assert report["provenance"]["prompt_version"] == PROMPT_VERSION
         assert report["provenance"]["adapter_version"] == ADAPTER_VERSION
         assert report["provenance"]["model_id"] == "stored-model-v2"
-        assert report["provenance"]["dataset_version"] == "synthetic-dataset-v2"
+        assert report["provenance"]["dataset_version"] == "synthetic-dataset-v3"
         assert report["provenance"]["dataset_manifest_hash"] == "d" * 64
         assert report["provenance"]["prediction_bundle_sha256"] == hashlib.sha256(
             prediction_raw
         ).hexdigest()
         assert report["provenance"]["producer_manifest_matches_current"] is True
+        assert report["metrics"]["candidate"]["recall_at_1"]["numerator"] == 1
+        assert report["metrics"]["frame"]["joint_exact_match"]["numerator"] == 2
+        assert report["metrics"]["validation"]["unknown_id_acceptance"][
+            "denominator"
+        ] == 1
+        assert report["metrics"]["validation"]["schema_validity"]["denominator"] == 1
+        assert report["metrics"]["diagnostics"]["pipeline_outcome_exact"][
+            "numerator"
+        ] == 2
+        if mode == "decoupled":
+            final_draft_hash = trace_bundle.cases[0].first_attempt.parsed_draft_sha256
+            assert final_draft_hash is not None
+            rejected_first = AttemptTrace(
+                payload_sha256="e" * 64,
+                payload_size_bytes=32,
+                parser_event="draft_parsed",
+                validator_event="validator_rejected",
+                stable_code="MODEL_UNKNOWN_ID",
+                parsed_draft_sha256="f" * 64,
+            )
+            rejected_repair = rejected_first.model_copy(
+                update={
+                    "payload_sha256": "9" * 64,
+                    "parsed_draft_sha256": final_draft_hash,
+                }
+            )
+            contradictory_trace = trace_bundle.cases[0].model_copy(
+                update={
+                    "first_attempt": rejected_first,
+                    "repair_attempt": rejected_repair,
+                    "repair_event": "failed",
+                    "stable_error_codes": ("MODEL_UNKNOWN_ID",),
+                }
+            )
+            contradictory_traces = trace_bundle.model_copy(
+                update={
+                    "cases": (contradictory_trace, *trace_bundle.cases[1:])
+                }
+            )
+            contradictory_trace_path = tmp_path / "contradictory-traces.json"
+            contradictory_trace_raw = _write_contract(
+                contradictory_trace_path, contradictory_traces
+            )
+            contradictory_bundle = bundle.model_copy(
+                update={
+                    "run_trace_bundle_raw_sha256": hashlib.sha256(
+                        contradictory_trace_raw
+                    ).hexdigest(),
+                    "run_trace_bundle_canonical_sha256": hashlib.sha256(
+                        canonical_json_bytes(contradictory_traces)
+                    ).hexdigest(),
+                }
+            )
+            contradictory_path = tmp_path / "contradictory-predictions.json"
+            _write_contract(contradictory_path, contradictory_bundle)
+            contradictory_result = _run_cli(
+                "--mode", "decoupled",
+                "--dataset", str(dataset_path),
+                "--predictions", str(contradictory_path),
+                "--bounded-views", str(view_path),
+                "--drafts", str(draft_path),
+                "--run-traces", str(contradictory_trace_path),
+                "--output", str(_report_path(tmp_path, "contradictory-trace")),
+            )
+            assert contradictory_result.returncode == 2
+            assert "EVALUATION_TRACE_MISMATCH" in contradictory_result.stderr
 
     missing_sidecars = _run_cli(
         "--mode", "decoupled",
@@ -1144,6 +1486,7 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
         "--predictions", str(tmp_path / "decoupled-predictions.json"),
         "--bounded-views", str(view_path),
         "--drafts", str(draft_path),
+        "--run-traces", str(trace_path),
         "--output", str(_report_path(tmp_path, "tampered-sidecar")),
     )
     assert tampered.returncode == 2
@@ -1156,9 +1499,18 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
         / "reports"
         / f"pytest-{tmp_path.name}-full-report.json"
     )
-    changed_prediction = predictions[0].model_copy(update={"completion_tokens": 6})
+    changed_trace = trace_bundle.cases[0].model_copy(update={"completion_tokens": 21})
+    changed_trace_bundle = trace_bundle.model_copy(
+        update={"cases": (changed_trace, *trace_bundle.cases[1:])}
+    )
+    changed_trace_raw = _write_contract(tmp_path / "changed-traces.json", changed_trace_bundle)
     changed_bundle = bundle.model_copy(
-        update={"predictions": (changed_prediction, *predictions[1:])}
+        update={
+            "run_trace_bundle_raw_sha256": hashlib.sha256(changed_trace_raw).hexdigest(),
+            "run_trace_bundle_canonical_sha256": hashlib.sha256(
+                canonical_json_bytes(changed_trace_bundle)
+            ).hexdigest(),
+        }
     )
     changed_path = tmp_path / "changed-full-predictions.json"
     changed_raw = _write_contract(changed_path, changed_bundle)
@@ -1167,7 +1519,10 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
         "--mode", "full",
         "--dataset", str(dataset_path),
         "--predictions", str(changed_path),
+        "--bounded-views", str(view_path),
+        "--drafts", str(draft_path),
         "--resolutions", str(resolution_path),
+        "--run-traces", str(tmp_path / "changed-traces.json"),
         "--output", str(changed_output),
     )
     assert changed_result.returncode == 0, changed_result.stderr
@@ -1184,7 +1539,10 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
         "--mode", "full",
         "--dataset", str(dataset_path),
         "--predictions", str(tmp_path / "full-predictions.json"),
+        "--bounded-views", str(view_path),
+        "--drafts", str(draft_path),
         "--resolutions", str(resolution_path),
+        "--run-traces", str(trace_path),
         "--output", str(_report_path(tmp_path, "repacked-dataset")),
     )
     assert repacked_dataset.returncode == 2
@@ -1199,11 +1557,205 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
         "--mode", "full",
         "--dataset", str(dataset_path),
         "--predictions", str(wrong_manifest_path),
+        "--bounded-views", str(view_path),
+        "--drafts", str(draft_path),
         "--resolutions", str(resolution_path),
+        "--run-traces", str(trace_path),
         "--output", str(_report_path(tmp_path, "wrong-manifest")),
     )
     assert wrong_manifest_result.returncode == 2
     assert "EVALUATION_INPUT_MISMATCH" in wrong_manifest_result.stderr
+
+
+def test_round2_validation_probes_replay_production_validators() -> None:
+    catalog = load_catalog(PROJECT_ROOT)
+    manifest = build_manifest(
+        catalog,
+        {
+            "normalizer_version": NORMALIZER_VERSION,
+            "candidate_policy_version": CANDIDATE_POLICY_VERSION,
+            "resolver_schema_version": RESOLVER_SCHEMA_VERSION,
+            "prompt_version": PROMPT_VERSION,
+            "adapter_version": ADAPTER_VERSION,
+        },
+    )
+    dataset, views, drafts, _, _ = _stored_artifacts(manifest)
+    case = dataset.cases[0]
+    view = views.cases[0].artifact
+    draft = drafts.cases[0].artifact
+    assert view is not None and draft is not None
+    created_at = datetime(2026, 8, 31, tzinfo=UTC)
+    context = RequestContext(
+        request_key=build_request_key(
+            case.case_id, case.question, "synthetic-dataset-v3", "1.0"
+        ),
+        run_id="run-stored-001",
+        dataset_version="synthetic-dataset-v3",
+        producer="evaluation-test",
+        created_at=created_at,
+        question_id=case.case_id,
+        question=case.question,
+        segments=(Segment(segment_id="s1", ordinal=0, text=case.question),),
+        deadline_at=created_at + timedelta(seconds=55),
+    )
+    normalized = normalize_request(context)
+
+    unknown = replay_validation_probes(
+        case, draft, context, normalized, view, catalog
+    )
+    assert [(item.decision, item.stable_code) for item in unknown] == [
+        ("rejected", "MODEL_UNKNOWN_ID")
+    ]
+
+    second = draft.intent_frames[0].model_copy(
+        update={
+            "frame_id": "f2",
+            "ordinal": 1,
+            "slot_assignments": (),
+            "produced_result_hints": (),
+        }
+    )
+    graph_draft = draft.model_copy(
+        update={
+            "intent_frames": (*draft.intent_frames, second),
+            "reference_hints": (
+                ReferenceHint(
+                    reference_id="ref-1",
+                    segment_id="s1",
+                    evidence_span_ids=("span-1",),
+                    surface_presence=ReferenceMentionType.EXPLICIT,
+                    reference_form=ReferenceForm.DEMONSTRATIVE,
+                    grammatical_number=("plural",),
+                    expected_target_kind=(ReferenceTargetKind.RESULT_SET,),
+                    expected_cardinality=(Cardinality.MANY,),
+                    candidate_target_frame_ids=("f1",),
+                    candidate_target_mention_ids=(),
+                    status="resolved",
+                    reason_code="explicit",
+                ),
+            ),
+            "context_link_hints": (
+                ContextLinkHint(
+                    context_link_id="link-1",
+                    reference_id="ref-1",
+                    link_type=ContextLinkType.CONSUME_RESULT_SET,
+                    source_role=SourceRole.CANDIDATES,
+                    selector=(Selector.ALL,),
+                    selector_literal_candidate_id=(),
+                    producer_frame_id="f1",
+                    consumer_frame_id="f2",
+                    target_slot_kind=(),
+                ),
+            ),
+        }
+    )
+    graph_case = case.model_copy(
+        update={
+            "validation_probes": (
+                EvaluationProbe(
+                    probe_id="probe-graph-stored",
+                    kind="invalid_context_graph",
+                    subject_id="dangling:stored",
+                    link_ordinal=0,
+                    graph_field="consumer_frame_id",
+                    expected_rejection_code="INVALID_CONTEXT_GRAPH",
+                ),
+            )
+        }
+    )
+    graph = replay_validation_probes(
+        graph_case, graph_draft, context, normalized, view, catalog
+    )
+    assert [(item.decision, item.stable_code) for item in graph] == [
+        ("rejected", "INVALID_CONTEXT_GRAPH")
+    ]
+
+
+def test_round2_validation_probe_rejects_noop_and_invalid_baseline() -> None:
+    catalog = load_catalog(PROJECT_ROOT)
+    manifest = build_manifest(
+        catalog,
+        {
+            "normalizer_version": NORMALIZER_VERSION,
+            "candidate_policy_version": CANDIDATE_POLICY_VERSION,
+            "resolver_schema_version": RESOLVER_SCHEMA_VERSION,
+            "prompt_version": PROMPT_VERSION,
+            "adapter_version": ADAPTER_VERSION,
+        },
+    )
+    dataset, views, drafts, _, _ = _stored_artifacts(manifest)
+    case = dataset.cases[0]
+    view = views.cases[0].artifact
+    draft = drafts.cases[0].artifact
+    assert view is not None and draft is not None
+    created_at = datetime(2026, 8, 31, tzinfo=UTC)
+    context = RequestContext(
+        request_key=build_request_key(
+            case.case_id, case.question, "synthetic-dataset-v3", "1.0"
+        ),
+        run_id="run-stored-001",
+        dataset_version="synthetic-dataset-v3",
+        producer="evaluation-test",
+        created_at=created_at,
+        question_id=case.case_id,
+        question=case.question,
+        segments=(Segment(segment_id="s1", ordinal=0, text=case.question),),
+        deadline_at=created_at + timedelta(seconds=55),
+    )
+    normalized = normalize_request(context)
+    noop_case = case.model_copy(
+        update={
+            "validation_probes": (
+                case.validation_probes[0].model_copy(update={"subject_id": "aum"}),
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="EVALUATION_PROBE_MUTATION_INVALID"):
+        replay_validation_probes(
+            noop_case, draft, context, normalized, view, catalog
+        )
+
+    invalid_assignment = draft.intent_frames[0].slot_assignments[0].model_copy(
+        update={"value_ids": ("unknown:unprobed",)}
+    )
+    invalid_frame = draft.intent_frames[0].model_copy(
+        update={"slot_assignments": (invalid_assignment,)}
+    )
+    invalid_draft = draft.model_copy(update={"intent_frames": (invalid_frame,)})
+    with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_ID"):
+        replay_validation_probes(
+            case, invalid_draft, context, normalized, view, catalog
+        )
+
+
+def test_round2_run_trace_rejects_contradictory_repair_and_raw_payload() -> None:
+    validated = AttemptTrace(
+        payload_sha256="a" * 64,
+        payload_size_bytes=12,
+        parser_event="draft_parsed",
+        validator_event="validated",
+        stable_code="RESOLUTION_VALIDATED",
+        parsed_draft_sha256="b" * 64,
+    )
+    with pytest.raises(ValidationError, match="repair"):
+        IntentRunTrace(
+            case_id="trace-1",
+            model_event="model_called",
+            first_attempt=validated,
+            repair_attempt=validated.model_copy(
+                update={"payload_sha256": "c" * 64}
+            ),
+            repair_event="succeeded",
+            latency_ms=1,
+            prompt_tokens=1,
+            completion_tokens=1,
+            stable_error_codes=(),
+        )
+
+    payload = validated.model_dump(mode="json")
+    payload["raw_model_response"] = "forbidden"
+    with pytest.raises(ValidationError):
+        AttemptTrace.model_validate(payload)
 
 
 def test_review_red_candidate_recall_keeps_later_mention_top_k() -> None:
@@ -1500,7 +2052,10 @@ def test_cli_rejects_gold_sidecar_and_symlink_output_escapes(tmp_path: Path) -> 
         "--mode", "full",
         "--dataset", str(HELDOUT_PATH),
         "--predictions", str(protected_sidecar),
+        "--bounded-views", str(tmp_path / "view.json"),
+        "--drafts", str(tmp_path / "draft.json"),
         "--resolutions", str(resolution_sidecar),
+        "--run-traces", str(tmp_path / "traces.json"),
         "--output", str(protected_sidecar),
     )
     assert sidecar_result.returncode == 2
@@ -1510,14 +2065,23 @@ def test_cli_rejects_gold_sidecar_and_symlink_output_escapes(tmp_path: Path) -> 
     protected_resolution = _report_path(tmp_path, "protected-resolution")
     protected_view = _report_path(tmp_path, "protected-view")
     protected_draft = _report_path(tmp_path, "protected-draft")
-    for path in (protected_resolution, protected_view, protected_draft):
+    protected_trace = _report_path(tmp_path, "protected-trace")
+    for path in (
+        protected_resolution,
+        protected_view,
+        protected_draft,
+        protected_trace,
+    ):
         path.write_text("{}\n", encoding="utf-8")
     protected_runs = (
         _run_cli(
             "--mode", "full",
             "--dataset", str(HELDOUT_PATH),
             "--predictions", str(tmp_path / "prediction.json"),
+            "--bounded-views", str(tmp_path / "view.json"),
+            "--drafts", str(tmp_path / "draft.json"),
             "--resolutions", str(protected_resolution),
+            "--run-traces", str(tmp_path / "traces.json"),
             "--output", str(protected_resolution),
         ),
         _run_cli(
@@ -1526,6 +2090,7 @@ def test_cli_rejects_gold_sidecar_and_symlink_output_escapes(tmp_path: Path) -> 
             "--predictions", str(tmp_path / "prediction.json"),
             "--bounded-views", str(protected_view),
             "--drafts", str(tmp_path / "draft.json"),
+            "--run-traces", str(tmp_path / "traces.json"),
             "--output", str(protected_view),
         ),
         _run_cli(
@@ -1534,7 +2099,17 @@ def test_cli_rejects_gold_sidecar_and_symlink_output_escapes(tmp_path: Path) -> 
             "--predictions", str(tmp_path / "prediction.json"),
             "--bounded-views", str(tmp_path / "view.json"),
             "--drafts", str(protected_draft),
+            "--run-traces", str(tmp_path / "traces.json"),
             "--output", str(protected_draft),
+        ),
+        _run_cli(
+            "--mode", "decoupled",
+            "--dataset", str(HELDOUT_PATH),
+            "--predictions", str(tmp_path / "prediction.json"),
+            "--bounded-views", str(tmp_path / "view.json"),
+            "--drafts", str(tmp_path / "draft.json"),
+            "--run-traces", str(protected_trace),
+            "--output", str(protected_trace),
         ),
     )
     assert all(result.returncode == 2 for result in protected_runs)
@@ -1544,7 +2119,12 @@ def test_cli_rejects_gold_sidecar_and_symlink_output_escapes(tmp_path: Path) -> 
     )
     assert all(
         path.read_text(encoding="utf-8") == "{}\n"
-        for path in (protected_resolution, protected_view, protected_draft)
+        for path in (
+            protected_resolution,
+            protected_view,
+            protected_draft,
+            protected_trace,
+        )
     )
 
 

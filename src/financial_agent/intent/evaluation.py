@@ -13,12 +13,19 @@ import json
 from math import ceil
 from typing import Any, Literal
 
-from pydantic import Field, computed_field, model_validator
+from pydantic import AliasChoices, Field, computed_field, field_validator, model_validator
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
+from financial_agent.contracts.request import RequestContext
+from financial_agent.contracts.canonical import canonical_sha256
 
+from .catalog import SemanticCatalogSnapshot
+from .context import validate_context_graph
 from .draft import IntentResolutionDraft
+from .errors import ResolverContractError
+from .normalization import NormalizedRequest
 from .resolution import ResolverBuildManifest, ValidatedIntentResolution
+from .validation import validate_semantics
 from .view import MAX_CANDIDATES_PER_MENTION, ResolverView
 
 
@@ -64,17 +71,36 @@ class ExpectedSlot(ContractModel):
 class EvaluationFrame(ContractModel):
     frame_id: Identifier
     ordinal: int = Field(ge=0)
-    action_id: Identifier
+    action_ids: tuple[Identifier, ...] = Field(
+        validation_alias=AliasChoices("action_ids", "action_id")
+    )
     product_family_ids: tuple[Identifier, ...]
     entity_type_ids: tuple[Identifier, ...]
     slots: tuple[ExpectedSlot, ...]
 
+    @field_validator("action_ids", mode="before")
+    @classmethod
+    def accept_frozen_v2_action_id(cls, value: object) -> object:
+        """Read frozen v2 fixtures without changing their bytes or labels."""
+        if isinstance(value, str):
+            return (value,)
+        if isinstance(value, list):
+            return tuple(value)
+        return value
+
     @model_validator(mode="after")
     def validate_semantic_sets(self) -> "EvaluationFrame":
+        _require_sorted_unique(self.action_ids, "action IDs")
         _require_sorted_unique(self.product_family_ids, "product family IDs")
         _require_sorted_unique(self.entity_type_ids, "entity type IDs")
         _require_unique((slot.slot_kind for slot in self.slots), "slot kinds")
         return self
+
+    @property
+    def action_id(self) -> str:
+        if len(self.action_ids) != 1:
+            raise AttributeError("frame does not have exactly one action")
+        return self.action_ids[0]
 
 
 class ExpectedReference(ContractModel):
@@ -105,7 +131,13 @@ class ExpectedSlotMutation(ContractModel):
 class EvaluationProbe(ContractModel):
     probe_id: Identifier
     kind: ProbeKind
-    subject_ids: tuple[Identifier, ...] = Field(min_length=1)
+    subject_id: Identifier | None = None
+    frame_ordinal: int | None = Field(default=None, ge=0)
+    slot_kind: Identifier | None = None
+    link_ordinal: int | None = Field(default=None, ge=0)
+    graph_field: Literal["consumer_frame_id"] | None = None
+    # Frozen v2 compatibility only. New/default fixtures use executable specs above.
+    subject_ids: tuple[Identifier, ...] = ()
     expected_rejection_code: Identifier
 
     @model_validator(mode="after")
@@ -114,7 +146,41 @@ class EvaluationProbe(ContractModel):
         expected = _PROBE_CODES[(self.kind, "rejected")][1]
         if self.expected_rejection_code != expected:
             raise ValueError("evaluation probe rejection code does not match kind")
+        legacy = bool(self.subject_ids)
+        executable = self.subject_id is not None
+        if legacy == executable:
+            raise ValueError("probe must be exactly one of frozen-v2 or executable")
+        if legacy:
+            if any(
+                value is not None
+                for value in (
+                    self.frame_ordinal,
+                    self.slot_kind,
+                    self.link_ordinal,
+                    self.graph_field,
+                )
+            ):
+                raise ValueError("frozen-v2 probe cannot carry mutation target")
+        elif self.kind == "unknown_id":
+            if (
+                self.frame_ordinal is None
+                or self.slot_kind is None
+                or self.link_ordinal is not None
+                or self.graph_field is not None
+            ):
+                raise ValueError("unknown-ID probe target is incomplete")
+        elif (
+            self.link_ordinal is None
+            or self.graph_field != "consumer_frame_id"
+            or self.frame_ordinal is not None
+            or self.slot_kind is not None
+        ):
+            raise ValueError("invalid-graph probe target is incomplete")
         return self
+
+    @property
+    def executable(self) -> bool:
+        return self.subject_id is not None
 
 
 class EvaluationCase(ContractModel):
@@ -158,6 +224,10 @@ class EvaluationCase(ContractModel):
         )
         _require_sorted_unique(self.expected_tags, "expected tags")
         _require_unique((item.probe_id for item in self.validation_probes), "probe IDs")
+        if self.expected_pipeline_outcome == "pre_model_rejected" and any(
+            probe.executable for probe in self.validation_probes
+        ):
+            raise ValueError("pre-model rejected case cannot carry validation probes")
         _validate_graph(
             self.expected_frames,
             self.expected_references,
@@ -169,13 +239,18 @@ class EvaluationCase(ContractModel):
 
 
 class EvaluationDataset(ContractModel):
-    schema_version: Literal["2.0"] = "2.0"
+    schema_version: Literal["2.0", "3.0"] = "3.0"
     split_id: Identifier
     cases: tuple[EvaluationCase, ...]
 
     @model_validator(mode="after")
     def validate_case_ids(self) -> "EvaluationDataset":
         _require_unique((case.case_id for case in self.cases), "evaluation case IDs")
+        probes = tuple(probe for case in self.cases for probe in case.validation_probes)
+        if self.schema_version == "3.0" and any(not probe.executable for probe in probes):
+            raise ValueError("v3 evaluation probes must be executable")
+        if self.schema_version == "2.0" and any(probe.executable for probe in probes):
+            raise ValueError("v2 evaluation probes must retain frozen shape")
         return self
 
 
@@ -192,12 +267,18 @@ class CandidateGroup(ContractModel):
 
 
 class FirstPassSchemaOutcome(ContractModel):
-    status: Literal["valid", "invalid"]
-    validator_event_code: Literal["SCHEMA_VALID", "SCHEMA_INVALID"]
+    status: Literal["not_attempted", "valid", "invalid"]
+    validator_event_code: Literal[
+        "SCHEMA_NOT_ATTEMPTED", "SCHEMA_VALID", "SCHEMA_INVALID"
+    ]
 
     @model_validator(mode="after")
     def validate_pair(self) -> "FirstPassSchemaOutcome":
-        expected = "SCHEMA_VALID" if self.status == "valid" else "SCHEMA_INVALID"
+        expected = {
+            "not_attempted": "SCHEMA_NOT_ATTEMPTED",
+            "valid": "SCHEMA_VALID",
+            "invalid": "SCHEMA_INVALID",
+        }[self.status]
         if self.validator_event_code != expected:
             raise ValueError("schema status contradicts validator event")
         return self
@@ -292,7 +373,7 @@ class EvaluationPrediction(ContractModel):
 
 class ResolverViewCaseArtifact(ContractModel):
     case_id: Identifier
-    artifact: ResolverView
+    artifact: ResolverView | None
 
 
 class ResolverViewBundle(ContractModel):
@@ -308,7 +389,7 @@ class ResolverViewBundle(ContractModel):
 
 class IntentDraftCaseArtifact(ContractModel):
     case_id: Identifier
-    artifact: IntentResolutionDraft
+    artifact: IntentResolutionDraft | None
 
 
 class IntentDraftBundle(ContractModel):
@@ -324,7 +405,7 @@ class IntentDraftBundle(ContractModel):
 
 class ValidatedResolutionCaseArtifact(ContractModel):
     case_id: Identifier
-    artifact: ValidatedIntentResolution
+    artifact: ValidatedIntentResolution | None
 
 
 class ValidatedResolutionBundle(ContractModel):
@@ -340,8 +421,100 @@ class ValidatedResolutionBundle(ContractModel):
         return self
 
 
+class AttemptTrace(ContractModel):
+    """Sanitized attempt evidence; raw model content is deliberately absent."""
+
+    payload_sha256: Sha256Hex
+    payload_size_bytes: int = Field(gt=0)
+    parser_event: Literal["draft_parsed", "schema_rejected"]
+    validator_event: Literal["validated", "validator_rejected", "not_run"]
+    stable_code: Identifier
+    parsed_draft_sha256: Sha256Hex | None = None
+
+    @model_validator(mode="after")
+    def validate_trace_pair(self) -> "AttemptTrace":
+        if self.parser_event == "schema_rejected":
+            if (
+                self.validator_event != "not_run"
+                or self.stable_code != "MODEL_SCHEMA_INVALID"
+                or self.parsed_draft_sha256 is not None
+            ):
+                raise ValueError("schema-rejected attempt trace is contradictory")
+        elif self.parsed_draft_sha256 is None or self.validator_event == "not_run":
+            raise ValueError("parsed attempt trace lacks validator evidence")
+        elif (self.validator_event == "validated") != (
+            self.stable_code == "RESOLUTION_VALIDATED"
+        ):
+            raise ValueError("validated attempt trace is contradictory")
+        return self
+
+
+class IntentRunTrace(ContractModel):
+    case_id: Identifier
+    model_event: Literal["model_called", "model_not_called"]
+    first_attempt: AttemptTrace | None
+    repair_attempt: AttemptTrace | None
+    repair_event: Literal["not_attempted", "succeeded", "failed"]
+    latency_ms: int = Field(ge=0)
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    stable_error_codes: tuple[Identifier, ...]
+
+    @model_validator(mode="after")
+    def validate_trace(self) -> "IntentRunTrace":
+        _require_sorted_unique(self.stable_error_codes, "run trace error codes")
+        if self.model_event == "model_not_called":
+            if (
+                self.first_attempt is not None
+                or self.repair_attempt is not None
+                or self.repair_event != "not_attempted"
+                or self.prompt_tokens != 0
+                or self.completion_tokens != 0
+                or self.stable_error_codes != ("REQUEST_CONTRACT_INVALID",)
+            ):
+                raise ValueError("model-not-called trace is contradictory")
+            return self
+        if self.first_attempt is None:
+            raise ValueError("model-called trace requires first attempt")
+        if self.repair_event == "not_attempted":
+            if (
+                self.repair_attempt is not None
+                or self.first_attempt.validator_event != "validated"
+            ):
+                raise ValueError("unattempted repair cannot carry attempt evidence")
+        elif self.repair_attempt is None:
+            raise ValueError("attempted repair requires attempt evidence")
+        elif self.first_attempt.validator_event == "validated":
+            raise ValueError("repair cannot follow a validated first attempt")
+        elif (self.repair_event == "succeeded") != (
+            self.repair_attempt.validator_event == "validated"
+        ):
+            raise ValueError("repair trace is contradictory")
+        rejected_codes = {
+            attempt.stable_code
+            for attempt in (self.first_attempt, self.repair_attempt)
+            if attempt is not None and attempt.validator_event != "validated"
+        }
+        if not rejected_codes <= set(self.stable_error_codes):
+            raise ValueError("run trace omits rejected attempt code")
+        return self
+
+
+class IntentRunTraceBundle(ContractModel):
+    schema_version: Literal["1.0"] = "1.0"
+    dataset_id: Identifier
+    cases: tuple[IntentRunTrace, ...]
+
+    @model_validator(mode="after")
+    def validate_case_ids(self) -> "IntentRunTraceBundle":
+        _require_unique((case.case_id for case in self.cases), "run trace case IDs")
+        return self
+
+
 class PredictionDataset(ContractModel):
-    schema_version: Literal["2.0"] = "2.0"
+    """Stored-run manifest. Semantic results live only in validated sidecars."""
+
+    schema_version: Literal["3.0"] = "3.0"
     mode: EvaluationMode
     dataset_id: Identifier
     evaluation_dataset_sha256: Sha256Hex
@@ -355,7 +528,8 @@ class PredictionDataset(ContractModel):
     draft_bundle_canonical_sha256: Sha256Hex | None = None
     resolution_bundle_raw_sha256: Sha256Hex | None = None
     resolution_bundle_canonical_sha256: Sha256Hex | None = None
-    predictions: tuple[EvaluationPrediction, ...]
+    run_trace_bundle_raw_sha256: Sha256Hex
+    run_trace_bundle_canonical_sha256: Sha256Hex
 
     @model_validator(mode="after")
     def validate_mode_evidence(self) -> "PredictionDataset":
@@ -374,14 +548,8 @@ class PredictionDataset(ContractModel):
                 value is not None for value in full_values
             ):
                 raise ValueError("decoupled prediction evidence is incomplete")
-        elif any(value is None for value in full_values) or any(
-            value is not None for value in decoupled_values
-        ):
+        elif any(value is None for value in (*decoupled_values, *full_values)):
             raise ValueError("full prediction evidence is incomplete")
-        _require_unique(
-            (prediction.case_id for prediction in self.predictions),
-            "prediction case IDs",
-        )
         return self
 
 
@@ -601,8 +769,8 @@ def evaluate_frames(
         ),
         action=_micro_prf(
             aligned,
-            lambda case: _frame_axis(case.expected_frames, lambda frame: (frame.action_id,)),
-            lambda prediction: _frame_axis(prediction.frames, lambda frame: (frame.action_id,)),
+            lambda case: _frame_axis(case.expected_frames, lambda frame: frame.action_ids),
+            lambda prediction: _frame_axis(prediction.frames, lambda frame: frame.action_ids),
         ),
         product_family=_micro_prf(
             aligned,
@@ -756,7 +924,9 @@ def evaluate_predictions(
         validation=ValidationMetrics(
             schema_validity=CountMetric(
                 numerator=sum(item.first_pass_schema.status == "valid" for item in values),
-                denominator=len(values),
+                denominator=sum(
+                    item.first_pass_schema.status != "not_attempted" for item in values
+                ),
             ),
             unknown_id_acceptance=CountMetric(
                 numerator=sum(outcome.decision == "accepted" for _, outcome in unknown),
@@ -768,7 +938,9 @@ def evaluate_predictions(
             ),
             repair_rate=CountMetric(
                 numerator=sum(item.repair.status != "not_attempted" for item in values),
-                denominator=len(values),
+                denominator=sum(
+                    item.first_pass_schema.status != "not_attempted" for item in values
+                ),
             ),
         ),
         diagnostics=DiagnosticMetrics(
@@ -817,7 +989,7 @@ def _validate_evidence_alignment(
         outcome = actual[probe_id]
         if (
             probe.kind != outcome.kind
-            or probe.subject_ids != outcome.subject_ids
+            or _probe_subject_ids(probe) != outcome.subject_ids
             or (
                 outcome.decision == "rejected"
                 and outcome.stable_code != probe.expected_rejection_code
@@ -842,8 +1014,99 @@ def _validate_evidence_alignment(
         raise ValueError("EVALUATION_VALIDATION_EVIDENCE_MISMATCH")
 
 
+def replay_validation_probes(
+    case: EvaluationCase,
+    draft: IntentResolutionDraft,
+    context: RequestContext,
+    normalized: NormalizedRequest,
+    view: ResolverView,
+    catalog: SemanticCatalogSnapshot,
+) -> tuple[ValidationProbeOutcome, ...]:
+    """Execute v3 gold mutations through the production validators."""
+
+    baseline_semantic = validate_semantics(draft, context, normalized, view, catalog)
+    validate_context_graph(baseline_semantic)
+    outcomes: list[ValidationProbeOutcome] = []
+    for probe in case.validation_probes:
+        if not probe.executable:
+            raise ValueError("EVALUATION_PROBE_NOT_EXECUTABLE")
+        mutated = _mutate_probe_draft(draft, probe)
+        if canonical_sha256(mutated) == canonical_sha256(draft):
+            raise ValueError("EVALUATION_PROBE_MUTATION_INVALID")
+        decision: ProbeDecision = "accepted"
+        stable_code = _PROBE_CODES[(probe.kind, decision)][1]
+        try:
+            semantic = validate_semantics(mutated, context, normalized, view, catalog)
+            validate_context_graph(semantic)
+        except ResolverContractError as error:
+            decision = "rejected"
+            stable_code = error.code
+            if stable_code != probe.expected_rejection_code:
+                raise ValueError("EVALUATION_PROBE_REJECTION_CODE_MISMATCH") from error
+        event_code, expected_stable_code = _PROBE_CODES[(probe.kind, decision)]
+        if decision == "accepted":
+            stable_code = expected_stable_code
+        outcomes.append(
+            ValidationProbeOutcome(
+                probe_id=probe.probe_id,
+                kind=probe.kind,
+                subject_ids=_probe_subject_ids(probe),
+                decision=decision,
+                validator_event_code=event_code,
+                stable_code=stable_code,
+            )
+        )
+    return tuple(outcomes)
+
+
+def _mutate_probe_draft(
+    draft: IntentResolutionDraft, probe: EvaluationProbe
+) -> IntentResolutionDraft:
+    subject = probe.subject_id
+    if subject is None:
+        raise ValueError("EVALUATION_PROBE_NOT_EXECUTABLE")
+    if probe.kind == "unknown_id":
+        assert probe.frame_ordinal is not None and probe.slot_kind is not None
+        if probe.frame_ordinal >= len(draft.intent_frames):
+            raise ValueError("EVALUATION_PROBE_MUTATION_INVALID")
+        frame = draft.intent_frames[probe.frame_ordinal]
+        matches = tuple(
+            (index, assignment)
+            for index, assignment in enumerate(frame.slot_assignments)
+            if assignment.slot_kind.value == probe.slot_kind
+        )
+        if len(matches) != 1:
+            raise ValueError("EVALUATION_PROBE_MUTATION_INVALID")
+        assignment_index, assignment = matches[0]
+        if subject in assignment.value_ids:
+            raise ValueError("EVALUATION_PROBE_MUTATION_INVALID")
+        assignments = list(frame.slot_assignments)
+        assignments[assignment_index] = assignment.model_copy(
+            update={"value_ids": tuple(sorted((*assignment.value_ids, subject)))}
+        )
+        frames = list(draft.intent_frames)
+        frames[probe.frame_ordinal] = frame.model_copy(
+            update={"slot_assignments": tuple(assignments)}
+        )
+        return draft.model_copy(update={"intent_frames": tuple(frames)})
+
+    assert probe.link_ordinal is not None
+    if probe.link_ordinal >= len(draft.context_link_hints):
+        raise ValueError("EVALUATION_PROBE_MUTATION_INVALID")
+    link = draft.context_link_hints[probe.link_ordinal]
+    if probe.graph_field != "consumer_frame_id" or link.consumer_frame_id == subject:
+        raise ValueError("EVALUATION_PROBE_MUTATION_INVALID")
+    links = list(draft.context_link_hints)
+    links[probe.link_ordinal] = link.model_copy(update={"consumer_frame_id": subject})
+    return draft.model_copy(update={"context_link_hints": tuple(links)})
+
+
 def _probe_index(prediction: EvaluationPrediction) -> dict[str, ValidationProbeOutcome]:
     return {item.probe_id: item for item in prediction.validation_probe_outcomes}
+
+
+def _probe_subject_ids(probe: EvaluationProbe) -> tuple[str, ...]:
+    return probe.subject_ids or ((probe.subject_id,) if probe.subject_id is not None else ())
 
 
 def _align(
@@ -891,7 +1154,7 @@ def _frame_signatures(frames: Sequence[EvaluationFrame]) -> tuple[object, ...]:
     return tuple(
         (
             frame.ordinal,
-            frame.action_id,
+            frame.action_ids,
             frame.product_family_ids,
             frame.entity_type_ids,
             tuple(
