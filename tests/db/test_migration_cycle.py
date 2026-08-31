@@ -1096,7 +1096,20 @@ def test_database_check_container_is_linux_amd64_and_uses_only_test_url() -> Non
     assert "COPY data/" not in dockerfile
     assert "db-check:" in compose
     assert "dockerfile: docker/database-check.Dockerfile" in compose
-    assert compose.count("platform: linux/amd64") == 2
+    compose_lines = compose.splitlines()
+    for service_name in ("postgres", "db-check"):
+        start = compose_lines.index(f"  {service_name}:") + 1
+        end = next(
+            (
+                index
+                for index in range(start, len(compose_lines))
+                if compose_lines[index].startswith("  ")
+                and not compose_lines[index].startswith("    ")
+            ),
+            len(compose_lines),
+        )
+        service = "\n".join(compose_lines[start:end])
+        assert "platform: linux/amd64" in service
     assert "FINANCIAL_AGENT_TEST_DATABASE_URL:" in compose
     assert "FINANCIAL_AGENT_COMPOSE_DATABASE_CHECK: \"1\"" in compose
     assert "FINANCIAL_AGENT_DATABASE_URL:" not in compose

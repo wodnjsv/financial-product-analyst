@@ -31,6 +31,18 @@ data/
 *.parquet
 indexes/
 vector_store/
+raw_responses/
+**/raw_responses/
+model_cache/
+**/model_cache/
+.cache/
+**/.cache/
+*.faiss
+*.index
+*.nq
+*.nquads
+*.safetensors
+*.gguf
 
 # Python environments and caches
 .venv/

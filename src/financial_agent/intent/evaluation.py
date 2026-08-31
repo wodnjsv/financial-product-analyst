@@ -659,6 +659,166 @@ class CoverageMetric(CountMetric):
         return self.denominator > 0 and self.numerator == self.denominator
 
 
+PromotionGateName = Literal[
+    "unknown_registered_id_acceptance",
+    "invalid_context_graph_acceptance",
+    "deterministic_candidate_reproducibility",
+    "candidate_recall_at_5",
+    "first_pass_structured_output_validity",
+    "held_out_joint_frame_exact_match",
+    "held_out_context_link_exact_match",
+    "ood_false_fast_rate",
+]
+PromotionGateStatus = Literal["passed", "failed", "unmeasured"]
+PromotionComparison = Literal["equal", "at_least", "at_most"]
+
+
+class PromotionEvidence(ContractModel):
+    unknown_registered_id_acceptance: CountMetric | None = None
+    invalid_context_graph_acceptance: CountMetric | None = None
+    validation_probe_coverage: CoverageMetric | None = None
+    deterministic_candidate_reproducibility: CountMetric | None = None
+    deterministic_candidate_reproducibility_coverage: CoverageMetric | None = None
+    candidate_recall_at_5: CountMetric | None = None
+    first_pass_structured_output_validity: CountMetric | None = None
+    held_out_joint_frame_exact_match: CountMetric | None = None
+    held_out_context_link_exact_match: CountMetric | None = None
+    ood_false_fast_rate: CountMetric | None = None
+
+
+class PromotionGateResult(ContractModel):
+    name: PromotionGateName
+    status: PromotionGateStatus
+    metric: CountMetric | None
+    comparison: PromotionComparison
+    threshold: Decimal
+
+
+class PromotionDecision(ContractModel):
+    eligible: bool
+    blocking_gate_names: tuple[PromotionGateName, ...]
+    gates: tuple[PromotionGateResult, ...] = Field(min_length=8, max_length=8)
+
+
+_PROMOTION_GATE_DEFINITIONS: tuple[
+    tuple[
+        PromotionGateName,
+        PromotionComparison,
+        Decimal,
+        Literal[
+            "validation_probe_coverage",
+            "deterministic_candidate_reproducibility_coverage",
+        ]
+        | None,
+    ],
+    ...,
+] = (
+    (
+        "unknown_registered_id_acceptance",
+        "equal",
+        Decimal("0"),
+        "validation_probe_coverage",
+    ),
+    (
+        "invalid_context_graph_acceptance",
+        "equal",
+        Decimal("0"),
+        "validation_probe_coverage",
+    ),
+    (
+        "deterministic_candidate_reproducibility",
+        "equal",
+        Decimal("1"),
+        "deterministic_candidate_reproducibility_coverage",
+    ),
+    ("candidate_recall_at_5", "at_least", Decimal("0.99"), None),
+    (
+        "first_pass_structured_output_validity",
+        "at_least",
+        Decimal("0.99"),
+        None,
+    ),
+    (
+        "held_out_joint_frame_exact_match",
+        "at_least",
+        Decimal("0.90"),
+        None,
+    ),
+    (
+        "held_out_context_link_exact_match",
+        "at_least",
+        Decimal("0.95"),
+        None,
+    ),
+    ("ood_false_fast_rate", "at_most", Decimal("0.02"), None),
+)
+
+
+def assess_promotion(evidence: PromotionEvidence) -> PromotionDecision:
+    """Require complete measured evidence for every approved promotion gate."""
+    gates: list[PromotionGateResult] = []
+    for name, comparison, threshold, coverage_name in _PROMOTION_GATE_DEFINITIONS:
+        metric = getattr(evidence, name)
+        coverage = None if coverage_name is None else getattr(evidence, coverage_name)
+        sufficient = metric is not None and metric.evidence_sufficient
+        if coverage_name is not None:
+            sufficient = (
+                sufficient
+                and coverage is not None
+                and coverage.evidence_sufficient
+                and _promotion_coverage_matches(
+                    evidence,
+                    name=name,
+                    metric=metric,
+                    coverage=coverage,
+                )
+            )
+        if not sufficient:
+            status: PromotionGateStatus = "unmeasured"
+        elif comparison == "equal":
+            status = "passed" if metric.value == threshold else "failed"
+        elif comparison == "at_least":
+            status = "passed" if metric.value >= threshold else "failed"
+        else:
+            status = "passed" if metric.value <= threshold else "failed"
+        gates.append(
+            PromotionGateResult(
+                name=name,
+                status=status,
+                metric=metric,
+                comparison=comparison,
+                threshold=threshold,
+            )
+        )
+
+    blocking = tuple(gate.name for gate in gates if gate.status != "passed")
+    return PromotionDecision(
+        eligible=not blocking,
+        blocking_gate_names=blocking,
+        gates=tuple(gates),
+    )
+
+
+def _promotion_coverage_matches(
+    evidence: PromotionEvidence,
+    *,
+    name: PromotionGateName,
+    metric: CountMetric | None,
+    coverage: CoverageMetric | None,
+) -> bool:
+    if metric is None or coverage is None:
+        return False
+    if name == "deterministic_candidate_reproducibility":
+        return coverage.numerator == metric.denominator
+    unknown = evidence.unknown_registered_id_acceptance
+    invalid_graph = evidence.invalid_context_graph_acceptance
+    return (
+        unknown is not None
+        and invalid_graph is not None
+        and coverage.numerator == unknown.denominator + invalid_graph.denominator
+    )
+
+
 class PrecisionRecallF1(ContractModel):
     precision: CountMetric
     recall: CountMetric
