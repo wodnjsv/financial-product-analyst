@@ -90,8 +90,8 @@ def validate_semantics(
     """
 
     _validate_schema(draft)
-    offered = _offered(view)
-    _validate_offered_ids(draft, context, offered)
+    offered = _offered(view, catalog)
+    _validate_offered_ids(draft, context, offered, catalog)
     _validate_evidence_spans(draft, context)
     _validate_applicability(draft, catalog, offered.concept_ids, offered.relation_ids)
     _validate_ontology_relations(draft, catalog, offered.relation_ids)
@@ -122,13 +122,14 @@ class _Offered:
     operator_ids: frozenset[str]
 
 
-def _offered(view: ResolverView) -> _Offered:
+def _offered(view: ResolverView, catalog: SemanticCatalogSnapshot) -> _Offered:
     concept_ids = frozenset(item.concept_id for item in view.concept_definitions)
     relation_ids = frozenset(item.relation_id for item in view.relation_definitions)
     entity_type_ids = {
         item.entity_type
         for group in view.entity_candidates
         for item in group.items
+        if item.entity_type in catalog.class_ancestor_ids
     }
     for concept in view.concept_definitions:
         entity_type_ids.update(concept.allowed_ontology_types)
@@ -173,6 +174,7 @@ def _validate_offered_ids(
     draft: IntentResolutionDraft,
     context: RequestContext,
     offered: _Offered,
+    catalog: SemanticCatalogSnapshot,
 ) -> None:
     segment_ids = {segment.segment_id for segment in context.segments}
     span_ids = {span.span_id for span in draft.evidence_spans}
@@ -200,10 +202,12 @@ def _validate_offered_ids(
             allowed_entity_ids = frozenset(candidates)
             _require_subset(hint.candidate_entity_ids, allowed_entity_ids)
             _require_subset(hint.selected_candidate_ids, hint.candidate_entity_ids)
-            _validate_selected_entity_types(draft, hint.entity_hint_id, hint, candidates)
+            _validate_selected_entity_types(
+                draft, hint.entity_hint_id, hint, candidates, catalog
+            )
         else:
-            _require_subset(hint.candidate_entity_ids, _all_entity_ids(offered))
-            _require_subset(hint.selected_candidate_ids, hint.candidate_entity_ids)
+            if hint.candidate_entity_ids or hint.selected_candidate_ids:
+                raise ResolverContractError("MODEL_UNKNOWN_ID")
 
     for hint in draft.reference_hints:
         _require_subset((hint.segment_id,), segment_ids)
@@ -253,6 +257,7 @@ def _validate_selected_entity_types(
     hint_id: str,
     hint: EntityHint,
     candidates: dict[str, ResolverViewEntityCandidate],
+    catalog: SemanticCatalogSnapshot,
 ) -> None:
     expected_types = set(hint.expected_entity_type_ids)
     referencing_frames = tuple(
@@ -260,10 +265,15 @@ def _validate_selected_entity_types(
     )
     for entity_id in hint.selected_candidate_ids:
         candidate_type = candidates[entity_id].entity_type
-        if expected_types and candidate_type not in expected_types:
+        if expected_types and not _type_is_compatible(
+            candidate_type, expected_types, catalog
+        ):
             raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
         if any(
-            frame.entity_type_ids and candidate_type not in frame.entity_type_ids
+            frame.entity_type_ids
+            and not _type_is_compatible(
+                candidate_type, set(frame.entity_type_ids), catalog
+            )
             for frame in referencing_frames
         ):
             raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
@@ -325,8 +335,9 @@ def _validate_concept_applicability(
     concept = catalog.concepts_by_id.get(concept_id)
     if concept is None:
         raise ResolverContractError("MODEL_UNKNOWN_ID")
-    if not family_ids <= set(concept.allowed_product_families) or not type_ids <= set(
-        concept.allowed_ontology_types
+    if not family_ids <= set(concept.allowed_product_families) or not all(
+        _type_is_compatible(type_id, set(concept.allowed_ontology_types), catalog)
+        for type_id in type_ids
     ):
         raise ResolverContractError("MODEL_INAPPLICABLE_CONCEPT")
 
@@ -351,16 +362,36 @@ def _validate_ontology_relations(
                 object_types = set(relation.object_ontology_types)
                 if (
                     not frame.entity_type_ids
-                    or not set(frame.entity_type_ids) <= subject_types
+                    or not all(
+                        _type_is_compatible(type_id, subject_types, catalog)
+                        for type_id in frame.entity_type_ids
+                    )
                     or not object_types
                 ):
                     raise ResolverContractError("MODEL_INVALID_RELATION")
                 for hint_id in frame.entity_hint_ids:
                     expected_types = set(hints_by_id[hint_id].expected_entity_type_ids)
                     if expected_types and not (
-                        expected_types <= subject_types or expected_types <= object_types
+                        all(
+                            _type_is_compatible(type_id, subject_types, catalog)
+                            for type_id in expected_types
+                        )
+                        or all(
+                            _type_is_compatible(type_id, object_types, catalog)
+                            for type_id in expected_types
+                        )
                     ):
                         raise ResolverContractError("MODEL_INVALID_RELATION")
+
+
+def _type_is_compatible(
+    actual_type: str,
+    allowed_types: set[str],
+    catalog: SemanticCatalogSnapshot,
+) -> bool:
+    return actual_type in allowed_types or bool(
+        set(catalog.class_ancestor_ids.get(actual_type, ())) & allowed_types
+    )
 
 
 def _validate_literal_types(

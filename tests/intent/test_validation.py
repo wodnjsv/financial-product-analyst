@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -254,7 +254,7 @@ def validation_inputs() -> ValidationInputs:
                     ResolverViewEntityCandidate(
                         entity_id="entity-product",
                         canonical_name="KODEX 200",
-                        entity_type="FinancialProduct",
+                        entity_type="ETF",
                         product_family="domestic_etf",
                         match_kind="exact_name",
                         score=1_000_000,
@@ -406,6 +406,98 @@ def test_entity_selection_must_satisfy_hint_and_frame_type_constraints(
         validate_semantics(draft=draft, **validation_inputs.rest)
 
 
+def test_entity_subclass_satisfies_hint_and_frame_type_constraints(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches rejecting an ETF that the pinned TBox defines as a product."""
+    draft = _draft_with_entity_hint(
+        validation_inputs.draft,
+        _entity_hint(
+            candidate_ids=("entity-product",), selected_ids=("entity-product",)
+        ),
+    )
+
+    assert validate_semantics(draft=draft, **validation_inputs.rest).resolution_status is ResolutionStatus.RESOLVED
+
+
+def test_entity_transitive_subclass_satisfies_an_intermediate_type(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches dropping DomesticETF-to-ETF ancestry during validation."""
+    group = validation_inputs.view.entity_candidates[0]
+    domestic_etf = group.items[0].model_copy(update={"entity_type": "DomesticETF"})
+    view = validation_inputs.view.model_copy(
+        update={
+            "entity_candidates": (
+                group.model_copy(update={"items": (domestic_etf, *group.items[1:])}),
+            ),
+            "relation_definitions": (
+                *validation_inputs.view.relation_definitions,
+                ResolverViewRelationDefinition(
+                    relation_id="tracksIndex",
+                    definition_ko="상품이 추종하는 지수",
+                    subject_ontology_types=("ETF",),
+                    object_ontology_types=("Index",),
+                    required_qualifiers=(),
+                ),
+            ),
+        }
+    )
+    inputs = replace(validation_inputs, view=view)
+    draft = _draft_with_entity_hint(
+        inputs.draft,
+        _entity_hint(
+            candidate_ids=("entity-product",),
+            selected_ids=("entity-product",),
+            expected_type_ids=("ETF",),
+        ),
+    )
+
+    assert validate_semantics(draft=draft, **inputs.rest).resolution_status is ResolutionStatus.RESOLVED
+
+
+def test_entity_hint_without_mention_cannot_select_a_dataset_candidate(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches an unbounded entity selection bypassing mention-scoped candidates."""
+    hint = _entity_hint(
+        candidate_ids=("entity-product",), selected_ids=("entity-product",)
+    ).model_copy(update={"mention_id": ()})
+    draft = _draft_with_entity_hint(validation_inputs.draft, hint)
+
+    with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_ID"):
+        validate_semantics(draft=draft, **validation_inputs.rest)
+
+
+def test_unknown_storage_entity_type_cannot_be_selected_as_an_ontology_type(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches a raw candidate category becoming an approved ontology type."""
+    group = validation_inputs.view.entity_candidates[0]
+    unknown_candidate = group.items[0].model_copy(
+        update={"entity_type": "UnknownStorageCategory"}
+    )
+    view = validation_inputs.view.model_copy(
+        update={
+            "entity_candidates": (
+                group.model_copy(update={"items": (unknown_candidate, *group.items[1:])}),
+            )
+        }
+    )
+    inputs = replace(validation_inputs, view=view)
+    draft = _draft_with_entity_hint(
+        inputs.draft,
+        _entity_hint(
+            candidate_ids=("entity-product",),
+            selected_ids=("entity-product",),
+            expected_type_ids=("UnknownStorageCategory",),
+        ),
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_ID"):
+        validate_semantics(draft=draft, **inputs.rest)
+
+
 def test_relation_direction_must_satisfy_the_catalog_endpoint_types(
     validation_inputs: ValidationInputs,
 ) -> None:
@@ -434,6 +526,34 @@ def test_relation_requires_a_nonempty_subject_type(
 
     with pytest.raises(ResolverContractError, match="MODEL_INVALID_RELATION"):
         validate_semantics(draft=draft, **validation_inputs.rest)
+
+
+def test_relation_subject_type_accepts_a_pinned_tbox_subclass(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches rejecting ETF as a managedBy subject despite its product ancestry."""
+    second = validation_inputs.draft.intent_frames[1].model_copy(
+        update={"entity_type_ids": ("ETF",)}
+    )
+    draft = validation_inputs.draft.model_copy(
+        update={"intent_frames": (validation_inputs.draft.intent_frames[0], second)}
+    )
+
+    assert validate_semantics(draft=draft, **validation_inputs.rest).resolution_status is ResolutionStatus.RESOLVED
+
+
+def test_concept_type_allows_a_pinned_tbox_subclass(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches rejecting an ETF where AUM permits the FinancialProduct superclass."""
+    first = validation_inputs.draft.intent_frames[0].model_copy(
+        update={"entity_type_ids": ("ETF",)}
+    )
+    draft = validation_inputs.draft.model_copy(
+        update={"intent_frames": (first, *validation_inputs.draft.intent_frames[1:])}
+    )
+
+    assert validate_semantics(draft=draft, **validation_inputs.rest).resolution_status is ResolutionStatus.RESOLVED
 
 
 def test_valid_multiframe_semantics_derive_sorted_tags(

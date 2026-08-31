@@ -186,6 +186,17 @@ def test_catalog_snapshot_mappings_are_immutable() -> None:
         snapshot.concepts_by_id["new"] = snapshot.concepts_by_id["aum"]  # type: ignore[index]
 
 
+def test_catalog_exposes_pinned_tbox_transitive_class_ancestors() -> None:
+    """Catches losing ontology ancestry needed for request-time type checks."""
+    snapshot = load_catalog(PROJECT_ROOT)
+    ancestors = getattr(snapshot, "class_ancestor_ids", {})
+
+    assert {"ETF", "ExchangeTradedProduct", "FinancialProduct"} <= set(
+        ancestors.get("DomesticETF", ())
+    )
+    assert "FinancialProduct" in ancestors.get("ETF", ())
+
+
 def test_compile_catalog_rejects_direct_alias_collision() -> None:
     """Catches a direct Korean expression resolving to multiple semantic IDs."""
     catalog_payload = (PROJECT_ROOT / "config/intent/semantic-query-catalog.v1.json").read_bytes()

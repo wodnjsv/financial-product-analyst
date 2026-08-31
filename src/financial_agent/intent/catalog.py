@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Literal, Mapping
@@ -83,6 +83,7 @@ class SemanticCatalogSnapshot:
     alias_candidates: Mapping[str, tuple[str, ...]]
     alias_kinds: Mapping[str, str]
     ontology_hashes: Mapping[str, str]
+    class_ancestor_ids: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -90,6 +91,7 @@ class SemanticCatalogSnapshot:
             "alias_candidates",
             "alias_kinds",
             "ontology_hashes",
+            "class_ancestor_ids",
         ):
             value = getattr(self, field_name)
             object.__setattr__(
@@ -127,9 +129,10 @@ def compile_catalog(
     _validate_runtime_axes(catalog)
     concepts_by_id = _index_concepts(catalog.concepts)
     ontology_hashes = _contract_hashes(ontology_paths, shacl_paths)
-    ontology_types = _tbox_classes(ontology_paths)
+    tbox_graph = _parse_graph(ontology_paths)
+    ontology_types = _tbox_classes(tbox_graph)
     _validate_ontology_references(catalog, concepts_by_id, ontology_types)
-    _validate_relations(concepts_by_id, ontology_paths, shacl_paths)
+    _validate_relations(concepts_by_id, tbox_graph, shacl_paths)
     alias_candidates, alias_kinds = _index_overlay(
         overlay.entries,
         allowed_semantic_ids=(
@@ -151,6 +154,7 @@ def compile_catalog(
         alias_candidates=alias_candidates,
         alias_kinds=alias_kinds,
         ontology_hashes=ontology_hashes,
+        class_ancestor_ids=_class_ancestor_ids(tbox_graph),
     )
 
 
@@ -214,15 +218,37 @@ def _contract_relative_path(path: Path) -> str:
     raise ValueError("ontology path is outside the graph contract")
 
 
-def _tbox_classes(ontology_paths: tuple[Path, ...]) -> set[str]:
-    graph = Graph()
-    for path in ontology_paths:
-        graph.parse(path, format="turtle")
+def _tbox_classes(graph: Graph) -> set[str]:
     return {
         str(subject).removeprefix(str(FP))
         for subject in graph.subjects(RDF.type, OWL.Class)
         if str(subject).startswith(str(FP))
     }
+
+
+def _class_ancestor_ids(graph: Graph) -> Mapping[str, tuple[str, ...]]:
+    """Return pinned transitive TBox ancestry without request-time graph work."""
+    class_ids = _tbox_classes(graph)
+    direct_parents = {
+        class_id: {
+            _class_id(parent)
+            for parent in graph.objects(FP[class_id], RDFS.subClassOf)
+            if str(parent).startswith(str(FP))
+        }
+        for class_id in class_ids
+    }
+    closure: dict[str, tuple[str, ...]] = {}
+    for class_id in class_ids:
+        ancestors: set[str] = set()
+        pending = list(direct_parents[class_id])
+        while pending:
+            parent = pending.pop()
+            if parent in ancestors:
+                continue
+            ancestors.add(parent)
+            pending.extend(direct_parents.get(parent, ()))
+        closure[class_id] = tuple(sorted(ancestors))
+    return MappingProxyType(dict(sorted(closure.items())))
 
 
 def _validate_ontology_references(
@@ -241,7 +267,7 @@ def _validate_ontology_references(
 
 def _validate_relations(
     concepts_by_id: Mapping[str, SemanticConcept],
-    ontology_paths: tuple[Path, ...],
+    tbox_graph: Graph,
     shacl_paths: tuple[Path, ...],
 ) -> None:
     relation_ids = {
@@ -249,16 +275,18 @@ def _validate_relations(
     }
     if relation_ids != APPROVED_PREDICATES:
         raise ValueError("relation concepts must exactly match approved predicates")
-    graph = _parse_graph(ontology_paths)
-    if not all((FP[relation_id], RDF.type, OWL.ObjectProperty) in graph for relation_id in relation_ids):
+    if not all(
+        (FP[relation_id], RDF.type, OWL.ObjectProperty) in tbox_graph
+        for relation_id in relation_ids
+    ):
         raise ValueError("relation concept is not an approved TBox predicate")
     shacl_constraints = _shacl_relation_constraints(_parse_graph(shacl_paths), relation_ids)
     for relation_id in relation_ids:
         concept = concepts_by_id[relation_id]
         if concept.authority_reference != f"ontology:predicate:{relation_id}":
             raise ValueError("relation authority reference does not match TBox predicate")
-        tbox_subject_types = _property_classes(graph, relation_id, RDFS.domain)
-        tbox_object_types = _property_classes(graph, relation_id, RDFS.range)
+        tbox_subject_types = _property_classes(tbox_graph, relation_id, RDFS.domain)
+        tbox_object_types = _property_classes(tbox_graph, relation_id, RDFS.range)
         shacl_subject_types, shacl_object_types = shacl_constraints[relation_id]
         if (tbox_subject_types, tbox_object_types) != (
             shacl_subject_types,
