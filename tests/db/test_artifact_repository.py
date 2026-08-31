@@ -265,6 +265,33 @@ def test_intent_resolution_and_query_plan_model_metadata_policy() -> None:
     _validate_model_metadata("query_plan", None, None)
 
 
+@pytest.mark.parametrize(
+    ("artifact_type", "model_id", "prompt_version"),
+    (
+        ("intent_resolution", " ", "intent-resolver-ko-v1"),
+        ("intent_resolution", "synthetic-model", "\t"),
+        ("answer_plan", " ", "prompt-v1"),
+        ("answer_plan", "synthetic-model", "\n"),
+    ),
+)
+def test_model_metadata_rejects_blank_values_for_every_optional_or_required_pair(
+    artifact_type: str,
+    model_id: str,
+    prompt_version: str,
+) -> None:
+    from financial_agent.db.repositories.artifacts import (
+        ArtifactValidationError,
+        _validate_model_metadata,
+    )
+
+    with pytest.raises(ArtifactValidationError, match="MODEL_METADATA_BLANK"):
+        _validate_model_metadata(  # type: ignore[arg-type]
+            artifact_type,
+            model_id,
+            prompt_version,
+        )
+
+
 def test_intent_resolution_contract_model_is_registered() -> None:
     from financial_agent.db.repositories.artifacts import ARTIFACT_MODELS
     from financial_agent.intent.resolution import ValidatedIntentResolution
@@ -303,12 +330,18 @@ def test_failure_event_accepts_only_bounded_payload_audit_metadata() -> None:
     ("payload_hash", "payload_size_bytes", "message"),
     (
         ("not-sha256", 1, "PAYLOAD_HASH_INVALID"),
+        (123, 1, "PAYLOAD_HASH_INVALID"),
         ("a" * 64, -1, "PAYLOAD_SIZE_BYTES_INVALID"),
+        ("a" * 64, True, "PAYLOAD_SIZE_BYTES_INVALID"),
+        ("a" * 64, "128", "PAYLOAD_SIZE_BYTES_INVALID"),
+        ("a" * 64, 1.5, "PAYLOAD_SIZE_BYTES_INVALID"),
+        (None, 1, "PAYLOAD_AUDIT_PAIR_REQUIRED"),
+        ("a" * 64, None, "PAYLOAD_AUDIT_PAIR_REQUIRED"),
     ),
 )
 def test_failure_event_rejects_invalid_payload_audit_metadata(
-    payload_hash: str,
-    payload_size_bytes: int,
+    payload_hash: object | None,
+    payload_size_bytes: object | None,
     message: str,
 ) -> None:
     from financial_agent.db.repositories.operations import FailureEventRecord
@@ -327,8 +360,8 @@ def test_failure_event_rejects_invalid_payload_audit_metadata(
             duration_ms=10,
             dependency="hcx",
             occurred_at=datetime(2026, 8, 31, tzinfo=UTC),
-            payload_hash=payload_hash,
-            payload_size_bytes=payload_size_bytes,
+            payload_hash=payload_hash,  # type: ignore[arg-type]
+            payload_size_bytes=payload_size_bytes,  # type: ignore[arg-type]
         )
 
 
@@ -350,6 +383,29 @@ def test_failure_event_schema_exposes_hash_and_size_without_raw_content() -> Non
     }
     assert "^[0-9a-f]{64}$" in checks["ck_failure_event_payload_hash"]
     assert ">= 0" in checks["ck_failure_event_payload_size_bytes"]
+    assert checks["ck_failure_event_payload_audit_pair"] == (
+        "(payload_hash IS NULL) = (payload_size_bytes IS NULL)"
+    )
+
+
+def test_request_artifact_schema_rejects_blank_provenance_and_resolution_id() -> None:
+    from financial_agent.db.schema.operations import request_artifact
+
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in request_artifact.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    }
+
+    model_metadata = checks["ck_request_artifact_model_metadata"]
+    assert "model_id ~ '[^[:space:]]'" in model_metadata
+    assert "prompt_version ~ '[^[:space:]]'" in model_metadata
+    resolution_id = checks[
+        "ck_request_artifact_intent_resolution_contract_object_id"
+    ]
+    assert "artifact_type <> 'intent_resolution'" in resolution_id
+    assert "contract_object_id IS NOT NULL" in resolution_id
+    assert "contract_object_id ~ '[^[:space:]]'" in resolution_id
 
 
 def _seed_references(connection: psycopg.Connection, context: ArtifactContext) -> None:
@@ -590,6 +646,135 @@ def test_artifact_type_constraint_matches_the_runtime_models(
         ).fetchone()[0]
 
     assert set(re.findall(r"'([a-z_]+)'", definition)) == expected
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "resolution_id",
+    (None, " \t"),
+    ids=("missing", "blank"),
+)
+def test_runtime_append_rejects_missing_or_blank_intent_resolution_id(
+    migrated_database_url: str,
+    resolution_id: str | None,
+) -> None:
+    context = _artifact_context(migrated_database_url)
+    payload = json.loads(
+        canonical_json_bytes(_artifact("intent_resolution", context))
+    )
+    if resolution_id is None:
+        payload.pop("resolution_id")
+    else:
+        payload["resolution_id"] = resolution_id
+    canonical_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        with pytest.raises(
+            psycopg.errors.InvalidParameterValue,
+            match="INTENT_RESOLUTION_ID_REQUIRED",
+        ):
+            connection.execute(
+                "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+                (
+                    "intent_resolution",
+                    "synthetic-model",
+                    "intent-resolver-ko-v1",
+                    canonical_payload,
+                ),
+            )
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("artifact_type", "model_id", "prompt_version"),
+    (
+        ("intent_resolution", " ", "intent-resolver-ko-v1"),
+        ("intent_resolution", "synthetic-model", "\t"),
+        ("answer_plan", " ", "prompt-v1"),
+        ("answer_plan", "synthetic-model", "\n"),
+    ),
+)
+def test_runtime_append_rejects_blank_model_metadata(
+    migrated_database_url: str,
+    artifact_type: str,
+    model_id: str,
+    prompt_version: str,
+) -> None:
+    context = _artifact_context(migrated_database_url)
+    canonical_payload = canonical_json_bytes(
+        _artifact(artifact_type, context)
+    ).decode("utf-8")
+
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        with pytest.raises(psycopg.errors.CheckViolation) as captured:
+            connection.execute(
+                "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+                (
+                    artifact_type,
+                    model_id,
+                    prompt_version,
+                    canonical_payload,
+                ),
+            )
+
+    assert captured.value.diag.constraint_name == (
+        "ck_request_artifact_model_metadata"
+    )
+
+
+@pytest.mark.postgres
+def test_runtime_append_intent_resolution_is_idempotent_and_conflict_safe(
+    migrated_database_url: str,
+) -> None:
+    context = _artifact_context(migrated_database_url)
+    canonical_payload = canonical_json_bytes(
+        _artifact("intent_resolution", context)
+    ).decode("utf-8")
+    conflicting_payload = json.loads(canonical_payload)
+    conflicting_payload["producer"] = "different-intent-resolver"
+    conflicting_canonical_payload = json.dumps(
+        conflicting_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    statement = "SELECT operations.append_request_artifact(%s, %s, %s, %s)"
+    provenance = (
+        "intent_resolution",
+        "synthetic-model",
+        "intent-resolver-ko-v1",
+    )
+
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        first_id = connection.execute(
+            statement,
+            (*provenance, canonical_payload),
+        ).fetchone()[0]
+        second_id = connection.execute(
+            statement,
+            (*provenance, canonical_payload),
+        ).fetchone()[0]
+
+        with pytest.raises(psycopg.errors.RaiseException) as payload_conflict:
+            with connection.transaction():
+                connection.execute(
+                    statement,
+                    (*provenance, conflicting_canonical_payload),
+                )
+        with pytest.raises(psycopg.errors.RaiseException) as provenance_conflict:
+            with connection.transaction():
+                connection.execute(
+                    statement,
+                    (
+                        "intent_resolution",
+                        "different-model",
+                        "intent-resolver-ko-v1",
+                        canonical_payload,
+                    ),
+                )
+
+    assert first_id == second_id
+    assert payload_conflict.value.diag.message_primary == "ARTIFACT_CONFLICT"
+    assert provenance_conflict.value.diag.message_primary == "ARTIFACT_CONFLICT"
 
 
 @pytest.mark.postgres

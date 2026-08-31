@@ -909,11 +909,33 @@ def test_failure_event_payload_audit_is_bounded_and_contains_no_raw_content(
         """
     ).fetchone() == ("a" * 64, 128)
 
-    for event_id, payload_hash, payload_size_bytes in (
-        ("event-bad-hash", "not-sha256", 1),
-        ("event-bad-size", "b" * 64, -1),
+    for event_id, payload_hash, payload_size_bytes, constraint_name in (
+        (
+            "event-bad-hash",
+            "not-sha256",
+            1,
+            "ck_failure_event_payload_hash",
+        ),
+        (
+            "event-bad-size",
+            "b" * 64,
+            -1,
+            "ck_failure_event_payload_size_bytes",
+        ),
+        (
+            "event-hash-only",
+            "c" * 64,
+            None,
+            "ck_failure_event_payload_audit_pair",
+        ),
+        (
+            "event-size-only",
+            None,
+            128,
+            "ck_failure_event_payload_audit_pair",
+        ),
     ):
-        with pytest.raises(psycopg.errors.CheckViolation):
+        with pytest.raises(psycopg.errors.CheckViolation) as captured:
             with connection.transaction():
                 connection.execute(
                     """
@@ -929,6 +951,7 @@ def test_failure_event_payload_audit_is_bounded_and_contains_no_raw_content(
                     """,
                     (event_id, created_at, payload_hash, payload_size_bytes),
                 )
+        assert captured.value.diag.constraint_name == constraint_name
 
     raw_columns = connection.execute(
         """

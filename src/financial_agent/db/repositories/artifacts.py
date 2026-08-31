@@ -85,6 +85,9 @@ def _validate_model_metadata(
 ) -> None:
     if (model_id is None) != (prompt_version is None):
         raise ArtifactValidationError("MODEL_METADATA_PAIR_REQUIRED")
+    if model_id is not None and prompt_version is not None:
+        if not model_id.strip() or not prompt_version.strip():
+            raise ArtifactValidationError("MODEL_METADATA_BLANK")
     if artifact_type == "intent_resolution":
         if model_id is None:
             raise ArtifactValidationError("MODEL_METADATA_REQUIRED")

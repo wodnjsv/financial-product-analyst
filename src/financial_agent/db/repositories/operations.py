@@ -44,11 +44,18 @@ class FailureEventRecord:
     payload_size_bytes: int | None = None
 
     def __post_init__(self) -> None:
-        if self.payload_hash is not None and re.fullmatch(
+        if (self.payload_hash is None) != (self.payload_size_bytes is None):
+            raise ValueError("PAYLOAD_AUDIT_PAIR_REQUIRED")
+        if self.payload_hash is None:
+            return
+        if not isinstance(self.payload_hash, str) or re.fullmatch(
             r"[0-9a-f]{64}", self.payload_hash
         ) is None:
             raise ValueError("PAYLOAD_HASH_INVALID")
-        if self.payload_size_bytes is not None and self.payload_size_bytes < 0:
+        if (
+            type(self.payload_size_bytes) is not int
+            or self.payload_size_bytes < 0
+        ):
             raise ValueError("PAYLOAD_SIZE_BYTES_INVALID")
 
 

@@ -367,6 +367,10 @@ failure_event = sa.Table(
         "payload_size_bytes IS NULL OR payload_size_bytes >= 0",
         name="payload_size_bytes",
     ),
+    sa.CheckConstraint(
+        "(payload_hash IS NULL) = (payload_size_bytes IS NULL)",
+        name="payload_audit_pair",
+    ),
     schema="operations",
 )
 
@@ -462,11 +466,19 @@ request_artifact = sa.Table(
     ),
     sa.CheckConstraint(
         "(model_id IS NULL) = (prompt_version IS NULL) AND "
+        "(model_id IS NULL OR (model_id ~ '[^[:space:]]' AND "
+        "prompt_version ~ '[^[:space:]]')) AND "
         "(artifact_type = 'intent_resolution' AND model_id IS NOT NULL OR "
         "artifact_type = 'answer_plan' OR "
         "artifact_type NOT IN ('intent_resolution','answer_plan') "
         "AND model_id IS NULL)",
         name="model_metadata",
+    ),
+    sa.CheckConstraint(
+        "artifact_type <> 'intent_resolution' OR "
+        "(contract_object_id IS NOT NULL AND "
+        "contract_object_id ~ '[^[:space:]]')",
+        name="intent_resolution_contract_object_id",
     ),
     schema="operations",
 )

@@ -82,6 +82,14 @@ def _replace_derive_request_artifact(*, include_intent_resolution: bool) -> None
                 ELSE NULL
             END;
 
+            IF NEW.artifact_type = 'intent_resolution'
+               AND (NEW.contract_object_id IS NULL
+                    OR NEW.contract_object_id !~ '[^[:space:]]')
+            THEN
+                RAISE EXCEPTION 'INTENT_RESOLUTION_ID_REQUIRED'
+                    USING ERRCODE = '22023';
+            END IF;
+
             IF NEW.schema_version IS NULL OR NEW.request_key IS NULL
                OR NEW.run_id IS NULL OR NEW.dataset_version IS NULL
                OR NEW.cutoff_date IS NULL OR NEW.producer IS NULL
@@ -143,6 +151,12 @@ def upgrade() -> None:
         "payload_size_bytes IS NULL OR payload_size_bytes >= 0",
         schema="operations",
     )
+    op.create_check_constraint(
+        op.f("ck_failure_event_payload_audit_pair"),
+        "failure_event",
+        "(payload_hash IS NULL) = (payload_size_bytes IS NULL)",
+        schema="operations",
+    )
 
     op.drop_constraint(
         op.f("ck_request_artifact_model_metadata"),
@@ -166,10 +180,20 @@ def upgrade() -> None:
         op.f("ck_request_artifact_model_metadata"),
         "request_artifact",
         "(model_id IS NULL) = (prompt_version IS NULL) AND "
+        "(model_id IS NULL OR (model_id ~ '[^[:space:]]' AND "
+        "prompt_version ~ '[^[:space:]]')) AND "
         "(artifact_type = 'intent_resolution' AND model_id IS NOT NULL OR "
         "artifact_type = 'answer_plan' OR "
         "artifact_type NOT IN ('intent_resolution','answer_plan') "
         "AND model_id IS NULL)",
+        schema="operations",
+    )
+    op.create_check_constraint(
+        op.f("ck_request_artifact_intent_resolution_contract_object_id"),
+        "request_artifact",
+        "artifact_type <> 'intent_resolution' OR "
+        "(contract_object_id IS NOT NULL AND "
+        "contract_object_id ~ '[^[:space:]]')",
         schema="operations",
     )
     _replace_derive_request_artifact(include_intent_resolution=True)
@@ -209,6 +233,12 @@ def downgrade() -> None:
 
     _replace_derive_request_artifact(include_intent_resolution=False)
     op.drop_constraint(
+        op.f("ck_request_artifact_intent_resolution_contract_object_id"),
+        "request_artifact",
+        schema="operations",
+        type_="check",
+    )
+    op.drop_constraint(
         op.f("ck_request_artifact_model_metadata"),
         "request_artifact",
         schema="operations",
@@ -237,6 +267,12 @@ def downgrade() -> None:
         schema="operations",
     )
 
+    op.drop_constraint(
+        op.f("ck_failure_event_payload_audit_pair"),
+        "failure_event",
+        schema="operations",
+        type_="check",
+    )
     op.drop_constraint(
         op.f("ck_failure_event_payload_size_bytes"),
         "failure_event",
