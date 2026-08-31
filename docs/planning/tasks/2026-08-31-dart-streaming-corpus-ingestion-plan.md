@@ -414,7 +414,7 @@ git commit -m "feat: stream DART PDFs into PostgreSQL"
 - Writes counts, IDs, hashes, reason codes, bytes, chunks, provisional tokens,
   and cleanup counts, but no source prose or credential.
 
-- [ ] **Step 1: Write failing CLI and secrecy tests**
+- [x] **Step 1: Write failing CLI and secrecy tests**
 
 Require repository-root `api.txt` to be ignored. Validate one nonblank key,
 PostgreSQL 15, an inactive `building` dataset, and paths outside tracked source.
@@ -422,13 +422,13 @@ Reject unknown fields, invalid limits, wrong cutoff/database state, unsafe temp
 root, and output under Git. Scan stdout, stderr, report, errors, and logs for a
 synthetic key and chunk prose.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 ~~~bash
 .venv/bin/python -m pytest tests/ingestion/test_dart_corpus_cli.py -q
 ~~~
 
-- [ ] **Step 3: Implement bounded execution**
+- [x] **Step 3: Implement bounded execution**
 
 ~~~text
 load and hash organizer target inventory
@@ -443,7 +443,13 @@ load and hash organizer target inventory
 Stop cleanly on DART rate limit, database loss, quarantine limit, inventory
 drift, or unsafe cleanup. Resume only from committed PostgreSQL state.
 
-- [ ] **Step 4: Run non-network tests and commit**
+Read reviewed ETF `DART_CORP_CODE` identifiers directly from the organizer
+dataset's canonical manager Entities. A local reviewed publisher mapping is an
+optional fallback only; it must not be required when the authoritative
+identifier already exists. Do not infer a public-fund manager when the
+organizer data does not provide one.
+
+- [x] **Step 4: Run non-network tests and commit**
 
 ~~~bash
 .venv/bin/python -m pytest \

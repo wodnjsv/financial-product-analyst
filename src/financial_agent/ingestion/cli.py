@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, date, datetime
+import hashlib
+import json
 import os
+import re
 import sys
 import tempfile
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
-from datetime import date, datetime
 from pathlib import Path
 from typing import BinaryIO, cast
 from urllib.error import HTTPError
@@ -24,6 +27,7 @@ from financial_agent.db.config import DatabaseConfig, DatabaseConfigurationError
 from financial_agent.db.engine import create_database_engine
 from financial_agent.db.preflight import normalize_psycopg_url
 from financial_agent.db.repositories.document_targets import DocumentTargetRepository
+from financial_agent.db.repositories.documents import DocumentCorpusRepository
 from financial_agent.db.schema.catalog import entity
 from financial_agent.db.schema.operations import (
     dataset_version as dataset_version_table,
@@ -34,8 +38,11 @@ from financial_agent.documents import (
     DocumentSourceAuditReport,
     DocumentSourceAttempt,
     DocumentSourceTarget,
+    PublisherRole,
+    SectionType,
     SourceAuditStatus,
 )
+from financial_agent.documents.chunking import WhitespaceTokenCounter
 from financial_agent.documents.source_manifest import (
     validate_document_source_report,
     write_document_source_report,
@@ -74,6 +81,27 @@ from financial_agent.ingestion.document_sources.base import (
     NoRedirectHttpOpener,
 )
 from financial_agent.ingestion.document_sources.dart import DartDocumentSourceAdapter
+from financial_agent.ingestion.document_sources.dart_batch import (
+    discover_dart_candidates_by_publisher,
+)
+from financial_agent.ingestion.document_sources.dart_ingestion import (
+    DartCorpusIngestionError,
+    DartCorpusIngestionRequest,
+    ingest_one_dart_document,
+)
+from financial_agent.ingestion.document_sources.dart_pipeline import (
+    DartProspectusContext,
+)
+from financial_agent.ingestion.document_sources.dart_publishers import (
+    DartPublisherDataError,
+    fetch_dart_corporation_codes,
+    reconcile_dart_publishers,
+)
+from financial_agent.ingestion.document_sources.dart_targets import (
+    OrganizerDartInventory,
+    OrganizerDartTarget,
+    build_organizer_dart_inventory,
+)
 from financial_agent.ingestion.document_sources.registered import (
     RegisteredDocumentSourceAdapter,
     ReviewedAuthorityContext,
@@ -169,6 +197,45 @@ class _PolicyTargetReconciliation:
     unavailable_entries: tuple[DocumentSourceAuditEntry, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class _DartCorpusConfiguration:
+    database_url: str
+    dataset_version: str
+    dart_api_key: str
+    temp_root: Path
+    publisher_aliases: Mapping[str, str]
+    report_path: Path
+    limit: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _DartCorpusRunReport:
+    schema_version: str
+    generated_at: datetime
+    cutoff_date: date
+    dataset_version: str
+    inventory_hash: str
+    organizer_product_count: int
+    organizer_target_count: int
+    selected_target_count: int
+    publisher_binding_count: int
+    publisher_failure_count: int
+    requested_publisher_count: int
+    discovered_document_count: int
+    indexed_document_ids: tuple[str, ...]
+    indexed_target_ids: tuple[str, ...]
+    failed_targets: tuple[tuple[str, str], ...]
+    rejected_dart_filing_count: int
+    captured_bytes: int
+    chunk_count: int
+    provisional_selected_token_count: int
+    token_counter_identity: str
+    deleted_pdf_count: int
+    deleted_bytes: int
+    quarantined_pdf_count: int
+    quarantined_bytes: int
+
+
 class _NoRedirectHandler(HTTPRedirectHandler):
     def redirect_request(
         self,
@@ -215,11 +282,198 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("load-stage03b")
     commands.add_parser("verify-official-object-storage")
     commands.add_parser("audit-document-sources")
+    dart_corpus = commands.add_parser("ingest-dart-corpus")
+    dart_corpus.add_argument("--limit", type=int)
     capacity = commands.add_parser("measure-stage03b-capacity")
     capacity.add_argument("--full-holdings", required=True, type=int)
     capacity.add_argument("--sample-products", default=100, type=int)
     capacity.add_argument("--current-storage-gib", default=20, type=int)
     return parser
+
+
+def _load_dart_corpus_configuration(
+    arguments: argparse.Namespace,
+) -> _DartCorpusConfiguration:
+    if arguments.command != "ingest-dart-corpus":
+        raise IngestionArgumentError()
+    limit = arguments.limit
+    if limit is not None and (
+        isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0
+    ):
+        raise IngestionArgumentError()
+    database_url = _required_env("FINANCIAL_AGENT_BUILD_DATABASE_URL").strip()
+    try:
+        DatabaseConfig(url=database_url)
+    except DatabaseConfigurationError:
+        raise IngestionArgumentError() from None
+    dataset_version = _required_env("FINANCIAL_AGENT_DATASET_VERSION").strip()
+    key_file = _required_absolute_file(
+        _required_env("FINANCIAL_AGENT_DART_API_KEY_FILE")
+    )
+    mapping_value = _optional_nonblank_env(
+        "FINANCIAL_AGENT_DART_PUBLISHER_MAPPING"
+    )
+    temp_root = _untracked_absolute_path(
+        _required_env("FINANCIAL_AGENT_DART_TEMP_ROOT"),
+        require_parent=False,
+    )
+    report_path = _untracked_absolute_path(
+        _required_env("FINANCIAL_AGENT_DART_REPORT"),
+        require_parent=True,
+    )
+    if report_path.exists() and not report_path.is_file():
+        raise IngestionArgumentError()
+    return _DartCorpusConfiguration(
+        database_url=database_url,
+        dataset_version=dataset_version,
+        dart_api_key=_read_dart_api_key(key_file),
+        temp_root=temp_root,
+        publisher_aliases=(
+            _load_dart_publisher_aliases(_required_absolute_file(mapping_value))
+            if mapping_value is not None
+            else {}
+        ),
+        report_path=report_path,
+        limit=limit,
+    )
+
+
+def _required_absolute_file(value: str) -> Path:
+    path = Path(value.strip())
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+    ):
+        raise IngestionArgumentError()
+    return path
+
+
+def _untracked_absolute_path(value: str, *, require_parent: bool) -> Path:
+    path = Path(value.strip())
+    repository_root = Path(__file__).resolve().parents[3]
+    if not path.is_absolute() or path.is_symlink():
+        raise IngestionArgumentError()
+    try:
+        path.resolve(strict=False).relative_to(repository_root)
+    except ValueError:
+        pass
+    else:
+        raise IngestionArgumentError()
+    parent = path.parent
+    if require_parent and (not parent.is_dir() or parent.is_symlink()):
+        raise IngestionArgumentError()
+    if path.exists() and not path.is_dir() and not require_parent:
+        raise IngestionArgumentError()
+    return path
+
+
+def _read_dart_api_key(path: Path) -> str:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        raise IngestionArgumentError() from None
+    matches: list[str] = []
+    nonblank = [line.strip() for line in lines if line.strip()]
+    if len(nonblank) == 1 and "=" not in nonblank[0]:
+        matches.append(nonblank[0])
+    else:
+        for line in nonblank:
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            if "=" not in line:
+                continue
+            name, value = line.split("=", 1)
+            normalized_name = re.sub(r"[^A-Z0-9]", "", name.upper())
+            if normalized_name not in {
+                "OPENDART",
+                "FINANCIALAGENTDARTAPIKEY",
+            }:
+                continue
+            secret = value.strip()
+            if (
+                len(secret) >= 2
+                and secret[0] == secret[-1]
+                and secret[0] in {"'", '"'}
+            ):
+                secret = secret[1:-1].strip()
+            if secret:
+                matches.append(secret)
+    if len(matches) != 1:
+        raise IngestionArgumentError()
+    return matches[0]
+
+
+def _load_dart_publisher_aliases(path: Path) -> Mapping[str, str]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        raise IngestionArgumentError() from None
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schema_version", "aliases"}
+        or payload.get("schema_version") != "1.0"
+        or not isinstance(payload.get("aliases"), list)
+    ):
+        raise IngestionArgumentError()
+    aliases: dict[str, str] = {}
+    for item in payload["aliases"]:
+        if not isinstance(item, dict) or set(item) != {
+            "manager_entity_id",
+            "corp_code",
+        }:
+            raise IngestionArgumentError()
+        manager_id = item["manager_entity_id"]
+        corp_code = item["corp_code"]
+        if (
+            not isinstance(manager_id, str)
+            or not manager_id.strip()
+            or not isinstance(corp_code, str)
+            or re.fullmatch(r"[0-9]{8}", corp_code) is None
+            or manager_id in aliases
+        ):
+            raise IngestionArgumentError()
+        aliases[manager_id] = corp_code
+    return aliases
+
+
+def _write_dart_corpus_report(
+    report: _DartCorpusRunReport,
+    destination: Path,
+) -> str:
+    def json_value(value: object) -> object:
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {key: json_value(item) for key, item in value.items()}
+        if isinstance(value, (tuple, list)):
+            return [json_value(item) for item in value]
+        return value
+
+    payload = json.dumps(
+        json_value(asdict(report)),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode()
+    report_hash = hashlib.sha256(payload).hexdigest()
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=".dart-corpus-report-",
+            dir=destination.parent,
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(payload)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        temporary_path.replace(destination)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    return report_hash
 
 
 def _optional_nonblank_env(name: str) -> str | None:
@@ -938,6 +1192,364 @@ async def _document_source_audit_command() -> int:
     return 0 if passed else 2
 
 
+async def _load_dart_corpus_inventory(
+    configuration: _DartCorpusConfiguration,
+):
+    engine = create_database_engine(
+        DatabaseConfig(url=configuration.database_url)
+    )
+    try:
+        async with engine.connect() as connection:
+            server_version = await connection.scalar(
+                sa.text("SHOW server_version_num")
+            )
+            try:
+                major_version = int(str(server_version)) // 10_000
+            except (TypeError, ValueError):
+                raise IngestionArgumentError() from None
+            if major_version != 15:
+                raise IngestionArgumentError()
+            dataset_row = (
+                await connection.execute(
+                    sa.select(
+                        dataset_version_table.c.cutoff_date,
+                        dataset_version_table.c.status,
+                    ).where(
+                        dataset_version_table.c.dataset_version
+                        == configuration.dataset_version
+                    )
+                )
+            ).mappings().one_or_none()
+            if (
+                dataset_row is None
+                or dataset_row["cutoff_date"] != _DOCUMENT_SOURCE_CUTOFF
+                or dataset_row["status"] != "building"
+            ):
+                raise IngestionArgumentError()
+            repository = DocumentTargetRepository(connection)
+            rows = await repository.list_organizer_dart_rows(
+                configuration.dataset_version,
+                _DOCUMENT_SOURCE_CUTOFF,
+            )
+    except Exception:
+        await engine.dispose()
+        raise
+    inventory = build_organizer_dart_inventory(
+        configuration.dataset_version,
+        _DOCUMENT_SOURCE_CUTOFF,
+        rows,
+    )
+    manager_ids = tuple(
+        sorted(
+            {
+                manager_id
+                for target in inventory.targets
+                for manager_id, _ in target.manager_bindings
+            }
+        )
+    )
+    try:
+        async with engine.connect() as connection:
+            institution_identifiers = await DocumentTargetRepository(
+                connection
+            ).list_identifiers(
+                configuration.dataset_version,
+                manager_ids,
+            )
+    except Exception:
+        await engine.dispose()
+        raise
+    return engine, inventory, institution_identifiers
+
+
+def _limited_dart_inventory(
+    inventory: OrganizerDartInventory,
+    limit: int | None,
+) -> OrganizerDartInventory:
+    if limit is None:
+        return inventory
+    return replace(inventory, targets=inventory.targets[:limit])
+
+
+def _merge_dart_targets(
+    grouped: tuple[tuple[OrganizerDartTarget, object], ...],
+) -> OrganizerDartTarget:
+    primary = grouped[0][0]
+    managers = tuple(
+        sorted(
+            {
+                manager
+                for target, _ in grouped
+                for manager in target.manager_bindings
+            }
+        )
+    )
+    return replace(
+        primary,
+        member_entity_ids=tuple(
+            sorted(
+                {
+                    entity_id
+                    for target, _ in grouped
+                    for entity_id in target.member_entity_ids
+                }
+            )
+        ),
+        identifiers=tuple(
+            sorted(
+                {
+                    identifier
+                    for target, _ in grouped
+                    for identifier in target.identifiers
+                }
+            )
+        ),
+        manager_bindings=managers,
+    )
+
+
+def _dart_prospectus_context(
+    *,
+    configuration: _DartCorpusConfiguration,
+    target: OrganizerDartTarget,
+    candidate: object,
+) -> DartProspectusContext:
+    receipt = candidate.accession_or_receipt_id
+    published_at = candidate.published_at
+    available_at = candidate.available_at
+    if (
+        receipt is None
+        or candidate.document_version is None
+        or published_at is None
+        or available_at is None
+        or len(target.manager_bindings) != 1
+    ):
+        raise DartCorpusIngestionError("dart_ingestion_context_incomplete")
+    manager_id, _ = target.manager_bindings[0]
+    return DartProspectusContext(
+        dataset_version=configuration.dataset_version,
+        entity_id=target.representative_entity_id,
+        canonical_entity_name=target.canonical_name,
+        document_id=f"dart:{receipt}:full-prospectus",
+        document_title=f"{target.canonical_name} 투자설명서",
+        document_type="full_prospectus",
+        document_version=candidate.document_version,
+        source_id=f"source:dart:{receipt}",
+        source_object_key=f"documents/dart/{receipt}/full-prospectus.pdf",
+        source_content_checksum="0" * 64,
+        publisher_id=manager_id,
+        publisher_role=PublisherRole.ASSET_MANAGER,
+        published_at=published_at,
+        available_at=available_at,
+        effective_from=(candidate.effective_from or published_at.date()),
+        effective_to=candidate.effective_to,
+        jurisdiction="KR",
+        original_language="ko",
+        required_document_role=DocumentRole.PRODUCT_FULL,
+        budget_scope_id=target.target_key,
+    )
+
+
+def _quarantine_totals(root: Path) -> tuple[int, int]:
+    if not root.exists():
+        return 0, 0
+    count = 0
+    byte_count = 0
+    for path in root.rglob("*.pdf"):
+        if path.is_symlink() or not path.is_file():
+            raise DartCorpusIngestionError("dart_quarantine_path_invalid")
+        count += 1
+        byte_count += path.stat().st_size
+    return count, byte_count
+
+
+async def _run_dart_corpus(
+    configuration: _DartCorpusConfiguration,
+) -> _DartCorpusRunReport:
+    (
+        engine,
+        full_inventory,
+        institution_identifiers,
+    ) = await _load_dart_corpus_inventory(configuration)
+    inventory = _limited_dart_inventory(full_inventory, configuration.limit)
+    opener = _NoRedirectHttpOpener()
+    repository = DocumentCorpusRepository(engine)
+    indexed_target_ids: set[str] = set()
+    failed_targets: dict[str, str] = {}
+    indexed_document_ids: set[str] = set()
+    captured_bytes = 0
+    chunk_count = 0
+    selected_tokens = 0
+    deleted_bytes = 0
+    try:
+        selected_manager_ids = {
+            manager_id
+            for target in inventory.targets
+            for manager_id, _ in target.manager_bindings
+        }
+        corp_code_zip = fetch_dart_corporation_codes(
+            opener, configuration.dart_api_key
+        )
+        reconciliation = reconcile_dart_publishers(
+            inventory=inventory,
+            corp_code_zip=corp_code_zip,
+            institution_identifiers=institution_identifiers,
+            reviewed_aliases={
+                manager_id: corp_code
+                for manager_id, corp_code
+                in configuration.publisher_aliases.items()
+                if manager_id in selected_manager_ids
+            },
+        )
+        discovery = discover_dart_candidates_by_publisher(
+            inventory=inventory,
+            reconciliation=reconciliation,
+            adapter=DartDocumentSourceAdapter(opener),
+            context=DocumentDiscoveryContext(
+                cutoff_date=_DOCUMENT_SOURCE_CUTOFF,
+                dart_api_key=configuration.dart_api_key,
+                sec_user_agent=None,
+                locator_registry_path=None,
+            ),
+        )
+        targets = {target.target_key: target for target in inventory.targets}
+        receipts: dict[str, list[tuple[OrganizerDartTarget, object]]] = {}
+        for disposition in discovery.dispositions:
+            if len(disposition.candidates) != 1:
+                failed_targets[disposition.target_key] = (
+                    disposition.reason_code or "dart_candidate_count_invalid"
+                )
+                continue
+            candidate = disposition.candidates[0]
+            receipt = candidate.accession_or_receipt_id
+            if receipt is None:
+                failed_targets[disposition.target_key] = (
+                    "dart_candidate_receipt_missing"
+                )
+                continue
+            receipts.setdefault(receipt, []).append(
+                (targets[disposition.target_key], candidate)
+            )
+
+        fatal_codes = {
+            "dart_corpus_readback_mismatch",
+            "dart_pdf_cleanup_not_authorized",
+            "dart_pdf_cleanup_checksum_mismatch",
+            "dart_pdf_cleanup_path_invalid",
+            "dart_pdf_cleanup_failed",
+            "dart_quarantine_limit_reached",
+            "dart_quarantine_path_invalid",
+        }
+        for receipt in sorted(receipts):
+            grouped = tuple(
+                sorted(receipts[receipt], key=lambda item: item[0].target_key)
+            )
+            target = _merge_dart_targets(grouped)
+            candidate = grouped[0][1]
+            target_keys = tuple(item[0].target_key for item in grouped)
+            try:
+                context = _dart_prospectus_context(
+                    configuration=configuration,
+                    target=target,
+                    candidate=candidate,
+                )
+                await ingest_one_dart_document(
+                    repository,
+                    opener,
+                    request=DartCorpusIngestionRequest(
+                        run_root=configuration.temp_root,
+                        target=target,
+                        candidate=candidate,
+                        context=context,
+                        requested_section_types=frozenset(
+                            {
+                                SectionType.INVESTMENT_STRATEGY,
+                                SectionType.RISK_FACTOR,
+                            }
+                        ),
+                        token_counter=WhitespaceTokenCounter(),
+                        maximum_bytes=64 * 1024 * 1024,
+                    ),
+                )
+                persisted = await repository.get_captured_corpus(
+                    configuration.dataset_version,
+                    context.document_id,
+                )
+                indexed_document_ids.add(context.document_id)
+                indexed_target_ids.update(target_keys)
+                captured_bytes += persisted.source_artifact.byte_count
+                deleted_bytes += persisted.source_artifact.byte_count
+                chunk_count += len(persisted.corpus.chunks)
+                selected_tokens += sum(
+                    WhitespaceTokenCounter().count(chunk.exact_text)
+                    for chunk in persisted.corpus.chunks
+                )
+            except DartCorpusIngestionError as error:
+                if error.code in fatal_codes:
+                    raise
+                for target_key in target_keys:
+                    failed_targets[target_key] = error.code
+            except SourceVerificationError as error:
+                for target_key in target_keys:
+                    failed_targets[target_key] = error.code
+
+        selected_target_ids = {target.target_key for target in inventory.targets}
+        if indexed_target_ids.intersection(failed_targets) or (
+            indexed_target_ids | set(failed_targets)
+        ) != selected_target_ids:
+            raise DartCorpusIngestionError("dart_target_reconciliation_failed")
+        quarantined_count, quarantined_bytes = _quarantine_totals(
+            configuration.temp_root
+        )
+        return _DartCorpusRunReport(
+            schema_version="1.0",
+            generated_at=datetime.now(UTC),
+            cutoff_date=_DOCUMENT_SOURCE_CUTOFF,
+            dataset_version=configuration.dataset_version,
+            inventory_hash=full_inventory.inventory_hash,
+            organizer_product_count=full_inventory.product_count,
+            organizer_target_count=len(full_inventory.targets),
+            selected_target_count=len(inventory.targets),
+            publisher_binding_count=len(reconciliation.bindings),
+            publisher_failure_count=len(reconciliation.failures),
+            requested_publisher_count=len(
+                discovery.requested_publisher_codes
+            ),
+            discovered_document_count=len(receipts),
+            indexed_document_ids=tuple(sorted(indexed_document_ids)),
+            indexed_target_ids=tuple(sorted(indexed_target_ids)),
+            failed_targets=tuple(sorted(failed_targets.items())),
+            rejected_dart_filing_count=len(discovery.rejected_filings),
+            captured_bytes=captured_bytes,
+            chunk_count=chunk_count,
+            provisional_selected_token_count=selected_tokens,
+            token_counter_identity="WhitespaceTokenCounter",
+            deleted_pdf_count=len(indexed_document_ids),
+            deleted_bytes=deleted_bytes,
+            quarantined_pdf_count=quarantined_count,
+            quarantined_bytes=quarantined_bytes,
+        )
+    finally:
+        await engine.dispose()
+
+
+async def _dart_corpus_command(arguments: argparse.Namespace) -> int:
+    configuration = _load_dart_corpus_configuration(arguments)
+    report = await _run_dart_corpus(configuration)
+    report_hash = _write_dart_corpus_report(
+        report, configuration.report_path
+    )
+    print(
+        "DART_CORPUS_OK "
+        f"targets={report.selected_target_count} "
+        f"documents={len(report.indexed_document_ids)} "
+        f"failed={len(report.failed_targets)} "
+        f"quarantined={report.quarantined_pdf_count} "
+        f"report_hash={report_hash}"
+    )
+    return 0 if not report.failed_targets else 2
+
+
 async def _official_object_storage_command() -> int:
     manifests, _ = _official_inputs()
     bucket = _required_env("FINANCIAL_AGENT_OBJECT_STORAGE_BUCKET")
@@ -993,6 +1605,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = asyncio.run(_capacity_probe_command(arguments))
         elif arguments.command == "audit-document-sources":
             result = asyncio.run(_document_source_audit_command())
+        elif arguments.command == "ingest-dart-corpus":
+            result = asyncio.run(_dart_corpus_command(arguments))
         else:
             result = asyncio.run(_official_object_storage_command())
         return 0 if result is None else result
@@ -1007,6 +1621,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         OrganizerBuildError,
         OrganizerSourceValidationError,
         SourceVerificationError,
+        DartCorpusIngestionError,
+        DartPublisherDataError,
         DatasetBuildConflict,
         DatasetBuildPayloadError,
         DatasetBuildRoleError,

@@ -101,10 +101,64 @@ class DocumentTargetRepository:
             for row in result.mappings().all()
         )
 
+    async def list_identifiers(
+        self,
+        dataset_version: str,
+        entity_ids: tuple[str, ...],
+    ) -> Mapping[str, tuple[tuple[str, str], ...]]:
+        statement = self.manager_identifiers_statement(
+            dataset_version,
+            entity_ids,
+        )
+        if not entity_ids:
+            return {}
+        result = await self._connection.execute(statement)
+        grouped: dict[str, set[tuple[str, str]]] = {}
+        for row in result.mappings().all():
+            entity_id = _required_row_text(row, "entity_id")
+            grouped.setdefault(entity_id, set()).add(
+                (
+                    _required_row_text(row, "scheme"),
+                    _required_row_text(row, "identifier_value"),
+                )
+            )
+        return {
+            entity_id: tuple(sorted(values))
+            for entity_id, values in sorted(grouped.items())
+        }
+
     @staticmethod
     def organizer_dart_statement(dataset_version: str) -> sa.Select[object]:
         _validate_dataset_version(dataset_version)
         return _organizer_dart_statement(dataset_version)
+
+    @staticmethod
+    def manager_identifiers_statement(
+        dataset_version: str,
+        entity_ids: tuple[str, ...],
+    ) -> sa.Select[object]:
+        _validate_dataset_version(dataset_version)
+        if any(
+            not isinstance(value, str) or not value.strip()
+            for value in entity_ids
+        ):
+            raise ValueError("entity_ids must contain only nonblank strings")
+        return (
+            sa.select(
+                identifier.c.entity_id,
+                identifier.c.scheme,
+                identifier.c.identifier_value,
+            )
+            .where(
+                identifier.c.dataset_version == dataset_version,
+                identifier.c.entity_id.in_(entity_ids),
+            )
+            .order_by(
+                identifier.c.entity_id,
+                identifier.c.scheme,
+                identifier.c.identifier_value,
+            )
+        )
 
 
 def _validate_scope(dataset_version: str, cutoff_date: date) -> None:

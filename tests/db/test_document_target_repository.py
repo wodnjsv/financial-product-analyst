@@ -58,6 +58,21 @@ def test_organizer_dart_query_is_product_gated_and_relation_exact() -> None:
     assert "overseas_etf" not in compiled_sql
 
 
+def test_manager_identifier_query_is_dataset_scoped_and_exact() -> None:
+    statement = DocumentTargetRepository.manager_identifiers_statement(
+        "facts-v1",
+        ("manager-one", "manager-two"),
+    )
+    compiled_sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
+
+    assert statement.is_select
+    assert "catalog.identifier.dataset_version = 'facts-v1'" in compiled_sql
+    assert (
+        "catalog.identifier.entity_id IN ('manager-one', 'manager-two')"
+        in compiled_sql
+    )
+
+
 @pytest.mark.asyncio
 async def test_blank_dataset_version_is_rejected_before_query() -> None:
     repository = DocumentTargetRepository(None)  # type: ignore[arg-type]
@@ -114,6 +129,44 @@ async def test_duplicate_identifier_rows_yield_one_exact_identifier() -> None:
     targets = await repository.list_targets("facts-v1", cutoff_date=CUTOFF)
 
     assert targets[0].identifiers == (("ISIN", "KR0000000001"),)
+
+
+@pytest.mark.asyncio
+async def test_lists_exact_manager_identifiers_without_guessing() -> None:
+    connection = _DuplicateIdentifierConnection()
+    connection._results = [
+        _MappingsResult(
+            [
+                {
+                    "entity_id": "manager-one",
+                    "scheme": "DART_CORP_CODE",
+                    "identifier_value": "00123456",
+                },
+                {
+                    "entity_id": "manager-one",
+                    "scheme": "DART_CORP_CODE",
+                    "identifier_value": "00123456",
+                },
+                {
+                    "entity_id": "manager-one",
+                    "scheme": "ORGANIZER_CODE",
+                    "identifier_value": "source-local",
+                },
+            ]
+        )
+    ]
+
+    identifiers = await DocumentTargetRepository(connection).list_identifiers(
+        "facts-v1",
+        ("manager-one",),
+    )
+
+    assert identifiers == {
+        "manager-one": (
+            ("DART_CORP_CODE", "00123456"),
+            ("ORGANIZER_CODE", "source-local"),
+        )
+    }
 
 
 def _token() -> str:
