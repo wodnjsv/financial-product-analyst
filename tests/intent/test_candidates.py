@@ -4,11 +4,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from financial_agent.contracts import canonical_json_bytes
 from financial_agent.contracts.canonical import build_request_key
 from financial_agent.contracts.request import RequestContext, Segment
-from financial_agent.intent.candidates import generate_semantic_candidates
+from financial_agent.intent.candidates import (
+    EntityCandidate,
+    generate_semantic_candidates,
+)
 from financial_agent.intent.catalog import SemanticCatalogSnapshot, load_catalog
 from financial_agent.intent.normalization import normalize_request
 
@@ -54,6 +58,51 @@ def test_semantic_candidates_are_stable_and_bounded(snapshot, normalized) -> Non
     assert canonical_json_bytes(first) == canonical_json_bytes(second)
     assert all(len(group.items) <= 5 for group in first.by_mention)
     assert first.total_count <= 80
+
+
+def test_entity_candidate_requires_canonical_ontology_type_set() -> None:
+    """Catches lossy singular types and noncanonical multi-role projections."""
+    candidate = EntityCandidate(
+        entity_id="entity-etf-share",
+        canonical_name="Synthetic ETF",
+        ontology_type_ids=(
+            "DomesticETF",
+            "ETF",
+            "FinancialProduct",
+            "FundShareClass",
+        ),
+        product_family="domestic_etf",
+        match_kind="exact_name",
+        score=1_000_000,
+        source_id="entity-etf-share",
+    )
+
+    assert candidate.ontology_type_ids == (
+        "DomesticETF",
+        "ETF",
+        "FinancialProduct",
+        "FundShareClass",
+    )
+    with pytest.raises(ValidationError):
+        EntityCandidate(
+            entity_id="entity-bad",
+            canonical_name="Bad",
+            ontology_type_ids=("ETF", "DomesticETF"),
+            product_family="domestic_etf",
+            match_kind="exact_name",
+            score=1_000_000,
+            source_id="entity-bad",
+        )
+    with pytest.raises(ValidationError):
+        EntityCandidate(
+            entity_id="entity-unknown",
+            canonical_name="Unknown",
+            ontology_type_ids=("storage-product",),
+            product_family="domestic_etf",
+            match_kind="exact_name",
+            score=1_000_000,
+            source_id="entity-unknown",
+        )
 
 
 def test_risk_grade_keeps_both_semantic_candidates(snapshot) -> None:

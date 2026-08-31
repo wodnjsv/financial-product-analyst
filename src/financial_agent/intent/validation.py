@@ -140,10 +140,11 @@ def _offered(view: ResolverView, catalog: SemanticCatalogSnapshot) -> _Offered:
     concept_ids = frozenset(item.concept_id for item in view.concept_definitions)
     relation_ids = frozenset(item.relation_id for item in view.relation_definitions)
     entity_type_ids = {
-        item.entity_type
+        ontology_type_id
         for group in view.entity_candidates
         for item in group.items
-        if item.entity_type in catalog.class_ancestor_ids
+        for ontology_type_id in item.ontology_type_ids
+        if ontology_type_id in catalog.class_ancestor_ids
     }
     for concept in view.concept_definitions:
         entity_type_ids.update(concept.allowed_ontology_types)
@@ -278,17 +279,24 @@ def _validate_selected_entity_types(
         frame for frame in draft.intent_frames if hint_id in frame.entity_hint_ids
     )
     for entity_id in hint.selected_candidate_ids:
-        candidate_type = candidates[entity_id].entity_type
-        if candidate_type not in catalog.class_ancestor_ids:
+        candidate_types = candidates[entity_id].ontology_type_ids
+        if any(
+            candidate_type not in catalog.class_ancestor_ids
+            for candidate_type in candidate_types
+        ):
             raise ResolverContractError("MODEL_UNKNOWN_ID")
-        if expected_types and not _type_is_compatible(
-            candidate_type, expected_types, catalog
+        if expected_types and not any(
+            _type_is_compatible(candidate_type, expected_types, catalog)
+            for candidate_type in candidate_types
         ):
             raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
         if any(
             frame.entity_type_ids
-            and not _type_is_compatible(
-                candidate_type, set(frame.entity_type_ids), catalog
+            and not any(
+                _type_is_compatible(
+                    candidate_type, set(frame.entity_type_ids), catalog
+                )
+                for candidate_type in candidate_types
             )
             for frame in referencing_frames
         ):

@@ -222,7 +222,12 @@ def _entity_type_ids(view: ResolverView) -> tuple[str, ...]:
     return tuple(
         sorted(
             {
-                *(item.entity_type for group in view.entity_candidates for item in group.items),
+                *(
+                    ontology_type_id
+                    for group in view.entity_candidates
+                    for item in group.items
+                    for ontology_type_id in item.ontology_type_ids
+                ),
                 *(item for concept in view.concept_definitions for item in concept.allowed_ontology_types),
                 *(item for relation in view.relation_definitions for item in relation.subject_ontology_types),
                 *(item for relation in view.relation_definitions for item in relation.object_ontology_types),

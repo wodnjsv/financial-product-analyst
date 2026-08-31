@@ -63,7 +63,7 @@ def resolver_inputs() -> dict[str, object]:
                 EntityCandidate(
                     entity_id="entity-kodex",
                     canonical_name="KODEX 200",
-                    entity_type="ETF",
+                    ontology_type_ids=("DomesticETF", "ETF", "FinancialProduct"),
                     product_family="domestic_etf",
                     match_kind="exact_name",
                     score=1_000_000,
@@ -176,7 +176,7 @@ def test_view_retains_exact_entity_candidates_before_truncating_fuzzy_candidates
             EntityCandidate(
                 entity_id=f"entity-{index}",
                 canonical_name=f"Entity {index}",
-                entity_type="ETF",
+                ontology_type_ids=("DomesticETF", "ETF", "FinancialProduct"),
                 product_family="domestic_etf",
                 match_kind="exact_name" if index < 3 else "trigram",
                 score=1_000_000 if index < 3 else 900_000 - index,

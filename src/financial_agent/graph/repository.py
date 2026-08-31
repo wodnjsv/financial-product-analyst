@@ -19,9 +19,6 @@ from financial_agent.db.schema.operations import dataset_version as dataset_vers
 from financial_agent.db.schema.relation import relation_record
 from financial_agent.graph.contract import (
     APPROVED_PREDICATES,
-    ENTITY_CLASS_BY_TYPE,
-    ETP_CLASSES_BY_FAMILY_AND_TYPE,
-    PRODUCT_BASE_CLASSES_BY_FAMILY,
     RELATION_METRIC_PROPERTY_BY_ID,
     EntityProjection,
     EvidenceProjection,
@@ -30,14 +27,13 @@ from financial_agent.graph.contract import (
     RelationProjection,
     SourceProjection,
 )
+from financial_agent.graph.entity_types import (
+    EntityTypeProjectionError,
+    ProductTypeFact,
+    project_entity_ontology_type_ids,
+)
 
 
-_INSTITUTION_CLASS_BY_KIND = {
-    "asset_manager": "AssetManager",
-    "issuer": "Issuer",
-    "exchange": "Market",
-}
-_SECURITY_CLASS_BY_KIND = {"listed_equity": "EquitySecurity"}
 _RELATION_DOMAIN_RANGE: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "managedBy": (frozenset({"FinancialProduct"}), frozenset({"AssetManager"})),
     "issuedBy": (
@@ -303,80 +299,43 @@ def _build_batch(
     evidence_rows: list[Any],
     metric_rows: list[Any],
 ) -> GraphProjectionBatch:
-    types_by_entity: dict[str, set[str]] = {}
-    family_by_entity: dict[str, str | None] = {}
-    for row in entity_rows:
-        base_type = ENTITY_CLASS_BY_TYPE.get(row.entity_type)
-        if base_type is None:
-            _fail("unsupported_entity_type", f"{row.entity_id}:{row.entity_type}")
-        subtype_types = {
-            subtype_type
-            for subtype_type, subtype_value in (
-                ("product", row.product_family),
-                ("security", row.security_kind),
-                ("institution", row.institution_kind),
-            )
-            if subtype_value is not None
-        }
-        if len(subtype_types) > 1 or (
-            subtype_types and row.entity_type not in subtype_types
-        ):
-            _fail(
-                "inconsistent_entity_subtype",
-                f"{row.entity_id}:{row.entity_type}:{','.join(sorted(subtype_types))}",
-            )
-        rdf_types = {base_type}
-        family_by_entity[row.entity_id] = row.product_family
-        if row.product_family is not None:
-            family_types = PRODUCT_BASE_CLASSES_BY_FAMILY.get(row.product_family)
-            if family_types is None:
-                _fail("unsupported_product_family", f"{row.entity_id}:{row.product_family}")
-            rdf_types.update(family_types)
-        if row.institution_kind in _INSTITUTION_CLASS_BY_KIND:
-            rdf_types.add(_INSTITUTION_CLASS_BY_KIND[row.institution_kind])
-        if row.security_kind in _SECURITY_CLASS_BY_KIND:
-            rdf_types.add(_SECURITY_CLASS_BY_KIND[row.security_kind])
-        types_by_entity[row.entity_id] = rdf_types
-
+    identifier_schemes_by_entity: dict[str, list[str]] = defaultdict(list)
     for row in identifier_rows:
-        rdf_types = types_by_entity.get(row.entity_id)
-        if rdf_types is None or "FinancialProduct" not in rdf_types:
-            _fail("invalid_share_class_type", row.entity_id)
-        rdf_types.add("FundShareClass")
-
-    product_types: dict[str, set[str]] = defaultdict(set)
+        identifier_schemes_by_entity[row.entity_id].append(row.scheme)
+    product_type_facts_by_entity: dict[str, list[ProductTypeFact]] = defaultdict(list)
     for row in product_type_rows:
-        if (
-            row.value_kind != "text"
-            or row.value_status != "present"
-            or row.text_value not in {"ETF", "ETN"}
-        ):
-            _fail("invalid_product_type_fact", str(row.entity_id))
-        product_types[row.entity_id].add(row.text_value)
-    for entity_id, values in product_types.items():
-        if len(values) != 1:
-            _fail("conflicting_product_type_facts", entity_id)
-        product_type = next(iter(values))
-        family = family_by_entity.get(entity_id)
-        classes = ETP_CLASSES_BY_FAMILY_AND_TYPE.get((family, product_type))
-        if classes is None:
-            _fail("conflicting_product_type_fact", f"{entity_id}:{family}:{product_type}")
-        types_by_entity[entity_id].update(classes)
+        product_type_facts_by_entity[row.entity_id].append(
+            ProductTypeFact(row.value_status, row.text_value, row.value_kind)
+        )
+    share_class_subject_ids = {
+        row.subject_id for row in relation_rows if row.predicate_id == "hasShareClass"
+    }
+    share_class_object_ids = {
+        row.object_id for row in relation_rows if row.predicate_id == "hasShareClass"
+    }
 
-    for row in relation_rows:
-        if row.predicate_id == "hasShareClass":
-            subject_types = types_by_entity.get(row.subject_id)
-            object_types = types_by_entity.get(row.object_id)
-            if subject_types is None or "PublicFund" not in subject_types:
-                _fail("missing_relation_type", f"{row.relation_id}:subject")
-            if object_types is None or "FinancialProduct" not in object_types:
-                _fail("missing_relation_type", f"{row.relation_id}:object")
-            subject_types.add("RepresentativeFund")
-            object_types.add("FundShareClass")
-
-    for rdf_types in types_by_entity.values():
-        if {"ETF", "ETN"} <= rdf_types:
-            _fail("conflicting_entity_types", "ETF and ETN")
+    types_by_entity: dict[str, set[str]] = {}
+    for row in entity_rows:
+        try:
+            types_by_entity[row.entity_id] = set(
+                project_entity_ontology_type_ids(
+                    entity_id=row.entity_id,
+                    storage_entity_type=row.entity_type,
+                    product_family=row.product_family,
+                    security_kind=row.security_kind,
+                    institution_kind=row.institution_kind,
+                    identifier_schemes=tuple(
+                        identifier_schemes_by_entity.get(row.entity_id, ())
+                    ),
+                    product_type_facts=tuple(
+                        product_type_facts_by_entity.get(row.entity_id, ())
+                    ),
+                    is_share_class_subject=row.entity_id in share_class_subject_ids,
+                    is_share_class_object=row.entity_id in share_class_object_ids,
+                )
+            )
+        except EntityTypeProjectionError as error:
+            _fail(error.code, error.detail)
 
     evidence_ids_by_relation: dict[str, list[str]] = defaultdict(list)
     evidence_by_id: dict[str, EvidenceProjection] = {}

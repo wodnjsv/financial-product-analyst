@@ -254,7 +254,7 @@ def validation_inputs() -> ValidationInputs:
                     ResolverViewEntityCandidate(
                         entity_id="entity-product",
                         canonical_name="KODEX 200",
-                        entity_type="ETF",
+                        ontology_type_ids=("DomesticETF", "ETF", "FinancialProduct"),
                         product_family="domestic_etf",
                         match_kind="exact_name",
                         score=1_000_000,
@@ -262,7 +262,7 @@ def validation_inputs() -> ValidationInputs:
                     ResolverViewEntityCandidate(
                         entity_id="entity-manager",
                         canonical_name="운용사",
-                        entity_type="AssetManager",
+                        ontology_type_ids=("AssetManager", "Organization"),
                         product_family=None,
                         match_kind="exact_name",
                         score=1_000_000,
@@ -425,7 +425,9 @@ def test_entity_transitive_subclass_satisfies_an_intermediate_type(
 ) -> None:
     """Catches dropping DomesticETF-to-ETF ancestry during validation."""
     group = validation_inputs.view.entity_candidates[0]
-    domestic_etf = group.items[0].model_copy(update={"entity_type": "DomesticETF"})
+    domestic_etf = group.items[0].model_copy(
+        update={"ontology_type_ids": ("DomesticETF", "FinancialProduct")}
+    )
     view = validation_inputs.view.model_copy(
         update={
             "entity_candidates": (
@@ -456,6 +458,64 @@ def test_entity_transitive_subclass_satisfies_an_intermediate_type(
     assert validate_semantics(draft=draft, **inputs.rest).resolution_status is ResolutionStatus.RESOLVED
 
 
+def test_entity_multirole_types_satisfy_independent_frame_constraints(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches choosing one leaf and losing an independent share-class role."""
+    group = validation_inputs.view.entity_candidates[0]
+    multi_role = group.items[0].model_copy(
+        update={
+            "ontology_type_ids": (
+                "DomesticETF",
+                "ETF",
+                "FinancialProduct",
+                "FundShareClass",
+            )
+        }
+    )
+    view = validation_inputs.view.model_copy(
+        update={
+            "entity_candidates": (
+                group.model_copy(update={"items": (multi_role, *group.items[1:])}),
+            )
+        }
+    )
+    hint = _entity_hint(
+        candidate_ids=("entity-product",),
+        selected_ids=("entity-product",),
+    )
+    first, second = validation_inputs.draft.intent_frames
+    draft = validation_inputs.draft.model_copy(
+        update={
+            "intent_frames": (
+                first.model_copy(
+                    update={
+                        "entity_type_ids": ("ETF",),
+                        "entity_hint_ids": (hint.entity_hint_id,),
+                    }
+                ),
+                second.model_copy(
+                    update={
+                        "entity_type_ids": ("FundShareClass",),
+                        "entity_hint_ids": (hint.entity_hint_id,),
+                    }
+                ),
+            ),
+            "entity_hints": (hint,),
+        }
+    )
+
+    state = validate_semantics(
+        draft=draft,
+        context=validation_inputs.context,
+        normalized=validation_inputs.normalized,
+        view=view,
+        catalog=validation_inputs.catalog,
+    )
+
+    assert state.resolution_status is ResolutionStatus.RESOLVED
+
+
 def test_entity_hint_without_mention_cannot_select_a_dataset_candidate(
     validation_inputs: ValidationInputs,
 ) -> None:
@@ -475,7 +535,7 @@ def test_unknown_storage_entity_type_cannot_be_selected_as_an_ontology_type(
     """Catches a raw candidate category becoming an approved ontology type."""
     group = validation_inputs.view.entity_candidates[0]
     unknown_candidate = group.items[0].model_copy(
-        update={"entity_type": "UnknownStorageCategory"}
+        update={"ontology_type_ids": ("UnknownStorageCategory",)}
     )
     view = validation_inputs.view.model_copy(
         update={
@@ -504,7 +564,7 @@ def test_unknown_storage_entity_type_cannot_bypass_empty_constraints(
     """Catches selected raw candidate types when no compatibility constraint is present."""
     group = validation_inputs.view.entity_candidates[0]
     unknown_candidate = group.items[0].model_copy(
-        update={"entity_type": "UnknownStorageCategory"}
+        update={"ontology_type_ids": ("UnknownStorageCategory",)}
     )
     view = validation_inputs.view.model_copy(
         update={

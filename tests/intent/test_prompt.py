@@ -96,7 +96,7 @@ def make_view() -> ResolverView:
                     ResolverViewEntityCandidate(
                         entity_id='entity-kodex',
                         canonical_name='KODEX 200',
-                        entity_type='ETF',
+                        ontology_type_ids=('DomesticETF', 'ETF', 'FinancialProduct'),
                         product_family='domestic_etf',
                         match_kind='exact_name',
                         score=1_000_000,

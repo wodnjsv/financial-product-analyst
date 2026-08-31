@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
 from financial_agent.contracts.enums import IntentType, ProductFamily
 from financial_agent.contracts.request import RequestContext
-from financial_agent.graph.contract import GRAPH_CONTRACT_RELATIVE_PATHS
+from financial_agent.graph.contract import (
+    APPROVED_RDF_TYPES,
+    GRAPH_CONTRACT_RELATIVE_PATHS,
+)
 
 from .candidates import EntityCandidate, SemanticCandidate, SemanticCandidateSet
 from .catalog import SemanticCatalogSnapshot
@@ -110,10 +113,19 @@ class ResolverViewLiteralCandidate(ContractModel):
 class ResolverViewEntityCandidate(ContractModel):
     entity_id: Identifier
     canonical_name: str = Field(min_length=1)
-    entity_type: Identifier
+    ontology_type_ids: tuple[Identifier, ...] = Field(min_length=1)
     product_family: Identifier | None = None
     match_kind: str = Field(min_length=1)
     score: int = Field(ge=0, le=1_000_000)
+
+    @model_validator(mode="after")
+    def validate_ontology_types(self) -> "ResolverViewEntityCandidate":
+        if (
+            self.ontology_type_ids != tuple(sorted(set(self.ontology_type_ids)))
+            or not set(self.ontology_type_ids) <= APPROVED_RDF_TYPES
+        ):
+            raise ValueError("ontology type IDs must be unique, sorted, and approved")
+        return self
 
 
 class ResolverViewEntityCandidateGroup(ContractModel):
@@ -169,7 +181,7 @@ def build_resolver_view(
     catalog: SemanticCatalogSnapshot,
 ) -> ResolverView:
     """Build the model-safe projection of one dataset-pinned resolver request."""
-    _validate_pins(catalog, context, normalized, manifest, active_dataset_pin)
+    validate_resolver_pins(catalog, context, normalized, manifest, active_dataset_pin)
     selected_semantic = _select_semantic_candidates(semantic_candidates)
     semantic_ids = {item.semantic_id for items in selected_semantic.values() for item in items}
     return ResolverView(
@@ -209,13 +221,14 @@ def build_resolver_view(
     )
 
 
-def _validate_pins(
+def validate_resolver_pins(
     catalog: SemanticCatalogSnapshot,
     context: RequestContext,
     normalized: NormalizedRequest,
     manifest: ResolverBuildManifest,
     active_dataset_pin: ActiveDatasetPin,
 ) -> None:
+    """Fail closed when runtime inputs do not share one resolver build pin."""
     catalog_hashes = tuple(
         ContractFileHash(relative_path=path, sha256=digest)
         for path, digest in sorted(catalog.ontology_hashes.items())
@@ -346,7 +359,7 @@ def _entity_candidate_groups(
                         ResolverViewEntityCandidate(
                             entity_id=item.entity_id,
                             canonical_name=item.canonical_name,
-                            entity_type=item.entity_type,
+                            ontology_type_ids=item.ontology_type_ids,
                             product_family=item.product_family,
                             match_kind=item.match_kind,
                             score=item.score,

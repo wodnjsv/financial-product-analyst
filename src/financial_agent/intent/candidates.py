@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import Field, model_validator
 
 from financial_agent.contracts.base import ContractModel, Identifier
+from financial_agent.graph.contract import APPROVED_RDF_TYPES
 
 from .catalog import SemanticCatalogSnapshot
 from .normalization import NormalizedRequest, NormalizedSegment
@@ -82,11 +83,20 @@ class SemanticCandidateSet(ContractModel):
 class EntityCandidate(ContractModel):
     entity_id: Identifier
     canonical_name: str = Field(min_length=1)
-    entity_type: str = Field(min_length=1)
+    ontology_type_ids: tuple[Identifier, ...] = Field(min_length=1)
     product_family: str | None = None
     match_kind: EntityMatchKind
     score: int = Field(ge=0, le=1_000_000)
     source_id: Identifier
+
+    @model_validator(mode="after")
+    def validate_ontology_types(self) -> "EntityCandidate":
+        if (
+            self.ontology_type_ids != tuple(sorted(set(self.ontology_type_ids)))
+            or not set(self.ontology_type_ids) <= APPROVED_RDF_TYPES
+        ):
+            raise ValueError("ontology type IDs must be unique, sorted, and approved")
+        return self
 
 
 @dataclass(frozen=True, slots=True)

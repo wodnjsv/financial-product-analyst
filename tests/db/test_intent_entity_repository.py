@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 import os
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
@@ -11,11 +12,37 @@ import pytest_asyncio
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from financial_agent.contracts.canonical import build_request_key
+from financial_agent.contracts.enums import IntentType, ProductFamily
+from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.db.preflight import normalize_psycopg_url
-from financial_agent.intent.candidates import Mention
+from financial_agent.intent.candidates import Mention, generate_semantic_candidates
+from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.draft import (
+    ActionChoice,
+    EntityHint,
+    EvidenceSpan,
+    IntentFrameDraft,
+    IntentResolutionDraft,
+    ProductFamilyChoice,
+)
 from financial_agent.intent.entity_repository import (
     EntityCandidateRepository,
     ResolverCatalogUnavailable,
+)
+from financial_agent.intent.literals import extract_literals
+from financial_agent.intent.normalization import normalize_request
+from financial_agent.intent.types import ChoiceState, ResolutionStatus, SourceRole
+from financial_agent.intent.validation import validate_semantics
+from financial_agent.intent.view import (
+    ADAPTER_VERSION,
+    CANDIDATE_POLICY_VERSION,
+    NORMALIZER_VERSION,
+    PROMPT_VERSION,
+    RESOLVER_SCHEMA_VERSION,
+    ActiveDatasetPin,
+    build_manifest,
+    build_resolver_view,
 )
 from tests.fixtures.db.synthetic_dataset import (
     CREATED_AT,
@@ -32,6 +59,7 @@ if os.getenv("FINANCIAL_AGENT_TEST_DATABASE_URL") is None:
 
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +155,42 @@ def seeded_entities(migrated_database_url: str) -> SeededEntities:
                       DATE '2026-01-01', NULL, %s, %s)
             """,
             (seeded.dataset_version, seeded.samsung_id, VALID_RECORD_HASH, CREATED_AT),
+        )
+        connection.execute(
+            """
+            INSERT INTO catalog.identifier (
+                dataset_version, identifier_id, entity_id, scheme, identifier_value,
+                is_primary, valid_from, valid_to, record_hash, created_at
+            ) VALUES (%s, 'identifier-samsung-share', %s, 'PRFD_ITM_NO',
+                      'SYN-SHARE-005930', false, DATE '2026-01-01', NULL, %s, %s)
+            """,
+            (seeded.dataset_version, seeded.samsung_id, VALID_RECORD_HASH, CREATED_AT),
+        )
+        connection.execute(
+            """
+            INSERT INTO observation.metric_definition (
+                metric_id, definition_version, semantic_family, value_kind,
+                definition_hash, approved_at
+            ) VALUES ('product_type', %s, 'intent-test', 'text', %s, %s)
+            """,
+            (seeded.dataset_version, "d" * 64, CREATED_AT),
+        )
+        connection.execute(
+            """
+            INSERT INTO observation.observation_record (
+                dataset_version, observation_id, entity_id, relation_id, metric_id,
+                metric_definition_version, value_status, text_value, applicable_date,
+                record_hash, created_at
+            ) VALUES (%s, 'product-type-samsung', %s, NULL, 'product_type', %s,
+                      'present', 'ETF', DATE '2026-08-24', %s, %s)
+            """,
+            (
+                seeded.dataset_version,
+                seeded.samsung_id,
+                seeded.dataset_version,
+                VALID_RECORD_HASH,
+                CREATED_AT,
+            ),
         )
         _insert_alias(
             connection,
@@ -235,6 +299,12 @@ async def test_entity_search_batches_mentions_and_pins_dataset(
 
     assert statement_count == 1
     assert result["m1"][0].match_kind == "exact_identifier"
+    assert result["m1"][0].ontology_type_ids == (
+        "DomesticETF",
+        "ETF",
+        "FinancialProduct",
+        "FundShareClass",
+    )
     assert result["m2"][0].entity_id == seeded_entities.samsung_id
     assert [item.entity_id for item in result["m3"]] == [
         "entity-alpha",
@@ -251,6 +321,119 @@ async def test_entity_search_batches_mentions_and_pins_dataset(
         "entity-limit-4",
     ]
     assert all(len(items) <= 5 for items in result.values())
+
+
+async def test_repository_types_survive_view_and_semantic_validation(
+    migrated_engine: AsyncEngine,
+    seeded_entities: SeededEntities,
+) -> None:
+    """Proves source-derived multi-role types reach the fail-closed validator."""
+    question = "삼성전자"
+    created_at = datetime(2026, 8, 31, tzinfo=UTC)
+    context = RequestContext(
+        request_key=build_request_key(
+            "q-repository-types", question, seeded_entities.dataset_version, "1.0"
+        ),
+        run_id="run-repository-types",
+        dataset_version=seeded_entities.dataset_version,
+        producer="test",
+        created_at=created_at,
+        question_id="q-repository-types",
+        question=question,
+        segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+        deadline_at=created_at + timedelta(seconds=10),
+    )
+    catalog = load_catalog(PROJECT_ROOT)
+    normalized = normalize_request(context)
+    entity_candidates = await EntityCandidateRepository(migrated_engine).search_batch(
+        seeded_entities.dataset_version,
+        (mention("mention-samsung", question),),
+    )
+    view = build_resolver_view(
+        context=context,
+        normalized=normalized,
+        literals=extract_literals(normalized),
+        semantic_candidates=generate_semantic_candidates(normalized, catalog),
+        entity_candidates=entity_candidates,
+        manifest=build_manifest(
+            catalog,
+            {
+                "normalizer_version": NORMALIZER_VERSION,
+                "candidate_policy_version": CANDIDATE_POLICY_VERSION,
+                "resolver_schema_version": RESOLVER_SCHEMA_VERSION,
+                "prompt_version": PROMPT_VERSION,
+                "adapter_version": ADAPTER_VERSION,
+            },
+        ),
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version=seeded_entities.dataset_version,
+            manifest_hash="a" * 64,
+        ),
+        catalog=catalog,
+    )
+    candidate = view.entity_candidates[0].items[0]
+    assert candidate.ontology_type_ids == (
+        "DomesticETF",
+        "ETF",
+        "FinancialProduct",
+        "FundShareClass",
+    )
+
+    span = EvidenceSpan(
+        span_id="span-samsung",
+        segment_id="s1",
+        start_char=0,
+        end_char=len(question),
+        text=question,
+    )
+    hint = EntityHint(
+        entity_hint_id="hint-samsung",
+        mention_id=("mention-samsung",),
+        evidence_span_ids=(span.span_id,),
+        expected_entity_type_ids=("ETF",),
+        candidate_entity_ids=(candidate.entity_id,),
+        selected_candidate_ids=(candidate.entity_id,),
+        reason_code="explicit",
+    )
+    draft = IntentResolutionDraft(
+        evidence_spans=(span,),
+        intent_frames=(
+            IntentFrameDraft(
+                frame_id="frame-samsung",
+                ordinal=0,
+                segment_ids=("s1",),
+                evidence_span_ids=(span.span_id,),
+                normalized_intent_argument=question,
+                action_choice=ActionChoice(
+                    state=ChoiceState.SELECTED,
+                    selected_ids=(IntentType.LOOKUP,),
+                    evidence_span_ids=(span.span_id,),
+                    reason_code="explicit",
+                ),
+                product_family_choice=ProductFamilyChoice(
+                    state=ChoiceState.SELECTED,
+                    selected_ids=(ProductFamily.DOMESTIC_ETF,),
+                    evidence_span_ids=(span.span_id,),
+                    reason_code="explicit",
+                ),
+                entity_type_ids=("FundShareClass",),
+                entity_hint_ids=(hint.entity_hint_id,),
+                slot_assignments=(),
+                produced_result_hints=(SourceRole.CANDIDATES,),
+            ),
+        ),
+        entity_hints=(hint,),
+        reference_hints=(),
+        context_link_hints=(),
+        slot_mutations=(),
+        semantic_flag_hints=(),
+        frame_limit_exceeded=False,
+    )
+
+    assert (
+        validate_semantics(draft, context, normalized, view, catalog).resolution_status
+        is ResolutionStatus.RESOLVED
+    )
 
 
 async def test_entity_search_rejects_an_unknown_dataset(
