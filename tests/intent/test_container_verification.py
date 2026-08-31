@@ -466,6 +466,95 @@ def test_promotion_requires_every_gate_to_be_measured_and_passing() -> None:
     assert {gate.status for gate in decision.gates} == {"passed"}
 
 
+def test_promotion_rejects_top_level_fields_injected_by_model_copy() -> None:
+    evidence = _passing_promotion_evidence().model_copy(
+        update={"surprise": "not-a-contract-field"}
+    )
+
+    with pytest.raises(ValueError, match="stored fields"):
+        assess_promotion(evidence)
+
+
+@pytest.mark.parametrize("invalid_numerator", (195.0, True, False, "195"))
+def test_promotion_revalidates_nested_metric_scalar_types(
+    invalid_numerator: object,
+) -> None:
+    evidence = _passing_promotion_evidence()
+    metric = evidence.candidate_recall_at_5
+    assert metric is not None
+    tampered = evidence.model_copy(
+        update={
+            "candidate_recall_at_5": metric.model_copy(
+                update={"numerator": invalid_numerator}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError):
+        assess_promotion(tampered)
+
+
+@pytest.mark.parametrize(
+    "invalid_metric",
+    (
+        CountMetric.model_construct(numerator=-1, denominator=196),
+        CountMetric(numerator=195, denominator=196).model_copy(
+            update={"numerator": 197}
+        ),
+    ),
+)
+def test_promotion_revalidates_constructed_invalid_count_metrics(
+    invalid_metric: CountMetric,
+) -> None:
+    evidence = _passing_promotion_evidence().model_copy(
+        update={"candidate_recall_at_5": invalid_metric}
+    )
+
+    with pytest.raises(ValueError):
+        assess_promotion(evidence)
+
+
+def test_promotion_revalidates_constructed_invalid_coverage_metrics() -> None:
+    evidence = _passing_promotion_evidence()
+    coverage = evidence.validation_probe_coverage
+    assert coverage is not None
+    tampered = evidence.model_copy(
+        update={
+            "validation_probe_coverage": coverage.model_copy(
+                update={"numerator": 20.0}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError):
+        assess_promotion(tampered)
+
+
+def test_promotion_rejects_wrong_nested_metric_type() -> None:
+    evidence = _passing_promotion_evidence().model_copy(
+        update={"candidate_recall_at_5": "not-a-metric"}
+    )
+
+    with pytest.raises(ValueError):
+        assess_promotion(evidence)
+
+
+def test_promotion_requires_the_exact_evidence_type() -> None:
+    class PromotionEvidenceSubclass(PromotionEvidence):
+        pass
+
+    payload = _passing_promotion_evidence().model_dump(
+        exclude_computed_fields=True
+    )
+    subclass_evidence = PromotionEvidenceSubclass.model_validate(payload)
+
+    with pytest.raises(TypeError, match="exact PromotionEvidence"):
+        assess_promotion(subclass_evidence)
+
+    with pytest.raises(TypeError, match="exact PromotionEvidence"):
+        assess_promotion(object())  # type: ignore[arg-type]
+
+
 def test_perfect_ratios_from_one_case_cannot_promote() -> None:
     one_success = CountMetric(numerator=1, denominator=1)
     zero_failure = CountMetric(numerator=0, denominator=1)

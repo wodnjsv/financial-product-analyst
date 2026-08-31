@@ -774,6 +774,21 @@ _PROMOTION_COVERAGE_POPULATIONS = {
 
 def assess_promotion(evidence: PromotionEvidence) -> PromotionDecision:
     """Require complete measured evidence for every approved promotion gate."""
+    if type(evidence) is not PromotionEvidence:
+        raise TypeError("promotion evidence must be exact PromotionEvidence")
+    declared_fields = tuple(PromotionEvidence.model_fields)
+    if set(evidence.__dict__) != set(declared_fields):
+        raise ValueError("promotion evidence stored fields do not match contract")
+    evidence = PromotionEvidence.model_validate_json(
+        json.dumps(
+            {name: evidence.__dict__[name] for name in declared_fields},
+            allow_nan=False,
+            default=_promotion_json_default,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+
     gates: list[PromotionGateResult] = []
     dataset_matches = (
         evidence.evaluation_dataset_sha256 == _FROZEN_PROMOTION_DATASET_SHA256
@@ -821,6 +836,12 @@ def assess_promotion(evidence: PromotionEvidence) -> PromotionDecision:
         blocking_gate_names=blocking,
         gates=tuple(gates),
     )
+
+
+def _promotion_json_default(value: object) -> dict[str, object]:
+    if isinstance(value, ContractModel):
+        return dict(value.__dict__)
+    raise TypeError(f"promotion evidence contains non-JSON value: {type(value)!r}")
 
 
 class PrecisionRecallF1(ContractModel):
