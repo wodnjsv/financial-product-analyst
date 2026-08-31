@@ -11,7 +11,7 @@ from financial_agent.contracts.base import (
 from financial_agent.contracts.enums import Cardinality
 from financial_agent.contracts.validation import require_unique_ids
 
-from .draft import AxisChoice, SlotAssignment
+from .draft import ActionChoice, ProductFamilyChoice, SlotAssignment
 from .types import (
     ContextLinkType,
     ReferenceTargetKind,
@@ -71,15 +71,28 @@ class ValidatedSlotMutation(ContractModel):
 class ValidatedIntentFrame(ContractModel):
     frame_id: Identifier
     ordinal: int = Field(ge=0)
+    frame_status: ResolutionStatus
     segment_ids: tuple[Identifier, ...]
     evidence_span_ids: tuple[Identifier, ...]
-    action_choice: AxisChoice
-    product_family_choice: AxisChoice
+    action_choice: ActionChoice
+    product_family_choice: ProductFamilyChoice
     entity_type_ids: tuple[Identifier, ...]
     entity_hint_ids: tuple[Identifier, ...]
     slot_assignments: tuple[SlotAssignment, ...]
     produced_result_roles: tuple[SourceRole, ...]
     slot_mutations: tuple[ValidatedSlotMutation, ...]
+
+    @model_validator(mode="after")
+    def validate_nested_ids(self) -> "ValidatedIntentFrame":
+        require_unique_ids(
+            (assignment.slot_assignment_id for assignment in self.slot_assignments),
+            label="slot assignments",
+        )
+        require_unique_ids(
+            (mutation.slot_mutation_id for mutation in self.slot_mutations),
+            label="slot mutations",
+        )
+        return self
 
 
 class ValidatedContextLink(ContractModel):
@@ -113,7 +126,9 @@ class ValidationEvent(ContractModel):
 class ValidatedIntentResolution(RuntimeArtifact):
     resolution_id: Identifier
     draft_hash: Sha256Hex
-    canonical_frames: tuple[ValidatedIntentFrame, ...]
+    canonical_frames: Annotated[
+        tuple[ValidatedIntentFrame, ...], Field(max_length=16)
+    ]
     context_links: tuple[ValidatedContextLink, ...]
     final_tags: tuple[SemanticTag, ...]
     resolution_status: ResolutionStatus

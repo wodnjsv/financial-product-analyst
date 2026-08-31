@@ -1,6 +1,6 @@
 {
   "$defs": {
-    "AxisChoice": {
+    "ActionChoice": {
       "additionalProperties": false,
       "properties": {
         "evidence_span_ids": {
@@ -20,9 +20,7 @@
         },
         "selected_ids": {
           "items": {
-            "minLength": 1,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
-            "type": "string"
+            "$ref": "#/$defs/IntentType"
           },
           "title": "Selected Ids",
           "type": "array"
@@ -37,7 +35,7 @@
         "evidence_span_ids",
         "reason_code"
       ],
-      "title": "AxisChoice",
+      "title": "ActionChoice",
       "type": "object"
     },
     "Cardinality": {
@@ -89,6 +87,68 @@
         "sha256"
       ],
       "title": "ContractFileHash",
+      "type": "object"
+    },
+    "IntentType": {
+      "enum": [
+        "lookup",
+        "screen",
+        "rank",
+        "compare",
+        "aggregate",
+        "calculate",
+        "similar",
+        "explain"
+      ],
+      "title": "IntentType",
+      "type": "string"
+    },
+    "ProductFamily": {
+      "enum": [
+        "domestic_bond",
+        "domestic_etf",
+        "overseas_etf",
+        "public_fund"
+      ],
+      "title": "ProductFamily",
+      "type": "string"
+    },
+    "ProductFamilyChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "selected_ids": {
+          "items": {
+            "$ref": "#/$defs/ProductFamily"
+          },
+          "title": "Selected Ids",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/ChoiceState"
+        }
+      },
+      "required": [
+        "state",
+        "selected_ids",
+        "evidence_span_ids",
+        "reason_code"
+      ],
+      "title": "ProductFamilyChoice",
       "type": "object"
     },
     "ReferenceTargetKind": {
@@ -463,7 +523,7 @@
       "additionalProperties": false,
       "properties": {
         "action_choice": {
-          "$ref": "#/$defs/AxisChoice"
+          "$ref": "#/$defs/ActionChoice"
         },
         "entity_hint_ids": {
           "items": {
@@ -498,6 +558,9 @@
           "title": "Frame Id",
           "type": "string"
         },
+        "frame_status": {
+          "$ref": "#/$defs/ResolutionStatus"
+        },
         "ordinal": {
           "minimum": 0,
           "title": "Ordinal",
@@ -511,7 +574,7 @@
           "type": "array"
         },
         "product_family_choice": {
-          "$ref": "#/$defs/AxisChoice"
+          "$ref": "#/$defs/ProductFamilyChoice"
         },
         "segment_ids": {
           "items": {
@@ -540,6 +603,7 @@
       "required": [
         "frame_id",
         "ordinal",
+        "frame_status",
         "segment_ids",
         "evidence_span_ids",
         "action_choice",
@@ -650,6 +714,7 @@
       "items": {
         "$ref": "#/$defs/ValidatedIntentFrame"
       },
+      "maxItems": 16,
       "title": "Canonical Frames",
       "type": "array"
     },

@@ -30,3 +30,12 @@ def test_schema_check_rejects_extra_missing_or_changed_contract_files(
 
     with pytest.raises(ValueError, match="do not match"):
         check_schemas(tmp_path)
+
+
+def test_schema_check_rejects_byte_drift(tmp_path: Path) -> None:
+    export_schemas(tmp_path)
+    target = tmp_path / "intent-resolution-draft.schema.json"
+    target.write_bytes(target.read_bytes() + b" ")
+
+    with pytest.raises(ValueError, match="do not match"):
+        check_schemas(tmp_path)

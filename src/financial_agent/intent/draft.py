@@ -16,6 +16,8 @@ from .types import (
     SlotKind,
     SlotMutationKind,
     SourceRole,
+    IntentType,
+    ProductFamily,
 )
 
 OptionalIdentifier = Annotated[tuple[Identifier, ...], Field(max_length=1)]
@@ -40,6 +42,14 @@ class AxisChoice(ContractModel):
     selected_ids: tuple[Identifier, ...]
     evidence_span_ids: tuple[Identifier, ...]
     reason_code: Identifier
+
+
+class ActionChoice(AxisChoice):
+    selected_ids: tuple[IntentType, ...]
+
+
+class ProductFamilyChoice(AxisChoice):
+    selected_ids: tuple[ProductFamily, ...]
 
 
 class EntityHint(ContractModel):
@@ -111,8 +121,8 @@ class IntentFrameDraft(ContractModel):
     segment_ids: tuple[Identifier, ...]
     evidence_span_ids: tuple[Identifier, ...]
     normalized_intent_argument: str
-    action_choice: AxisChoice
-    product_family_choice: AxisChoice
+    action_choice: ActionChoice
+    product_family_choice: ProductFamilyChoice
     entity_type_ids: tuple[Identifier, ...]
     entity_hint_ids: tuple[Identifier, ...]
     slot_assignments: tuple[SlotAssignment, ...]

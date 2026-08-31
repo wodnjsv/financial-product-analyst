@@ -46,6 +46,30 @@ def frame(frame_id: str, ordinal: int, action: str) -> dict[str, object]:
     }
 
 
+def validated_frame(
+    frame_id: str,
+    ordinal: int,
+    *,
+    frame_status: str = "resolved",
+    slot_assignments: list[dict[str, object]] | None = None,
+    slot_mutations: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    return {
+        "frame_id": frame_id,
+        "ordinal": ordinal,
+        "frame_status": frame_status,
+        "segment_ids": ["s1"],
+        "evidence_span_ids": ["span-1"],
+        "action_choice": choice("compare"),
+        "product_family_choice": choice("domestic_etf"),
+        "entity_type_ids": [],
+        "entity_hint_ids": [],
+        "slot_assignments": slot_assignments or [],
+        "produced_result_roles": [],
+        "slot_mutations": slot_mutations or [],
+    }
+
+
 def valid_draft_payload() -> dict[str, object]:
     return {
         "evidence_spans": [span()],
@@ -61,6 +85,41 @@ def valid_draft_payload() -> dict[str, object]:
 
 def sha256(seed: str) -> str:
     return seed * 64
+
+
+def valid_validated_resolution_payload() -> dict[str, object]:
+    return {
+        "request_key": sha256("a"),
+        "run_id": "run-1",
+        "dataset_version": "dataset-v1",
+        "producer": "intent-resolver",
+        "created_at": "2026-08-31T00:00:00Z",
+        "resolution_id": "resolution-1",
+        "draft_hash": sha256("b"),
+        "canonical_frames": [],
+        "context_links": [],
+        "final_tags": [],
+        "resolution_status": "resolved",
+        "issues": [],
+        "validation_events": [],
+        "build_manifest": {
+            "catalog_version": "catalog-v1",
+            "catalog_hash": sha256("c"),
+            "ontology_hashes": [
+                {"relative_path": "ontology.ttl", "sha256": sha256("d")}
+            ],
+            "overlay_version": "overlay-v1",
+            "overlay_hash": sha256("e"),
+            "normalizer_version": "normalizer-v1",
+            "candidate_policy_version": "policy-v1",
+            "resolver_schema_version": "1.0",
+            "prompt_version": "prompt-v1",
+            "adapter_version": "adapter-v1",
+        },
+        "active_dataset_manifest_hash": sha256("f"),
+        "repair_used": False,
+        "invalid_attempt_hashes": [],
+    }
 
 
 @pytest.mark.clova_integration
@@ -89,6 +148,30 @@ def test_one_surface_segment_can_produce_two_frames() -> None:
 
     assert [item.frame_id for item in draft.intent_frames] == ["f1", "f2"]
     assert {item.segment_ids for item in draft.intent_frames} == {("s1",)}
+
+
+@pytest.mark.parametrize(
+    ("choice_name", "invalid_value"),
+    [
+        ("action_choice", "not-an-intent"),
+        ("product_family_choice", "not-a-product-family"),
+    ],
+)
+def test_draft_rejects_unregistered_public_axis_values(
+    choice_name: str,
+    invalid_value: str,
+) -> None:
+    payload = valid_draft_payload()
+    frames = payload["intent_frames"]
+    assert isinstance(frames, list)
+    frame_payload = frames[0]
+    assert isinstance(frame_payload, dict)
+    choice_payload = frame_payload[choice_name]
+    assert isinstance(choice_payload, dict)
+    choice_payload["selected_ids"] = [invalid_value]
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraft.model_validate_json(json.dumps(payload))
 
 
 @pytest.mark.parametrize(
@@ -134,6 +217,101 @@ def test_build_manifest_rejects_ontology_hashes_out_of_path_order() -> None:
                 }
             )
         )
+
+
+def test_validated_resolution_rejects_more_than_sixteen_frames() -> None:
+    payload = valid_validated_resolution_payload()
+    payload["canonical_frames"] = [
+        validated_frame(f"f{index}", index) for index in range(17)
+    ]
+
+    with pytest.raises(ValidationError):
+        ValidatedIntentResolution.model_validate_json(json.dumps(payload))
+
+
+def test_validated_frame_requires_deterministic_status() -> None:
+    payload = valid_validated_resolution_payload()
+    frame_payload = validated_frame("f1", 0)
+    frame_payload.pop("frame_status")
+    payload["canonical_frames"] = [frame_payload]
+
+    with pytest.raises(ValidationError, match="frame_status"):
+        ValidatedIntentResolution.model_validate_json(json.dumps(payload))
+
+
+def test_validated_frame_preserves_deterministic_status() -> None:
+    payload = valid_validated_resolution_payload()
+    payload["canonical_frames"] = [
+        validated_frame("f1", 0, frame_status="context_unresolved")
+    ]
+
+    resolution = ValidatedIntentResolution.model_validate_json(json.dumps(payload))
+
+    assert resolution.canonical_frames[0].frame_status.value == "context_unresolved"
+
+
+@pytest.mark.parametrize(
+    ("slot_assignments", "slot_mutations", "message"),
+    [
+        (
+            [
+                {
+                    "slot_assignment_id": "slot-1",
+                    "slot_kind": "metric",
+                    "value_ids": ["aum"],
+                    "evidence_span_ids": ["span-1"],
+                    "reason_code": "explicit",
+                },
+                {
+                    "slot_assignment_id": "slot-1",
+                    "slot_kind": "metric",
+                    "value_ids": ["aum"],
+                    "evidence_span_ids": ["span-1"],
+                    "reason_code": "explicit",
+                },
+            ],
+            [],
+            "slot assignments",
+        ),
+        (
+            [],
+            [
+                {
+                    "slot_mutation_id": "mutation-1",
+                    "consumer_frame_id": "f1",
+                    "slot_kind": "metric",
+                    "mutation_kind": "update",
+                    "source_frame_id": [],
+                },
+                {
+                    "slot_mutation_id": "mutation-1",
+                    "consumer_frame_id": "f1",
+                    "slot_kind": "metric",
+                    "mutation_kind": "update",
+                    "source_frame_id": [],
+                },
+            ],
+            "slot mutations",
+        ),
+    ],
+)
+def test_validated_frame_rejects_duplicate_nested_ids(
+    slot_assignments: list[dict[str, object]],
+    slot_mutations: list[dict[str, object]],
+    message: str,
+) -> None:
+    payload = valid_validated_resolution_payload()
+    payload["canonical_frames"] = [
+        validated_frame(
+            "f1",
+            0,
+            slot_assignments=slot_assignments,
+            slot_mutations=slot_mutations,
+        )
+    ]
+
+    with pytest.raises(ValidationError, match=message):
+        ValidatedIntentResolution.model_validate_json(json.dumps(payload))
 
 
 def test_validated_resolution_preserves_runtime_provenance() -> None:
