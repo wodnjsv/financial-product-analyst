@@ -1,0 +1,17 @@
+{
+  "overlay_version": "korean-nlu-overlay.v1",
+  "entries": [
+    {"semantic_id":"aum","preferred_label":"순자산총액","aliases":["AUM","순자산","순자산총액"],"alias_kind":"direct","negative_semantic_ids":[]},
+    {"semantic_id":"trailing_1y_historical_cumulative_return","preferred_label":"최근 1년 수익률","aliases":["1년 수익률","연간 수익률"],"alias_kind":"direct","negative_semantic_ids":[]},
+    {"semantic_id":"product_risk_grade","preferred_label":"상품 위험등급","aliases":["위험등급"],"alias_kind":"ambiguous","negative_semantic_ids":["credit_grade"]},
+    {"semantic_id":"credit_grade","preferred_label":"신용등급","aliases":["위험등급"],"alias_kind":"ambiguous","negative_semantic_ids":["product_risk_grade"]},
+    {"semantic_id":"managedBy","preferred_label":"운용사","aliases":["운용사","자산운용사"],"alias_kind":"direct","negative_semantic_ids":[]},
+    {"semantic_id":"issuedBy","preferred_label":"발행사","aliases":["발행사","발행기관"],"alias_kind":"direct","negative_semantic_ids":[]},
+    {"semantic_id":"holdsSecurity","preferred_label":"편입 종목","aliases":["구성종목"],"alias_kind":"ambiguous","negative_semantic_ids":["containsSecurity"]},
+    {"semantic_id":"containsSecurity","preferred_label":"지수 구성 종목","aliases":["구성종목"],"alias_kind":"ambiguous","negative_semantic_ids":["holdsSecurity"]},
+    {"semantic_id":"similar","preferred_label":"유사 상품","aliases":["비슷한","비슷한 상품"],"alias_kind":"direct","negative_semantic_ids":[]},
+    {"semantic_id":"ETF","preferred_label":"상장지수펀드 유형","aliases":["ETF"],"alias_kind":"group","negative_semantic_ids":[]},
+    {"semantic_id":"domestic_etf","preferred_label":"국내 ETF 범위","aliases":["ETF"],"alias_kind":"group","negative_semantic_ids":["overseas_etf"]},
+    {"semantic_id":"overseas_etf","preferred_label":"해외 ETF 범위","aliases":["ETF"],"alias_kind":"group","negative_semantic_ids":["domestic_etf"]}
+  ]
+}
