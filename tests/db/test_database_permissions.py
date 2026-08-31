@@ -403,8 +403,8 @@ def test_build_and_runtime_can_use_only_their_approved_functions(
         "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
         (
             "query_plan",
-            "hcx-model",
-            "prompt-v1",
+            None,
+            None,
             canonical_json_bytes(query_plan).decode("utf-8"),
         ),
     )

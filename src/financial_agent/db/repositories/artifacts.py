@@ -22,12 +22,14 @@ from financial_agent.contracts import (
     canonical_json_bytes,
 )
 from financial_agent.db.schema.operations import request_artifact
+from financial_agent.intent.resolution import ValidatedIntentResolution
 
 from .operations import raise_request_run_error
 
 
 ArtifactType = Literal[
     "request_context",
+    "intent_resolution",
     "query_plan",
     "execution_graph",
     "tool_result",
@@ -40,6 +42,7 @@ ArtifactType = Literal[
 
 ARTIFACT_MODELS: Mapping[ArtifactType, type[RuntimeArtifact]] = {
     "request_context": RequestContext,
+    "intent_resolution": ValidatedIntentResolution,
     "query_plan": QueryPlan,
     "execution_graph": ExecutionGraph,
     "tool_result": ToolResult,
@@ -82,7 +85,7 @@ def _validate_model_metadata(
 ) -> None:
     if (model_id is None) != (prompt_version is None):
         raise ArtifactValidationError("MODEL_METADATA_PAIR_REQUIRED")
-    if artifact_type == "query_plan":
+    if artifact_type == "intent_resolution":
         if model_id is None:
             raise ArtifactValidationError("MODEL_METADATA_REQUIRED")
         return

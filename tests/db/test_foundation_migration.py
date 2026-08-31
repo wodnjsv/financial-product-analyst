@@ -861,6 +861,87 @@ def test_failure_events_preserve_every_attempt_and_are_immutable(
         )
 
 
+@pytest.mark.postgres
+def test_failure_event_payload_audit_is_bounded_and_contains_no_raw_content(
+    connection: psycopg.Connection,
+) -> None:
+    created_at = datetime(2026, 8, 31, tzinfo=UTC)
+    connection.execute(
+        """
+        INSERT INTO operations.dataset_version (
+            dataset_version, cutoff_date, status, manifest_hash, created_at
+        ) VALUES ('dataset-payload-audit', DATE '2026-08-24', 'building', %s, %s)
+        """,
+        (VALID_MANIFEST_HASH, created_at),
+    )
+    connection.execute(
+        """
+        INSERT INTO operations.request_run (
+            run_id, request_key, question_id, question, schema_version,
+            dataset_version, cutoff_date, created_at, deadline_at
+        ) VALUES (
+            'run-payload-audit', %s, 'Q', 'synthetic question', '1.0',
+            'dataset-payload-audit', DATE '2026-08-24', %s, %s
+        )
+        """,
+        ("4" * 64, created_at, created_at + timedelta(seconds=55)),
+    )
+    connection.execute(
+        """
+        INSERT INTO operations.failure_event (
+            event_id, run_id, stage, code, category, retryable, attempt,
+            remaining_budget_ms, duration_ms, occurred_at, payload_hash,
+            payload_size_bytes
+        ) VALUES (
+            'event-payload-audit', 'run-payload-audit', 'intent_resolution',
+            'MODEL_SCHEMA_INVALID', 'planner_contract', false, 1, 1000, 10,
+            %s, %s, 128
+        )
+        """,
+        (created_at, "a" * 64),
+    )
+
+    assert connection.execute(
+        """
+        SELECT payload_hash, payload_size_bytes
+        FROM operations.failure_event
+        WHERE event_id = 'event-payload-audit'
+        """
+    ).fetchone() == ("a" * 64, 128)
+
+    for event_id, payload_hash, payload_size_bytes in (
+        ("event-bad-hash", "not-sha256", 1),
+        ("event-bad-size", "b" * 64, -1),
+    ):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with connection.transaction():
+                connection.execute(
+                    """
+                    INSERT INTO operations.failure_event (
+                        event_id, run_id, stage, code, category, retryable,
+                        attempt, remaining_budget_ms, duration_ms, occurred_at,
+                        payload_hash, payload_size_bytes
+                    ) VALUES (
+                        %s, 'run-payload-audit', 'intent_resolution',
+                        'MODEL_SCHEMA_INVALID', 'planner_contract', false, 1,
+                        1000, 10, %s, %s, %s
+                    )
+                    """,
+                    (event_id, created_at, payload_hash, payload_size_bytes),
+                )
+
+    raw_columns = connection.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'operations'
+          AND table_name = 'failure_event'
+          AND column_name IN ('raw_payload', 'raw_question', 'raw_model_output')
+        """
+    ).fetchall()
+    assert raw_columns == []
+
+
 def _truncate_foundation_tables(database_url: str) -> None:
     with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
         connection.execute(

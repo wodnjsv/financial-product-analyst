@@ -56,6 +56,8 @@ class MigrationVerificationReport:
     foundation_request_start_idempotent: bool
     foundation_request_conflict_rejected: bool
     foundation_append_only_enforced: bool
+    foundation_intent_provenance_enforced: bool
+    foundation_failure_payload_audit_enforced: bool
     foundation_concurrent_request_idempotent: bool
     foundation_concurrent_request_conflict_rejected: bool
 
@@ -305,7 +307,20 @@ def _verify_base_state(database_url: str) -> tuple[bool, bool]:
 
 def _verify_foundation_behavior(
     database_url: str,
-) -> tuple[bool, bool, bool, bool, bool, bool, bool, bool, bool, bool]:
+) -> tuple[
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+]:
     cutoff_enforced = False
     legacy_activation_rejected = False
     transition_enforced = False
@@ -314,6 +329,8 @@ def _verify_foundation_behavior(
     request_start_idempotent = False
     request_conflict_rejected = False
     append_only_enforced = False
+    intent_provenance_enforced = False
+    failure_payload_audit_enforced = False
     concurrent_request_idempotent = False
     concurrent_request_conflict_rejected = False
     normalized_url = normalize_psycopg_url(database_url)
@@ -637,6 +654,163 @@ def _verify_foundation_behavior(
             and artifact_count == 1
             and immutable_update_rejected
         )
+
+        intent_payload = json.dumps(
+            {
+                "schema_version": "1.0.0",
+                "request_key": "6" * 64,
+                "run_id": "task8-second-head-run",
+                "dataset_version": "task8-second-head-active",
+                "cutoff_date": "2026-08-24",
+                "producer": "task10-intent-resolver",
+                "created_at": "2026-08-19T00:00:03+00:00",
+                "resolution_id": "task10-resolution",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        missing_intent_provenance_rejected = False
+        try:
+            with connection.transaction():
+                connection.execute(
+                    "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+                    ("intent_resolution", None, None, intent_payload),
+                )
+        except psycopg.errors.CheckViolation:
+            missing_intent_provenance_rejected = True
+        first_intent_artifact = connection.execute(
+            "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+            (
+                "intent_resolution",
+                "task10-model",
+                "task10-prompt",
+                intent_payload,
+            ),
+        ).fetchone()[0]
+        second_intent_artifact = connection.execute(
+            "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+            (
+                "intent_resolution",
+                "task10-model",
+                "task10-prompt",
+                intent_payload,
+            ),
+        ).fetchone()[0]
+        provenance_conflict_rejected = False
+        try:
+            with connection.transaction():
+                connection.execute(
+                    "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+                    (
+                        "intent_resolution",
+                        "different-model",
+                        "task10-prompt",
+                        intent_payload,
+                    ),
+                )
+        except psycopg.errors.RaiseException as error:
+            provenance_conflict_rejected = (
+                error.diag.message_primary == "ARTIFACT_CONFLICT"
+            )
+
+        query_plan_artifact = connection.execute(
+            "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+            ("query_plan", None, None, canonical_payload),
+        ).fetchone()[0]
+        query_plan_provenance_rejected = False
+        try:
+            with connection.transaction():
+                connection.execute(
+                    "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+                    ("query_plan", "task10-model", "task10-prompt", canonical_payload),
+                )
+        except psycopg.errors.CheckViolation:
+            query_plan_provenance_rejected = True
+        intent_contract_id = connection.execute(
+            """
+            SELECT contract_object_id
+            FROM operations.request_artifact
+            WHERE artifact_record_id = %s
+            """,
+            (first_intent_artifact,),
+        ).fetchone()[0]
+        intent_provenance_enforced = (
+            missing_intent_provenance_rejected
+            and first_intent_artifact == second_intent_artifact
+            and provenance_conflict_rejected
+            and query_plan_artifact is not None
+            and query_plan_provenance_rejected
+            and intent_contract_id == "task10-resolution"
+        )
+
+        connection.execute(
+            """
+            INSERT INTO operations.failure_event (
+                event_id, run_id, stage, code, category, retryable, attempt,
+                remaining_budget_ms, duration_ms, occurred_at, payload_hash,
+                payload_size_bytes
+            ) VALUES (
+                'task10-payload-audit', 'task8-second-head-run',
+                'intent_resolution', 'MODEL_SCHEMA_INVALID',
+                'planner_contract', false, 1, 1000, 10,
+                TIMESTAMPTZ '2026-08-19 00:00:04+00', repeat('a', 64), 128
+            )
+            """
+        )
+        payload_hash_rejected = False
+        try:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    INSERT INTO operations.failure_event (
+                        event_id, run_id, stage, code, category, retryable,
+                        attempt, remaining_budget_ms, duration_ms, occurred_at,
+                        payload_hash, payload_size_bytes
+                    ) VALUES (
+                        'task10-bad-payload-hash', 'task8-second-head-run',
+                        'intent_resolution', 'MODEL_SCHEMA_INVALID',
+                        'planner_contract', false, 1, 1000, 10,
+                        TIMESTAMPTZ '2026-08-19 00:00:04+00', 'bad', 1
+                    )
+                    """
+                )
+        except psycopg.errors.CheckViolation:
+            payload_hash_rejected = True
+        payload_size_rejected = False
+        try:
+            with connection.transaction():
+                connection.execute(
+                    """
+                    INSERT INTO operations.failure_event (
+                        event_id, run_id, stage, code, category, retryable,
+                        attempt, remaining_budget_ms, duration_ms, occurred_at,
+                        payload_hash, payload_size_bytes
+                    ) VALUES (
+                        'task10-bad-payload-size', 'task8-second-head-run',
+                        'intent_resolution', 'MODEL_SCHEMA_INVALID',
+                        'planner_contract', false, 1, 1000, 10,
+                        TIMESTAMPTZ '2026-08-19 00:00:04+00', repeat('b', 64), -1
+                    )
+                    """
+                )
+        except psycopg.errors.CheckViolation:
+            payload_size_rejected = True
+        raw_payload_column_count = connection.execute(
+            """
+            SELECT count(*)
+            FROM information_schema.columns
+            WHERE table_schema = 'operations'
+              AND table_name = 'failure_event'
+              AND column_name IN (
+                  'raw_payload', 'raw_question', 'raw_model_output'
+              )
+            """
+        ).fetchone()[0]
+        failure_payload_audit_enforced = (
+            payload_hash_rejected
+            and payload_size_rejected
+            and raw_payload_column_count == 0
+        )
         connection.commit()
 
         concurrent_parameters = (
@@ -759,6 +933,8 @@ def _verify_foundation_behavior(
             request_start_idempotent,
             request_conflict_rejected,
             append_only_enforced,
+            intent_provenance_enforced,
+            failure_payload_audit_enforced,
             concurrent_request_idempotent,
             concurrent_request_conflict_rejected,
         )
@@ -776,6 +952,8 @@ def _verify_foundation_behavior(
         request_start_idempotent,
         request_conflict_rejected,
         append_only_enforced,
+        intent_provenance_enforced,
+        failure_payload_audit_enforced,
         concurrent_request_idempotent,
         concurrent_request_conflict_rejected,
     )
@@ -819,6 +997,8 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
             foundation_request_start_idempotent,
             foundation_request_conflict_rejected,
             foundation_append_only_enforced,
+            foundation_intent_provenance_enforced,
+            foundation_failure_payload_audit_enforced,
             foundation_concurrent_request_idempotent,
             foundation_concurrent_request_conflict_rejected,
         ) = _verify_foundation_behavior(disposable_url)
@@ -833,7 +1013,7 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
                 "preflight result changed across the migration cycle",
             )
         return MigrationVerificationReport(
-            alembic_head="0006",
+            alembic_head="0007",
             application_schema_count=len(EXPECTED_APPLICATION_SCHEMAS),
             object_counts=second_inventory,
             ncp_extensions_preserved=ncp_extensions_preserved,
@@ -856,6 +1036,12 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
                 foundation_request_conflict_rejected
             ),
             foundation_append_only_enforced=foundation_append_only_enforced,
+            foundation_intent_provenance_enforced=(
+                foundation_intent_provenance_enforced
+            ),
+            foundation_failure_payload_audit_enforced=(
+                foundation_failure_payload_audit_enforced
+            ),
             foundation_concurrent_request_idempotent=(
                 foundation_concurrent_request_idempotent
             ),

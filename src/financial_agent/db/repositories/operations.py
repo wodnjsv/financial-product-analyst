@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Literal, NoReturn
@@ -39,6 +40,16 @@ class FailureEventRecord:
     duration_ms: int
     dependency: str | None
     occurred_at: datetime
+    payload_hash: str | None = None
+    payload_size_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.payload_hash is not None and re.fullmatch(
+            r"[0-9a-f]{64}", self.payload_hash
+        ) is None:
+            raise ValueError("PAYLOAD_HASH_INVALID")
+        if self.payload_size_bytes is not None and self.payload_size_bytes < 0:
+            raise ValueError("PAYLOAD_SIZE_BYTES_INVALID")
 
 
 class RequestRunPersistenceError(RuntimeError):

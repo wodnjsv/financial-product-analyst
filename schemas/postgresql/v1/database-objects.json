@@ -122,7 +122,7 @@
       "schema": "operations",
       "name": "derive_request_artifact",
       "identity_arguments": "",
-      "definition": "CREATE OR REPLACE FUNCTION operations.derive_request_artifact()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'pg_catalog', 'operations', 'pg_temp'\nAS $function$\n        BEGIN\n            NEW.payload_jsonb := NEW.canonical_payload::jsonb;\n            IF pg_catalog.jsonb_typeof(NEW.payload_jsonb) IS DISTINCT FROM 'object'\n            THEN\n                RAISE EXCEPTION 'ARTIFACT_PAYLOAD_INVALID'\n                    USING ERRCODE = '22023';\n            END IF;\n\n            NEW.payload_hash := pg_catalog.encode(\n                public.digest(NEW.canonical_payload, 'sha256'), 'hex'\n            );\n            NEW.schema_version := NEW.payload_jsonb ->> 'schema_version';\n            NEW.request_key := NEW.payload_jsonb ->> 'request_key';\n            NEW.run_id := NEW.payload_jsonb ->> 'run_id';\n            NEW.dataset_version := NEW.payload_jsonb ->> 'dataset_version';\n            NEW.cutoff_date := (NEW.payload_jsonb ->> 'cutoff_date')::date;\n            NEW.producer := NEW.payload_jsonb ->> 'producer';\n            NEW.created_at := (NEW.payload_jsonb ->> 'created_at')::timestamptz;\n            NEW.contract_object_id := CASE NEW.artifact_type\n                WHEN 'execution_graph' THEN NEW.payload_jsonb ->> 'graph_id'\n                WHEN 'tool_result' THEN NEW.payload_jsonb ->> 'task_id'\n                WHEN 'evidence_bundle' THEN NEW.payload_jsonb ->> 'bundle_id'\n                WHEN 'verification_report'\n                    THEN NEW.payload_jsonb ->> 'verification_report_id'\n                ELSE NULL\n            END;\n\n            IF NEW.schema_version IS NULL OR NEW.request_key IS NULL\n               OR NEW.run_id IS NULL OR NEW.dataset_version IS NULL\n               OR NEW.cutoff_date IS NULL OR NEW.producer IS NULL\n               OR NEW.created_at IS NULL\n            THEN\n                RAISE EXCEPTION 'ARTIFACT_METADATA_INVALID'\n                    USING ERRCODE = '22023';\n            END IF;\n            RETURN NEW;\n        EXCEPTION\n            WHEN invalid_text_representation OR datetime_field_overflow\n                 OR invalid_datetime_format THEN\n                RAISE EXCEPTION 'ARTIFACT_PAYLOAD_INVALID'\n                    USING ERRCODE = '22023';\n        END\n        $function$",
+      "definition": "CREATE OR REPLACE FUNCTION operations.derive_request_artifact()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'pg_catalog', 'operations', 'pg_temp'\nAS $function$\n        BEGIN\n            NEW.payload_jsonb := NEW.canonical_payload::jsonb;\n            IF pg_catalog.jsonb_typeof(NEW.payload_jsonb) IS DISTINCT FROM 'object'\n            THEN\n                RAISE EXCEPTION 'ARTIFACT_PAYLOAD_INVALID'\n                    USING ERRCODE = '22023';\n            END IF;\n\n            NEW.payload_hash := pg_catalog.encode(\n                public.digest(NEW.canonical_payload, 'sha256'), 'hex'\n            );\n            NEW.schema_version := NEW.payload_jsonb ->> 'schema_version';\n            NEW.request_key := NEW.payload_jsonb ->> 'request_key';\n            NEW.run_id := NEW.payload_jsonb ->> 'run_id';\n            NEW.dataset_version := NEW.payload_jsonb ->> 'dataset_version';\n            NEW.cutoff_date := (NEW.payload_jsonb ->> 'cutoff_date')::date;\n            NEW.producer := NEW.payload_jsonb ->> 'producer';\n            NEW.created_at := (NEW.payload_jsonb ->> 'created_at')::timestamptz;\n            NEW.contract_object_id := CASE NEW.artifact_type\n                WHEN 'intent_resolution' THEN NEW.payload_jsonb ->> 'resolution_id'\n                WHEN 'execution_graph' THEN NEW.payload_jsonb ->> 'graph_id'\n                WHEN 'tool_result' THEN NEW.payload_jsonb ->> 'task_id'\n                WHEN 'evidence_bundle' THEN NEW.payload_jsonb ->> 'bundle_id'\n                WHEN 'verification_report'\n                    THEN NEW.payload_jsonb ->> 'verification_report_id'\n                ELSE NULL\n            END;\n\n            IF NEW.schema_version IS NULL OR NEW.request_key IS NULL\n               OR NEW.run_id IS NULL OR NEW.dataset_version IS NULL\n               OR NEW.cutoff_date IS NULL OR NEW.producer IS NULL\n               OR NEW.created_at IS NULL\n            THEN\n                RAISE EXCEPTION 'ARTIFACT_METADATA_INVALID'\n                    USING ERRCODE = '22023';\n            END IF;\n            RETURN NEW;\n        EXCEPTION\n            WHEN invalid_text_representation OR datetime_field_overflow\n                 OR invalid_datetime_format THEN\n                RAISE EXCEPTION 'ARTIFACT_PAYLOAD_INVALID'\n                    USING ERRCODE = '22023';\n        END\n        $function$",
       "configuration": [
         "search_path=pg_catalog, operations, pg_temp"
       ]
@@ -1149,6 +1149,18 @@
     {
       "schema": "operations",
       "table": "failure_event",
+      "name": "ck_failure_event_payload_hash",
+      "definition": "CHECK (payload_hash IS NULL OR payload_hash ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "operations",
+      "table": "failure_event",
+      "name": "ck_failure_event_payload_size_bytes",
+      "definition": "CHECK (payload_size_bytes IS NULL OR payload_size_bytes >= 0)"
+    },
+    {
+      "schema": "operations",
+      "table": "failure_event",
       "name": "ck_failure_event_remaining_budget_ms",
       "definition": "CHECK (remaining_budget_ms >= 0)"
     },
@@ -1156,7 +1168,7 @@
       "schema": "operations",
       "table": "request_artifact",
       "name": "ck_request_artifact_artifact_type",
-      "definition": "CHECK (artifact_type = ANY (ARRAY['request_context'::text, 'query_plan'::text, 'execution_graph'::text, 'tool_result'::text, 'evidence_bundle'::text, 'verification_report'::text, 'answer_plan'::text, 'released_answer'::text]))"
+      "definition": "CHECK (artifact_type = ANY (ARRAY['request_context'::text, 'intent_resolution'::text, 'query_plan'::text, 'execution_graph'::text, 'tool_result'::text, 'evidence_bundle'::text, 'verification_report'::text, 'answer_plan'::text, 'released_answer'::text]))"
     },
     {
       "schema": "operations",
@@ -1168,7 +1180,7 @@
       "schema": "operations",
       "table": "request_artifact",
       "name": "ck_request_artifact_model_metadata",
-      "definition": "CHECK ((model_id IS NULL) = (prompt_version IS NULL) AND (artifact_type = 'query_plan'::text AND model_id IS NOT NULL OR artifact_type = 'answer_plan'::text OR (artifact_type <> ALL (ARRAY['query_plan'::text, 'answer_plan'::text])) AND model_id IS NULL))"
+      "definition": "CHECK ((model_id IS NULL) = (prompt_version IS NULL) AND (artifact_type = 'intent_resolution'::text AND model_id IS NOT NULL OR artifact_type = 'answer_plan'::text OR (artifact_type <> ALL (ARRAY['intent_resolution'::text, 'answer_plan'::text])) AND model_id IS NULL))"
     },
     {
       "schema": "operations",

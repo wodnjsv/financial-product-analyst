@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 from psycopg.types.json import Jsonb
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -35,6 +36,7 @@ from financial_agent.contracts import (
     canonical_json_bytes,
 )
 from financial_agent.db.preflight import normalize_psycopg_url
+from financial_agent.intent.resolution import ValidatedIntentResolution
 from tests.fixtures.db.synthetic_dataset import (
     CREATED_AT,
     VALID_RECORD_HASH,
@@ -48,6 +50,7 @@ from tests.fixtures.db.synthetic_dataset import (
 FIXTURE_ROOT = Path(__file__).parents[1] / "fixtures" / "contracts" / "v1"
 MODEL_BY_TYPE: dict[str, type[RuntimeArtifact]] = {
     "request_context": RequestContext,
+    "intent_resolution": ValidatedIntentResolution,
     "query_plan": QueryPlan,
     "execution_graph": ExecutionGraph,
     "tool_result": ToolResult,
@@ -131,7 +134,43 @@ def _artifact(
     *,
     empty_references: bool = True,
 ) -> RuntimeArtifact:
-    if artifact_type == "released_answer":
+    if artifact_type == "intent_resolution":
+        payload: dict[str, Any] = {
+            "request_key": context.request_key,
+            "run_id": context.run_id,
+            "dataset_version": context.dataset_version,
+            "producer": "intent-resolver",
+            "created_at": context.created_at.isoformat().replace("+00:00", "Z"),
+            "resolution_id": "resolution-syn-001",
+            "draft_hash": "8" * 64,
+            "canonical_frames": [],
+            "context_links": [],
+            "final_tags": [],
+            "resolution_status": "resolved",
+            "issues": [],
+            "validation_events": [],
+            "build_manifest": {
+                "catalog_version": "catalog-v1",
+                "catalog_hash": "9" * 64,
+                "ontology_hashes": [
+                    {
+                        "relative_path": "ontology/financial-product.ttl",
+                        "sha256": "a" * 64,
+                    }
+                ],
+                "overlay_version": "overlay-v1",
+                "overlay_hash": "b" * 64,
+                "normalizer_version": "intent-normalizer-v1",
+                "candidate_policy_version": "intent-candidate-v1",
+                "resolver_schema_version": "1.0",
+                "prompt_version": "intent-resolver-ko-v1",
+                "adapter_version": "clova-chat-v3-structured-v1",
+            },
+            "active_dataset_manifest_hash": "c" * 64,
+            "repair_used": False,
+            "invalid_attempt_hashes": [],
+        }
+    elif artifact_type == "released_answer":
         payload: dict[str, Any] = {
             "schema_version": "1.0",
             "request_key": context.request_key,
@@ -205,6 +244,112 @@ def _artifact(
     return MODEL_BY_TYPE[artifact_type].model_validate_json(
         json.dumps(payload, ensure_ascii=False)
     )
+
+
+def test_intent_resolution_and_query_plan_model_metadata_policy() -> None:
+    from financial_agent.db.repositories.artifacts import (
+        ArtifactValidationError,
+        _validate_model_metadata,
+    )
+
+    with pytest.raises(ArtifactValidationError, match="MODEL_METADATA_REQUIRED"):
+        _validate_model_metadata("intent_resolution", None, None)
+    _validate_model_metadata(
+        "intent_resolution", "synthetic-model", "intent-resolver-ko-v1"
+    )
+
+    with pytest.raises(ArtifactValidationError, match="MODEL_METADATA_FORBIDDEN"):
+        _validate_model_metadata(
+            "query_plan", "synthetic-model", "intent-resolver-ko-v1"
+        )
+    _validate_model_metadata("query_plan", None, None)
+
+
+def test_intent_resolution_contract_model_is_registered() -> None:
+    from financial_agent.db.repositories.artifacts import ARTIFACT_MODELS
+    from financial_agent.intent.resolution import ValidatedIntentResolution
+
+    assert ARTIFACT_MODELS["intent_resolution"] is ValidatedIntentResolution
+
+
+def test_failure_event_accepts_only_bounded_payload_audit_metadata() -> None:
+    from financial_agent.db.repositories.operations import FailureEventRecord
+
+    event = FailureEventRecord(
+        event_id="event-1",
+        run_id="run-1",
+        task_id=None,
+        stage="intent_resolution",
+        code="MODEL_SCHEMA_INVALID",
+        category="planner_contract",
+        retryable=False,
+        attempt=1,
+        remaining_budget_ms=1_000,
+        duration_ms=10,
+        dependency="hcx",
+        occurred_at=datetime(2026, 8, 31, tzinfo=UTC),
+        payload_hash="a" * 64,
+        payload_size_bytes=128,
+    )
+
+    assert event.payload_hash == "a" * 64
+    assert event.payload_size_bytes == 128
+    assert not hasattr(event, "raw_payload")
+    assert not hasattr(event, "raw_question")
+    assert not hasattr(event, "raw_model_output")
+
+
+@pytest.mark.parametrize(
+    ("payload_hash", "payload_size_bytes", "message"),
+    (
+        ("not-sha256", 1, "PAYLOAD_HASH_INVALID"),
+        ("a" * 64, -1, "PAYLOAD_SIZE_BYTES_INVALID"),
+    ),
+)
+def test_failure_event_rejects_invalid_payload_audit_metadata(
+    payload_hash: str,
+    payload_size_bytes: int,
+    message: str,
+) -> None:
+    from financial_agent.db.repositories.operations import FailureEventRecord
+
+    with pytest.raises(ValueError, match=message):
+        FailureEventRecord(
+            event_id="event-1",
+            run_id="run-1",
+            task_id=None,
+            stage="intent_resolution",
+            code="MODEL_SCHEMA_INVALID",
+            category="planner_contract",
+            retryable=False,
+            attempt=1,
+            remaining_budget_ms=1_000,
+            duration_ms=10,
+            dependency="hcx",
+            occurred_at=datetime(2026, 8, 31, tzinfo=UTC),
+            payload_hash=payload_hash,
+            payload_size_bytes=payload_size_bytes,
+        )
+
+
+def test_failure_event_schema_exposes_hash_and_size_without_raw_content() -> None:
+    from financial_agent.db.schema.operations import failure_event
+
+    column_names = set(failure_event.c.keys())
+    assert {"payload_hash", "payload_size_bytes"} <= column_names
+    assert {
+        "raw_payload",
+        "raw_question",
+        "raw_model_output",
+    }.isdisjoint(column_names)
+
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in failure_event.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    }
+    assert "^[0-9a-f]{64}$" in checks["ck_failure_event_payload_hash"]
+    assert ">= 0" in checks["ck_failure_event_payload_size_bytes"]
 
 
 def _seed_references(connection: psycopg.Connection, context: ArtifactContext) -> None:
@@ -425,7 +570,7 @@ def test_database_derives_artifact_metadata_projection_and_sha256(
 
 
 @pytest.mark.postgres
-def test_artifact_type_constraint_matches_the_eight_runtime_models(
+def test_artifact_type_constraint_matches_the_runtime_models(
     migrated_database_url: str,
 ) -> None:
     expected = set(MODEL_BY_TYPE)
@@ -458,7 +603,7 @@ def test_artifact_and_reference_rows_reject_updates_and_deletes(
         ).decode("utf-8")
         connection.execute(
             "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
-            ("query_plan", "hcx-model", "prompt-v1", query_plan_payload),
+            ("query_plan", None, None, query_plan_payload),
         )
         _seed_references(connection, context)
         canonical_payload = canonical_json_bytes(
@@ -522,7 +667,7 @@ def test_stage02_creates_no_release_authority_or_raw_chain_of_thought_column(
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_repository_round_trips_all_eight_selected_stage01_models(
+async def test_repository_round_trips_all_registered_models(
     migrated_database_url: str,
     artifact_engine: AsyncEngine,
 ) -> None:
@@ -537,6 +682,7 @@ async def test_repository_round_trips_all_eight_selected_stage01_models(
 
     expected_contract_ids = {
         "request_context": None,
+        "intent_resolution": "resolution-syn-001",
         "query_plan": None,
         "execution_graph": "graph-syn-001",
         "tool_result": "t3",
@@ -550,7 +696,7 @@ async def test_repository_round_trips_all_eight_selected_stage01_models(
         artifact = _artifact(artifact_type, context)
         kwargs = (
             {"model_id": "hcx-model", "prompt_version": "prompt-v1"}
-            if artifact_type == "query_plan"
+            if artifact_type == "intent_resolution"
             else {}
         )
         artifact_record_id = await repository.append(
@@ -569,7 +715,7 @@ async def test_repository_round_trips_all_eight_selected_stage01_models(
             (context.run_id,),
         ).fetchall()
     assert dict(rows) == expected_contract_ids
-    assert len(set(stored.values())) == 8
+    assert len(set(stored.values())) == 9
 
 
 @pytest.mark.postgres
@@ -585,12 +731,27 @@ async def test_model_metadata_rules_are_checked_before_insert(
 
     context = _artifact_context(migrated_database_url)
     repository = RequestArtifactRepository(artifact_engine)
+    intent_resolution = _artifact("intent_resolution", context)
     query_plan = _artifact("query_plan", context)
     answer_plan = _artifact("answer_plan", context)
     tool_result = _artifact("tool_result", context)
 
     with pytest.raises(ArtifactValidationError, match="MODEL_METADATA_REQUIRED"):
-        await repository.append("query_plan", query_plan)
+        await repository.append("intent_resolution", intent_resolution)
+    await repository.append(
+        "intent_resolution",
+        intent_resolution,
+        model_id="hcx-model",
+        prompt_version="intent-resolver-ko-v1",
+    )
+    with pytest.raises(ArtifactValidationError, match="MODEL_METADATA_FORBIDDEN"):
+        await repository.append(
+            "query_plan",
+            query_plan,
+            model_id="hcx-model",
+            prompt_version="prompt-v1",
+        )
+    await repository.append("query_plan", query_plan)
     with pytest.raises(ArtifactValidationError, match="MODEL_METADATA_PAIR_REQUIRED"):
         await repository.append(
             "answer_plan", answer_plan, model_id="hcx-model"
@@ -634,6 +795,13 @@ async def test_selected_model_rejects_unknown_cross_type_and_extra_payloads(
         await repository.append("unknown", query_plan)  # type: ignore[arg-type]
     with pytest.raises(ArtifactValidationError, match="ARTIFACT_PAYLOAD_INVALID"):
         await repository.append("tool_result", query_plan)
+    with pytest.raises(ArtifactValidationError, match="ARTIFACT_PAYLOAD_INVALID"):
+        await repository.append(
+            "intent_resolution",
+            query_plan,
+            model_id="hcx-model",
+            prompt_version="intent-resolver-ko-v1",
+        )
 
     extra = ExtendedArtifact(
         request_key=context.request_key,
@@ -675,6 +843,36 @@ async def test_identical_retry_returns_original_uuid_and_canonical_text(
     assert canonical_payload != jsonb_text
     assert canonical_json_bytes(restored).decode("utf-8") == canonical_payload
     assert payload_hash == hashlib.sha256(canonical_payload.encode()).hexdigest()
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_identical_intent_payload_with_different_provenance_conflicts(
+    migrated_database_url: str,
+    artifact_engine: AsyncEngine,
+) -> None:
+    from financial_agent.db.repositories.artifacts import (
+        ArtifactConflict,
+        RequestArtifactRepository,
+    )
+
+    context = _artifact_context(migrated_database_url)
+    repository = RequestArtifactRepository(artifact_engine)
+    resolution = _artifact("intent_resolution", context)
+    await repository.append(
+        "intent_resolution",
+        resolution,
+        model_id="synthetic-model-a",
+        prompt_version="intent-resolver-ko-v1",
+    )
+
+    with pytest.raises(ArtifactConflict, match="ARTIFACT_CONFLICT"):
+        await repository.append(
+            "intent_resolution",
+            resolution,
+            model_id="synthetic-model-b",
+            prompt_version="intent-resolver-ko-v1",
+        )
 
 
 @pytest.mark.postgres
@@ -732,8 +930,6 @@ async def test_repository_populates_subtasks_and_normalized_references(
     await repository.append(
         "query_plan",
         _artifact("query_plan", context, empty_references=False),
-        model_id="hcx-model",
-        prompt_version="prompt-v1",
     )
     with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
         _seed_references(connection, context)
@@ -833,8 +1029,6 @@ async def test_verification_report_normalizes_only_calculation_typed_targets(
     await repository.append(
         "query_plan",
         _artifact("query_plan", context, empty_references=False),
-        model_id="hcx-model",
-        prompt_version="prompt-v1",
     )
     with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
         _seed_references(connection, context)
