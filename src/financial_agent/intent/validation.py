@@ -74,6 +74,7 @@ class SemanticValidationState:
     resolution_status: ResolutionStatus
     issues: tuple[ResolutionIssue, ...]
     validation_events: tuple[ValidationEvent, ...]
+    literal_kinds_by_id: tuple[tuple[str, str], ...] = ()
 
 
 def validate_semantics(
@@ -107,6 +108,10 @@ def validate_semantics(
         resolution_status=_resolution_status(issues),
         issues=issues,
         validation_events=_events(),
+        literal_kinds_by_id=tuple(
+            (literal.literal_id, literal.kind)
+            for literal in sorted(view.literal_candidates, key=lambda item: item.literal_id)
+        ),
     )
 
 
