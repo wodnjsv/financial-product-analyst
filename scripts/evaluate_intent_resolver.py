@@ -70,7 +70,7 @@ from financial_agent.intent.view import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-REPORT_DIRECTORY = (PROJECT_ROOT / "build" / "reports").resolve()
+REPORT_DIRECTORY = PROJECT_ROOT / "build" / "reports"
 DEFAULT_DATASET = (
     PROJECT_ROOT
     / "tests"
@@ -311,45 +311,54 @@ def _safe_output_path(
     output: Path, supplied_inputs: tuple[Path, ...]
 ) -> tuple[int, str]:
     absolute = output if output.is_absolute() else PROJECT_ROOT / output
-    report_path = PROJECT_ROOT / "build" / "reports"
-    report_path.mkdir(parents=True, exist_ok=True)
-    if report_path.is_symlink() or report_path.resolve(strict=True) != REPORT_DIRECTORY:
-        raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
-    if absolute.is_symlink() or absolute.parent.is_symlink():
-        raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
-    resolved = absolute.resolve(strict=False)
+    candidate = Path(os.path.normpath(os.fspath(absolute)))
     protected = (*supplied_inputs, *FIXTURE_DIRECTORY.glob("*.json"))
-    if any(_same_file_if_present(resolved, path) for path in protected):
+    if any(_same_file_if_present(candidate, path) for path in protected):
         raise EvaluationCliError("EVALUATION_FIXTURE_OVERWRITE_REFUSED")
-    if resolved.parent != REPORT_DIRECTORY or absolute.parent.resolve() != REPORT_DIRECTORY:
+    if candidate.parent != REPORT_DIRECTORY:
         raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
-    if resolved.suffix != ".json":
+    if candidate.suffix != ".json":
         raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    directory_fd = os.open(report_path, flags)
     try:
-        opened = os.fstat(directory_fd)
-        expected = os.stat(REPORT_DIRECTORY, follow_symlinks=False)
-        if (
-            not stat.S_ISDIR(opened.st_mode)
-            or (opened.st_dev, opened.st_ino) != (expected.st_dev, expected.st_ino)
-        ):
-            raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
-        output_stat = _entry_stat(resolved.name, directory_fd)
+        directory_fd = _open_report_directory()
+    except OSError as error:
+        raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID") from error
+    try:
+        output_stat = _entry_stat(candidate.name, directory_fd)
         if output_stat is not None and not stat.S_ISREG(output_stat.st_mode):
             raise EvaluationCliError("EVALUATION_OUTPUT_PATH_INVALID")
         if output_stat is not None and any(
             _same_inode(output_stat, path) for path in protected
         ):
             raise EvaluationCliError("EVALUATION_FIXTURE_OVERWRITE_REFUSED")
-        return directory_fd, resolved.name
+        return directory_fd, candidate.name
     except BaseException:
         os.close(directory_fd)
         raise
+
+
+def _open_report_directory() -> int:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    root_fd = os.open(PROJECT_ROOT, flags)
+    build_fd: int | None = None
+    try:
+        build_fd = _open_or_create_directory(root_fd, "build", flags)
+        return _open_or_create_directory(build_fd, "reports", flags)
+    finally:
+        if build_fd is not None:
+            os.close(build_fd)
+        os.close(root_fd)
+
+
+def _open_or_create_directory(parent_fd: int, name: str, flags: int) -> int:
+    try:
+        return os.open(name, flags, dir_fd=parent_fd)
+    except FileNotFoundError:
+        try:
+            os.mkdir(name, mode=0o755, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        return os.open(name, flags, dir_fd=parent_fd)
 
 
 def _entry_stat(name: str, directory_fd: int) -> os.stat_result | None:
@@ -561,7 +570,7 @@ def _validate_artifact_presence(
                 or trace.model_event != "model_not_called"
             ):
                 raise EvaluationCliError("EVALUATION_PIPELINE_OUTCOME_MISMATCH")
-        elif trace.repair_event == "failed":
+        elif trace.terminal_model_failure:
             if view is None or trace.model_event != "model_called":
                 raise EvaluationCliError("EVALUATION_PIPELINE_OUTCOME_MISMATCH")
             if draft is not None or resolution is not None:
@@ -606,7 +615,7 @@ def _project_stored_predictions(
             continue
         view = view_index[case.case_id]
         draft = draft_index[case.case_id]
-        if trace.repair_event == "failed":
+        if trace.terminal_model_failure:
             if (
                 view is None
                 or draft is not None
@@ -739,7 +748,7 @@ def _validate_trace_against_artifacts(
     trace: IntentRunTrace, draft: Any, resolution: Any | None
 ) -> None:
     draft_hash = canonical_sha256(draft)
-    if trace.repair_event == "failed":
+    if trace.terminal_model_failure:
         raise EvaluationCliError("EVALUATION_TRACE_MISMATCH")
     if trace.repair_event == "not_attempted":
         if (

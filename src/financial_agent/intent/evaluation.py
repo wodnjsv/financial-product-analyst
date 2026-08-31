@@ -468,6 +468,17 @@ class IntentRunTrace(ContractModel):
     completion_tokens: int = Field(ge=0)
     stable_error_codes: tuple[Identifier, ...]
 
+    @property
+    def terminal_model_failure(self) -> bool:
+        if self.model_event != "model_called":
+            return False
+        final_attempt = (
+            self.first_attempt
+            if self.repair_event == "not_attempted"
+            else self.repair_attempt
+        )
+        return final_attempt is None or final_attempt.validator_event != "validated"
+
     @model_validator(mode="after")
     def validate_trace(self) -> "IntentRunTrace":
         _require_sorted_unique(self.stable_error_codes, "run trace error codes")
@@ -485,10 +496,7 @@ class IntentRunTrace(ContractModel):
         if self.first_attempt is None:
             raise ValueError("model-called trace requires first attempt")
         if self.repair_event == "not_attempted":
-            if (
-                self.repair_attempt is not None
-                or self.first_attempt.validator_event != "validated"
-            ):
+            if self.repair_attempt is not None:
                 raise ValueError("unattempted repair cannot carry attempt evidence")
         elif self.repair_attempt is None:
             raise ValueError("attempted repair requires attempt evidence")
@@ -509,13 +517,17 @@ class IntentRunTrace(ContractModel):
                 and first_draft == repair_draft
             ):
                 raise ValueError("repair attempt evidence must differ")
-        rejected_codes = {
-            attempt.stable_code
-            for attempt in (self.first_attempt, self.repair_attempt)
-            if attempt is not None and attempt.validator_event != "validated"
-        }
-        if not rejected_codes <= set(self.stable_error_codes):
-            raise ValueError("run trace omits rejected attempt code")
+        rejected_codes = tuple(
+            sorted(
+                {
+                    attempt.stable_code
+                    for attempt in (self.first_attempt, self.repair_attempt)
+                    if attempt is not None and attempt.validator_event != "validated"
+                }
+            )
+        )
+        if rejected_codes != self.stable_error_codes:
+            raise ValueError("run trace error codes do not match rejected attempts")
         return self
 
 

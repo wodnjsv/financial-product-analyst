@@ -2505,3 +2505,195 @@ def test_round3_terminal_repair_failure_remains_in_all_metrics() -> None:
         assert report.validation.probe_coverage.evidence_sufficient is False
         assert report.runtime.prompt_tokens == 60
         assert report.runtime.completion_tokens == 30
+
+
+def test_round4_preexisting_build_symlink_is_not_a_report_trust_root(
+    tmp_path: Path,
+) -> None:
+    test_root = tmp_path / "project"
+    scripts = test_root / "scripts"
+    scripts.mkdir(parents=True)
+    copied_script = scripts / SCRIPT_PATH.name
+    copied_script.write_bytes(SCRIPT_PATH.read_bytes())
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (test_root / "build").symlink_to(outside, target_is_directory=True)
+    namespace = runpy.run_path(
+        str(copied_script), run_name="intent_evaluation_cli_symlink_test"
+    )
+    namespace["main"].__globals__["load_catalog"] = lambda _: load_catalog(
+        PROJECT_ROOT
+    )
+
+    result = namespace["main"](
+        [
+            "--mode",
+            "deterministic",
+            "--dataset",
+            str(HELDOUT_PATH),
+            "--output",
+            str(test_root / "build" / "reports" / "report.json"),
+        ]
+    )
+
+    assert not (outside / "reports").exists()
+    assert result == 2
+
+
+def test_round4_no_repair_first_failure_is_retained_as_terminal_failure() -> None:
+    manifest = _resolver_manifest()
+    dataset, views, drafts, resolutions, traces = _stored_artifacts(manifest)
+    failed_trace = IntentRunTrace(
+        case_id=dataset.cases[0].case_id,
+        model_event="model_called",
+        first_attempt=AttemptTrace(
+            payload_sha256="c" * 64,
+            payload_size_bytes=42,
+            parser_event="schema_rejected",
+            validator_event="not_run",
+            stable_code="MODEL_SCHEMA_INVALID",
+            parsed_draft_sha256=None,
+        ),
+        repair_attempt=None,
+        repair_event="not_attempted",
+        latency_ms=15,
+        prompt_tokens=50,
+        completion_tokens=10,
+        stable_error_codes=("MODEL_SCHEMA_INVALID",),
+    )
+    failed_drafts = drafts.model_copy(
+        update={
+            "cases": (
+                drafts.cases[0].model_copy(update={"artifact": None}),
+                *drafts.cases[1:],
+            )
+        }
+    )
+    failed_resolutions = resolutions.model_copy(
+        update={
+            "cases": (
+                resolutions.cases[0].model_copy(update={"artifact": None}),
+                *resolutions.cases[1:],
+            )
+        }
+    )
+    failed_traces = traces.model_copy(
+        update={"cases": (failed_trace, *traces.cases[1:])}
+    )
+    namespace = _cli_namespace()
+
+    for final_resolutions in (None, failed_resolutions):
+        namespace["_validate_artifact_presence"](
+            dataset, views, failed_drafts, failed_traces, final_resolutions
+        )
+        predictions = namespace["_project_stored_predictions"](
+            dataset=dataset,
+            views=views,
+            drafts=failed_drafts,
+            traces=failed_traces,
+            resolutions=final_resolutions,
+            catalog=load_catalog(PROJECT_ROOT),
+            dataset_version="synthetic-dataset-v3",
+        )
+        failed = predictions[0]
+        report = evaluate_predictions(dataset.cases, predictions)
+
+        assert failed.pipeline_outcome == "model_resolution_failed"
+        assert failed.candidate_groups
+        assert failed.frames == failed.references == failed.context_links == ()
+        assert failed.first_pass_schema.status == "invalid"
+        assert failed.repair.status == "not_attempted"
+        assert report.diagnostics.pipeline_outcome_exact.numerator == 1
+        assert (
+            report.validation.probe_coverage.numerator,
+            report.validation.probe_coverage.denominator,
+        ) == (0, 1)
+
+
+def test_round4_trace_rejects_fabricated_error_codes() -> None:
+    with pytest.raises(ValidationError, match="run trace error codes do not match"):
+        IntentRunTrace(
+            case_id="fabricated-error",
+            model_event="model_called",
+            first_attempt=AttemptTrace(
+                payload_sha256="a" * 64,
+                payload_size_bytes=20,
+                parser_event="draft_parsed",
+                validator_event="validated",
+                stable_code="RESOLUTION_VALIDATED",
+                parsed_draft_sha256="b" * 64,
+            ),
+            repair_attempt=None,
+            repair_event="not_attempted",
+            latency_ms=1,
+            prompt_tokens=1,
+            completion_tokens=1,
+            stable_error_codes=("FABRICATED_ERROR",),
+        )
+
+
+def test_round4_trace_error_codes_match_each_model_called_outcome() -> None:
+    schema_rejected = AttemptTrace(
+        payload_sha256="a" * 64,
+        payload_size_bytes=20,
+        parser_event="schema_rejected",
+        validator_event="not_run",
+        stable_code="MODEL_SCHEMA_INVALID",
+        parsed_draft_sha256=None,
+    )
+    validated = AttemptTrace(
+        payload_sha256="b" * 64,
+        payload_size_bytes=21,
+        parser_event="draft_parsed",
+        validator_event="validated",
+        stable_code="RESOLUTION_VALIDATED",
+        parsed_draft_sha256="c" * 64,
+    )
+    validator_rejected = AttemptTrace(
+        payload_sha256="d" * 64,
+        payload_size_bytes=22,
+        parser_event="draft_parsed",
+        validator_event="validator_rejected",
+        stable_code="MODEL_UNKNOWN_ID",
+        parsed_draft_sha256="e" * 64,
+    )
+    cases = (
+        (validated, None, "not_attempted", ()),
+        (
+            schema_rejected,
+            validated,
+            "succeeded",
+            ("MODEL_SCHEMA_INVALID",),
+        ),
+        (
+            schema_rejected,
+            validator_rejected,
+            "failed",
+            ("MODEL_SCHEMA_INVALID", "MODEL_UNKNOWN_ID"),
+        ),
+        (
+            schema_rejected,
+            None,
+            "not_attempted",
+            ("MODEL_SCHEMA_INVALID",),
+        ),
+    )
+
+    traces = tuple(
+        IntentRunTrace(
+            case_id=f"trace-{index}",
+            model_event="model_called",
+            first_attempt=first,
+            repair_attempt=repair,
+            repair_event=repair_event,
+            latency_ms=1,
+            prompt_tokens=1,
+            completion_tokens=1,
+            stable_error_codes=error_codes,
+        )
+        for index, (first, repair, repair_event, error_codes) in enumerate(cases)
+    )
+
+    assert tuple(trace.stable_error_codes for trace in traces) == tuple(
+        item[3] for item in cases
+    )
