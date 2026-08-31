@@ -699,6 +699,65 @@ def _task10_artifact_payload(
     return json.dumps(payload, separators=(",", ":"))
 
 
+def _derive_request_artifact_state(
+    connection: psycopg.Connection,
+) -> tuple[str, str]:
+    function_definition = connection.execute(
+        """
+        SELECT pg_catalog.pg_get_functiondef(
+            'operations.derive_request_artifact()'::regprocedure
+        )
+        """
+    ).fetchone()[0]
+    trigger_binding = connection.execute(
+        """
+        SELECT trigger_function.oid::regprocedure::text
+        FROM pg_catalog.pg_trigger AS trigger_record
+        JOIN pg_catalog.pg_class AS table_record
+          ON table_record.oid = trigger_record.tgrelid
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = table_record.relnamespace
+        JOIN pg_catalog.pg_proc AS trigger_function
+          ON trigger_function.oid = trigger_record.tgfoid
+        WHERE namespace.nspname = 'operations'
+          AND table_record.relname = 'request_artifact'
+          AND trigger_record.tgname = 'derive_request_artifact'
+          AND NOT trigger_record.tgisinternal
+        """
+    ).fetchone()[0]
+    return function_definition, trigger_binding
+
+
+@pytest.mark.postgres
+def test_downgrade_restores_the_exact_0006_artifact_trigger_function(
+    postgres_database_url: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "0006")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            before_definition, before_binding = _derive_request_artifact_state(
+                connection
+            )
+
+        with configured_alembic_target_only():
+            command.upgrade(config, "0007")
+            command.downgrade(config, "0006")
+
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            after_definition, after_binding = _derive_request_artifact_state(
+                connection
+            )
+            revision = connection.execute(
+                "SELECT version_num FROM public.alembic_version"
+            ).fetchone()[0]
+
+    assert revision == "0006"
+    assert after_binding == before_binding
+    assert after_definition == before_definition
+
+
 @pytest.mark.postgres
 def test_intent_resolution_migration_blocks_legacy_query_plan_provenance(
     postgres_database_url: str,

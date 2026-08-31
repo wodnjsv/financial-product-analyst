@@ -42,11 +42,25 @@ def _artifact_type_check(artifact_types: tuple[str, ...]) -> str:
 
 
 def _replace_derive_request_artifact(*, include_intent_resolution: bool) -> None:
-    intent_resolution_case = (
-        "WHEN 'intent_resolution' THEN NEW.payload_jsonb ->> 'resolution_id'"
-        if include_intent_resolution
-        else ""
-    )
+    if include_intent_resolution:
+        intent_resolution_case = (
+            "                WHEN 'intent_resolution' "
+            "THEN NEW.payload_jsonb ->> 'resolution_id'\n"
+        )
+        intent_resolution_guard = (
+            "            IF NEW.artifact_type = 'intent_resolution'\n"
+            "               AND (NEW.contract_object_id IS NULL\n"
+            "                    OR NEW.contract_object_id "
+            "!~ '[^[:space:]]')\n"
+            "            THEN\n"
+            "                RAISE EXCEPTION "
+            "'INTENT_RESOLUTION_ID_REQUIRED'\n"
+            "                    USING ERRCODE = '22023';\n"
+            "            END IF;\n\n"
+        )
+    else:
+        intent_resolution_case = ""
+        intent_resolution_guard = ""
     op.execute(
         rf"""
         CREATE OR REPLACE FUNCTION operations.derive_request_artifact()
@@ -73,8 +87,7 @@ def _replace_derive_request_artifact(*, include_intent_resolution: bool) -> None
             NEW.producer := NEW.payload_jsonb ->> 'producer';
             NEW.created_at := (NEW.payload_jsonb ->> 'created_at')::timestamptz;
             NEW.contract_object_id := CASE NEW.artifact_type
-                {intent_resolution_case}
-                WHEN 'execution_graph' THEN NEW.payload_jsonb ->> 'graph_id'
+{intent_resolution_case}                WHEN 'execution_graph' THEN NEW.payload_jsonb ->> 'graph_id'
                 WHEN 'tool_result' THEN NEW.payload_jsonb ->> 'task_id'
                 WHEN 'evidence_bundle' THEN NEW.payload_jsonb ->> 'bundle_id'
                 WHEN 'verification_report'
@@ -82,15 +95,7 @@ def _replace_derive_request_artifact(*, include_intent_resolution: bool) -> None
                 ELSE NULL
             END;
 
-            IF NEW.artifact_type = 'intent_resolution'
-               AND (NEW.contract_object_id IS NULL
-                    OR NEW.contract_object_id !~ '[^[:space:]]')
-            THEN
-                RAISE EXCEPTION 'INTENT_RESOLUTION_ID_REQUIRED'
-                    USING ERRCODE = '22023';
-            END IF;
-
-            IF NEW.schema_version IS NULL OR NEW.request_key IS NULL
+{intent_resolution_guard}            IF NEW.schema_version IS NULL OR NEW.request_key IS NULL
                OR NEW.run_id IS NULL OR NEW.dataset_version IS NULL
                OR NEW.cutoff_date IS NULL OR NEW.producer IS NULL
                OR NEW.created_at IS NULL
