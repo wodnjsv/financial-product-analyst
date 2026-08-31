@@ -212,6 +212,64 @@ def test_compile_catalog_rejects_direct_alias_collision() -> None:
         )
 
 
+def test_compile_catalog_rejects_unauthorized_relation_endpoint_type() -> None:
+    """Catches a valid TBox class expanding a relation beyond its approved endpoints."""
+    catalog = json.loads(
+        (PROJECT_ROOT / "config/intent/semantic-query-catalog.v1.json").read_text("utf-8")
+    )
+    holds_security = next(
+        concept for concept in catalog["concepts"] if concept["id"] == "holdsSecurity"
+    )
+    holds_security["allowed_ontology_types"].append("Company")
+    overlay_payload = (PROJECT_ROOT / "config/intent/korean-nlu-overlay.v1.json").read_bytes()
+
+    with pytest.raises(ValueError, match="relation ontology types"):
+        compile_catalog(
+            json.dumps(catalog, ensure_ascii=False).encode("utf-8"),
+            overlay_payload,
+            ontology_paths=tuple(PROJECT_ROOT / path for path in TBOX_RELATIVE_PATHS),
+            shacl_paths=tuple(PROJECT_ROOT / path for path in SHACL_RELATIVE_PATHS),
+        )
+
+
+def test_catalog_preserves_tbox_derived_relation_roles() -> None:
+    """Catches flattening relation endpoints so a later consumer can reverse roles."""
+    holds_security = load_catalog(PROJECT_ROOT).concepts_by_id["holdsSecurity"]
+
+    assert holds_security.subject_ontology_types == ("ETF", "PublicFund")
+    assert holds_security.object_ontology_types == ("Security",)
+
+
+def test_catalog_hash_canonicalizes_relation_endpoint_order() -> None:
+    """Catches endpoint-order-only edits changing the catalog reproducibility hash."""
+    catalog = json.loads(
+        (PROJECT_ROOT / "config/intent/semantic-query-catalog.v1.json").read_text("utf-8")
+    )
+    reordered = json.loads(json.dumps(catalog))
+    holds_security = next(
+        concept for concept in reordered["concepts"] if concept["id"] == "holdsSecurity"
+    )
+    holds_security["subject_ontology_types"].reverse()
+    overlay_payload = (PROJECT_ROOT / "config/intent/korean-nlu-overlay.v1.json").read_bytes()
+    paths = tuple(PROJECT_ROOT / path for path in TBOX_RELATIVE_PATHS)
+    shape_paths = tuple(PROJECT_ROOT / path for path in SHACL_RELATIVE_PATHS)
+
+    original = compile_catalog(
+        json.dumps(catalog, ensure_ascii=False).encode("utf-8"),
+        overlay_payload,
+        ontology_paths=paths,
+        shacl_paths=shape_paths,
+    )
+    changed_order = compile_catalog(
+        json.dumps(reordered, ensure_ascii=False).encode("utf-8"),
+        overlay_payload,
+        ontology_paths=paths,
+        shacl_paths=shape_paths,
+    )
+
+    assert changed_order.catalog_hash == original.catalog_hash
+
+
 def test_gold_question_semantics_are_consumers_of_the_catalog() -> None:
     """Catches a catalog that no longer covers semantics exercised by gold questions."""
     gold = json.loads((PROJECT_ROOT / "tests/gold/core_questions.json").read_text("utf-8"))

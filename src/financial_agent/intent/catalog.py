@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from rdflib import Graph, OWL, RDF
+from rdflib import Graph, Namespace, OWL, RDF, RDFS, URIRef
 
 from financial_agent.contracts.enums import IntentType, ProductFamily
 from financial_agent.graph.contract import (
@@ -26,6 +26,7 @@ _CATALOG_PATH = Path("config/intent/semantic-query-catalog.v1.json")
 _OVERLAY_PATH = Path("config/intent/korean-nlu-overlay.v1.json")
 _CONCEPT_KINDS = Literal["attribute", "metric", "relation", "document_topic"]
 _ALIAS_KINDS = Literal["direct", "ambiguous", "group"]
+_SH = Namespace("http://www.w3.org/ns/shacl#")
 
 
 class _StrictModel(BaseModel):
@@ -39,6 +40,8 @@ class SemanticConcept(_StrictModel):
     value_kind: str = Field(min_length=1)
     allowed_product_families: tuple[str, ...]
     allowed_ontology_types: tuple[str, ...]
+    subject_ontology_types: tuple[str, ...] = ()
+    object_ontology_types: tuple[str, ...] = ()
     required_qualifiers: tuple[str, ...]
     allowed_operators: tuple[str, ...]
     missingness_sensitive: bool
@@ -126,7 +129,7 @@ def compile_catalog(
     ontology_hashes = _contract_hashes(ontology_paths, shacl_paths)
     ontology_types = _tbox_classes(ontology_paths)
     _validate_ontology_references(catalog, concepts_by_id, ontology_types)
-    _validate_relations(concepts_by_id, ontology_paths)
+    _validate_relations(concepts_by_id, ontology_paths, shacl_paths)
     alias_candidates, alias_kinds = _index_overlay(
         overlay.entries,
         allowed_semantic_ids=(
@@ -237,21 +240,115 @@ def _validate_ontology_references(
 
 
 def _validate_relations(
-    concepts_by_id: Mapping[str, SemanticConcept], ontology_paths: tuple[Path, ...]
+    concepts_by_id: Mapping[str, SemanticConcept],
+    ontology_paths: tuple[Path, ...],
+    shacl_paths: tuple[Path, ...],
 ) -> None:
     relation_ids = {
         concept.id for concept in concepts_by_id.values() if concept.kind == "relation"
     }
     if relation_ids != APPROVED_PREDICATES:
         raise ValueError("relation concepts must exactly match approved predicates")
-    graph = Graph()
-    for path in ontology_paths:
-        graph.parse(path, format="turtle")
+    graph = _parse_graph(ontology_paths)
     if not all((FP[relation_id], RDF.type, OWL.ObjectProperty) in graph for relation_id in relation_ids):
         raise ValueError("relation concept is not an approved TBox predicate")
+    shacl_constraints = _shacl_relation_constraints(_parse_graph(shacl_paths), relation_ids)
     for relation_id in relation_ids:
-        if concepts_by_id[relation_id].authority_reference != f"ontology:predicate:{relation_id}":
+        concept = concepts_by_id[relation_id]
+        if concept.authority_reference != f"ontology:predicate:{relation_id}":
             raise ValueError("relation authority reference does not match TBox predicate")
+        tbox_subject_types = _property_classes(graph, relation_id, RDFS.domain)
+        tbox_object_types = _property_classes(graph, relation_id, RDFS.range)
+        shacl_subject_types, shacl_object_types = shacl_constraints[relation_id]
+        if (tbox_subject_types, tbox_object_types) != (
+            shacl_subject_types,
+            shacl_object_types,
+        ):
+            raise ValueError("relation SHACL endpoint constraints must match the TBox")
+        if set(concept.allowed_ontology_types) != (
+            tbox_subject_types | tbox_object_types
+        ):
+            raise ValueError("relation ontology types must exactly match TBox endpoints")
+        if set(concept.subject_ontology_types) != tbox_subject_types:
+            raise ValueError("relation subject ontology types must match TBox endpoints")
+        if set(concept.object_ontology_types) != tbox_object_types:
+            raise ValueError("relation object ontology types must match TBox endpoints")
+
+
+def _parse_graph(paths: tuple[Path, ...]) -> Graph:
+    graph = Graph()
+    for path in paths:
+        graph.parse(path, format="turtle")
+    return graph
+
+
+def _property_classes(graph: Graph, property_id: str, predicate: URIRef) -> set[str]:
+    node = graph.value(FP[property_id], predicate)
+    if node is None:
+        raise ValueError("relation endpoint constraint is missing from the TBox")
+    if graph.value(node, OWL.unionOf) is not None:
+        classes = {_class_id(item) for item in graph.items(graph.value(node, OWL.unionOf))}
+    else:
+        classes = {_class_id(node)}
+    if not classes:
+        raise ValueError("relation endpoint constraint is empty")
+    return classes
+
+
+def _shacl_relation_constraints(
+    graph: Graph, relation_ids: set[str]
+) -> Mapping[str, tuple[set[str], set[str]]]:
+    constraints: dict[str, tuple[set[str], set[str]]] = {}
+    for relation_id in relation_ids:
+        matching_shapes = [
+            shape
+            for shape in graph.subjects(RDF.type, _SH.NodeShape)
+            if any(
+                str(FP[relation_id]) in str(graph.value(target, _SH.select))
+                for target in graph.objects(shape, _SH.target)
+            )
+        ]
+        if len(matching_shapes) != 1:
+            raise ValueError("relation must have one SHACL endpoint constraint shape")
+        subject_types, object_types = _shacl_shape_endpoint_types(graph, matching_shapes[0])
+        constraints[relation_id] = (subject_types, object_types)
+    return MappingProxyType(dict(sorted(constraints.items())))
+
+
+def _shacl_shape_endpoint_types(graph: Graph, shape: object) -> tuple[set[str], set[str]]:
+    endpoints: dict[URIRef, set[str]] = {}
+    for property_shape in graph.objects(shape, _SH.property):
+        path = graph.value(property_shape, _SH.path)
+        if path not in {FP.subject, FP.object}:
+            continue
+        endpoints[path] = _shacl_property_classes(graph, property_shape)
+    if set(endpoints) != {FP.subject, FP.object}:
+        raise ValueError("relation SHACL shape must constrain subject and object")
+    return endpoints[FP.subject], endpoints[FP.object]
+
+
+def _shacl_property_classes(graph: Graph, property_shape: object) -> set[str]:
+    direct = graph.value(property_shape, _SH["class"])
+    if direct is not None:
+        return {_class_id(direct)}
+    alternatives = graph.value(property_shape, _SH["or"])
+    if alternatives is None:
+        raise ValueError("relation SHACL endpoint has no class constraint")
+    classes = {
+        _class_id(class_node)
+        for alternative in graph.items(alternatives)
+        if (class_node := graph.value(alternative, _SH["class"])) is not None
+    }
+    if not classes:
+        raise ValueError("relation SHACL endpoint has no class alternatives")
+    return classes
+
+
+def _class_id(node: object) -> str:
+    value = str(node)
+    if not value.startswith(str(FP)):
+        raise ValueError("relation endpoint must reference a financial ontology class")
+    return value.removeprefix(str(FP))
 
 
 def _index_overlay(
@@ -304,6 +401,8 @@ def _canonical_catalog_payload(catalog: _CatalogPayload) -> dict[str, object]:
                 **concept.model_dump(mode="json"),
                 "allowed_product_families": sorted(concept.allowed_product_families),
                 "allowed_ontology_types": sorted(concept.allowed_ontology_types),
+                "subject_ontology_types": sorted(concept.subject_ontology_types),
+                "object_ontology_types": sorted(concept.object_ontology_types),
                 "required_qualifiers": sorted(concept.required_qualifiers),
                 "allowed_operators": sorted(concept.allowed_operators),
             }
