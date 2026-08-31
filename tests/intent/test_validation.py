@@ -14,6 +14,7 @@ from financial_agent.intent.draft import (
     ActionChoice,
     AxisChoice,
     ContextLinkHint,
+    EntityHint,
     EvidenceSpan,
     IntentFrameDraft,
     IntentResolutionDraft,
@@ -40,6 +41,8 @@ from financial_agent.intent.view import (
     ActiveDatasetPin,
     ResolverView,
     ResolverViewConcept,
+    ResolverViewEntityCandidate,
+    ResolverViewEntityCandidateGroup,
     ResolverViewLiteralCandidate,
     ResolverViewRelationDefinition,
 )
@@ -244,7 +247,29 @@ def validation_inputs() -> ValidationInputs:
                 canonical_value="P1Y",
             ),
         ),
-        entity_candidates=(),
+        entity_candidates=(
+            ResolverViewEntityCandidateGroup(
+                mention_id="mention-entity",
+                items=(
+                    ResolverViewEntityCandidate(
+                        entity_id="entity-product",
+                        canonical_name="KODEX 200",
+                        entity_type="FinancialProduct",
+                        product_family="domestic_etf",
+                        match_kind="exact_name",
+                        score=1_000_000,
+                    ),
+                    ResolverViewEntityCandidate(
+                        entity_id="entity-manager",
+                        canonical_name="운용사",
+                        entity_type="AssetManager",
+                        product_family=None,
+                        match_kind="exact_name",
+                        score=1_000_000,
+                    ),
+                ),
+            ),
+        ),
     )
     return ValidationInputs(
         draft=draft,
@@ -274,6 +299,32 @@ def replace_span_text(draft: IntentResolutionDraft, text: str) -> IntentResoluti
     )
 
 
+def _entity_hint(
+    *,
+    candidate_ids: tuple[str, ...],
+    selected_ids: tuple[str, ...],
+    expected_type_ids: tuple[str, ...] = ("FinancialProduct",),
+) -> EntityHint:
+    return EntityHint(
+        entity_hint_id="hint-1",
+        mention_id=("mention-entity",),
+        evidence_span_ids=("span-1",),
+        expected_entity_type_ids=expected_type_ids,
+        candidate_entity_ids=candidate_ids,
+        selected_candidate_ids=selected_ids,
+        reason_code="explicit",
+    )
+
+
+def _draft_with_entity_hint(
+    draft: IntentResolutionDraft, hint: EntityHint
+) -> IntentResolutionDraft:
+    first = draft.intent_frames[0].model_copy(update={"entity_hint_ids": (hint.entity_hint_id,)})
+    return draft.model_copy(
+        update={"intent_frames": (first, *draft.intent_frames[1:]), "entity_hints": (hint,)}
+    )
+
+
 def test_unknown_id_is_contract_failure(validation_inputs: ValidationInputs) -> None:
     """Catches accepting a model-invented metric instead of failing closed."""
     draft = replace_metric(validation_inputs.draft, "invented_metric")
@@ -300,12 +351,82 @@ def test_concept_outside_selected_family_is_contract_failure(
         validate_semantics(draft=draft, **validation_inputs.rest)
 
 
+def test_unit_slot_is_rejected_without_a_registered_unit_authority(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches arbitrary units bypassing the bounded resolver vocabulary."""
+    first = validation_inputs.draft.intent_frames[0]
+    draft = validation_inputs.draft.model_copy(
+        update={
+            "intent_frames": (
+                first.model_copy(
+                    update={
+                        "slot_assignments": (
+                            *first.slot_assignments,
+                            _slot("slot-unit", SlotKind.UNIT, "invented_unit"),
+                        )
+                    }
+                ),
+                *validation_inputs.draft.intent_frames[1:],
+            )
+        }
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_ID"):
+        validate_semantics(draft=draft, **validation_inputs.rest)
+
+
+def test_entity_selection_must_be_present_in_its_model_candidate_list(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches selecting an offered entity that the model was not presented."""
+    draft = _draft_with_entity_hint(
+        validation_inputs.draft,
+        _entity_hint(
+            candidate_ids=("entity-product",), selected_ids=("entity-manager",)
+        ),
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_ID"):
+        validate_semantics(draft=draft, **validation_inputs.rest)
+
+
+def test_entity_selection_must_satisfy_hint_and_frame_type_constraints(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches an AssetManager selected where the hint and frame require a product."""
+    draft = _draft_with_entity_hint(
+        validation_inputs.draft,
+        _entity_hint(
+            candidate_ids=("entity-manager",), selected_ids=("entity-manager",)
+        ),
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_INVALID_ENTITY_TYPE"):
+        validate_semantics(draft=draft, **validation_inputs.rest)
+
+
 def test_relation_direction_must_satisfy_the_catalog_endpoint_types(
     validation_inputs: ValidationInputs,
 ) -> None:
     """Catches reversing managedBy so an asset manager becomes its subject."""
     second = validation_inputs.draft.intent_frames[1].model_copy(
         update={"entity_type_ids": ("AssetManager",)}
+    )
+    draft = validation_inputs.draft.model_copy(
+        update={"intent_frames": (validation_inputs.draft.intent_frames[0], second)}
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_INVALID_RELATION"):
+        validate_semantics(draft=draft, **validation_inputs.rest)
+
+
+def test_relation_requires_a_nonempty_subject_type(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches accepting a relation whose subject class was left unspecified."""
+    second = validation_inputs.draft.intent_frames[1].model_copy(
+        update={"entity_type_ids": ()}
     )
     draft = validation_inputs.draft.model_copy(
         update={"intent_frames": (validation_inputs.draft.intent_frames[0], second)}

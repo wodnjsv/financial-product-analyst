@@ -7,12 +7,12 @@ from dataclasses import dataclass
 from financial_agent.contracts.request import RequestContext
 
 from .catalog import SemanticCatalogSnapshot
-from .draft import AxisChoice, IntentFrameDraft, IntentResolutionDraft
+from .draft import AxisChoice, EntityHint, IntentFrameDraft, IntentResolutionDraft
 from .errors import ResolverContractError
 from .normalization import NormalizedRequest
 from .resolution import ResolutionIssue, ValidationEvent
 from .types import ChoiceState, ResolutionStatus, SemanticTag, SlotKind
-from .view import ResolverView
+from .view import ResolverView, ResolverViewEntityCandidate
 
 
 VALIDATION_STAGES = (
@@ -117,7 +117,7 @@ class _Offered:
     concept_ids: frozenset[str]
     relation_ids: frozenset[str]
     entity_type_ids: frozenset[str]
-    entity_ids_by_mention: dict[str, frozenset[str]]
+    entity_candidates_by_mention: dict[str, dict[str, ResolverViewEntityCandidate]]
     literal_by_id: dict[str, object]
     operator_ids: frozenset[str]
 
@@ -141,8 +141,8 @@ def _offered(view: ResolverView) -> _Offered:
         concept_ids=concept_ids,
         relation_ids=relation_ids,
         entity_type_ids=frozenset(entity_type_ids),
-        entity_ids_by_mention={
-            group.mention_id: frozenset(item.entity_id for item in group.items)
+        entity_candidates_by_mention={
+            group.mention_id: {item.entity_id: item for item in group.items}
             for group in view.entity_candidates
         },
         literal_by_id={item.literal_id: item for item in view.literal_candidates},
@@ -193,13 +193,17 @@ def _validate_offered_ids(
         _require_subset(hint.evidence_span_ids, span_ids)
         _require_subset(hint.expected_entity_type_ids, offered.entity_type_ids)
         if hint.mention_id:
-            _require_subset(hint.mention_id, offered.entity_ids_by_mention.keys())
-            allowed_entity_ids = offered.entity_ids_by_mention[hint.mention_id[0]]
+            _require_subset(
+                hint.mention_id, offered.entity_candidates_by_mention.keys()
+            )
+            candidates = offered.entity_candidates_by_mention[hint.mention_id[0]]
+            allowed_entity_ids = frozenset(candidates)
             _require_subset(hint.candidate_entity_ids, allowed_entity_ids)
-            _require_subset(hint.selected_candidate_ids, allowed_entity_ids)
+            _require_subset(hint.selected_candidate_ids, hint.candidate_entity_ids)
+            _validate_selected_entity_types(draft, hint.entity_hint_id, hint, candidates)
         else:
             _require_subset(hint.candidate_entity_ids, _all_entity_ids(offered))
-            _require_subset(hint.selected_candidate_ids, _all_entity_ids(offered))
+            _require_subset(hint.selected_candidate_ids, hint.candidate_entity_ids)
 
     for hint in draft.reference_hints:
         _require_subset((hint.segment_id,), segment_ids)
@@ -230,6 +234,8 @@ def _validate_slot_ids(kind: SlotKind, values: tuple[str, ...], offered: _Offere
         _require_subset(values, offered.operator_ids)
     elif kind in _LITERAL_KINDS_BY_SLOT:
         _require_subset(values, offered.literal_by_id)
+    elif kind is SlotKind.UNIT:
+        raise ResolverContractError("MODEL_UNKNOWN_ID")
     elif kind is SlotKind.ENTITY:
         _require_subset(values, _all_entity_ids(offered))
 
@@ -237,9 +243,30 @@ def _validate_slot_ids(kind: SlotKind, values: tuple[str, ...], offered: _Offere
 def _all_entity_ids(offered: _Offered) -> frozenset[str]:
     return frozenset(
         entity_id
-        for entity_ids in offered.entity_ids_by_mention.values()
-        for entity_id in entity_ids
+        for candidates in offered.entity_candidates_by_mention.values()
+        for entity_id in candidates
     )
+
+
+def _validate_selected_entity_types(
+    draft: IntentResolutionDraft,
+    hint_id: str,
+    hint: EntityHint,
+    candidates: dict[str, ResolverViewEntityCandidate],
+) -> None:
+    expected_types = set(hint.expected_entity_type_ids)
+    referencing_frames = tuple(
+        frame for frame in draft.intent_frames if hint_id in frame.entity_hint_ids
+    )
+    for entity_id in hint.selected_candidate_ids:
+        candidate_type = candidates[entity_id].entity_type
+        if expected_types and candidate_type not in expected_types:
+            raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
+        if any(
+            frame.entity_type_ids and candidate_type not in frame.entity_type_ids
+            for frame in referencing_frames
+        ):
+            raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
 
 
 def _require_subset(values: object, allowed: object) -> None:
@@ -322,7 +349,11 @@ def _validate_ontology_relations(
                     raise ResolverContractError("MODEL_INVALID_RELATION")
                 subject_types = set(relation.subject_ontology_types)
                 object_types = set(relation.object_ontology_types)
-                if not set(frame.entity_type_ids) <= subject_types or not object_types:
+                if (
+                    not frame.entity_type_ids
+                    or not set(frame.entity_type_ids) <= subject_types
+                    or not object_types
+                ):
                     raise ResolverContractError("MODEL_INVALID_RELATION")
                 for hint_id in frame.entity_hint_ids:
                     expected_types = set(hints_by_id[hint_id].expected_entity_type_ids)
