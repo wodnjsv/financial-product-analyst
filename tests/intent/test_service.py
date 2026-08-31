@@ -9,7 +9,11 @@ from types import MappingProxyType
 import pytest
 
 from financial_agent.contracts.canonical import build_request_key, canonical_sha256
-from financial_agent.contracts.request import RequestContext, Segment
+from financial_agent.contracts.request import (
+    NamedEntityMention,
+    RequestContext,
+    Segment,
+)
 from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.clova import ModelInvocationResult
 from financial_agent.intent.errors import (
@@ -46,7 +50,11 @@ def _context(
     *,
     dataset_version: str = "dataset-v1",
     deadline_seconds: float = 8.0,
+    entity_mention_count: int = 0,
 ) -> RequestContext:
+    mention_texts = tuple(f"상품{index}" for index in range(entity_mention_count))
+    if mention_texts:
+        question = " ".join(mention_texts)
     return RequestContext(
         request_key=build_request_key("q-service", question, dataset_version, "1.0"),
         run_id="run-service",
@@ -56,6 +64,15 @@ def _context(
         question_id="q-service",
         question=question,
         segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+        named_entities=tuple(
+            NamedEntityMention(
+                mention_id=f"entity-mention-{index}",
+                segment_id="s1",
+                text=text,
+                expected_entity_types=("FinancialProduct",),
+            )
+            for index, text in enumerate(mention_texts)
+        ),
         deadline_at=NOW + timedelta(seconds=deadline_seconds),
     )
 
@@ -244,6 +261,27 @@ async def test_prepare_rejects_input_and_pin_mismatch_before_model(
 
 
 @pytest.mark.asyncio
+async def test_prepare_accepts_sixteen_entity_mentions(
+    service_fixture: ServiceFixture,
+) -> None:
+    await service_fixture.service.prepare(_context(entity_mention_count=16))
+
+    assert service_fixture.entity_repository.call_count == 1
+    assert service_fixture.adapter.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_prepare_rejects_seventeen_entity_mentions_before_repository(
+    service_fixture: ServiceFixture,
+) -> None:
+    with pytest.raises(ValueError, match="REQUEST_CONTRACT_INVALID"):
+        await service_fixture.service.prepare(_context(entity_mention_count=17))
+
+    assert service_fixture.entity_repository.call_count == 0
+    assert service_fixture.adapter.call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_model_timeout_is_derived_from_request_deadline(
     service_fixture: ServiceFixture,
 ) -> None:
@@ -328,11 +366,13 @@ async def test_repair_builder_reuses_view_and_schema_without_calling_model(
 
     assert repair.response_schema == prepared.prompt.response_schema
     assert set(payload) == {
+        "context",
         "view",
         "original_prompt_hash",
         "failure_code",
         "correction_instruction",
     }
+    assert payload["context"] == prepared.context.model_dump(mode="json")
     assert payload["view"] == prepared.view.model_dump(mode="json")
     assert payload["failure_code"] == MODEL_UNKNOWN_ID
     assert len(payload["original_prompt_hash"]) == 64

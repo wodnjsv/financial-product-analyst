@@ -16,6 +16,7 @@ from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.request import RequestContext
 
 from .candidates import (
+    MAX_ENTITY_MENTIONS,
     EntityCandidate,
     Mention,
     SemanticCandidateSet,
@@ -147,6 +148,10 @@ class IntentResolverService:
     async def prepare(self, context: RequestContext) -> PreparedResolutionRequest:
         normalization_started = self._timer()
         normalized = normalize_request(context)
+        if len(context.named_entities) > MAX_ENTITY_MENTIONS:
+            raise RequestNormalizationError(
+                "REQUEST_CONTRACT_INVALID: entity mention limit exceeded"
+            )
         validate_resolver_pins(
             self._catalog,
             context,
@@ -298,6 +303,7 @@ def build_repair_envelope(
         ),
         user_message=json.dumps(
             {
+                "context": prepared.context.model_dump(mode="json"),
                 "view": prepared.view.model_dump(mode="json"),
                 "original_prompt_hash": original_prompt_hash,
                 "failure_code": failure.code,

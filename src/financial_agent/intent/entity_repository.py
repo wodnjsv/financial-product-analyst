@@ -16,10 +16,14 @@ from financial_agent.graph.entity_types import (
     project_entity_ontology_type_ids,
 )
 
-from .candidates import EntityCandidate, Mention
+from .candidates import (
+    MAX_ENTITY_CANDIDATES_PER_MENTION,
+    MAX_ENTITY_MENTIONS,
+    EntityCandidate,
+    Mention,
+)
 
 
-MAX_ENTITY_CANDIDATES_PER_MENTION = 5
 TRIGRAM_THRESHOLD = 0.30
 
 
@@ -42,6 +46,8 @@ class EntityCandidateRepository:
         """Search every mention in one dataset-pinned read transaction."""
         if not dataset_version:
             raise ValueError("dataset_version is required")
+        if len(mentions) > MAX_ENTITY_MENTIONS:
+            raise ValueError("REQUEST_CONTRACT_INVALID: entity mention limit exceeded")
         mention_ids = tuple(mention.mention_id for mention in mentions)
         if len(set(mention_ids)) != len(mention_ids):
             raise ValueError("mention IDs must be unique")

@@ -11,9 +11,11 @@ from financial_agent.contracts.canonical import build_request_key
 from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.candidates import (
     EntityCandidate,
+    Mention,
     generate_semantic_candidates,
 )
 from financial_agent.intent.catalog import SemanticCatalogSnapshot, load_catalog
+from financial_agent.intent.entity_repository import EntityCandidateRepository
 from financial_agent.intent.normalization import normalize_request
 
 
@@ -103,6 +105,35 @@ def test_entity_candidate_requires_canonical_ontology_type_set() -> None:
             score=1_000_000,
             source_id="entity-unknown",
         )
+
+
+@pytest.mark.asyncio
+async def test_entity_repository_rejects_seventeen_mentions_before_sql(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches direct repository callers constructing unbounded SQL."""
+    def fail_if_sql_is_constructed(*_args: object) -> None:
+        raise AssertionError("SQL was constructed for an oversized mention set")
+
+    monkeypatch.setattr(
+        "financial_agent.intent.entity_repository._search_statement",
+        fail_if_sql_is_constructed,
+    )
+    repository = EntityCandidateRepository(object())  # type: ignore[arg-type]
+    mentions = tuple(
+        Mention(
+            mention_id=f"mention-{index}",
+            segment_id="s1",
+            text=f"entity-{index}",
+            normalized_text=f"entity-{index}",
+            start_char=0,
+            end_char=len(f"entity-{index}"),
+        )
+        for index in range(17)
+    )
+
+    with pytest.raises(ValueError, match="REQUEST_CONTRACT_INVALID"):
+        await repository.search_batch("dataset-v1", mentions)
 
 
 def test_risk_grade_keeps_both_semantic_candidates(snapshot) -> None:

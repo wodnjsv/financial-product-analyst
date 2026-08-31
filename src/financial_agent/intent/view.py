@@ -14,7 +14,14 @@ from financial_agent.graph.contract import (
     GRAPH_CONTRACT_RELATIVE_PATHS,
 )
 
-from .candidates import EntityCandidate, SemanticCandidate, SemanticCandidateSet
+from .candidates import (
+    MAX_ENTITY_CANDIDATES,
+    MAX_ENTITY_CANDIDATES_PER_MENTION,
+    MAX_ENTITY_MENTIONS,
+    EntityCandidate,
+    SemanticCandidate,
+    SemanticCandidateSet,
+)
 from .catalog import SemanticCatalogSnapshot
 from .literals import LiteralCandidate
 from .normalization import NormalizedRequest
@@ -131,7 +138,7 @@ class ResolverViewEntityCandidate(ContractModel):
 class ResolverViewEntityCandidateGroup(ContractModel):
     mention_id: Identifier
     items: tuple[ResolverViewEntityCandidate, ...] = Field(
-        max_length=MAX_CANDIDATES_PER_MENTION
+        max_length=MAX_ENTITY_CANDIDATES_PER_MENTION
     )
 
 
@@ -145,6 +152,16 @@ class ResolverView(ContractModel):
     relation_definitions: tuple[ResolverViewRelationDefinition, ...]
     literal_candidates: tuple[ResolverViewLiteralCandidate, ...]
     entity_candidates: tuple[ResolverViewEntityCandidateGroup, ...]
+
+    @model_validator(mode="after")
+    def validate_entity_candidate_bounds(self) -> "ResolverView":
+        if (
+            len(self.entity_candidates) > MAX_ENTITY_MENTIONS
+            or sum(len(group.items) for group in self.entity_candidates)
+            > MAX_ENTITY_CANDIDATES
+        ):
+            raise ValueError("RESOLVER_VIEW_LIMIT_EXCEEDED")
+        return self
 
 
 def build_manifest(
@@ -380,12 +397,14 @@ def _select_entity_candidates(
         if previous is None or _entity_key(item) < _entity_key(previous):
             selected[item.entity_id] = item
     exact = [item for item in selected.values() if item.match_kind != "trigram"]
-    if len(exact) > MAX_CANDIDATES_PER_MENTION:
+    if len(exact) > MAX_ENTITY_CANDIDATES_PER_MENTION:
         raise ResolverInvariantError("RESOLVER_VIEW_LIMIT_EXCEEDED")
     fuzzy = [item for item in selected.values() if item.match_kind == "trigram"]
     return tuple(
         sorted(exact, key=_entity_key)
-        + sorted(fuzzy, key=_entity_key)[: MAX_CANDIDATES_PER_MENTION - len(exact)]
+        + sorted(fuzzy, key=_entity_key)[
+            : MAX_ENTITY_CANDIDATES_PER_MENTION - len(exact)
+        ]
     )
 
 

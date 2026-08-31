@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from financial_agent.contracts import canonical_json_bytes
 from financial_agent.contracts.canonical import build_request_key
@@ -27,6 +28,8 @@ from financial_agent.intent.view import (
     RESOLVER_SCHEMA_VERSION,
     ActiveDatasetPin,
     ResolverInvariantError,
+    ResolverView,
+    ResolverViewEntityCandidateGroup,
     build_manifest,
     build_resolver_view,
 )
@@ -195,6 +198,77 @@ def test_view_retains_exact_entity_candidates_before_truncating_fuzzy_candidates
         "entity-3",
         "entity-4",
     ]
+
+
+def _rebuild_view(
+    view: ResolverView,
+    entity_candidates: tuple[ResolverViewEntityCandidateGroup, ...],
+) -> ResolverView:
+    return ResolverView(
+        build_manifest=view.build_manifest,
+        active_dataset_pin=view.active_dataset_pin,
+        product_family_ids=view.product_family_ids,
+        action_ids=view.action_ids,
+        semantic_candidates=view.semantic_candidates,
+        concept_definitions=view.concept_definitions,
+        relation_definitions=view.relation_definitions,
+        literal_candidates=view.literal_candidates,
+        entity_candidates=entity_candidates,
+    )
+
+
+def _entity_candidate_groups(
+    view: ResolverView,
+    group_count: int,
+    items_per_group: int,
+) -> tuple[ResolverViewEntityCandidateGroup, ...]:
+    template = view.entity_candidates[0].items[0]
+    return tuple(
+        ResolverViewEntityCandidateGroup(
+            mention_id=f"entity-mention-{group_index}",
+            items=tuple(
+                template.model_copy(
+                    update={"entity_id": f"entity-{group_index}-{item_index}"}
+                )
+                for item_index in range(items_per_group)
+            ),
+        )
+        for group_index in range(group_count)
+    )
+
+
+def test_view_accepts_sixteen_and_rejects_seventeen_entity_groups(
+    resolver_inputs: dict[str, object],
+) -> None:
+    """Catches injected callers bypassing the entity-mention bound."""
+    view = build_resolver_view(**resolver_inputs)
+
+    accepted = _rebuild_view(view, _entity_candidate_groups(view, 16, 1))
+    assert len(accepted.entity_candidates) == 16
+    with pytest.raises(ValidationError, match="RESOLVER_VIEW_LIMIT_EXCEEDED"):
+        _rebuild_view(view, _entity_candidate_groups(view, 17, 1))
+
+
+def test_view_accepts_eighty_and_rejects_more_total_entity_candidates(
+    resolver_inputs: dict[str, object],
+) -> None:
+    """Catches oversized injected groups bypassing the total candidate bound."""
+    view = build_resolver_view(**resolver_inputs)
+    bounded = _entity_candidate_groups(view, 16, 5)
+    accepted = _rebuild_view(view, bounded)
+    assert sum(len(group.items) for group in accepted.entity_candidates) == 80
+
+    template = view.entity_candidates[0].items[0]
+    oversized_first = ResolverViewEntityCandidateGroup.model_construct(
+        mention_id="entity-mention-0",
+        items=tuple(
+            template.model_copy(update={"entity_id": f"entity-0-{index}"})
+            for index in range(6)
+        ),
+    )
+    oversized = (oversized_first, *bounded[1:])
+    with pytest.raises(ValidationError, match="RESOLVER_VIEW_LIMIT_EXCEEDED"):
+        _rebuild_view(view, oversized)
 
 
 def test_view_rejects_more_than_eighty_exact_semantic_candidates(
