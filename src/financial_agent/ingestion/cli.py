@@ -206,6 +206,7 @@ class _DartCorpusConfiguration:
     publisher_aliases: Mapping[str, str]
     report_path: Path
     limit: int | None
+    target_key: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,7 +284,9 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("verify-official-object-storage")
     commands.add_parser("audit-document-sources")
     dart_corpus = commands.add_parser("ingest-dart-corpus")
-    dart_corpus.add_argument("--limit", type=int)
+    dart_selection = dart_corpus.add_mutually_exclusive_group()
+    dart_selection.add_argument("--limit", type=int)
+    dart_selection.add_argument("--target-key")
     capacity = commands.add_parser("measure-stage03b-capacity")
     capacity.add_argument("--full-holdings", required=True, type=int)
     capacity.add_argument("--sample-products", default=100, type=int)
@@ -297,8 +300,13 @@ def _load_dart_corpus_configuration(
     if arguments.command != "ingest-dart-corpus":
         raise IngestionArgumentError()
     limit = arguments.limit
+    target_key = arguments.target_key
     if limit is not None and (
         isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0
+    ):
+        raise IngestionArgumentError()
+    if target_key is not None and (
+        not isinstance(target_key, str) or not target_key.strip()
     ):
         raise IngestionArgumentError()
     database_url = _required_env("FINANCIAL_AGENT_BUILD_DATABASE_URL").strip()
@@ -335,6 +343,7 @@ def _load_dart_corpus_configuration(
         ),
         report_path=report_path,
         limit=limit,
+        target_key=target_key,
     )
 
 
@@ -1265,7 +1274,17 @@ async def _load_dart_corpus_inventory(
 def _limited_dart_inventory(
     inventory: OrganizerDartInventory,
     limit: int | None,
+    target_key: str | None = None,
 ) -> OrganizerDartInventory:
+    if target_key is not None:
+        selected = tuple(
+            target
+            for target in inventory.targets
+            if target.target_key == target_key
+        )
+        if len(selected) != 1:
+            raise IngestionArgumentError()
+        return replace(inventory, targets=selected)
     if limit is None:
         return inventory
     return replace(inventory, targets=inventory.targets[:limit])
@@ -1371,7 +1390,11 @@ async def _run_dart_corpus(
         full_inventory,
         institution_identifiers,
     ) = await _load_dart_corpus_inventory(configuration)
-    inventory = _limited_dart_inventory(full_inventory, configuration.limit)
+    inventory = _limited_dart_inventory(
+        full_inventory,
+        configuration.limit,
+        configuration.target_key,
+    )
     opener = _NoRedirectHttpOpener()
     repository = DocumentCorpusRepository(engine)
     indexed_target_ids: set[str] = set()

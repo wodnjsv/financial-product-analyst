@@ -53,6 +53,7 @@ def test_organizer_dart_query_is_product_gated_and_relation_exact() -> None:
     assert "PRFD_ITM_NO" in compiled_sql
     assert "PREF01_PD_ITM_NO" in compiled_sql
     assert "managedBy" in compiled_sql
+    assert "DART_CORP_CODE" in compiled_sql
     assert "hasShareClass" in compiled_sql
     assert "domestic_bond" not in compiled_sql
     assert "overseas_etf" not in compiled_sql
@@ -315,6 +316,19 @@ async def test_organizer_dart_rows_exclude_nonorganizer_and_out_of_scope_product
             dataset_version=dataset_version,
             entity_id="manager-one",
         )
+        insert_identifier(
+            connection,
+            dataset_version=dataset_version,
+            identifier_id="id-manager-one-dart",
+            entity_id="manager-one",
+            scheme="DART_CORP_CODE",
+            identifier_value="00123456",
+        )
+        insert_institution(
+            connection,
+            dataset_version=dataset_version,
+            entity_id="source-local-manager",
+        )
         for entity_id, family, scheme in (
             ("etf-one", "domestic_etf", "PREF01_PD_ITM_NO"),
             ("fund-one", "public_fund", "PRFD_ITM_NO"),
@@ -364,6 +378,14 @@ async def test_organizer_dart_rows_exclude_nonorganizer_and_out_of_scope_product
         insert_relation(
             connection,
             dataset_version=dataset_version,
+            relation_id="manager-etf-source-local",
+            subject_id="etf-one",
+            predicate_id="managedBy",
+            object_id="source-local-manager",
+        )
+        insert_relation(
+            connection,
+            dataset_version=dataset_version,
             relation_id="fund-group",
             subject_id="fund-representative",
             predicate_id="hasShareClass",
@@ -399,6 +421,9 @@ async def test_organizer_dart_rows_exclude_nonorganizer_and_out_of_scope_product
     fund = next(row for row in rows if row.entity_id == "fund-one")
     assert fund.representative_entity_id == "fund-representative"
     assert fund.manager_entity_id == "manager-one"
+    assert {
+        row.manager_entity_id for row in rows if row.entity_id == "etf-one"
+    } == {"manager-one"}
     assert all(row.identifier_scheme != "FSS_FUND" for row in rows)
     representative = next(
         row for row in rows if row.entity_id == "fund-representative"

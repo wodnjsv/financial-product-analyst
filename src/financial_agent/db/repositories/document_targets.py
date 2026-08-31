@@ -252,6 +252,7 @@ def _index_targets_statement(dataset_version: str) -> sa.Select[object]:
 def _organizer_dart_statement(dataset_version: str) -> sa.Select[object]:
     organizer_identifier = identifier.alias("organizer_identifier")
     marker_identifier = identifier.alias("organizer_row_marker")
+    manager_identifier = identifier.alias("manager_identifier")
     manager_relation = relation_record.alias("manager_relation")
     manager_entity = entity.alias("manager_entity")
     representative_relation = relation_record.alias("representative_relation")
@@ -311,6 +312,14 @@ def _organizer_dart_statement(dataset_version: str) -> sa.Select[object]:
             ),
         )
     )
+    official_manager_identifier_exists = sa.exists(
+        sa.select(sa.literal(1)).where(
+            manager_identifier.c.dataset_version
+            == manager_relation.c.dataset_version,
+            manager_identifier.c.entity_id == manager_relation.c.object_id,
+            manager_identifier.c.scheme == "DART_CORP_CODE",
+        )
+    )
     return (
         sa.select(
             entity.c.entity_id,
@@ -360,6 +369,7 @@ def _organizer_dart_statement(dataset_version: str) -> sa.Select[object]:
                     == product.c.dataset_version,
                     manager_relation.c.subject_id == product.c.entity_id,
                     manager_relation.c.predicate_id == "managedBy",
+                    official_manager_identifier_exists,
                 ),
             )
             .outerjoin(

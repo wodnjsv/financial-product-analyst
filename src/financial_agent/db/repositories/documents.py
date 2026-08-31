@@ -22,7 +22,6 @@ from financial_agent.db.schema.document import (
     document_source_artifact,
 )
 from financial_agent.db.schema.evidence import source_record
-from financial_agent.db.schema.operations import dataset_version
 from financial_agent.contracts import SourceRecord, canonical_sha256
 from financial_agent.documents import (
     CoverageStatus,
@@ -1207,11 +1206,11 @@ class DocumentCorpusRepository:
         connection: AsyncConnection, dataset_version_value: str
     ) -> None:
         status = await connection.scalar(
-            sa.select(dataset_version.c.status)
-            .where(dataset_version.c.dataset_version == dataset_version_value)
-            .with_for_update(read=True)
+            sa.text(
+                "SELECT operations.lock_building_dataset(:dataset_version)"
+            ).bindparams(dataset_version=dataset_version_value)
         )
-        if status != "building":
+        if status is not True:
             raise DocumentCorpusStateError()
 
     @staticmethod

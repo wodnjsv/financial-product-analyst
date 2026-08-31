@@ -10,15 +10,25 @@ from financial_agent.ingestion.cli import (
     IngestionArgumentError,
     _DartCorpusRunReport,
     _load_dart_corpus_configuration,
+    _limited_dart_inventory,
     _parser,
     _write_dart_corpus_report,
 )
+from financial_agent.ingestion.document_sources.dart_targets import (
+    OrganizerDartInventory,
+    OrganizerDartTarget,
+)
 
 
-def _arguments(limit: str | None = None):
+def _arguments(
+    limit: str | None = None,
+    target_key: str | None = None,
+):
     values = ["ingest-dart-corpus"]
     if limit is not None:
         values.extend(("--limit", limit))
+    if target_key is not None:
+        values.extend(("--target-key", target_key))
     return _parser().parse_args(values)
 
 
@@ -100,6 +110,58 @@ def test_configuration_does_not_require_a_manual_publisher_mapping(
     configuration = _load_dart_corpus_configuration(_arguments("1"))
 
     assert configuration.publisher_aliases == {}
+
+
+def test_configuration_accepts_one_exact_target_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _environment(monkeypatch, tmp_path)
+
+    configuration = _load_dart_corpus_configuration(
+        _arguments(target_key="domestic_etf:product-one")
+    )
+
+    assert configuration.target_key == "domestic_etf:product-one"
+    assert configuration.limit is None
+
+
+def test_parser_rejects_limit_and_target_key_together() -> None:
+    with pytest.raises(IngestionArgumentError):
+        _arguments("1", "domestic_etf:product-one")
+
+
+def test_exact_target_selection_fails_closed_when_target_is_absent() -> None:
+    target = OrganizerDartTarget(
+        target_key="domestic_etf:product-one",
+        product_family="domestic_etf",
+        representative_entity_id="product-one",
+        canonical_name="Product One",
+        member_entity_ids=("product-one",),
+        identifiers=(("product-one", "ISIN", "KR0000000001"),),
+        manager_bindings=(("manager-one", "Manager One"),),
+    )
+    inventory = OrganizerDartInventory(
+        dataset_version="documents-building-v1",
+        cutoff_date=date(2026, 8, 24),
+        product_count=1,
+        targets=(target,),
+        inventory_hash="a" * 64,
+    )
+
+    selected = _limited_dart_inventory(
+        inventory,
+        None,
+        "domestic_etf:product-one",
+    )
+    assert selected.targets == (target,)
+
+    with pytest.raises(IngestionArgumentError):
+        _limited_dart_inventory(
+            inventory,
+            None,
+            "domestic_etf:missing",
+        )
 
 
 @pytest.mark.parametrize("limit", ("0", "-1", "not-a-number"))
