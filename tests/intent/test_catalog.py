@@ -107,7 +107,7 @@ def copy_catalog_and_ontology_without_tests(destination: Path) -> Path:
         target = destination / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-    for name in ("semantic-query-catalog.v1.json", "korean-nlu-overlay.v1.json"):
+    for name in ("semantic-query-catalog.v1.json", "korean-nlu-overlay.v2.json"):
         source = PROJECT_ROOT / "config" / "intent" / name
         target = destination / "config" / "intent" / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -132,6 +132,22 @@ def test_catalog_uses_frozen_runtime_axes() -> None:
 
     assert set(snapshot.product_family_ids) == {item.value for item in ProductFamily}
     assert set(snapshot.action_ids) == {item.value for item in IntentType}
+
+
+def test_v2_overlay_covers_every_runtime_axis_once() -> None:
+    snapshot = load_catalog(PROJECT_ROOT)
+
+    assert tuple(snapshot.axis_definitions) == tuple(
+        sorted([item.value for item in ProductFamily] + [item.value for item in IntentType])
+    )
+
+
+def test_generic_recommendation_is_not_a_personalized_policy_cue() -> None:
+    snapshot = load_catalog(PROJECT_ROOT)
+    surfaces = {cue.surface for cue in snapshot.policy_cues}
+
+    assert "추천해줘" not in surfaces
+    assert {"내 투자성향에 맞춰", "매수해줘"} <= surfaces
 
 
 def test_catalog_has_exact_initial_concepts_and_family_applicability() -> None:
@@ -201,7 +217,7 @@ def test_compile_catalog_rejects_direct_alias_collision() -> None:
     """Catches a direct Korean expression resolving to multiple semantic IDs."""
     catalog_payload = (PROJECT_ROOT / "config/intent/semantic-query-catalog.v1.json").read_bytes()
     overlay = json.loads(
-        (PROJECT_ROOT / "config/intent/korean-nlu-overlay.v1.json").read_text("utf-8")
+        (PROJECT_ROOT / "config/intent/korean-nlu-overlay.v2.json").read_text("utf-8")
     )
     overlay["entries"].append(
         {
@@ -232,7 +248,7 @@ def test_compile_catalog_rejects_unauthorized_relation_endpoint_type() -> None:
         concept for concept in catalog["concepts"] if concept["id"] == "holdsSecurity"
     )
     holds_security["allowed_ontology_types"].append("Company")
-    overlay_payload = (PROJECT_ROOT / "config/intent/korean-nlu-overlay.v1.json").read_bytes()
+    overlay_payload = (PROJECT_ROOT / "config/intent/korean-nlu-overlay.v2.json").read_bytes()
 
     with pytest.raises(ValueError, match="relation ontology types"):
         compile_catalog(
@@ -261,7 +277,7 @@ def test_catalog_hash_canonicalizes_relation_endpoint_order() -> None:
         concept for concept in reordered["concepts"] if concept["id"] == "holdsSecurity"
     )
     holds_security["subject_ontology_types"].reverse()
-    overlay_payload = (PROJECT_ROOT / "config/intent/korean-nlu-overlay.v1.json").read_bytes()
+    overlay_payload = (PROJECT_ROOT / "config/intent/korean-nlu-overlay.v2.json").read_bytes()
     paths = tuple(PROJECT_ROOT / path for path in TBOX_RELATIVE_PATHS)
     shape_paths = tuple(PROJECT_ROOT / path for path in SHACL_RELATIVE_PATHS)
 

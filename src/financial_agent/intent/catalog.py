@@ -23,7 +23,7 @@ from financial_agent.graph.contract import (
 
 
 _CATALOG_PATH = Path("config/intent/semantic-query-catalog.v1.json")
-_OVERLAY_PATH = Path("config/intent/korean-nlu-overlay.v1.json")
+_OVERLAY_PATH = Path("config/intent/korean-nlu-overlay.v2.json")
 _CONCEPT_KINDS = Literal["attribute", "metric", "relation", "document_topic"]
 _ALIAS_KINDS = Literal["direct", "ambiguous", "group"]
 _SH = Namespace("http://www.w3.org/ns/shacl#")
@@ -65,9 +65,29 @@ class KoreanNluEntry(_StrictModel):
     negative_semantic_ids: tuple[str, ...]
 
 
+class AxisLanguageDefinition(_StrictModel):
+    axis_kind: Literal["product_family", "action"]
+    axis_id: str = Field(min_length=1)
+    preferred_label_ko: str = Field(min_length=1)
+    definition_ko: str = Field(min_length=1)
+    surface_forms: tuple[str, ...]
+
+
+class PolicyCue(_StrictModel):
+    semantic_tag: Literal[
+        "PERSONALIZED_ADVICE",
+        "ORDER_EXECUTION",
+        "FUTURE_FORECAST",
+        "REALTIME_REQUIRED",
+    ]
+    surface: str = Field(min_length=1)
+
+
 class _OverlayPayload(_StrictModel):
     overlay_version: str = Field(min_length=1)
     entries: tuple[KoreanNluEntry, ...]
+    axis_definitions: tuple[AxisLanguageDefinition, ...]
+    policy_cues: tuple[PolicyCue, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +104,8 @@ class SemanticCatalogSnapshot:
     alias_kinds: Mapping[str, str]
     ontology_hashes: Mapping[str, str]
     class_ancestor_ids: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    axis_definitions: Mapping[str, AxisLanguageDefinition] = field(default_factory=dict)
+    policy_cues: tuple[PolicyCue, ...] = ()
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -92,6 +114,7 @@ class SemanticCatalogSnapshot:
             "alias_kinds",
             "ontology_hashes",
             "class_ancestor_ids",
+            "axis_definitions",
         ):
             value = getattr(self, field_name)
             object.__setattr__(
@@ -127,6 +150,8 @@ def compile_catalog(
         raise ValueError("invalid semantic catalog payload") from error
 
     _validate_runtime_axes(catalog)
+    axis_definitions = _index_axis_definitions(overlay.axis_definitions)
+    policy_cues = _validate_policy_cues(overlay.policy_cues)
     concepts_by_id = _index_concepts(catalog.concepts)
     ontology_hashes = _contract_hashes(ontology_paths, shacl_paths)
     tbox_graph = _parse_graph(ontology_paths)
@@ -155,6 +180,8 @@ def compile_catalog(
         alias_kinds=alias_kinds,
         ontology_hashes=ontology_hashes,
         class_ancestor_ids=_class_ancestor_ids(tbox_graph),
+        axis_definitions=axis_definitions,
+        policy_cues=policy_cues,
     )
 
 
@@ -165,6 +192,32 @@ def _validate_runtime_axes(catalog: _CatalogPayload) -> None:
         raise ValueError("product family IDs must exactly match ProductFamily")
     if set(catalog.action_ids) != expected_actions or len(catalog.action_ids) != len(expected_actions):
         raise ValueError("action IDs must exactly match IntentType")
+
+
+def _index_axis_definitions(
+    definitions: tuple[AxisLanguageDefinition, ...],
+) -> Mapping[str, AxisLanguageDefinition]:
+    expected_kinds = {
+        **{item.value: "product_family" for item in ProductFamily},
+        **{item.value: "action" for item in IntentType},
+    }
+    indexed = {definition.axis_id: definition for definition in definitions}
+    if len(indexed) != len(definitions):
+        raise ValueError("axis definitions must be unique")
+    if set(indexed) != set(expected_kinds):
+        raise ValueError("axis definitions must exactly match runtime axes")
+    if any(
+        definition.axis_kind != expected_kinds[definition.axis_id]
+        for definition in definitions
+    ):
+        raise ValueError("axis definition kind must match runtime axis")
+    return MappingProxyType(dict(sorted(indexed.items())))
+
+
+def _validate_policy_cues(cues: tuple[PolicyCue, ...]) -> tuple[PolicyCue, ...]:
+    if len(set(cues)) != len(cues):
+        raise ValueError("policy cues must be unique")
+    return tuple(sorted(cues, key=lambda cue: (cue.semantic_tag, cue.surface)))
 
 
 def _index_concepts(concepts: tuple[SemanticConcept, ...]) -> Mapping[str, SemanticConcept]:
@@ -451,6 +504,23 @@ def _canonical_overlay_payload(overlay: _OverlayPayload) -> dict[str, object]:
             for entry in sorted(
                 overlay.entries,
                 key=lambda item: (item.semantic_id, item.preferred_label),
+            )
+        ],
+        "axis_definitions": [
+            {
+                **definition.model_dump(mode="json"),
+                "surface_forms": sorted(definition.surface_forms),
+            }
+            for definition in sorted(
+                overlay.axis_definitions,
+                key=lambda item: item.axis_id,
+            )
+        ],
+        "policy_cues": [
+            cue.model_dump(mode="json")
+            for cue in sorted(
+                overlay.policy_cues,
+                key=lambda item: (item.semantic_tag, item.surface),
             )
         ],
     }
