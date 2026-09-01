@@ -28,6 +28,7 @@ from financial_agent.intent.candidates import generate_semantic_candidates
 from financial_agent.intent.catalog import SemanticCatalogSnapshot, load_catalog
 from financial_agent.intent.evaluation import (
     CandidateGroup,
+    EntityTypeReachabilityEvidence,
     EvaluationDataset,
     EvaluationFrame,
     EvaluationPrediction,
@@ -71,6 +72,7 @@ from financial_agent.intent.resolution import ResolverBuildManifest
 from financial_agent.intent.service import IntentResolverService
 from financial_agent.intent.validation import validate_semantics
 from financial_agent.intent.proposal import IntentResolutionProposalV2
+from financial_agent.intent.prompt import build_prompt
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
     CANDIDATE_POLICY_VERSION,
@@ -142,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         dataset = parse_strict_json(dataset_bytes, EvaluationDataset)
         catalog = load_catalog(PROJECT_ROOT)
         current_manifest = _current_manifest(catalog)
+        reachability = _entity_type_reachability(dataset, catalog)
         prediction_bundle: PredictionDataset | None = None
         prediction_bytes: bytes | None = None
         evidence_hashes: dict[str, str | None] = {
@@ -161,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
                 "candidate": evaluate_candidates(
                     dataset.cases, predictions
                 ).model_dump(mode="json"),
+                "entity_type_reachability": reachability.model_dump(mode="json"),
                 "frame": None,
                 "context": None,
                 "ood": None,
@@ -259,6 +263,7 @@ def main(argv: list[str] | None = None) -> int:
             metrics = evaluate_predictions(dataset.cases, predictions).model_dump(
                 mode="json"
             )
+            metrics["entity_type_reachability"] = reachability.model_dump(mode="json")
 
         payload: dict[str, Any] = {
             "schema_version": "3.0",
@@ -1359,6 +1364,35 @@ def _deterministic_predictions(
             )
         )
     return tuple(predictions)
+
+
+def _entity_type_reachability(
+    dataset: EvaluationDataset,
+    catalog: SemanticCatalogSnapshot,
+) -> EntityTypeReachabilityEvidence:
+    unreachable_case_ids: list[str] = []
+    total = 0
+    for case in dataset.cases:
+        if case.expected_pipeline_outcome == "pre_model_rejected":
+            continue
+        context = _case_context(case, SYNTHETIC_DATASET_VERSION, None)
+        normalized = normalize_request(context)
+        view = _deterministic_view(context, normalized, catalog)
+        schema = build_prompt(context, view).response_schema
+        offered = set(
+            schema["properties"]["frames"]["items"]["properties"]
+            ["entity_type_ids"]["items"]["enum"]
+        )
+        if any(
+            not set(frame.entity_type_ids) <= offered for frame in case.expected_frames
+        ):
+            unreachable_case_ids.append(case.case_id)
+        total += 1
+    return EntityTypeReachabilityEvidence(
+        total=total,
+        reachable=total - len(unreachable_case_ids),
+        unreachable_case_ids=tuple(unreachable_case_ids),
+    )
 
 
 def _deterministic_view(

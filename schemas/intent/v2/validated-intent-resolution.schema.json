@@ -89,6 +89,104 @@
       "title": "ContractFileHash",
       "type": "object"
     },
+    "EntityHintV2": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_entity_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Candidate Entity Ids",
+          "type": "array"
+        },
+        "entity_hint_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Entity Hint Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "expected_entity_type_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Expected Entity Type Ids",
+          "type": "array"
+        },
+        "mention_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Mention Id",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "relation_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Relation Id",
+          "type": "array"
+        },
+        "selected_candidate_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Selected Candidate Ids",
+          "type": "array"
+        },
+        "semantic_role": {
+          "$ref": "#/$defs/EntitySemanticRole"
+        }
+      },
+      "required": [
+        "entity_hint_id",
+        "mention_id",
+        "evidence_span_ids",
+        "expected_entity_type_ids",
+        "candidate_entity_ids",
+        "selected_candidate_ids",
+        "reason_code",
+        "semantic_role",
+        "relation_id"
+      ],
+      "title": "EntityHintV2",
+      "type": "object"
+    },
+    "EntitySemanticRole": {
+      "enum": [
+        "frame_subject",
+        "relation_object"
+      ],
+      "title": "EntitySemanticRole",
+      "type": "string"
+    },
     "FrameSemanticCoverage": {
       "additionalProperties": false,
       "properties": {
@@ -806,6 +904,13 @@
       "title": "Draft Hash",
       "type": "string"
     },
+    "entity_hints": {
+      "items": {
+        "$ref": "#/$defs/EntityHintV2"
+      },
+      "title": "Entity Hints",
+      "type": "array"
+    },
     "final_tags": {
       "items": {
         "$ref": "#/$defs/SemanticTag"
@@ -889,7 +994,8 @@
     "build_manifest",
     "active_dataset_manifest_hash",
     "repair_used",
-    "invalid_attempt_hashes"
+    "invalid_attempt_hashes",
+    "entity_hints"
   ],
   "title": "ValidatedIntentResolutionV2",
   "type": "object"

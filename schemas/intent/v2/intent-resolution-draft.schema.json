@@ -143,7 +143,7 @@
       "title": "ContextLinkType",
       "type": "string"
     },
-    "EntityHint": {
+    "EntityHintV2": {
       "additionalProperties": false,
       "properties": {
         "candidate_entity_ids": {
@@ -195,6 +195,16 @@
           "title": "Reason Code",
           "type": "string"
         },
+        "relation_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Relation Id",
+          "type": "array"
+        },
         "selected_candidate_ids": {
           "items": {
             "minLength": 1,
@@ -204,6 +214,9 @@
           "maxItems": 1,
           "title": "Selected Candidate Ids",
           "type": "array"
+        },
+        "semantic_role": {
+          "$ref": "#/$defs/EntitySemanticRole"
         }
       },
       "required": [
@@ -213,10 +226,20 @@
         "expected_entity_type_ids",
         "candidate_entity_ids",
         "selected_candidate_ids",
-        "reason_code"
+        "reason_code",
+        "semantic_role",
+        "relation_id"
       ],
-      "title": "EntityHint",
+      "title": "EntityHintV2",
       "type": "object"
+    },
+    "EntitySemanticRole": {
+      "enum": [
+        "frame_subject",
+        "relation_object"
+      ],
+      "title": "EntitySemanticRole",
+      "type": "string"
     },
     "EvidenceSpan": {
       "additionalProperties": false,
@@ -838,7 +861,7 @@
     },
     "entity_hints": {
       "items": {
-        "$ref": "#/$defs/EntityHint"
+        "$ref": "#/$defs/EntityHintV2"
       },
       "title": "Entity Hints",
       "type": "array"

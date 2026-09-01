@@ -13,6 +13,7 @@ import pytest
 from financial_agent.intent.evaluation import (
     CountMetric,
     CoverageMetric,
+    EntityTypeReachabilityEvidence,
     PromotionEvidence,
     assess_promotion,
 )
@@ -41,6 +42,7 @@ APPROVED_COPY_SOURCES = {
 }
 
 PROMOTION_GATE_NAMES = (
+    "entity_type_reachability",
     "unknown_registered_id_acceptance",
     "invalid_context_graph_acceptance",
     "deterministic_candidate_reproducibility",
@@ -286,6 +288,11 @@ def _dockerignore_excludes(source: str, path: str) -> bool:
 def _passing_promotion_evidence() -> PromotionEvidence:
     return PromotionEvidence(
         evaluation_dataset_sha256=FROZEN_V3_DATASET_SHA256,
+        entity_type_reachability=EntityTypeReachabilityEvidence(
+            total=155,
+            reachable=155,
+            unreachable_case_ids=(),
+        ),
         unknown_registered_id_acceptance=CountMetric(numerator=0, denominator=10),
         invalid_context_graph_acceptance=CountMetric(numerator=0, denominator=10),
         validation_probe_coverage=CoverageMetric(numerator=20, denominator=20),
@@ -599,6 +606,11 @@ def test_promotion_requires_the_frozen_v3_dataset(
 def test_promotion_blocks_failed_candidate_recall_and_unmeasured_live_metrics() -> None:
     evidence = PromotionEvidence(
         evaluation_dataset_sha256=FROZEN_V3_DATASET_SHA256,
+        entity_type_reachability=EntityTypeReachabilityEvidence(
+            total=155,
+            reachable=155,
+            unreachable_case_ids=(),
+        ),
         deterministic_candidate_reproducibility=CountMetric(
             numerator=155, denominator=155
         ),

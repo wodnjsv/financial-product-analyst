@@ -21,6 +21,7 @@ from pydantic import SecretStr, ValidationError
 from financial_agent.intent.evaluation import (
     CandidateGroup,
     CountMetric,
+    EntityTypeReachabilityEvidence,
     EvaluationCase,
     EvaluationDataset,
     EvaluationFrame,
@@ -72,8 +73,11 @@ from financial_agent.contracts.enums import (
     ProductFamily,
     ReferenceMentionType,
 )
-from financial_agent.contracts.request import RequestContext, Segment
-from financial_agent.intent.candidates import generate_semantic_candidates
+from financial_agent.contracts.request import NamedEntityMention, RequestContext, Segment
+from financial_agent.intent.candidates import (
+    EntityCandidate,
+    generate_semantic_candidates,
+)
 from financial_agent.intent.assembler import assemble_proposal
 from financial_agent.intent.clova import ClovaStructuredOutputAdapter
 from financial_agent.intent.config import ClovaResolverConfig
@@ -91,7 +95,7 @@ from financial_agent.intent.draft import (
 )
 from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
 from financial_agent.intent.errors import ResolverContractError
-from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.catalog import SemanticCatalogSnapshot, load_catalog
 from financial_agent.intent.context import (
     ResolutionFinalizationMetadata,
     finalize_resolution,
@@ -99,7 +103,8 @@ from financial_agent.intent.context import (
 )
 from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.proposal import IntentResolutionProposalV2
-from financial_agent.intent.prompt import ResolverPromptEnvelope
+from financial_agent.intent.prompt import ResolverPromptEnvelope, build_prompt
+from financial_agent.intent.literals import extract_literals
 from financial_agent.intent.resolution import ValidatedIntentResolutionV2
 from financial_agent.intent.types import (
     ChoiceState,
@@ -124,6 +129,7 @@ from financial_agent.intent.view import (
     ResolverViewSemanticCandidate,
     ResolverViewSemanticCandidateGroup,
     build_manifest,
+    build_resolver_view,
 )
 from tests.intent.view_fixtures import complete_axis_definitions, complete_entity_type_ids
 
@@ -792,7 +798,104 @@ def test_fixture_hashes_are_literal_and_frozen() -> None:
     assert hashlib.sha256(HELDOUT_PATH.read_bytes()).hexdigest() == HELDOUT_SHA256
 
 
-def test_completely_correct_semantic_predictions_satisfy_promotion_gates() -> None:
+def case_request_context(case: EvaluationCase) -> RequestContext:
+    created_at = datetime(2026, 8, 31, tzinfo=UTC)
+    dataset_version = "intent-heldout-ko-v3"
+    return RequestContext(
+        request_key=build_request_key(
+            case.case_id, case.question, dataset_version, "1.0"
+        ),
+        run_id=f"reachability-{case.case_id}",
+        dataset_version=dataset_version,
+        producer="intent-reachability-test",
+        created_at=created_at,
+        question_id=case.case_id,
+        question=case.question,
+        segments=tuple(
+            Segment(segment_id=item.segment_id, ordinal=item.ordinal, text=item.text)
+            for item in case.segments
+        ),
+        deadline_at=created_at + timedelta(seconds=55),
+    )
+
+
+def build_real_view_for_evaluation_case(
+    case: EvaluationCase,
+    catalog: SemanticCatalogSnapshot,
+) -> ResolverView:
+    context = case_request_context(case)
+    normalized = normalize_request(context)
+    manifest = build_manifest(
+        catalog,
+        {
+            "normalizer_version": NORMALIZER_VERSION,
+            "candidate_policy_version": CANDIDATE_POLICY_VERSION,
+            "resolver_schema_version": RESOLVER_SCHEMA_VERSION,
+            "prompt_version": PROMPT_VERSION,
+            "adapter_version": ADAPTER_VERSION,
+        },
+    )
+    return build_resolver_view(
+        context=context,
+        normalized=normalized,
+        literals=extract_literals(normalized),
+        semantic_candidates=generate_semantic_candidates(normalized, catalog),
+        entity_candidates={},
+        manifest=manifest,
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version=context.dataset_version,
+            manifest_hash="d" * 64,
+        ),
+        catalog=catalog,
+    )
+
+
+def test_all_semantic_cases_can_express_expected_frame_types() -> None:
+    dataset = parse_strict_json(HELDOUT_PATH.read_bytes(), EvaluationDataset)
+    catalog = load_catalog(PROJECT_ROOT)
+    unreachable_case_ids = []
+    checked = 0
+    for case in dataset.cases:
+        if case.expected_pipeline_outcome == "pre_model_rejected":
+            continue
+        view = build_real_view_for_evaluation_case(case, catalog)
+        schema = build_prompt(case_request_context(case), view).response_schema
+        offered = set(
+            schema["properties"]["frames"]["items"]["properties"]
+            ["entity_type_ids"]["items"]["enum"]
+        )
+        if any(
+            not set(frame.entity_type_ids) <= offered for frame in case.expected_frames
+        ):
+            unreachable_case_ids.append(case.case_id)
+        checked += 1
+
+    assert checked == 155
+    assert unreachable_case_ids == []
+
+
+def test_entity_type_reachability_evidence_requires_complete_counts() -> None:
+    evidence = EntityTypeReachabilityEvidence(
+        total=155,
+        reachable=154,
+        unreachable_case_ids=("HKO-PAR-001",),
+    )
+
+    assert evidence.model_dump(mode="json") == {
+        "total": 155,
+        "reachable": 154,
+        "unreachable_case_ids": ["HKO-PAR-001"],
+    }
+    with pytest.raises(
+        ValidationError, match="entity-type reachability counts must cover population"
+    ):
+        EntityTypeReachabilityEvidence(
+            total=155, reachable=154, unreachable_case_ids=()
+        )
+
+
+def test_perfect_prediction_arithmetic_satisfies_existing_promotion_percentages(
+) -> None:
     dataset = parse_strict_json(HELDOUT_PATH.read_bytes(), EvaluationDataset)
     blocking_code_by_ood_type = {
         "vocabulary": "SEMANTIC_CONCEPT_UNMAPPED",
@@ -859,6 +962,13 @@ def test_completely_correct_semantic_predictions_satisfy_promotion_gates() -> No
     report = evaluate_predictions(dataset.cases, tuple(predictions))
     evidence = PromotionEvidence(
         evaluation_dataset_sha256=HELDOUT_SHA256,
+        entity_type_reachability=(
+            EntityTypeReachabilityEvidence(
+                total=155,
+                reachable=155,
+                unreachable_case_ids=(),
+            )
+        ),
         unknown_registered_id_acceptance=report.validation.unknown_id_acceptance,
         invalid_context_graph_acceptance=report.validation.invalid_graph_acceptance,
         validation_probe_coverage=report.validation.probe_coverage,
@@ -876,6 +986,21 @@ def test_completely_correct_semantic_predictions_satisfy_promotion_gates() -> No
     assert report.frame.joint_exact_match.denominator == 155
     assert report.context.link_exact_match.denominator == 155
     assert assess_promotion(evidence).eligible is True
+
+    incomplete_reachability = evidence.model_copy(
+        update={
+            "entity_type_reachability": (
+                EntityTypeReachabilityEvidence(
+                    total=155,
+                    reachable=154,
+                    unreachable_case_ids=("HKO-PAR-001",),
+                )
+            )
+        }
+    )
+    decision = assess_promotion(incomplete_reachability)
+    assert decision.eligible is False
+    assert "entity_type_reachability" in decision.blocking_gate_names
 
 
 def test_v2_preserves_v1_questions_and_candidate_gold_without_tuning() -> None:
@@ -1178,6 +1303,11 @@ def test_deterministic_cli_is_reproducible_aggregate_only_and_provenanced(
     assert report["metrics"]["candidate"]["reproducibility_coverage"][
         "evidence_sufficient"
     ] is True
+    assert report["metrics"]["entity_type_reachability"] == {
+        "total": 155,
+        "reachable": 155,
+        "unreachable_case_ids": [],
+    }
     serialized = first.read_text(encoding="utf-8").lower()
     assert "question" not in serialized
     assert "raw_model" not in serialized
@@ -1451,6 +1581,180 @@ def test_round2_output_hardlink_cannot_modify_supplied_input(tmp_path: Path) -> 
         assert supplied.read_bytes() == original
     finally:
         output.unlink(missing_ok=True)
+
+
+def _resolve_gold_equivalent_managed_by(
+) -> tuple[IntentResolutionDraftV2, ValidatedIntentResolutionV2]:
+    dataset_version = "entity-role-v2"
+    question = "테스트운용사 운용사 ETF 알려줘"
+    created_at = datetime(2026, 8, 31, tzinfo=UTC)
+    context = RequestContext(
+        request_key=build_request_key(
+            "managed-by", question, dataset_version, "1.0"
+        ),
+        run_id="managed-by",
+        dataset_version=dataset_version,
+        producer="evaluation-test",
+        created_at=created_at,
+        question_id="managed-by",
+        question=question,
+        segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+        named_entities=(
+            NamedEntityMention(
+                mention_id="mention-manager",
+                segment_id="s1",
+                text="테스트운용사",
+                expected_entity_types=("AssetManager",),
+            ),
+        ),
+        deadline_at=created_at + timedelta(seconds=55),
+    )
+    normalized = normalize_request(context)
+    catalog = load_catalog(PROJECT_ROOT)
+    manifest = _resolver_manifest()
+    view = build_resolver_view(
+        context=context,
+        normalized=normalized,
+        literals=extract_literals(normalized),
+        semantic_candidates=generate_semantic_candidates(normalized, catalog),
+        entity_candidates={
+            "mention-manager": (
+                EntityCandidate(
+                    entity_id="manager-synthetic",
+                    canonical_name="synthetic-manager",
+                    ontology_type_ids=("AssetManager", "Organization"),
+                    product_family=None,
+                    match_kind="exact_name",
+                    score=1_000_000,
+                    source_id="source-manager-synthetic",
+                ),
+            )
+        },
+        manifest=manifest,
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version=dataset_version,
+            manifest_hash="d" * 64,
+        ),
+        catalog=catalog,
+    )
+    relation_evidence_id = next(
+        item.evidence_id
+        for item in view.evidence_candidates
+        if "managedBy" in item.offered_semantic_ids
+    )
+    family_evidence_id = next(
+        item.evidence_id
+        for item in view.evidence_candidates
+        if "domestic_etf" in item.offered_semantic_ids
+    )
+    proposal = IntentResolutionProposalV2.model_validate_json(
+        json.dumps(
+            {
+                "proposal_schema_version": "2.0",
+                "frames": [
+                    {
+                        "segment_ids": ["s1"],
+                        "action_choice": {
+                            "state": "selected",
+                            "selected_ids": ["lookup"],
+                            "evidence_ids": [family_evidence_id],
+                            "reason_code": "explicit",
+                        },
+                        "product_family_choice": {
+                            "state": "selected",
+                            "selected_ids": ["domestic_etf"],
+                            "evidence_ids": [family_evidence_id],
+                            "reason_code": "explicit",
+                        },
+                        "entity_type_ids": ["ETF"],
+                        "semantic_coverage": {
+                            "state": "covered",
+                            "reason": "none",
+                            "evidence_ids": [],
+                        },
+                        "slot_assignments": [
+                            {
+                                "slot_kind": "relation",
+                                "value_ids": ["managedBy"],
+                                "evidence_ids": [relation_evidence_id],
+                                "reason_code": "explicit",
+                            }
+                        ],
+                        "entity_hints": [
+                            {
+                                "semantic_role": "relation_object",
+                                "relation_id": ["managedBy"],
+                                "expected_entity_type_ids": ["AssetManager"],
+                                "mention_id": ["mention-manager"],
+                                "candidate_entity_ids": ["manager-synthetic"],
+                                "selected_candidate_ids": ["manager-synthetic"],
+                            }
+                        ],
+                        "produced_result_hints": ["relation_target"],
+                    }
+                ],
+                "references": [],
+                "context_links": [],
+                "slot_mutations": [],
+                "semantic_flag_hints": [],
+                "frame_limit_exceeded": False,
+            },
+            ensure_ascii=False,
+        )
+    )
+    draft = assemble_proposal(proposal, normalized, view)
+    semantic = validate_semantics(draft, context, normalized, view, catalog)
+    resolution = finalize_resolution(
+        validate_context_graph(semantic),
+        ResolutionFinalizationMetadata(
+            request_key=context.request_key,
+            run_id=context.run_id,
+            dataset_version=dataset_version,
+            producer=context.producer,
+            created_at=created_at,
+            resolution_id="resolution-managed-by",
+            draft_hash=canonical_sha256(draft),
+            build_manifest=manifest,
+            active_dataset_manifest_hash="d" * 64,
+        ),
+    )
+    assert isinstance(draft, IntentResolutionDraftV2)
+    assert isinstance(resolution, ValidatedIntentResolutionV2)
+    return draft, resolution
+
+
+def test_managed_by_proposal_crosses_full_v2_evaluation_boundary() -> None:
+    draft, resolution = _resolve_gold_equivalent_managed_by()
+    draft_bundle = IntentDraftBundleV2(
+        dataset_id="entity-role-v2",
+        cases=(
+            IntentDraftCaseArtifactV2(case_id="managed-by", artifact=draft),
+        ),
+    )
+    resolution_bundle = ValidatedResolutionBundleV2(
+        dataset_id="entity-role-v2",
+        cases=(
+            ValidatedResolutionCaseArtifactV2(
+                case_id="managed-by", artifact=resolution
+            ),
+        ),
+    )
+    draft_model, resolution_model = _cli_namespace()["_artifact_bundle_models"](
+        "2.0"
+    )
+    stored_drafts = parse_strict_json(
+        canonical_json_bytes(draft_bundle), draft_model
+    )
+    stored_resolutions = parse_strict_json(
+        canonical_json_bytes(resolution_bundle), resolution_model
+    )
+
+    stored_draft = stored_drafts.cases[0].artifact
+    stored_resolution = stored_resolutions.cases[0].artifact
+    assert stored_draft is not None
+    assert stored_resolution is not None
+    assert stored_draft.entity_hints[0].semantic_role.value == "relation_object"
+    assert stored_resolution.entity_hints[0].relation_id == ("managedBy",)
 
 
 def _stored_artifacts(

@@ -738,6 +738,7 @@ class CoverageMetric(CountMetric):
 
 
 PromotionGateName = Literal[
+    "entity_type_reachability",
     "unknown_registered_id_acceptance",
     "invalid_context_graph_acceptance",
     "deterministic_candidate_reproducibility",
@@ -752,10 +753,24 @@ PromotionComparison = Literal["equal", "at_least", "at_most"]
 _FROZEN_PROMOTION_DATASET_SHA256 = (
     "2142f4da110c7a83daba902c7b77df62168649c7f0a412867495fa6930acf211"
 )
+_ENTITY_TYPE_REACHABILITY_POPULATION = 155
+
+
+class EntityTypeReachabilityEvidence(ContractModel):
+    total: int = Field(ge=0)
+    reachable: int = Field(ge=0)
+    unreachable_case_ids: tuple[Identifier, ...]
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> "EntityTypeReachabilityEvidence":
+        if self.reachable + len(self.unreachable_case_ids) != self.total:
+            raise ValueError("entity-type reachability counts must cover population")
+        return self
 
 
 class PromotionEvidence(ContractModel):
     evaluation_dataset_sha256: Sha256Hex | None = None
+    entity_type_reachability: EntityTypeReachabilityEvidence | None = None
     unknown_registered_id_acceptance: CountMetric | None = None
     invalid_context_graph_acceptance: CountMetric | None = None
     validation_probe_coverage: CoverageMetric | None = None
@@ -779,7 +794,7 @@ class PromotionGateResult(ContractModel):
 class PromotionDecision(ContractModel):
     eligible: bool
     blocking_gate_names: tuple[PromotionGateName, ...]
-    gates: tuple[PromotionGateResult, ...] = Field(min_length=8, max_length=8)
+    gates: tuple[PromotionGateResult, ...] = Field(min_length=9, max_length=9)
 
 
 _PROMOTION_GATE_DEFINITIONS: tuple[
@@ -867,10 +882,41 @@ def assess_promotion(evidence: PromotionEvidence) -> PromotionDecision:
         )
     )
 
-    gates: list[PromotionGateResult] = []
     dataset_matches = (
         evidence.evaluation_dataset_sha256 == _FROZEN_PROMOTION_DATASET_SHA256
     )
+    reachability = evidence.entity_type_reachability
+    reachability_metric = (
+        None
+        if reachability is None
+        else CountMetric(
+            numerator=reachability.reachable,
+            denominator=reachability.total,
+        )
+    )
+    reachability_sufficient = (
+        dataset_matches
+        and reachability is not None
+        and reachability.total == _ENTITY_TYPE_REACHABILITY_POPULATION
+    )
+    if not reachability_sufficient:
+        reachability_status: PromotionGateStatus = "unmeasured"
+    elif (
+        reachability.reachable == _ENTITY_TYPE_REACHABILITY_POPULATION
+        and not reachability.unreachable_case_ids
+    ):
+        reachability_status = "passed"
+    else:
+        reachability_status = "failed"
+    gates: list[PromotionGateResult] = [
+        PromotionGateResult(
+            name="entity_type_reachability",
+            status=reachability_status,
+            metric=reachability_metric,
+            comparison="equal",
+            threshold=Decimal("1"),
+        )
+    ]
     for name, comparison, threshold, coverage_name in _PROMOTION_GATE_DEFINITIONS:
         metric = getattr(evidence, name)
         coverage = None if coverage_name is None else getattr(evidence, coverage_name)
