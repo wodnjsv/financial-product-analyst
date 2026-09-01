@@ -8,6 +8,8 @@ from pathlib import Path
 import psycopg
 import pytest
 from alembic import command
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from psycopg import sql
 from sqlalchemy.exc import DBAPIError
 
@@ -36,6 +38,13 @@ from scripts.verify_database_migrations import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_intent_resolution_migration_is_the_single_alembic_head() -> None:
+    config = Config(PROJECT_ROOT / "alembic.ini")
+    script = ScriptDirectory.from_config(config)
+
+    assert script.get_heads() == ["0008"]
 
 
 def _object_manifest() -> dict[str, object]:
@@ -484,7 +493,7 @@ def test_manifest_and_postflight_reject_redacted_unexpected_principals(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0007",
+                alembic_head="0008",
             )
             with pytest.raises(PreflightFailure) as preflight_error:
                 validate_post_migration_snapshot(snapshot)
@@ -540,7 +549,7 @@ def test_manifest_and_postflight_reject_column_acl_drift(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0007",
+                alembic_head="0008",
             )
             with pytest.raises(PreflightFailure) as preflight_error:
                 validate_post_migration_snapshot(snapshot)
@@ -587,7 +596,7 @@ def test_disposable_database_runs_base_head_base_head_cycle(
 ) -> None:
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0007"
+    assert report.alembic_head == "0008"
     assert report.application_schema_count == 7
     assert report.object_counts["tables"] > 0
     assert report.object_counts["checks"] > 0
@@ -606,6 +615,8 @@ def test_disposable_database_runs_base_head_base_head_cycle(
     assert report.foundation_request_start_idempotent is True
     assert report.foundation_request_conflict_rejected is True
     assert report.foundation_append_only_enforced is True
+    assert report.foundation_intent_provenance_enforced is True
+    assert report.foundation_failure_payload_audit_enforced is True
     assert report.foundation_concurrent_request_idempotent is True
     assert report.foundation_concurrent_request_conflict_rejected is True
 
@@ -923,7 +934,7 @@ def test_cutoff_rebaseline_preserves_legacy_rows_and_fails_closed_on_downgrade(
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 "SELECT version_num FROM public.alembic_version"
-            ).fetchone()[0] == "0007"
+            ).fetchone()[0] == "0008"
             assert connection.execute(
                 """
                 SELECT count(*) FROM operations.dataset_version
@@ -932,6 +943,219 @@ def test_cutoff_rebaseline_preserves_legacy_rows_and_fails_closed_on_downgrade(
                 )
                 """
             ).fetchone()[0] == 2
+
+
+def _seed_task10_run(connection: psycopg.Connection) -> str:
+    created_at = "2026-08-31T00:00:00+00:00"
+    connection.execute(
+        """
+        INSERT INTO operations.dataset_version (
+            dataset_version, cutoff_date, status, manifest_hash, created_at
+        ) VALUES (
+            'dataset-task10', DATE '2026-08-24', 'building',
+            repeat('1', 64), %s
+        )
+        """,
+        (created_at,),
+    )
+    connection.execute(
+        """
+        INSERT INTO operations.request_run (
+            run_id, request_key, question_id, question, schema_version,
+            dataset_version, cutoff_date, created_at, deadline_at
+        ) VALUES (
+            'run-task10', repeat('2', 64), 'Q-task10',
+            'synthetic question', '1.0', 'dataset-task10',
+            DATE '2026-08-24', %s, %s::timestamptz + interval '55 seconds'
+        )
+        """,
+        (created_at, created_at),
+    )
+    return created_at
+
+
+def _task10_artifact_payload(
+    created_at: str,
+    *,
+    resolution_id: str | None = None,
+) -> str:
+    payload = {
+        "schema_version": "1.0",
+        "request_key": "2" * 64,
+        "run_id": "run-task10",
+        "dataset_version": "dataset-task10",
+        "cutoff_date": "2026-08-24",
+        "producer": "intent-resolver",
+        "created_at": created_at,
+    }
+    if resolution_id is not None:
+        payload["resolution_id"] = resolution_id
+    return json.dumps(payload, separators=(",", ":"))
+
+
+def _derive_request_artifact_state(
+    connection: psycopg.Connection,
+) -> tuple[str, str]:
+    function_definition = connection.execute(
+        """
+        SELECT pg_catalog.pg_get_functiondef(
+            'operations.derive_request_artifact()'::regprocedure
+        )
+        """
+    ).fetchone()[0]
+    trigger_binding = connection.execute(
+        """
+        SELECT trigger_function.oid::regprocedure::text
+        FROM pg_catalog.pg_trigger AS trigger_record
+        JOIN pg_catalog.pg_class AS table_record
+          ON table_record.oid = trigger_record.tgrelid
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = table_record.relnamespace
+        JOIN pg_catalog.pg_proc AS trigger_function
+          ON trigger_function.oid = trigger_record.tgfoid
+        WHERE namespace.nspname = 'operations'
+          AND table_record.relname = 'request_artifact'
+          AND trigger_record.tgname = 'derive_request_artifact'
+          AND NOT trigger_record.tgisinternal
+        """
+    ).fetchone()[0]
+    return function_definition, trigger_binding
+
+
+@pytest.mark.postgres
+def test_downgrade_restores_the_exact_0006_artifact_trigger_function(
+    postgres_database_url: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "0006")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            before_definition, before_binding = _derive_request_artifact_state(
+                connection
+            )
+
+        with configured_alembic_target_only():
+            command.upgrade(config, "0008")
+            command.downgrade(config, "0006")
+
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            after_definition, after_binding = _derive_request_artifact_state(
+                connection
+            )
+            revision = connection.execute(
+                "SELECT version_num FROM public.alembic_version"
+            ).fetchone()[0]
+
+    assert revision == "0006"
+    assert after_binding == before_binding
+    assert after_definition == before_definition
+
+
+@pytest.mark.postgres
+def test_intent_resolution_migration_blocks_legacy_query_plan_provenance(
+    postgres_database_url: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "0006")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            created_at = _seed_task10_run(connection)
+            connection.execute(
+                "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+                (
+                    "query_plan",
+                    "legacy-model",
+                    "legacy-prompt",
+                    _task10_artifact_payload(created_at),
+                ),
+            )
+
+        with configured_alembic_target_only():
+            with pytest.raises(DBAPIError) as captured:
+                command.upgrade(config, "head")
+
+        assert "LEGACY_QUERY_PLAN_PROVENANCE_PREVENTS_UPGRADE" in str(
+            captured.value.orig
+        )
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                "SELECT version_num FROM public.alembic_version"
+            ).fetchone()[0] == "0006"
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    "lossy_state",
+    ("intent_resolution", "payload_audit", "query_plan"),
+)
+def test_intent_resolution_audit_migration_fails_closed_on_lossy_downgrade(
+    postgres_database_url: str,
+    lossy_state: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            created_at = _seed_task10_run(connection)
+            if lossy_state == "intent_resolution":
+                connection.execute(
+                    """
+                    INSERT INTO operations.request_artifact (
+                        artifact_type, model_id, prompt_version, canonical_payload
+                    ) VALUES ('intent_resolution', 'synthetic-model',
+                              'intent-resolver-ko-v1', %s)
+                    """,
+                    (
+                        _task10_artifact_payload(
+                            created_at,
+                            resolution_id="resolution-task10",
+                        ),
+                    ),
+                )
+            elif lossy_state == "payload_audit":
+                connection.execute(
+                    """
+                    INSERT INTO operations.failure_event (
+                        event_id, run_id, stage, code, category, retryable,
+                        attempt, remaining_budget_ms, duration_ms, occurred_at,
+                        payload_hash, payload_size_bytes
+                    ) VALUES (
+                        'event-task10', 'run-task10', 'intent_resolution',
+                        'MODEL_SCHEMA_INVALID', 'planner_contract', false,
+                        1, 1000, 10, %s, repeat('3', 64), 128
+                    )
+                    """,
+                    (created_at,),
+                )
+            else:
+                connection.execute(
+                    "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+                    (
+                        "query_plan",
+                        None,
+                        None,
+                        _task10_artifact_payload(created_at),
+                    ),
+                )
+
+        with configured_alembic_target_only():
+            with pytest.raises(DBAPIError) as captured:
+                command.downgrade(config, "0006")
+
+        expected_code = (
+            "QUERY_PLAN_PROVENANCE_POLICY_PREVENTS_DOWNGRADE"
+            if lossy_state == "query_plan"
+            else "INTENT_RESOLUTION_AUDIT_PREVENTS_DOWNGRADE"
+        )
+        assert expected_code in str(captured.value.orig)
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                "SELECT version_num FROM public.alembic_version"
+            ).fetchone()[0] == "0008"
 
 
 def _mutate_second_head_behavior(
@@ -1131,7 +1355,7 @@ def test_migration_cycle_never_uses_an_ambient_database_url(
 
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0007"
+    assert report.alembic_head == "0008"
     assert os.environ["FINANCIAL_AGENT_DATABASE_URL"] == stale_url
 
 
@@ -1166,7 +1390,20 @@ def test_database_check_container_is_linux_amd64_and_uses_only_test_url() -> Non
     assert "COPY data/" not in dockerfile
     assert "db-check:" in compose
     assert "dockerfile: docker/database-check.Dockerfile" in compose
-    assert compose.count("platform: linux/amd64") == 2
+    compose_lines = compose.splitlines()
+    for service_name in ("postgres", "db-check"):
+        start = compose_lines.index(f"  {service_name}:") + 1
+        end = next(
+            (
+                index
+                for index in range(start, len(compose_lines))
+                if compose_lines[index].startswith("  ")
+                and not compose_lines[index].startswith("    ")
+            ),
+            len(compose_lines),
+        )
+        service = "\n".join(compose_lines[start:end])
+        assert "platform: linux/amd64" in service
     assert "FINANCIAL_AGENT_TEST_DATABASE_URL:" in compose
     assert "FINANCIAL_AGENT_COMPOSE_DATABASE_CHECK: \"1\"" in compose
     assert "FINANCIAL_AGENT_DATABASE_URL:" not in compose

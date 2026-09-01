@@ -1,0 +1,195 @@
+"""Strict model-facing intent-resolution proposal contract, version 2."""
+
+from enum import Enum
+from typing import Annotated, Literal
+
+from pydantic import Field, model_validator
+
+from financial_agent.contracts.base import ContractModel, Identifier
+from financial_agent.contracts.enums import Cardinality, ReferenceMentionType
+
+from .types import (
+    ChoiceState,
+    ContextLinkType,
+    EntitySemanticRole,
+    ReferenceForm,
+    ReferenceTargetKind,
+    Selector,
+    SemanticCoverageReason,
+    SemanticCoverageState,
+    SemanticTag,
+    SlotKind,
+    SlotMutationKind,
+    SourceRole,
+)
+
+
+OptionalIdentifier = Annotated[tuple[Identifier, ...], Field(max_length=1)]
+OptionalSelector = Annotated[tuple[Selector, ...], Field(max_length=1)]
+OptionalCardinality = Annotated[tuple[Cardinality, ...], Field(max_length=1)]
+OptionalReferenceTargetKind = Annotated[
+    tuple[ReferenceTargetKind, ...], Field(max_length=1)
+]
+OptionalSlotKind = Annotated[tuple[SlotKind, ...], Field(max_length=1)]
+OptionalFrameOrdinal = Annotated[tuple[int, ...], Field(max_length=1)]
+FrameOrdinal = Annotated[int, Field(ge=0, le=15)]
+
+
+class FrameSemanticCoverage(ContractModel):
+    state: SemanticCoverageState
+    reason: SemanticCoverageReason
+    evidence_ids: tuple[Identifier, ...]
+
+    @model_validator(mode="after")
+    def validate_state_reason_evidence(self) -> "FrameSemanticCoverage":
+        if self.state is SemanticCoverageState.COVERED:
+            if self.reason is not SemanticCoverageReason.NONE or self.evidence_ids:
+                raise ValueError("covered semantic coverage requires no OOD reason or evidence")
+        elif self.reason is SemanticCoverageReason.NONE or not self.evidence_ids:
+            raise ValueError("uncovered semantic coverage requires an OOD reason and evidence")
+        return self
+
+
+class ProposedAxisChoice(ContractModel):
+    state: ChoiceState
+    selected_ids: tuple[Identifier, ...]
+    evidence_ids: tuple[Identifier, ...]
+    reason_code: Identifier
+
+
+def require_valid_action_cardinality(
+    state: ChoiceState,
+    selected_ids: tuple[object, ...],
+    coverage_state: SemanticCoverageState,
+) -> None:
+    if state is ChoiceState.SELECTED:
+        if len(selected_ids) != 1:
+            raise ValueError("selected action requires exactly one action ID")
+    elif selected_ids:
+        raise ValueError("unselected action cannot carry action IDs")
+    elif (
+        state is not ChoiceState.AMBIGUOUS
+        and coverage_state is SemanticCoverageState.COVERED
+    ):
+        raise ValueError("an actionless frame requires uncovered or ambiguous semantics")
+
+
+class ProposalSlotKind(str, Enum):
+    """The model-facing subset of canonical slot kinds."""
+
+    METRIC = SlotKind.METRIC.value
+    FILTER_VALUE = SlotKind.FILTER_VALUE.value
+    FILTER_OPERATOR = SlotKind.FILTER_OPERATOR.value
+    PERIOD = SlotKind.PERIOD.value
+    CURRENCY = SlotKind.CURRENCY.value
+    SORT_KEY = SlotKind.SORT_KEY.value
+    SORT_DIRECTION = SlotKind.SORT_DIRECTION.value
+    RESULT_LIMIT = SlotKind.RESULT_LIMIT.value
+    DATE_SCOPE = SlotKind.DATE_SCOPE.value
+    RELATION = SlotKind.RELATION.value
+    COMPARISON_BASIS = SlotKind.COMPARISON_BASIS.value
+    SIMILARITY_ANCHOR = SlotKind.SIMILARITY_ANCHOR.value
+    DOCUMENT_TOPIC = SlotKind.DOCUMENT_TOPIC.value
+
+
+class ProposedSlotAssignment(ContractModel):
+    slot_kind: ProposalSlotKind
+    value_ids: tuple[Identifier, ...]
+    evidence_ids: tuple[Identifier, ...]
+    reason_code: Identifier
+
+
+class ProposedEntityHint(ContractModel):
+    semantic_role: EntitySemanticRole
+    relation_id: OptionalIdentifier
+    expected_entity_type_ids: Annotated[
+        tuple[Identifier, ...], Field(min_length=1)
+    ]
+    mention_id: OptionalIdentifier
+    candidate_entity_ids: tuple[Identifier, ...]
+    selected_candidate_ids: OptionalIdentifier
+
+    @model_validator(mode="after")
+    def validate_role_shape(self) -> "ProposedEntityHint":
+        if self.semantic_role is EntitySemanticRole.FRAME_SUBJECT and self.relation_id:
+            raise ValueError("frame subject cannot carry a relation ID")
+        if (
+            self.semantic_role is EntitySemanticRole.RELATION_OBJECT
+            and len(self.relation_id) != 1
+        ):
+            raise ValueError("relation object requires exactly one relation ID")
+        if not set(self.selected_candidate_ids) <= set(self.candidate_entity_ids):
+            raise ValueError("selected entity candidates must be proposed candidates")
+        return self
+
+
+class ProposedIntentFrame(ContractModel):
+    segment_ids: Annotated[tuple[Identifier, ...], Field(min_length=1)]
+    action_choice: ProposedAxisChoice
+    product_family_choice: ProposedAxisChoice
+    entity_type_ids: tuple[Identifier, ...]
+    semantic_coverage: FrameSemanticCoverage
+    slot_assignments: tuple[ProposedSlotAssignment, ...]
+    entity_hints: tuple[ProposedEntityHint, ...]
+    produced_result_hints: tuple[SourceRole, ...]
+
+    @model_validator(mode="after")
+    def validate_action_cardinality(self) -> "ProposedIntentFrame":
+        require_valid_action_cardinality(
+            self.action_choice.state,
+            self.action_choice.selected_ids,
+            self.semantic_coverage.state,
+        )
+        return self
+
+
+class ProposedReference(ContractModel):
+    reference_id: Identifier
+    producer_frame_ordinals: tuple[FrameOrdinal, ...]
+    surface_presence: ReferenceMentionType
+    reference_form: ReferenceForm
+    grammatical_number: Annotated[
+        tuple[Literal["singular", "plural", "unknown"], ...], Field(max_length=1)
+    ]
+    expected_target_kind: OptionalReferenceTargetKind
+    expected_cardinality: OptionalCardinality
+    status: Literal["resolved", "ambiguous", "unresolved"]
+    reason_code: Identifier
+
+
+class ProposedContextLink(ContractModel):
+    reference_id: Identifier
+    link_type: ContextLinkType
+    source_role: SourceRole
+    selector: OptionalSelector
+    selector_literal_candidate_id: OptionalIdentifier
+    producer_frame_ordinal: FrameOrdinal
+    consumer_frame_ordinal: FrameOrdinal
+    target_slot_kind: OptionalSlotKind
+
+
+class ProposedSlotMutation(ContractModel):
+    consumer_frame_ordinal: FrameOrdinal
+    slot_kind: SlotKind
+    mutation_kind: SlotMutationKind
+    source_frame_ordinal: OptionalFrameOrdinal
+    evidence_ids: tuple[Identifier, ...]
+    reason_code: Identifier
+
+
+class ProposedSemanticFlag(ContractModel):
+    semantic_tag: SemanticTag
+    evidence_ids: tuple[Identifier, ...]
+    reason_code: Identifier
+
+
+class IntentResolutionProposalV2(ContractModel):
+    proposal_schema_version: Literal["2.0"] = "2.0"
+    frames: Annotated[
+        tuple[ProposedIntentFrame, ...], Field(min_length=1, max_length=16)
+    ]
+    references: tuple[ProposedReference, ...]
+    context_links: tuple[ProposedContextLink, ...]
+    slot_mutations: tuple[ProposedSlotMutation, ...]
+    semantic_flag_hints: tuple[ProposedSemanticFlag, ...]
+    frame_limit_exceeded: bool

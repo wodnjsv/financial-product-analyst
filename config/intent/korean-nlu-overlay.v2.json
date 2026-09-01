@@ -1,0 +1,39 @@
+{
+  "overlay_version": "korean-nlu-overlay.v2",
+  "entries": [
+    {"semantic_id":"aum","preferred_label":"순자산총액","aliases":["AUM","순자산","순자산총액"],"alias_kind":"direct","negative_semantic_ids":[]},
+    {"semantic_id":"trailing_1y_historical_cumulative_return","preferred_label":"최근 1년 수익률","aliases":["1년 수익률","연간 수익률"],"alias_kind":"direct","negative_semantic_ids":[]},
+    {"semantic_id":"product_risk_grade","preferred_label":"상품 위험등급","aliases":["위험등급"],"alias_kind":"ambiguous","negative_semantic_ids":["credit_grade"]},
+    {"semantic_id":"credit_grade","preferred_label":"신용등급","aliases":["위험등급"],"alias_kind":"ambiguous","negative_semantic_ids":["product_risk_grade"]},
+    {"semantic_id":"managedBy","preferred_label":"운용사","aliases":["운용사","자산운용사"],"alias_kind":"direct","negative_semantic_ids":[]},
+    {"semantic_id":"issuedBy","preferred_label":"발행사","aliases":["발행사","발행기관"],"alias_kind":"direct","negative_semantic_ids":[]},
+    {"semantic_id":"holdsSecurity","preferred_label":"편입 종목","aliases":["구성종목"],"alias_kind":"ambiguous","negative_semantic_ids":["containsSecurity"]},
+    {"semantic_id":"containsSecurity","preferred_label":"지수 구성 종목","aliases":["구성종목"],"alias_kind":"ambiguous","negative_semantic_ids":["holdsSecurity"]},
+    {"semantic_id":"similar","preferred_label":"유사 상품","aliases":["비슷한","비슷한 상품"],"alias_kind":"direct","negative_semantic_ids":[]},
+    {"semantic_id":"ETF","preferred_label":"상장지수펀드 유형","aliases":["ETF"],"alias_kind":"group","negative_semantic_ids":[]},
+    {"semantic_id":"domestic_etf","preferred_label":"국내 ETF 범위","aliases":["ETF"],"alias_kind":"group","negative_semantic_ids":["overseas_etf"]},
+    {"semantic_id":"overseas_etf","preferred_label":"해외 ETF 범위","aliases":["ETF"],"alias_kind":"group","negative_semantic_ids":["domestic_etf"]}
+  ],
+  "axis_definitions": [
+    {"axis_kind":"product_family","axis_id":"domestic_bond","preferred_label_ko":"국내채권","definition_ko":"국내에서 발행·유통되는 채권 상품 범위","surface_forms":["국내채권","채권"]},
+    {"axis_kind":"product_family","axis_id":"domestic_etf","preferred_label_ko":"국내ETF","definition_ko":"국내 거래소에 상장된 ETF 상품 범위","surface_forms":["국내 ETF","국내 상장 ETF"]},
+    {"axis_kind":"product_family","axis_id":"overseas_etf","preferred_label_ko":"해외ETF","definition_ko":"해외 거래소에 상장된 ETF 상품 범위","surface_forms":["해외 ETF","미국 ETF"]},
+    {"axis_kind":"product_family","axis_id":"public_fund","preferred_label_ko":"공모펀드","definition_ko":"일반 투자자에게 공개 모집되는 비상장 공모펀드 범위","surface_forms":["공모펀드","펀드"]},
+    {"axis_kind":"action","axis_id":"lookup","preferred_label_ko":"조회","definition_ko":"특정 상품이나 속성의 값을 확인하는 질문","surface_forms":["알려줘","조회","얼마"]},
+    {"axis_kind":"action","axis_id":"screen","preferred_label_ko":"조건검색","definition_ko":"명시한 조건을 만족하는 후보를 찾는 질문","surface_forms":["찾아줘","골라줘","추천해줘"]},
+    {"axis_kind":"action","axis_id":"rank","preferred_label_ko":"순위","definition_ko":"정렬 기준에 따라 상위·하위 상품을 구하는 질문","surface_forms":["상위","하위","순위","1위"]},
+    {"axis_kind":"action","axis_id":"compare","preferred_label_ko":"비교","definition_ko":"둘 이상의 상품·집단의 차이를 대조하는 질문","surface_forms":["비교","더 높은","차이"]},
+    {"axis_kind":"action","axis_id":"aggregate","preferred_label_ko":"집계","definition_ko":"상품 집합을 세거나 그룹별 통계를 구하는 질문","surface_forms":["몇 개","분포","평균","합계"]},
+    {"axis_kind":"action","axis_id":"calculate","preferred_label_ko":"계산","definition_ko":"제공된 값과 등록된 산식으로 파생값을 구하는 질문","surface_forms":["계산","환산"]},
+    {"axis_kind":"action","axis_id":"similar","preferred_label_ko":"유사상품","definition_ko":"기준 상품과 등록된 축에서 유사한 후보를 찾는 질문","surface_forms":["비슷한","유사한"]},
+    {"axis_kind":"action","axis_id":"explain","preferred_label_ko":"설명","definition_ko":"상품·속성·관계의 의미나 근거를 설명하는 질문","surface_forms":["설명","의미","왜"]}
+  ],
+  "policy_cues": [
+    {"semantic_tag":"PERSONALIZED_ADVICE","surface":"내 투자성향에 맞춰"},
+    {"semantic_tag":"PERSONALIZED_ADVICE","surface":"내 상황에 맞는 상품"},
+    {"semantic_tag":"ORDER_EXECUTION","surface":"매수해줘"},
+    {"semantic_tag":"ORDER_EXECUTION","surface":"주문해줘"},
+    {"semantic_tag":"FUTURE_FORECAST","surface":"앞으로 오를"},
+    {"semantic_tag":"REALTIME_REQUIRED","surface":"지금 가격"}
+  ]
+}

@@ -1,14 +1,16 @@
 # Financial Product Agent 실행 계약
 
-**Status:** Task 2 승인 설계; 2026-08-18 실행 계약·손실 없는 태그 값 보강안 승인
+**Status:** Task 2 승인 설계; 2026-08-18 실행 계약·손실 없는 태그 값 보강안 승인; 2026-08-31 Stage 06 Intent Resolver 내부 경계 보정 승인·미구현
 
-**Date:** 2026-08-17 (2026-08-18 실행 계약 보강)
+**Date:** 2026-08-17 (2026-08-18 실행 계약 보강, 2026-08-31 Intent Resolver 목표 경계 보정)
 
-**Decisions:** [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md), [ADR-0007: Use a Normalized Evidence Ledger and Structured Answer Plans](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md), [ADR-0008: Use Lossless Tagged Values](../decisions/ADR-0008-lossless-tagged-contract-values.md)
+**Decisions:** [ADR-0005: Use Bounded LLM Roles and Typed Capability Execution](../decisions/ADR-0005-bounded-llm-typed-capability-execution.md), [ADR-0006: Separate Answer Disposition from Execution Failure and Bound Recovery](../decisions/ADR-0006-separate-disposition-and-bound-recovery.md), [ADR-0007: Use a Normalized Evidence Ledger and Structured Answer Plans](../decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md), [ADR-0008: Use Lossless Tagged Values](../decisions/ADR-0008-lossless-tagged-contract-values.md), [ADR-0022: Use Ontology-Grounded Intent Resolution](../decisions/ADR-0022-use-ontology-grounded-intent-resolution.md)
 
 **Related:** [Multi-Agent Architecture](MULTI_AGENT_ARCHITECTURE.md), [Failure and Disposition Policy](FAILURE_AND_DISPOSITION_POLICY.md), [Evidence, Verification, and Rendering](EVIDENCE_VERIFICATION_AND_RENDERING.md), [NCP Deployment Architecture](NCP_DEPLOYMENT_ARCHITECTURE.md), [Core Evaluation Set](../specs/core-evaluation-set.md)
 
 > **Current-baseline notice:** The JSON shape remains approved, but every fixed `2026-07-11` cutoff literal below is superseded by `2026-08-24` under [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md). The minimal compatibility migration is proposed in [ADR-0017](../decisions/ADR-0017-adopt-current-cutoff-with-legacy-preservation.md).
+
+> **Stage 06 target-boundary notice:** [ADR-0022](../decisions/ADR-0022-use-ontology-grounded-intent-resolution.md) keeps the external `RequestContext → Intent Resolver component → QueryPlan` handoff and the frozen `QueryPlan` JSON shape. Inside that component, the target flow is now `IntentResolutionDraft → deterministic validation → ValidatedIntentResolution → deterministic QueryPlan compiler`. The internal artifact and provenance migration described below are approved design targets, not implemented runtime state.
 
 ## 1. 목적
 
@@ -16,7 +18,7 @@
 
 기본 경로에서 LLM은 다음 두 번만 호출한다.
 
-1. **Intent Resolver:** 질문을 구조화된 `QueryPlan`으로 해석
+1. **Intent Resolver component:** 한 번의 구조화 모델 호출로 내부 초안을 만들고, 결정론적 검증·컴파일을 거쳐 구조화된 `QueryPlan`을 생성
 2. **Answer Composer:** 검증된 Claim을 승인된 블록·템플릿에 배치한 `AnswerPlan`을 작성
 
 조회, 관계 탐색, 필터, 정렬, 순위, 집계, 수익률 계산, 유사도, 비교 가능성, 근거 검증은 Capability Executor와 규칙 엔진이 수행한다.
@@ -69,7 +71,7 @@ flowchart LR
 | 번호 | 계약 그룹 | 생성자 | 주요 소비자 |
 | ---: | --- | --- | --- |
 | 1 | `RequestContext` | API 입력 정규화기 | Intent Resolver |
-| 2 | `QueryPlan` | Intent Resolver | Orchestrator |
+| 2 | `QueryPlan` | Intent Resolver component의 결정론적 compiler | Orchestrator |
 | 3 | `ExecutionGraph` | Orchestrator | Capability Executors |
 | 4 | `ToolResult` | Capability Executors | 결과 통합기·근거 원장 |
 | 5 | `EvidenceBundle` | 결과 통합기·근거 원장 | Verifier |
@@ -133,11 +135,11 @@ Python 경계는 실제 타입이 부여된 값만 받고, JSON 경계는 원본
 
 `named_entities`는 원문 표면에서 발견한 후보다. 정규식으로 확인할 수 있는 ISIN·티커·상품번호는 입력 정규화 단계에서 표시할 수 있지만, 실제 데이터셋의 안정된 ID로 확정하는 작업은 `ExecutionGraph`의 Entity Resolution 작업이 수행한다. 확정 상태는 `unresolved`, `resolved`, `ambiguous`, `not_found`, `invalid_at_cutoff`로 구분한다.
 
-`연간수익률은?`, `위험등급도 보여줘`처럼 뒷문장의 주어가 생략되면 원문에 지시 단어가 없을 수 있다. 이때 Intent Resolver는 `QueryPlan.resolved_references`에 `mention_type=ellipsis`인 묵시적 지시를 생성하고, 해당 문장을 앞 문장의 명시 엔티티 또는 `binding_specs`에 연결한다. 따라서 표면 표현은 `RequestContext`, 생략 해소는 `QueryPlan`의 책임이다.
+`연간수익률은?`, `위험등급도 보여줘`처럼 뒷문장의 주어가 생략되면 원문에 지시 단어가 없을 수 있다. 이때 Intent Resolver component는 내부의 검증된 문맥 링크를 `QueryPlan.resolved_references`의 `mention_type=ellipsis` 참조로 결정론적으로 컴파일하고, 해당 문장을 앞 문장의 명시 엔티티 또는 `binding_specs`에 연결한다. 따라서 표면 표현은 `RequestContext`, 문맥 해소 판단은 `ValidatedIntentResolution`, 실행 계약으로의 투영은 `QueryPlan`의 책임이다.
 
 ### 5.2 `QueryPlan`
 
-Intent Resolver가 Structured Output으로 만드는 유일한 실행 전 LLM 계약이다.
+`QueryPlan`은 Intent Resolver component가 Orchestrator에 전달하는 유일한 실행 전 외부 계약이다. ADR-0022 이후 모델이 이 계약을 직접 작성하지 않으며, 검증된 온톨로지·catalog ID와 typed context link를 결정론적 compiler가 기존 JSON shape으로 투영한다.
 
 | 필드 | 의미 |
 | --- | --- |
@@ -351,7 +353,8 @@ t5 similarity depends_on t4
 | 대상 | 저장 범위 |
 | --- | --- |
 | `RequestContext` | 정규화된 질문, 문장, 식별자, 데이터 버전 |
-| `QueryPlan` | 전체 구조화 JSON과 프롬프트·모델 버전 |
+| `intent_resolution` | Stage 06에서 추가할 내부 검증 artifact, catalog·ontology·model·prompt provenance; 아직 미구현 |
+| `QueryPlan` | 전체 구조화 JSON과 compiler·catalog 버전; 현재 구현 스키마의 프롬프트·모델 provenance는 Stage 06 migration 전까지 유지 |
 | `ExecutionGraph` | 작업 DAG, 할당 시간, 해시 |
 | `ToolResult` | 상태, 선택된 결과, 근거, 제외, 결과 해시, 지연 |
 | `EvidenceBundle` | 최종 답변 판단에 사용된 사실·계산·근거 |

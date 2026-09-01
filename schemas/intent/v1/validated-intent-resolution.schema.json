@@ -1,0 +1,837 @@
+{
+  "$defs": {
+    "ActionChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "selected_ids": {
+          "items": {
+            "$ref": "#/$defs/IntentType"
+          },
+          "title": "Selected Ids",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/ChoiceState"
+        }
+      },
+      "required": [
+        "state",
+        "selected_ids",
+        "evidence_span_ids",
+        "reason_code"
+      ],
+      "title": "ActionChoice",
+      "type": "object"
+    },
+    "Cardinality": {
+      "enum": [
+        "one",
+        "many"
+      ],
+      "title": "Cardinality",
+      "type": "string"
+    },
+    "ChoiceState": {
+      "enum": [
+        "selected",
+        "ambiguous",
+        "unmapped"
+      ],
+      "title": "ChoiceState",
+      "type": "string"
+    },
+    "ContextLinkType": {
+      "enum": [
+        "consume_single_result",
+        "consume_result_set",
+        "derive_entity",
+        "derive_metric_value",
+        "inherit_scope",
+        "replace_slot",
+        "refer_exclusion_set",
+        "refer_evidence"
+      ],
+      "title": "ContextLinkType",
+      "type": "string"
+    },
+    "ContractFileHash": {
+      "additionalProperties": false,
+      "properties": {
+        "relative_path": {
+          "title": "Relative Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "relative_path",
+        "sha256"
+      ],
+      "title": "ContractFileHash",
+      "type": "object"
+    },
+    "IntentType": {
+      "enum": [
+        "lookup",
+        "screen",
+        "rank",
+        "compare",
+        "aggregate",
+        "calculate",
+        "similar",
+        "explain"
+      ],
+      "title": "IntentType",
+      "type": "string"
+    },
+    "ProductFamily": {
+      "enum": [
+        "domestic_bond",
+        "domestic_etf",
+        "overseas_etf",
+        "public_fund"
+      ],
+      "title": "ProductFamily",
+      "type": "string"
+    },
+    "ProductFamilyChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "selected_ids": {
+          "items": {
+            "$ref": "#/$defs/ProductFamily"
+          },
+          "title": "Selected Ids",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/ChoiceState"
+        }
+      },
+      "required": [
+        "state",
+        "selected_ids",
+        "evidence_span_ids",
+        "reason_code"
+      ],
+      "title": "ProductFamilyChoice",
+      "type": "object"
+    },
+    "ReferenceTargetKind": {
+      "enum": [
+        "entity",
+        "result_set",
+        "metric_value",
+        "related_entity",
+        "prior_operation",
+        "evidence_records",
+        "exclusion_set"
+      ],
+      "title": "ReferenceTargetKind",
+      "type": "string"
+    },
+    "ResolutionIssue": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Code",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "issue_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Issue Id",
+          "type": "string"
+        },
+        "related_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Related Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "issue_id",
+        "code",
+        "related_ids",
+        "evidence_span_ids"
+      ],
+      "title": "ResolutionIssue",
+      "type": "object"
+    },
+    "ResolutionStatus": {
+      "enum": [
+        "resolved",
+        "ambiguous",
+        "unmapped",
+        "context_unresolved"
+      ],
+      "title": "ResolutionStatus",
+      "type": "string"
+    },
+    "ResolverBuildManifest": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter_version": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Adapter Version",
+          "type": "string"
+        },
+        "candidate_policy_version": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Candidate Policy Version",
+          "type": "string"
+        },
+        "catalog_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Catalog Hash",
+          "type": "string"
+        },
+        "catalog_version": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Catalog Version",
+          "type": "string"
+        },
+        "normalizer_version": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Normalizer Version",
+          "type": "string"
+        },
+        "ontology_hashes": {
+          "items": {
+            "$ref": "#/$defs/ContractFileHash"
+          },
+          "title": "Ontology Hashes",
+          "type": "array"
+        },
+        "overlay_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Overlay Hash",
+          "type": "string"
+        },
+        "overlay_version": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Overlay Version",
+          "type": "string"
+        },
+        "prompt_version": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Prompt Version",
+          "type": "string"
+        },
+        "resolver_schema_version": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Resolver Schema Version",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "catalog_version",
+        "catalog_hash",
+        "ontology_hashes",
+        "overlay_version",
+        "overlay_hash",
+        "normalizer_version",
+        "candidate_policy_version",
+        "resolver_schema_version",
+        "prompt_version",
+        "adapter_version"
+      ],
+      "title": "ResolverBuildManifest",
+      "type": "object"
+    },
+    "Selector": {
+      "enum": [
+        "all",
+        "first",
+        "last",
+        "rank_position",
+        "top_n",
+        "former",
+        "latter",
+        "each",
+        "remaining"
+      ],
+      "title": "Selector",
+      "type": "string"
+    },
+    "SemanticTag": {
+      "enum": [
+        "CROSS_FAMILY",
+        "MULTI_STEP",
+        "CONTEXT_DEPENDENT",
+        "RELATIONSHIP_REQUIRED",
+        "DOCUMENT_GROUNDED",
+        "TEMPORAL",
+        "NORMALIZATION_REQUIRED",
+        "MISSINGNESS_SENSITIVE",
+        "OPERATIONAL_STATUS",
+        "FUTURE_FORECAST",
+        "PERSONALIZED_ADVICE",
+        "ORDER_EXECUTION",
+        "REALTIME_REQUIRED"
+      ],
+      "title": "SemanticTag",
+      "type": "string"
+    },
+    "SlotAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "slot_assignment_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Slot Assignment Id",
+          "type": "string"
+        },
+        "slot_kind": {
+          "$ref": "#/$defs/SlotKind"
+        },
+        "value_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Value Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "slot_assignment_id",
+        "slot_kind",
+        "value_ids",
+        "evidence_span_ids",
+        "reason_code"
+      ],
+      "title": "SlotAssignment",
+      "type": "object"
+    },
+    "SlotKind": {
+      "enum": [
+        "entity",
+        "metric",
+        "filter_value",
+        "filter_operator",
+        "period",
+        "unit",
+        "currency",
+        "sort_key",
+        "sort_direction",
+        "result_limit",
+        "date_scope",
+        "relation",
+        "comparison_basis",
+        "similarity_anchor",
+        "document_topic"
+      ],
+      "title": "SlotKind",
+      "type": "string"
+    },
+    "SlotMutationKind": {
+      "enum": [
+        "carryover",
+        "update",
+        "delete",
+        "dontcare"
+      ],
+      "title": "SlotMutationKind",
+      "type": "string"
+    },
+    "SourceRole": {
+      "enum": [
+        "candidates",
+        "selected_product",
+        "top_k_products",
+        "excluded_products",
+        "metric_value",
+        "relation_target",
+        "comparison_decision",
+        "evidence_records"
+      ],
+      "title": "SourceRole",
+      "type": "string"
+    },
+    "ValidatedContextLink": {
+      "additionalProperties": false,
+      "properties": {
+        "consumer_frame_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Consumer Frame Id",
+          "type": "string"
+        },
+        "context_link_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Context Link Id",
+          "type": "string"
+        },
+        "link_type": {
+          "$ref": "#/$defs/ContextLinkType"
+        },
+        "producer_frame_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Producer Frame Id",
+          "type": "string"
+        },
+        "reference_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reference Id",
+          "type": "string"
+        },
+        "selector": {
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 1,
+          "title": "Selector",
+          "type": "array"
+        },
+        "selector_literal_candidate_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Selector Literal Candidate Id",
+          "type": "array"
+        },
+        "source_role": {
+          "$ref": "#/$defs/SourceRole"
+        },
+        "target_cardinality": {
+          "items": {
+            "$ref": "#/$defs/Cardinality"
+          },
+          "maxItems": 1,
+          "title": "Target Cardinality",
+          "type": "array"
+        },
+        "target_kind": {
+          "items": {
+            "$ref": "#/$defs/ReferenceTargetKind"
+          },
+          "maxItems": 1,
+          "title": "Target Kind",
+          "type": "array"
+        },
+        "target_slot_kind": {
+          "items": {
+            "$ref": "#/$defs/SlotKind"
+          },
+          "maxItems": 1,
+          "title": "Target Slot Kind",
+          "type": "array"
+        }
+      },
+      "required": [
+        "context_link_id",
+        "reference_id",
+        "link_type",
+        "source_role",
+        "selector",
+        "selector_literal_candidate_id",
+        "producer_frame_id",
+        "consumer_frame_id",
+        "target_kind",
+        "target_cardinality",
+        "target_slot_kind"
+      ],
+      "title": "ValidatedContextLink",
+      "type": "object"
+    },
+    "ValidatedIntentFrame": {
+      "additionalProperties": false,
+      "properties": {
+        "action_choice": {
+          "$ref": "#/$defs/ActionChoice"
+        },
+        "entity_hint_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Entity Hint Ids",
+          "type": "array"
+        },
+        "entity_type_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Entity Type Ids",
+          "type": "array"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "frame_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Frame Id",
+          "type": "string"
+        },
+        "frame_status": {
+          "$ref": "#/$defs/ResolutionStatus"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "produced_result_roles": {
+          "items": {
+            "$ref": "#/$defs/SourceRole"
+          },
+          "title": "Produced Result Roles",
+          "type": "array"
+        },
+        "product_family_choice": {
+          "$ref": "#/$defs/ProductFamilyChoice"
+        },
+        "segment_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Segment Ids",
+          "type": "array"
+        },
+        "slot_assignments": {
+          "items": {
+            "$ref": "#/$defs/SlotAssignment"
+          },
+          "title": "Slot Assignments",
+          "type": "array"
+        },
+        "slot_mutations": {
+          "items": {
+            "$ref": "#/$defs/ValidatedSlotMutation"
+          },
+          "title": "Slot Mutations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "frame_id",
+        "ordinal",
+        "frame_status",
+        "segment_ids",
+        "evidence_span_ids",
+        "action_choice",
+        "product_family_choice",
+        "entity_type_ids",
+        "entity_hint_ids",
+        "slot_assignments",
+        "produced_result_roles",
+        "slot_mutations"
+      ],
+      "title": "ValidatedIntentFrame",
+      "type": "object"
+    },
+    "ValidatedSlotMutation": {
+      "additionalProperties": false,
+      "properties": {
+        "consumer_frame_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Consumer Frame Id",
+          "type": "string"
+        },
+        "mutation_kind": {
+          "$ref": "#/$defs/SlotMutationKind"
+        },
+        "slot_kind": {
+          "$ref": "#/$defs/SlotKind"
+        },
+        "slot_mutation_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Slot Mutation Id",
+          "type": "string"
+        },
+        "source_frame_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Source Frame Id",
+          "type": "array"
+        }
+      },
+      "required": [
+        "slot_mutation_id",
+        "consumer_frame_id",
+        "slot_kind",
+        "mutation_kind",
+        "source_frame_id"
+      ],
+      "title": "ValidatedSlotMutation",
+      "type": "object"
+    },
+    "ValidationEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Code",
+          "type": "string"
+        },
+        "event_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "related_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Related Ids",
+          "type": "array"
+        },
+        "stage": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Stage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "stage",
+        "code",
+        "related_ids"
+      ],
+      "title": "ValidationEvent",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "active_dataset_manifest_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Active Dataset Manifest Hash",
+      "type": "string"
+    },
+    "build_manifest": {
+      "$ref": "#/$defs/ResolverBuildManifest"
+    },
+    "canonical_frames": {
+      "items": {
+        "$ref": "#/$defs/ValidatedIntentFrame"
+      },
+      "maxItems": 16,
+      "title": "Canonical Frames",
+      "type": "array"
+    },
+    "context_links": {
+      "items": {
+        "$ref": "#/$defs/ValidatedContextLink"
+      },
+      "title": "Context Links",
+      "type": "array"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "cutoff_date": {
+      "default": "2026-08-24",
+      "format": "date",
+      "title": "Cutoff Date",
+      "type": "string"
+    },
+    "dataset_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Dataset Version",
+      "type": "string"
+    },
+    "draft_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Draft Hash",
+      "type": "string"
+    },
+    "final_tags": {
+      "items": {
+        "$ref": "#/$defs/SemanticTag"
+      },
+      "title": "Final Tags",
+      "type": "array"
+    },
+    "invalid_attempt_hashes": {
+      "items": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Invalid Attempt Hashes",
+      "type": "array"
+    },
+    "issues": {
+      "items": {
+        "$ref": "#/$defs/ResolutionIssue"
+      },
+      "title": "Issues",
+      "type": "array"
+    },
+    "producer": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Producer",
+      "type": "string"
+    },
+    "repair_used": {
+      "title": "Repair Used",
+      "type": "boolean"
+    },
+    "request_key": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Request Key",
+      "type": "string"
+    },
+    "resolution_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Resolution Id",
+      "type": "string"
+    },
+    "resolution_status": {
+      "$ref": "#/$defs/ResolutionStatus"
+    },
+    "run_id": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "validation_events": {
+      "items": {
+        "$ref": "#/$defs/ValidationEvent"
+      },
+      "title": "Validation Events",
+      "type": "array"
+    }
+  },
+  "required": [
+    "request_key",
+    "run_id",
+    "dataset_version",
+    "producer",
+    "created_at",
+    "resolution_id",
+    "draft_hash",
+    "canonical_frames",
+    "context_links",
+    "final_tags",
+    "resolution_status",
+    "issues",
+    "validation_events",
+    "build_manifest",
+    "active_dataset_manifest_hash",
+    "repair_used",
+    "invalid_attempt_hashes"
+  ],
+  "title": "ValidatedIntentResolution",
+  "type": "object"
+}

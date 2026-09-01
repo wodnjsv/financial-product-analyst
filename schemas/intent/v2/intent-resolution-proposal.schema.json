@@ -1,0 +1,724 @@
+{
+  "$defs": {
+    "Cardinality": {
+      "enum": [
+        "one",
+        "many"
+      ],
+      "title": "Cardinality",
+      "type": "string"
+    },
+    "ChoiceState": {
+      "enum": [
+        "selected",
+        "ambiguous",
+        "unmapped"
+      ],
+      "title": "ChoiceState",
+      "type": "string"
+    },
+    "ContextLinkType": {
+      "enum": [
+        "consume_single_result",
+        "consume_result_set",
+        "derive_entity",
+        "derive_metric_value",
+        "inherit_scope",
+        "replace_slot",
+        "refer_exclusion_set",
+        "refer_evidence"
+      ],
+      "title": "ContextLinkType",
+      "type": "string"
+    },
+    "EntitySemanticRole": {
+      "enum": [
+        "frame_subject",
+        "relation_object"
+      ],
+      "title": "EntitySemanticRole",
+      "type": "string"
+    },
+    "FrameSemanticCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "reason": {
+          "$ref": "#/$defs/SemanticCoverageReason"
+        },
+        "state": {
+          "$ref": "#/$defs/SemanticCoverageState"
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "evidence_ids"
+      ],
+      "title": "FrameSemanticCoverage",
+      "type": "object"
+    },
+    "ProposalSlotKind": {
+      "description": "The model-facing subset of canonical slot kinds.",
+      "enum": [
+        "metric",
+        "filter_value",
+        "filter_operator",
+        "period",
+        "currency",
+        "sort_key",
+        "sort_direction",
+        "result_limit",
+        "date_scope",
+        "relation",
+        "comparison_basis",
+        "similarity_anchor",
+        "document_topic"
+      ],
+      "title": "ProposalSlotKind",
+      "type": "string"
+    },
+    "ProposedAxisChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "selected_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Selected Ids",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/ChoiceState"
+        }
+      },
+      "required": [
+        "state",
+        "selected_ids",
+        "evidence_ids",
+        "reason_code"
+      ],
+      "title": "ProposedAxisChoice",
+      "type": "object"
+    },
+    "ProposedContextLink": {
+      "additionalProperties": false,
+      "properties": {
+        "consumer_frame_ordinal": {
+          "maximum": 15,
+          "minimum": 0,
+          "title": "Consumer Frame Ordinal",
+          "type": "integer"
+        },
+        "link_type": {
+          "$ref": "#/$defs/ContextLinkType"
+        },
+        "producer_frame_ordinal": {
+          "maximum": 15,
+          "minimum": 0,
+          "title": "Producer Frame Ordinal",
+          "type": "integer"
+        },
+        "reference_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reference Id",
+          "type": "string"
+        },
+        "selector": {
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 1,
+          "title": "Selector",
+          "type": "array"
+        },
+        "selector_literal_candidate_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Selector Literal Candidate Id",
+          "type": "array"
+        },
+        "source_role": {
+          "$ref": "#/$defs/SourceRole"
+        },
+        "target_slot_kind": {
+          "items": {
+            "$ref": "#/$defs/SlotKind"
+          },
+          "maxItems": 1,
+          "title": "Target Slot Kind",
+          "type": "array"
+        }
+      },
+      "required": [
+        "reference_id",
+        "link_type",
+        "source_role",
+        "selector",
+        "selector_literal_candidate_id",
+        "producer_frame_ordinal",
+        "consumer_frame_ordinal",
+        "target_slot_kind"
+      ],
+      "title": "ProposedContextLink",
+      "type": "object"
+    },
+    "ProposedEntityHint": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_entity_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Candidate Entity Ids",
+          "type": "array"
+        },
+        "expected_entity_type_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Expected Entity Type Ids",
+          "type": "array"
+        },
+        "mention_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Mention Id",
+          "type": "array"
+        },
+        "relation_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Relation Id",
+          "type": "array"
+        },
+        "selected_candidate_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Selected Candidate Ids",
+          "type": "array"
+        },
+        "semantic_role": {
+          "$ref": "#/$defs/EntitySemanticRole"
+        }
+      },
+      "required": [
+        "semantic_role",
+        "relation_id",
+        "expected_entity_type_ids",
+        "mention_id",
+        "candidate_entity_ids",
+        "selected_candidate_ids"
+      ],
+      "title": "ProposedEntityHint",
+      "type": "object"
+    },
+    "ProposedIntentFrame": {
+      "additionalProperties": false,
+      "properties": {
+        "action_choice": {
+          "$ref": "#/$defs/ProposedAxisChoice"
+        },
+        "entity_hints": {
+          "items": {
+            "$ref": "#/$defs/ProposedEntityHint"
+          },
+          "title": "Entity Hints",
+          "type": "array"
+        },
+        "entity_type_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Entity Type Ids",
+          "type": "array"
+        },
+        "produced_result_hints": {
+          "items": {
+            "$ref": "#/$defs/SourceRole"
+          },
+          "title": "Produced Result Hints",
+          "type": "array"
+        },
+        "product_family_choice": {
+          "$ref": "#/$defs/ProposedAxisChoice"
+        },
+        "segment_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Segment Ids",
+          "type": "array"
+        },
+        "semantic_coverage": {
+          "$ref": "#/$defs/FrameSemanticCoverage"
+        },
+        "slot_assignments": {
+          "items": {
+            "$ref": "#/$defs/ProposedSlotAssignment"
+          },
+          "title": "Slot Assignments",
+          "type": "array"
+        }
+      },
+      "required": [
+        "segment_ids",
+        "action_choice",
+        "product_family_choice",
+        "entity_type_ids",
+        "semantic_coverage",
+        "slot_assignments",
+        "entity_hints",
+        "produced_result_hints"
+      ],
+      "title": "ProposedIntentFrame",
+      "type": "object"
+    },
+    "ProposedReference": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_cardinality": {
+          "items": {
+            "$ref": "#/$defs/Cardinality"
+          },
+          "maxItems": 1,
+          "title": "Expected Cardinality",
+          "type": "array"
+        },
+        "expected_target_kind": {
+          "items": {
+            "$ref": "#/$defs/ReferenceTargetKind"
+          },
+          "maxItems": 1,
+          "title": "Expected Target Kind",
+          "type": "array"
+        },
+        "grammatical_number": {
+          "items": {
+            "enum": [
+              "singular",
+              "plural",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Grammatical Number",
+          "type": "array"
+        },
+        "producer_frame_ordinals": {
+          "items": {
+            "maximum": 15,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": "Producer Frame Ordinals",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "reference_form": {
+          "$ref": "#/$defs/ReferenceForm"
+        },
+        "reference_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reference Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "resolved",
+            "ambiguous",
+            "unresolved"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "surface_presence": {
+          "$ref": "#/$defs/ReferenceMentionType"
+        }
+      },
+      "required": [
+        "reference_id",
+        "producer_frame_ordinals",
+        "surface_presence",
+        "reference_form",
+        "grammatical_number",
+        "expected_target_kind",
+        "expected_cardinality",
+        "status",
+        "reason_code"
+      ],
+      "title": "ProposedReference",
+      "type": "object"
+    },
+    "ProposedSemanticFlag": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "semantic_tag": {
+          "$ref": "#/$defs/SemanticTag"
+        }
+      },
+      "required": [
+        "semantic_tag",
+        "evidence_ids",
+        "reason_code"
+      ],
+      "title": "ProposedSemanticFlag",
+      "type": "object"
+    },
+    "ProposedSlotAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "slot_kind": {
+          "$ref": "#/$defs/ProposalSlotKind"
+        },
+        "value_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Value Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "slot_kind",
+        "value_ids",
+        "evidence_ids",
+        "reason_code"
+      ],
+      "title": "ProposedSlotAssignment",
+      "type": "object"
+    },
+    "ProposedSlotMutation": {
+      "additionalProperties": false,
+      "properties": {
+        "consumer_frame_ordinal": {
+          "maximum": 15,
+          "minimum": 0,
+          "title": "Consumer Frame Ordinal",
+          "type": "integer"
+        },
+        "evidence_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "mutation_kind": {
+          "$ref": "#/$defs/SlotMutationKind"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "slot_kind": {
+          "$ref": "#/$defs/SlotKind"
+        },
+        "source_frame_ordinal": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 1,
+          "title": "Source Frame Ordinal",
+          "type": "array"
+        }
+      },
+      "required": [
+        "consumer_frame_ordinal",
+        "slot_kind",
+        "mutation_kind",
+        "source_frame_ordinal",
+        "evidence_ids",
+        "reason_code"
+      ],
+      "title": "ProposedSlotMutation",
+      "type": "object"
+    },
+    "ReferenceForm": {
+      "enum": [
+        "demonstrative",
+        "zero_anaphora",
+        "lexical_anaphor",
+        "bridging",
+        "discourse_deixis"
+      ],
+      "title": "ReferenceForm",
+      "type": "string"
+    },
+    "ReferenceMentionType": {
+      "enum": [
+        "explicit",
+        "ellipsis"
+      ],
+      "title": "ReferenceMentionType",
+      "type": "string"
+    },
+    "ReferenceTargetKind": {
+      "enum": [
+        "entity",
+        "result_set",
+        "metric_value",
+        "related_entity",
+        "prior_operation",
+        "evidence_records",
+        "exclusion_set"
+      ],
+      "title": "ReferenceTargetKind",
+      "type": "string"
+    },
+    "Selector": {
+      "enum": [
+        "all",
+        "first",
+        "last",
+        "rank_position",
+        "top_n",
+        "former",
+        "latter",
+        "each",
+        "remaining"
+      ],
+      "title": "Selector",
+      "type": "string"
+    },
+    "SemanticCoverageReason": {
+      "enum": [
+        "none",
+        "lexical_ood",
+        "domain_ood",
+        "unsupported_operation",
+        "missing_critical_semantic"
+      ],
+      "title": "SemanticCoverageReason",
+      "type": "string"
+    },
+    "SemanticCoverageState": {
+      "enum": [
+        "covered",
+        "partial",
+        "unmapped"
+      ],
+      "title": "SemanticCoverageState",
+      "type": "string"
+    },
+    "SemanticTag": {
+      "enum": [
+        "CROSS_FAMILY",
+        "MULTI_STEP",
+        "CONTEXT_DEPENDENT",
+        "RELATIONSHIP_REQUIRED",
+        "DOCUMENT_GROUNDED",
+        "TEMPORAL",
+        "NORMALIZATION_REQUIRED",
+        "MISSINGNESS_SENSITIVE",
+        "OPERATIONAL_STATUS",
+        "FUTURE_FORECAST",
+        "PERSONALIZED_ADVICE",
+        "ORDER_EXECUTION",
+        "REALTIME_REQUIRED"
+      ],
+      "title": "SemanticTag",
+      "type": "string"
+    },
+    "SlotKind": {
+      "enum": [
+        "entity",
+        "metric",
+        "filter_value",
+        "filter_operator",
+        "period",
+        "unit",
+        "currency",
+        "sort_key",
+        "sort_direction",
+        "result_limit",
+        "date_scope",
+        "relation",
+        "comparison_basis",
+        "similarity_anchor",
+        "document_topic"
+      ],
+      "title": "SlotKind",
+      "type": "string"
+    },
+    "SlotMutationKind": {
+      "enum": [
+        "carryover",
+        "update",
+        "delete",
+        "dontcare"
+      ],
+      "title": "SlotMutationKind",
+      "type": "string"
+    },
+    "SourceRole": {
+      "enum": [
+        "candidates",
+        "selected_product",
+        "top_k_products",
+        "excluded_products",
+        "metric_value",
+        "relation_target",
+        "comparison_decision",
+        "evidence_records"
+      ],
+      "title": "SourceRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "context_links": {
+      "items": {
+        "$ref": "#/$defs/ProposedContextLink"
+      },
+      "title": "Context Links",
+      "type": "array"
+    },
+    "frame_limit_exceeded": {
+      "title": "Frame Limit Exceeded",
+      "type": "boolean"
+    },
+    "frames": {
+      "items": {
+        "$ref": "#/$defs/ProposedIntentFrame"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Frames",
+      "type": "array"
+    },
+    "proposal_schema_version": {
+      "const": "2.0",
+      "default": "2.0",
+      "title": "Proposal Schema Version",
+      "type": "string"
+    },
+    "references": {
+      "items": {
+        "$ref": "#/$defs/ProposedReference"
+      },
+      "title": "References",
+      "type": "array"
+    },
+    "semantic_flag_hints": {
+      "items": {
+        "$ref": "#/$defs/ProposedSemanticFlag"
+      },
+      "title": "Semantic Flag Hints",
+      "type": "array"
+    },
+    "slot_mutations": {
+      "items": {
+        "$ref": "#/$defs/ProposedSlotMutation"
+      },
+      "title": "Slot Mutations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "frames",
+    "references",
+    "context_links",
+    "slot_mutations",
+    "semantic_flag_hints",
+    "frame_limit_exceeded"
+  ],
+  "title": "IntentResolutionProposalV2",
+  "type": "object"
+}

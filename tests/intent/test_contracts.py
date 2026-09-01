@@ -1,0 +1,659 @@
+import json
+
+import pytest
+from pydantic import ValidationError
+
+from financial_agent.contracts.canonical import canonical_json_bytes
+from financial_agent.intent.draft import (
+    EntityHint,
+    EntityHintV2,
+    IntentResolutionDraft,
+    IntentResolutionDraftV2,
+)
+from financial_agent.intent.types import EntitySemanticRole
+from financial_agent.intent.resolution import (
+    ContractFileHash,
+    ResolverBuildManifest,
+    ValidatedIntentResolution,
+    ValidatedIntentResolutionV2,
+)
+
+
+def span(span_id: str = "span-1") -> dict[str, object]:
+    return {
+        "span_id": span_id,
+        "segment_id": "s1",
+        "start_char": 0,
+        "end_char": 2,
+        "text": "비교",
+    }
+
+
+def choice(selected_id: str) -> dict[str, object]:
+    return {
+        "state": "selected",
+        "selected_ids": [selected_id],
+        "evidence_span_ids": ["span-1"],
+        "reason_code": "explicit",
+    }
+
+
+def frame(frame_id: str, ordinal: int, action: str) -> dict[str, object]:
+    return {
+        "frame_id": frame_id,
+        "ordinal": ordinal,
+        "segment_ids": ["s1"],
+        "evidence_span_ids": ["span-1"],
+        "normalized_intent_argument": "ETF 비교",
+        "action_choice": choice(action),
+        "product_family_choice": choice("domestic_etf"),
+        "entity_type_ids": [],
+        "entity_hint_ids": [],
+        "slot_assignments": [],
+        "produced_result_hints": [],
+    }
+
+
+def validated_frame(
+    frame_id: str,
+    ordinal: int,
+    *,
+    frame_status: str = "resolved",
+    slot_assignments: list[dict[str, object]] | None = None,
+    slot_mutations: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    return {
+        "frame_id": frame_id,
+        "ordinal": ordinal,
+        "frame_status": frame_status,
+        "segment_ids": ["s1"],
+        "evidence_span_ids": ["span-1"],
+        "action_choice": choice("compare"),
+        "product_family_choice": choice("domestic_etf"),
+        "entity_type_ids": [],
+        "entity_hint_ids": [],
+        "slot_assignments": slot_assignments or [],
+        "produced_result_roles": [],
+        "slot_mutations": slot_mutations or [],
+    }
+
+
+def valid_draft_payload() -> dict[str, object]:
+    return {
+        "evidence_spans": [span()],
+        "intent_frames": [frame("f1", 0, "compare")],
+        "entity_hints": [],
+        "reference_hints": [],
+        "context_link_hints": [],
+        "slot_mutations": [],
+        "semantic_flag_hints": [],
+        "frame_limit_exceeded": False,
+    }
+
+
+def sha256(seed: str) -> str:
+    return seed * 64
+
+
+def valid_validated_resolution_payload() -> dict[str, object]:
+    return {
+        "request_key": sha256("a"),
+        "run_id": "run-1",
+        "dataset_version": "dataset-v1",
+        "producer": "intent-resolver",
+        "created_at": "2026-08-31T00:00:00Z",
+        "resolution_id": "resolution-1",
+        "draft_hash": sha256("b"),
+        "canonical_frames": [],
+        "context_links": [],
+        "final_tags": [],
+        "resolution_status": "resolved",
+        "issues": [],
+        "validation_events": [],
+        "build_manifest": {
+            "catalog_version": "catalog-v1",
+            "catalog_hash": sha256("c"),
+            "ontology_hashes": [
+                {"relative_path": "ontology.ttl", "sha256": sha256("d")}
+            ],
+            "overlay_version": "overlay-v1",
+            "overlay_hash": sha256("e"),
+            "normalizer_version": "normalizer-v1",
+            "candidate_policy_version": "policy-v1",
+            "resolver_schema_version": "1.0",
+            "prompt_version": "prompt-v1",
+            "adapter_version": "adapter-v1",
+        },
+        "active_dataset_manifest_hash": sha256("f"),
+        "repair_used": False,
+        "invalid_attempt_hashes": [],
+    }
+
+
+def valid_v2_validated_resolution_payload() -> dict[str, object]:
+    payload = valid_validated_resolution_payload()
+    payload["build_manifest"]["resolver_schema_version"] = "2.0"  # type: ignore[index]
+    payload["entity_hints"] = []
+    return payload
+
+
+@pytest.mark.clova_integration
+def test_resolver_dependency_is_importable() -> None:
+    import httpx
+
+    assert httpx.__version__
+
+
+def test_draft_rejects_unknown_fields() -> None:
+    payload = valid_draft_payload()
+    payload["sql"] = "SELECT * FROM product"
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraft.model_validate_json(json.dumps(payload))
+
+
+def test_one_surface_segment_can_produce_two_frames() -> None:
+    payload = valid_draft_payload()
+    payload["intent_frames"] = [
+        frame("f1", 0, "compare"),
+        frame("f2", 1, "rank"),
+    ]
+
+    draft = IntentResolutionDraft.model_validate_json(json.dumps(payload))
+
+    assert [item.frame_id for item in draft.intent_frames] == ["f1", "f2"]
+    assert {item.segment_ids for item in draft.intent_frames} == {("s1",)}
+
+
+def test_v1_draft_schema_and_serialization_exclude_v2_coverage() -> None:
+    draft = IntentResolutionDraft.model_validate_json(json.dumps(valid_draft_payload()))
+
+    assert "semantic_coverage" not in draft.model_dump(mode="json")
+    assert "semantic_coverage" not in json.dumps(
+        IntentResolutionDraft.model_json_schema(), sort_keys=True
+    )
+
+
+def test_v1_validated_resolution_schema_and_serialization_exclude_v2_coverage() -> None:
+    resolution = ValidatedIntentResolution.model_validate_json(
+        json.dumps(valid_validated_resolution_payload())
+    )
+
+    assert "semantic_coverage" not in resolution.model_dump(mode="json")
+    assert "semantic_coverage" not in json.dumps(
+        ValidatedIntentResolution.model_json_schema(), sort_keys=True
+    )
+
+
+def test_v1_entity_hint_schema_and_canonical_bytes_remain_frozen() -> None:
+    hint = EntityHint(
+        entity_hint_id="hint-1",
+        mention_id=("mention-1",),
+        evidence_span_ids=("span-1",),
+        expected_entity_type_ids=("ETF",),
+        candidate_entity_ids=("entity-1",),
+        selected_candidate_ids=("entity-1",),
+        reason_code="explicit",
+    )
+
+    assert "semantic_role" not in EntityHint.model_fields
+    assert "relation_id" not in EntityHint.model_fields
+    assert "expected_entity_type_ids" in EntityHint.model_fields
+    assert canonical_json_bytes(hint) == (
+        b'{"candidate_entity_ids":["entity-1"],"entity_hint_id":"hint-1",'
+        b'"evidence_span_ids":["span-1"],"expected_entity_type_ids":["ETF"],'
+        b'"mention_id":["mention-1"],"reason_code":"explicit",'
+        b'"selected_candidate_ids":["entity-1"]}'
+    )
+
+
+def test_historical_v1_validated_resolution_json_still_parses_as_v1() -> None:
+    historical_payload = json.dumps(valid_validated_resolution_payload())
+
+    resolution = ValidatedIntentResolution.model_validate_json(historical_payload)
+
+    assert type(resolution) is ValidatedIntentResolution
+    assert resolution.build_manifest.resolver_schema_version == "1.0"
+
+
+def test_v2_draft_requires_exactly_one_semantic_coverage() -> None:
+    payload = valid_draft_payload()
+    frames = payload["intent_frames"]
+    assert isinstance(frames, list)
+    frame_payload = frames[0]
+    assert isinstance(frame_payload, dict)
+    frame_payload["semantic_coverage"] = []
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
+
+
+def test_v2_draft_preserves_relation_object_role() -> None:
+    payload = valid_draft_payload()
+    frame_payload = payload["intent_frames"][0]
+    frame_payload["semantic_coverage"] = [
+        {"state": "covered", "reason": "none", "evidence_ids": []}
+    ]
+    frame_payload["entity_hint_ids"] = ["entity-hint-1"]
+    frame_payload["slot_assignments"] = [
+        {
+            "slot_assignment_id": "slot-entity-1",
+            "slot_kind": "entity",
+            "value_ids": ["manager-1"],
+            "evidence_span_ids": [],
+            "reason_code": "implicit",
+        }
+    ]
+    payload["entity_hints"] = [
+        {
+            "entity_hint_id": "entity-hint-1",
+            "semantic_role": "relation_object",
+            "relation_id": ["managedBy"],
+            "mention_id": ["mention-manager"],
+            "evidence_span_ids": ["span-1"],
+            "expected_entity_type_ids": ["AssetManager"],
+            "candidate_entity_ids": ["manager-1"],
+            "selected_candidate_ids": ["manager-1"],
+            "reason_code": "explicit",
+        }
+    ]
+
+    draft = IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
+
+    hint = draft.entity_hints[0]
+    assert hint.semantic_role == "relation_object"
+    assert hint.relation_id == ("managedBy",)
+    assert hint.expected_entity_type_ids == ("AssetManager",)
+
+
+@pytest.mark.parametrize(
+    ("role", "relation_id", "expected_entity_type_ids"),
+    (
+        (EntitySemanticRole.FRAME_SUBJECT, ("managedBy",), ("ETF",)),
+        (EntitySemanticRole.RELATION_OBJECT, (), ("AssetManager",)),
+        (EntitySemanticRole.FRAME_SUBJECT, (), ()),
+    ),
+)
+def test_v2_entity_hint_rejects_invalid_role_shape(
+    role: EntitySemanticRole,
+    relation_id: tuple[str, ...],
+    expected_entity_type_ids: tuple[str, ...],
+) -> None:
+    """Catches role-bearing v2 artifacts that violate their own endpoint shape."""
+    with pytest.raises(ValidationError):
+        EntityHintV2(
+            entity_hint_id="entity-hint-1",
+            semantic_role=role,
+            relation_id=relation_id,
+            mention_id=("mention-1",),
+            evidence_span_ids=("span-1",),
+            expected_entity_type_ids=expected_entity_type_ids,
+            candidate_entity_ids=("entity-1",),
+            selected_candidate_ids=("entity-1",),
+            reason_code="explicit",
+        )
+
+
+def test_v2_draft_rejects_orphan_entity_hint_reference() -> None:
+    """Catches a sidecar frame pointing at a hint it does not contain."""
+    payload = valid_draft_payload()
+    frame_payload = payload["intent_frames"][0]
+    frame_payload["semantic_coverage"] = [
+        {"state": "covered", "reason": "none", "evidence_ids": []}
+    ]
+    frame_payload["entity_hint_ids"] = ["missing-hint"]
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
+
+
+def test_v2_draft_rejects_an_empty_resolution() -> None:
+    payload = valid_draft_payload()
+    payload["intent_frames"] = []
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
+
+
+def test_v2_draft_rejects_empty_frame_segments_and_two_selected_actions() -> None:
+    payload = valid_draft_payload()
+    frames = payload["intent_frames"]
+    assert isinstance(frames, list)
+    frame_payload = frames[0]
+    assert isinstance(frame_payload, dict)
+    frame_payload["semantic_coverage"] = [
+        {"state": "covered", "reason": "none", "evidence_ids": []}
+    ]
+    frame_payload["segment_ids"] = []
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
+
+    frame_payload["segment_ids"] = ["s1"]
+    action = frame_payload["action_choice"]
+    assert isinstance(action, dict)
+    action["selected_ids"] = ["lookup", "compare"]
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
+
+
+def test_v2_validated_resolution_requires_v2_manifest_and_one_coverage_per_frame() -> None:
+    payload = valid_v2_validated_resolution_payload()
+    payload["canonical_frames"] = [
+        {
+            **validated_frame("f1", 0),
+            "semantic_coverage": [
+                {"state": "covered", "reason": "none", "evidence_ids": []}
+            ],
+        }
+    ]
+
+    resolution = ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
+
+    assert resolution.canonical_frames[0].semantic_coverage[0].state.value == "covered"
+
+
+def test_v2_validated_resolution_round_trips_relation_object_role() -> None:
+    payload = valid_v2_validated_resolution_payload()
+    payload["canonical_frames"] = [
+        {
+            **validated_frame("f1", 0),
+            "entity_hint_ids": ["entity-hint-1"],
+            "slot_assignments": [
+                {
+                    "slot_assignment_id": "slot-entity-1",
+                    "slot_kind": "entity",
+                    "value_ids": ["manager-1"],
+                    "evidence_span_ids": [],
+                    "reason_code": "implicit",
+                }
+            ],
+            "semantic_coverage": [
+                {"state": "covered", "reason": "none", "evidence_ids": []}
+            ],
+        }
+    ]
+    payload["entity_hints"] = [
+        {
+            "entity_hint_id": "entity-hint-1",
+            "semantic_role": "relation_object",
+            "relation_id": ["managedBy"],
+            "mention_id": ["mention-manager"],
+            "evidence_span_ids": ["span-1"],
+            "expected_entity_type_ids": ["AssetManager"],
+            "candidate_entity_ids": ["manager-1"],
+            "selected_candidate_ids": ["manager-1"],
+            "reason_code": "explicit",
+        }
+    ]
+
+    resolution = ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
+    restored = ValidatedIntentResolutionV2.model_validate_json(
+        resolution.model_dump_json()
+    )
+
+    hint = restored.entity_hints[0]
+    assert hint.semantic_role == "relation_object"
+    assert hint.relation_id == ("managedBy",)
+    assert hint.expected_entity_type_ids == ("AssetManager",)
+
+
+def test_v2_validated_resolution_rejects_orphan_role_sidecar() -> None:
+    payload = valid_v2_validated_resolution_payload()
+    payload["canonical_frames"] = [
+        {
+            **validated_frame("f1", 0),
+            "semantic_coverage": [
+                {"state": "covered", "reason": "none", "evidence_ids": []}
+            ],
+        }
+    ]
+    payload["entity_hints"] = [
+        {
+            "entity_hint_id": "entity-hint-1",
+            "semantic_role": "frame_subject",
+            "relation_id": [],
+            "mention_id": [],
+            "evidence_span_ids": [],
+            "expected_entity_type_ids": ["ETF"],
+            "candidate_entity_ids": [],
+            "selected_candidate_ids": [],
+            "reason_code": "implicit",
+        }
+    ]
+
+    with pytest.raises(ValidationError):
+        ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
+
+
+def test_v2_validated_resolution_rejects_empty_frames_segments_and_two_actions() -> None:
+    payload = valid_v2_validated_resolution_payload()
+
+    with pytest.raises(ValidationError):
+        ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
+
+    frame_payload = {
+        **validated_frame("f1", 0),
+        "semantic_coverage": [
+            {"state": "covered", "reason": "none", "evidence_ids": []}
+        ],
+    }
+    payload["canonical_frames"] = [frame_payload]
+    frame_payload["segment_ids"] = []
+    with pytest.raises(ValidationError):
+        ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
+
+    frame_payload["segment_ids"] = ["s1"]
+    frame_payload["action_choice"]["selected_ids"] = ["lookup", "compare"]
+    with pytest.raises(ValidationError):
+        ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize(
+    ("choice_name", "invalid_value"),
+    [
+        ("action_choice", "not-an-intent"),
+        ("product_family_choice", "not-a-product-family"),
+    ],
+)
+def test_draft_rejects_unregistered_public_axis_values(
+    choice_name: str,
+    invalid_value: str,
+) -> None:
+    payload = valid_draft_payload()
+    frames = payload["intent_frames"]
+    assert isinstance(frames, list)
+    frame_payload = frames[0]
+    assert isinstance(frame_payload, dict)
+    choice_payload = frame_payload[choice_name]
+    assert isinstance(choice_payload, dict)
+    choice_payload["selected_ids"] = [invalid_value]
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraft.model_validate_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("intent_frames", [frame("f1", 0, "compare"), frame("f1", 1, "rank")]),
+        ("intent_frames", [frame("f1", 0, "compare"), frame("f2", 0, "rank")]),
+        (
+            "intent_frames",
+            [frame(f"f{index}", index, "lookup") for index in range(17)],
+        ),
+    ],
+)
+def test_draft_rejects_duplicate_frame_ids_duplicate_ordinals_and_too_many_frames(
+    field: str,
+    value: object,
+) -> None:
+    payload = valid_draft_payload()
+    payload[field] = value
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraft.model_validate_json(json.dumps(payload))
+
+
+def test_build_manifest_rejects_ontology_hashes_out_of_path_order() -> None:
+    with pytest.raises(ValidationError):
+        ResolverBuildManifest.model_validate_json(
+            json.dumps(
+                {
+                    "catalog_version": "catalog-v1",
+                    "catalog_hash": sha256("a"),
+                    "ontology_hashes": [
+                        {"relative_path": "z.ttl", "sha256": sha256("b")},
+                        {"relative_path": "a.ttl", "sha256": sha256("c")},
+                    ],
+                    "overlay_version": "overlay-v1",
+                    "overlay_hash": sha256("d"),
+                    "normalizer_version": "normalizer-v1",
+                    "candidate_policy_version": "policy-v1",
+                    "resolver_schema_version": "1.0",
+                    "prompt_version": "prompt-v1",
+                    "adapter_version": "adapter-v1",
+                }
+            )
+        )
+
+
+def test_validated_resolution_rejects_more_than_sixteen_frames() -> None:
+    payload = valid_validated_resolution_payload()
+    payload["canonical_frames"] = [
+        validated_frame(f"f{index}", index) for index in range(17)
+    ]
+
+    with pytest.raises(ValidationError):
+        ValidatedIntentResolution.model_validate_json(json.dumps(payload))
+
+
+def test_validated_frame_requires_deterministic_status() -> None:
+    payload = valid_validated_resolution_payload()
+    frame_payload = validated_frame("f1", 0)
+    frame_payload.pop("frame_status")
+    payload["canonical_frames"] = [frame_payload]
+
+    with pytest.raises(ValidationError, match="frame_status"):
+        ValidatedIntentResolution.model_validate_json(json.dumps(payload))
+
+
+def test_validated_frame_preserves_deterministic_status() -> None:
+    payload = valid_validated_resolution_payload()
+    payload["canonical_frames"] = [
+        validated_frame("f1", 0, frame_status="context_unresolved")
+    ]
+
+    resolution = ValidatedIntentResolution.model_validate_json(json.dumps(payload))
+
+    assert resolution.canonical_frames[0].frame_status.value == "context_unresolved"
+
+
+@pytest.mark.parametrize(
+    ("slot_assignments", "slot_mutations", "message"),
+    [
+        (
+            [
+                {
+                    "slot_assignment_id": "slot-1",
+                    "slot_kind": "metric",
+                    "value_ids": ["aum"],
+                    "evidence_span_ids": ["span-1"],
+                    "reason_code": "explicit",
+                },
+                {
+                    "slot_assignment_id": "slot-1",
+                    "slot_kind": "metric",
+                    "value_ids": ["aum"],
+                    "evidence_span_ids": ["span-1"],
+                    "reason_code": "explicit",
+                },
+            ],
+            [],
+            "slot assignments",
+        ),
+        (
+            [],
+            [
+                {
+                    "slot_mutation_id": "mutation-1",
+                    "consumer_frame_id": "f1",
+                    "slot_kind": "metric",
+                    "mutation_kind": "update",
+                    "source_frame_id": [],
+                },
+                {
+                    "slot_mutation_id": "mutation-1",
+                    "consumer_frame_id": "f1",
+                    "slot_kind": "metric",
+                    "mutation_kind": "update",
+                    "source_frame_id": [],
+                },
+            ],
+            "slot mutations",
+        ),
+    ],
+)
+def test_validated_frame_rejects_duplicate_nested_ids(
+    slot_assignments: list[dict[str, object]],
+    slot_mutations: list[dict[str, object]],
+    message: str,
+) -> None:
+    payload = valid_validated_resolution_payload()
+    payload["canonical_frames"] = [
+        validated_frame(
+            "f1",
+            0,
+            slot_assignments=slot_assignments,
+            slot_mutations=slot_mutations,
+        )
+    ]
+
+    with pytest.raises(ValidationError, match=message):
+        ValidatedIntentResolution.model_validate_json(json.dumps(payload))
+
+
+def test_validated_resolution_preserves_runtime_provenance() -> None:
+    validated = ValidatedIntentResolution.model_validate_json(
+        json.dumps(
+            {
+                "request_key": sha256("a"),
+                "run_id": "run-1",
+                "dataset_version": "dataset-v1",
+                "producer": "intent-resolver",
+                "created_at": "2026-08-31T00:00:00Z",
+                "resolution_id": "resolution-1",
+                "draft_hash": sha256("b"),
+                "canonical_frames": [],
+                "context_links": [],
+                "final_tags": [],
+                "resolution_status": "resolved",
+                "issues": [],
+                "validation_events": [],
+                "build_manifest": {
+                    "catalog_version": "catalog-v1",
+                    "catalog_hash": sha256("c"),
+                    "ontology_hashes": [
+                        {"relative_path": "ontology.ttl", "sha256": sha256("d")}
+                    ],
+                    "overlay_version": "overlay-v1",
+                    "overlay_hash": sha256("e"),
+                    "normalizer_version": "normalizer-v1",
+                    "candidate_policy_version": "policy-v1",
+                    "resolver_schema_version": "1.0",
+                    "prompt_version": "prompt-v1",
+                    "adapter_version": "adapter-v1",
+                },
+                "active_dataset_manifest_hash": sha256("f"),
+                "repair_used": False,
+                "invalid_attempt_hashes": [],
+            }
+        )
+    )
+
+    assert validated.resolution_id == "resolution-1"
+    assert validated.build_manifest.schema_version == "1.0"
+    assert isinstance(
+        validated.build_manifest.ontology_hashes[0], ContractFileHash
+    )

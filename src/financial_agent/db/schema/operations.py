@@ -338,6 +338,8 @@ failure_event = sa.Table(
     sa.Column("remaining_budget_ms", sa.Integer, nullable=False),
     sa.Column("duration_ms", sa.Integer, nullable=False),
     sa.Column("dependency", sa.Text),
+    sa.Column("payload_hash", sa.CHAR(64)),
+    sa.Column("payload_size_bytes", sa.BigInteger),
     sa.Column("occurred_at", sa.TIMESTAMP(timezone=True), nullable=False),
     sa.ForeignKeyConstraint(
         ["run_id"],
@@ -357,12 +359,25 @@ failure_event = sa.Table(
         name="remaining_budget_ms",
     ),
     sa.CheckConstraint("duration_ms >= 0", name="duration_ms"),
+    sa.CheckConstraint(
+        f"payload_hash IS NULL OR payload_hash ~ '{SHA256_PATTERN}'",
+        name="payload_hash",
+    ),
+    sa.CheckConstraint(
+        "payload_size_bytes IS NULL OR payload_size_bytes >= 0",
+        name="payload_size_bytes",
+    ),
+    sa.CheckConstraint(
+        "(payload_hash IS NULL) = (payload_size_bytes IS NULL)",
+        name="payload_audit_pair",
+    ),
     schema="operations",
 )
 
 
 ARTIFACT_TYPES = (
     "request_context",
+    "intent_resolution",
     "query_plan",
     "execution_graph",
     "tool_result",
@@ -451,11 +466,19 @@ request_artifact = sa.Table(
     ),
     sa.CheckConstraint(
         "(model_id IS NULL) = (prompt_version IS NULL) AND "
-        "(artifact_type = 'query_plan' AND model_id IS NOT NULL OR "
+        "(model_id IS NULL OR (model_id ~ '[^[:space:]]' AND "
+        "prompt_version ~ '[^[:space:]]')) AND "
+        "(artifact_type = 'intent_resolution' AND model_id IS NOT NULL OR "
         "artifact_type = 'answer_plan' OR "
-        "artifact_type NOT IN ('query_plan','answer_plan') "
+        "artifact_type NOT IN ('intent_resolution','answer_plan') "
         "AND model_id IS NULL)",
         name="model_metadata",
+    ),
+    sa.CheckConstraint(
+        "artifact_type <> 'intent_resolution' OR "
+        "(contract_object_id IS NOT NULL AND "
+        "contract_object_id ~ '[^[:space:]]')",
+        name="intent_resolution_contract_object_id",
     ),
     schema="operations",
 )

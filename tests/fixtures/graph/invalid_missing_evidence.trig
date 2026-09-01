@@ -1,0 +1,7 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:product a fp:FinancialProduct .
+  fp:manager a fp:AssetManager .
+  fp:relation a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:managedBy ; fp:object fp:manager ; fp:relationId "missing-evidence" ; fp:datasetVersion "2026-08-24-v1" .
+}

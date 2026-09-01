@@ -1,0 +1,1172 @@
+{
+  "schema_version": "1.0",
+  "split_id": "intent-regression-v1",
+  "source": {
+    "relative_path": "tests/gold/core_questions.json",
+    "sha256": "00c1949f42a56d7910a50adbf9d8a0a8d9d88276cf695217c8dc1ecd074c3922",
+    "label_policy": "mechanical_projection_without_question_copy"
+  },
+  "cases": [
+    {
+      "case_id": "LKP-DETF-001",
+      "expected_axes": {
+        "intent_label": "lookup",
+        "product_family_ids": [
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "AssetManager",
+          "DomesticETF"
+        ],
+        "semantic_ids": [
+          "managedBy",
+          "pension_eligibility",
+          "product_risk_grade"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "LKP-OETF-001",
+      "expected_axes": {
+        "intent_label": "lookup",
+        "product_family_ids": [
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "AssetManager",
+          "Index",
+          "OverseasETF"
+        ],
+        "semantic_ids": [
+          "currency",
+          "managedBy",
+          "region",
+          "tracksIndex"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "LKP-BOND-001",
+      "expected_axes": {
+        "intent_label": "lookup",
+        "product_family_ids": [
+          "domestic_bond"
+        ],
+        "entity_type_ids": [
+          "DomesticBond",
+          "Issuer"
+        ],
+        "semantic_ids": [
+          "credit_grade",
+          "issuedBy"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "LKP-FUND-001",
+      "expected_axes": {
+        "intent_label": "lookup",
+        "product_family_ids": [
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "FundShareClass",
+          "PublicFund",
+          "RepresentativeFund"
+        ],
+        "semantic_ids": [
+          "hasShareClass",
+          "product_risk_grade",
+          "sale_status"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "FLT-DETF-001",
+      "expected_axes": {
+        "intent_label": "filter",
+        "product_family_ids": [
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF"
+        ],
+        "semantic_ids": [
+          "asset_class",
+          "pension_eligibility",
+          "region",
+          "sale_status"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "FLT-OETF-001",
+      "expected_axes": {
+        "intent_label": "filter",
+        "product_family_ids": [
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "OverseasETF"
+        ],
+        "semantic_ids": [
+          "asset_class",
+          "aum",
+          "fee_rate",
+          "region"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "FLT-BOND-001",
+      "expected_axes": {
+        "intent_label": "filter",
+        "product_family_ids": [
+          "domestic_bond"
+        ],
+        "entity_type_ids": [
+          "DomesticBond"
+        ],
+        "semantic_ids": [
+          "availability_status",
+          "credit_grade",
+          "currency",
+          "maturity_date"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "FLT-FUND-001",
+      "expected_axes": {
+        "intent_label": "filter",
+        "product_family_ids": [
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "PublicFund"
+        ],
+        "semantic_ids": [
+          "hedge_policy",
+          "offering_type",
+          "region",
+          "sale_status"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "RANK-DETF-001",
+      "expected_axes": {
+        "intent_label": "rank",
+        "product_family_ids": [
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "AssetManager",
+          "DomesticETF"
+        ],
+        "semantic_ids": [
+          "aum",
+          "managedBy"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "RANK-OETF-001",
+      "expected_axes": {
+        "intent_label": "rank",
+        "product_family_ids": [
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "OverseasETF"
+        ],
+        "semantic_ids": [
+          "asset_class",
+          "aum",
+          "currency",
+          "region"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "RANK-BOND-001",
+      "expected_axes": {
+        "intent_label": "rank",
+        "product_family_ids": [
+          "domestic_bond"
+        ],
+        "entity_type_ids": [
+          "DomesticBond"
+        ],
+        "semantic_ids": [
+          "availability_status",
+          "maturity_date",
+          "yield_rate"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "RANK-FUND-001",
+      "expected_axes": {
+        "intent_label": "rank",
+        "product_family_ids": [
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "PublicFund"
+        ],
+        "semantic_ids": [
+          "offering_type",
+          "sale_status",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "CALC-DETF-001",
+      "expected_axes": {
+        "intent_label": "calculate",
+        "product_family_ids": [
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF"
+        ],
+        "semantic_ids": [
+          "market_price",
+          "nav",
+          "premium_discount_rate"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "CALC-BOND-001",
+      "expected_axes": {
+        "intent_label": "calculate",
+        "product_family_ids": [
+          "domestic_bond"
+        ],
+        "entity_type_ids": [
+          "DomesticBond"
+        ],
+        "semantic_ids": [
+          "maturity_date",
+          "remaining_days"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": [
+        {
+          "mention": "이 채권들",
+          "binds_to": "request.explicit_product_set",
+          "expected": "resolved"
+        }
+      ]
+    },
+    {
+      "case_id": "CALC-FUND-001",
+      "expected_axes": {
+        "intent_label": "aggregate",
+        "product_family_ids": [
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "FundShareClass",
+          "PublicFund",
+          "RepresentativeFund"
+        ],
+        "semantic_ids": [
+          "hasShareClass"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "CALC-CROSS-001",
+      "expected_axes": {
+        "intent_label": "aggregate",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf",
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "AssetManager",
+          "DomesticETF",
+          "OverseasETF",
+          "PublicFund"
+        ],
+        "semantic_ids": [
+          "managedBy"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "CMP-RET-001",
+      "expected_axes": {
+        "intent_label": "compare",
+        "product_family_ids": [
+          "domestic_etf",
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "PublicFund"
+        ],
+        "semantic_ids": [
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "CMP-AUM-001",
+      "expected_axes": {
+        "intent_label": "compare_and_rank",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "OverseasETF"
+        ],
+        "semantic_ids": [
+          "aum",
+          "currency"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "CMP-RISK-001",
+      "expected_axes": {
+        "intent_label": "compare_and_rank",
+        "product_family_ids": [
+          "domestic_bond",
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticBond",
+          "DomesticETF"
+        ],
+        "semantic_ids": [
+          "credit_grade",
+          "product_risk_grade"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "CMP-FEE-001",
+      "expected_axes": {
+        "intent_label": "compare_and_rank",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "OverseasETF"
+        ],
+        "semantic_ids": [
+          "fee_rate"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "REL-HOLD-001",
+      "expected_axes": {
+        "intent_label": "relationship_filter_and_rank",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf",
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "OverseasETF",
+          "PublicFund",
+          "Security"
+        ],
+        "semantic_ids": [
+          "holdsSecurity",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "REL-HOLD-002",
+      "expected_axes": {
+        "intent_label": "relationship_lookup_and_rank",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "OverseasETF",
+          "Security"
+        ],
+        "semantic_ids": [
+          "holdsSecurity"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": [
+        {
+          "mention": "이 ETF",
+          "binds_to": "request.explicit_product",
+          "expected": "resolved"
+        }
+      ]
+    },
+    {
+      "case_id": "REL-HOLD-003",
+      "expected_axes": {
+        "intent_label": "relationship_similarity",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "OverseasETF",
+          "Security"
+        ],
+        "semantic_ids": [
+          "holdsSecurity"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "REL-HOLD-004",
+      "expected_axes": {
+        "intent_label": "relationship_aggregate_filter_and_rank",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "Industry",
+          "OverseasETF",
+          "Security"
+        ],
+        "semantic_ids": [
+          "aum",
+          "classifiedAsIndustry",
+          "holdsSecurity"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "REL-MGR-001",
+      "expected_axes": {
+        "intent_label": "dependent_multi_step",
+        "product_family_ids": [
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "AssetManager",
+          "DomesticETF",
+          "Index",
+          "OfficialDocument"
+        ],
+        "semantic_ids": [
+          "asset_class",
+          "documentedBy",
+          "investment_strategy",
+          "managedBy",
+          "region",
+          "tracksIndex",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": [
+        {
+          "mention": "그거",
+          "binds_to": "s1.top_product",
+          "expected": "resolved"
+        }
+      ]
+    },
+    {
+      "case_id": "REL-SIM-FUND-001",
+      "expected_axes": {
+        "intent_label": "family_specific_similarity",
+        "product_family_ids": [
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "FundShareClass",
+          "Index",
+          "PublicFund",
+          "RepresentativeFund"
+        ],
+        "semantic_ids": [
+          "asset_class",
+          "hasShareClass",
+          "hedge_policy",
+          "product_risk_grade",
+          "region",
+          "tracksIndex"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": [
+        {
+          "mention": "A 공모 주식형 펀드",
+          "binds_to": "request.explicit_product",
+          "expected": "resolved"
+        }
+      ]
+    },
+    {
+      "case_id": "REL-SIM-BOND-001",
+      "expected_axes": {
+        "intent_label": "family_specific_similarity",
+        "product_family_ids": [
+          "domestic_bond"
+        ],
+        "entity_type_ids": [
+          "DomesticBond",
+          "Issuer"
+        ],
+        "semantic_ids": [
+          "credit_grade",
+          "currency",
+          "issuedBy",
+          "rate_structure",
+          "remaining_maturity",
+          "yield_rate"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": [
+        {
+          "mention": "A 회사채",
+          "binds_to": "request.explicit_product",
+          "expected": "resolved"
+        }
+      ]
+    },
+    {
+      "case_id": "REL-IDX-001",
+      "expected_axes": {
+        "intent_label": "relationship_lookup_and_compare",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "AssetManager",
+          "DomesticETF",
+          "Index",
+          "OverseasETF"
+        ],
+        "semantic_ids": [
+          "fee_rate",
+          "managedBy",
+          "tracksIndex"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "REL-FUND-001",
+      "expected_axes": {
+        "intent_label": "relationship_rank_and_expand",
+        "product_family_ids": [
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "FundShareClass",
+          "PublicFund",
+          "RepresentativeFund"
+        ],
+        "semantic_ids": [
+          "hasShareClass",
+          "sale_status",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "CTX-DETF-001",
+      "expected_axes": {
+        "intent_label": "dependent_multi_step",
+        "product_family_ids": [
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "AssetManager",
+          "DomesticETF"
+        ],
+        "semantic_ids": [
+          "aum",
+          "managedBy",
+          "product_risk_grade",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": [
+        {
+          "mention": "이 상품",
+          "binds_to": "s1.top_product",
+          "expected": "resolved"
+        }
+      ]
+    },
+    {
+      "case_id": "CTX-DETF-002",
+      "expected_axes": {
+        "intent_label": "dependent_multi_step",
+        "product_family_ids": [
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF"
+        ],
+        "semantic_ids": [
+          "aum",
+          "pension_eligibility",
+          "product_risk_grade"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": [
+        {
+          "mention": "이 상품들",
+          "binds_to": "s1.top10_products",
+          "expected": "resolved"
+        }
+      ]
+    },
+    {
+      "case_id": "CTX-AMB-001",
+      "expected_axes": {
+        "intent_label": "compare_then_followup",
+        "product_family_ids": [
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF"
+        ],
+        "semantic_ids": [
+          "aum",
+          "product_risk_grade",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": [
+        {
+          "mention": "이 상품",
+          "binds_to": [
+            "A ETF",
+            "B ETF"
+          ],
+          "expected": "ambiguous_fallback_all_candidates",
+          "candidates": [
+            "A ETF",
+            "B ETF"
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "CTX-CROSS-001",
+      "expected_axes": {
+        "intent_label": "cross_family_dependent_lookup",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "AssetManager",
+          "DomesticETF",
+          "OverseasETF"
+        ],
+        "semantic_ids": [
+          "aum",
+          "managedBy"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": [
+        {
+          "mention": "그 운용사",
+          "binds_to": "s1.provider_entity",
+          "expected": "resolved"
+        }
+      ]
+    },
+    {
+      "case_id": "MIS-OETF-001",
+      "expected_axes": {
+        "intent_label": "calculate",
+        "product_family_ids": [
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "OverseasETF"
+        ],
+        "semantic_ids": [
+          "market_price",
+          "nav"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "MIS-DETF-001",
+      "expected_axes": {
+        "intent_label": "rank",
+        "product_family_ids": [
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF"
+        ],
+        "semantic_ids": [
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "MIS-BOND-001",
+      "expected_axes": {
+        "intent_label": "lookup_and_similarity",
+        "product_family_ids": [
+          "domestic_bond"
+        ],
+        "entity_type_ids": [
+          "DomesticBond"
+        ],
+        "semantic_ids": [
+          "credit_grade"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "MIS-FUND-001",
+      "expected_axes": {
+        "intent_label": "lookup",
+        "product_family_ids": [
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "PublicFund"
+        ],
+        "semantic_ids": [
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "AMB-RET-001",
+      "expected_axes": {
+        "intent_label": "rank",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf",
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "AssetManager",
+          "DomesticETF",
+          "OverseasETF",
+          "PublicFund"
+        ],
+        "semantic_ids": [
+          "managedBy",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "expected_disposition": "limitation"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "AMB-SIM-001",
+      "expected_axes": {
+        "intent_label": "similarity_search",
+        "product_family_ids": [],
+        "entity_type_ids": [
+          "FinancialProduct"
+        ],
+        "semantic_ids": [],
+        "expected_disposition": "abstention"
+      },
+      "expected_context": [
+        {
+          "mention": "이거",
+          "binds_to": null,
+          "expected": "unresolved"
+        }
+      ]
+    },
+    {
+      "case_id": "AMB-AUM-001",
+      "expected_axes": {
+        "intent_label": "rank",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "OverseasETF"
+        ],
+        "semantic_ids": [
+          "aum",
+          "currency"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "AMB-NAME-001",
+      "expected_axes": {
+        "intent_label": "lookup",
+        "product_family_ids": [
+          "domestic_bond",
+          "domestic_etf",
+          "overseas_etf",
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "DomesticBond",
+          "DomesticETF",
+          "OverseasETF",
+          "PublicFund"
+        ],
+        "semantic_ids": [],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "UNS-FCAST-001",
+      "expected_axes": {
+        "intent_label": "forecast_and_recommend",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "OverseasETF"
+        ],
+        "semantic_ids": [],
+        "expected_disposition": "abstention"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "UNS-PERS-001",
+      "expected_axes": {
+        "intent_label": "personalized_recommendation",
+        "product_family_ids": [
+          "domestic_bond",
+          "domestic_etf",
+          "overseas_etf",
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "DomesticBond",
+          "DomesticETF",
+          "OverseasETF",
+          "PublicFund"
+        ],
+        "semantic_ids": [],
+        "expected_disposition": "abstention"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "UNS-RT-001",
+      "expected_axes": {
+        "intent_label": "real_time_lookup",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "OverseasETF"
+        ],
+        "semantic_ids": [
+          "intraday_indicative_nav",
+          "market_price"
+        ],
+        "expected_disposition": "abstention"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "UNS-ORDER-001",
+      "expected_axes": {
+        "intent_label": "order_execution",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "OverseasETF"
+        ],
+        "semantic_ids": [],
+        "expected_disposition": "abstention"
+      },
+      "expected_context": [
+        {
+          "mention": "그 ETF",
+          "binds_to": "prior_context.product_if_any",
+          "expected": "irrelevant_to_policy_gate"
+        }
+      ]
+    },
+    {
+      "case_id": "DOC-FUND-001",
+      "expected_axes": {
+        "intent_label": "document_grounded_product_explanation",
+        "product_family_ids": [
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "OfficialDocument",
+          "PolicyProgram",
+          "PublicFund"
+        ],
+        "semantic_ids": [
+          "documentedBy",
+          "investment_strategy",
+          "official_update",
+          "product_structure"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "REL-OETF-001",
+      "expected_axes": {
+        "intent_label": "multi_hop_holding_filter",
+        "product_family_ids": [
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "Company",
+          "Industry",
+          "OverseasETF",
+          "Security"
+        ],
+        "semantic_ids": [
+          "classifiedAsIndustry",
+          "holdsSecurity",
+          "product_alias",
+          "region",
+          "securityOfCompany"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": [
+        {
+          "mention": "캠브리콘",
+          "binds_to": "canonical_company_and_listed_security",
+          "expected": "resolved_from_official_aliases"
+        }
+      ]
+    },
+    {
+      "case_id": "REL-THEME-001",
+      "expected_axes": {
+        "intent_label": "temporal_relationship_search",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF",
+          "Index",
+          "OfficialDocument",
+          "OverseasETF",
+          "Theme"
+        ],
+        "semantic_ids": [
+          "associatedWithTheme",
+          "documentedBy",
+          "supporting_document",
+          "tracksIndex"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": [
+        {
+          "mention": "우주항공 테마",
+          "binds_to": "canonical_theme",
+          "expected": "resolved_with_aliases"
+        }
+      ]
+    },
+    {
+      "case_id": "REL-CORP-001",
+      "expected_axes": {
+        "intent_label": "relationship_filter_rank_then_document_explanation",
+        "product_family_ids": [
+          "domestic_etf",
+          "overseas_etf"
+        ],
+        "entity_type_ids": [
+          "Company",
+          "DomesticETF",
+          "Market",
+          "OfficialDocument",
+          "OverseasETF",
+          "RiskFactor",
+          "Security"
+        ],
+        "semantic_ids": [
+          "aum",
+          "controlsCompany",
+          "documentedBy",
+          "hasRiskFactor",
+          "holdsSecurity",
+          "listedOn",
+          "risk_factor",
+          "securityOfCompany"
+        ],
+        "expected_disposition": "answer"
+      },
+      "expected_context": [
+        {
+          "mention": "에코프로",
+          "binds_to": "canonical_parent_company",
+          "expected": "resolved"
+        }
+      ]
+    },
+    {
+      "case_id": "UNS-GRADE-001",
+      "expected_axes": {
+        "intent_label": "invalid_ontology_value_lookup",
+        "product_family_ids": [
+          "domestic_bond"
+        ],
+        "entity_type_ids": [
+          "DomesticBond"
+        ],
+        "semantic_ids": [
+          "credit_grade"
+        ],
+        "expected_disposition": "abstention"
+      },
+      "expected_context": []
+    },
+    {
+      "case_id": "UNS-ENTITY-001",
+      "expected_axes": {
+        "intent_label": "unsupported_entity_relationship_search",
+        "product_family_ids": [
+          "domestic_bond",
+          "domestic_etf",
+          "overseas_etf",
+          "public_fund"
+        ],
+        "entity_type_ids": [
+          "DomesticBond",
+          "DomesticETF",
+          "OverseasETF",
+          "PublicFund"
+        ],
+        "semantic_ids": [],
+        "expected_disposition": "abstention"
+      },
+      "expected_context": [
+        {
+          "mention": "Kimi",
+          "binds_to": "none_without_unique_official_entity",
+          "expected": "unresolved_or_unproven"
+        }
+      ]
+    },
+    {
+      "case_id": "UNS-PRODUCT-001",
+      "expected_axes": {
+        "intent_label": "absent_exact_product_lookup",
+        "product_family_ids": [
+          "domestic_etf"
+        ],
+        "entity_type_ids": [
+          "DomesticETF"
+        ],
+        "semantic_ids": [
+          "official_product_name",
+          "product_alias"
+        ],
+        "expected_disposition": "abstention"
+      },
+      "expected_context": [
+        {
+          "mention": "KODEX AI로봇 ETF",
+          "binds_to": "none",
+          "expected": "not_found_at_cutoff"
+        }
+      ]
+    }
+  ]
+}

@@ -2,7 +2,7 @@
 
 **Status:** Approved project direction
 
-**Last updated:** 2026-08-17
+**Last updated:** 2026-08-31
 
 **Purpose:** Keep the project's `what` and `why` stable while allowing capable agents freedom over `how` within approved constraints.
 
@@ -230,7 +230,7 @@ These defaults prevent unsafe assumptions and may be superseded by a later accep
 
 The approved top-level architecture is a bounded, conditionally parallel execution graph controlled by a deterministic application orchestrator.
 
-- One HyperCLOVA X Intent Resolver produces a schema-validated, domain-neutral `QueryPlan`.
+- One HyperCLOVA X Intent Resolver component uses one bounded structured model call to produce an internal intent-resolution draft; deterministic catalog·ontology·context validation and compilation then produce the schema-validated, domain-neutral `QueryPlan`.
 - The orchestrator compiles the plan into a typed `ExecutionGraph`, routes only the required Capability Executors, and runs independent work concurrently.
 - Product-family Capability modules own family-specific fields, rules, ontology mappings, and allowed operations. They are not LLM Agents in the approved baseline.
 - A deterministic data engine performs retrieval, filtering, sorting, ranking, aggregation, similarity scoring, and supported financial calculations.
@@ -239,7 +239,7 @@ The approved top-level architecture is a bounded, conditionally parallel executi
 - A deterministic Claim Gate rejects factual statements without valid evidence references.
 - Product Specialist LLMs may be added only through a later benchmark-backed ADR.
 
-ADR-0004 remains the historical basis for deterministic control, conditional routing, request-internal parallelism, bounded retries, and Claim Gate behavior. [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) supersedes its mandatory Specialist and Verifier Agent topology. [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) separates answer disposition from execution failure and fixes the initial recovery and deadline policy. [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) fixes the evidence authority, atomic Claim, structured AnswerPlan, and deterministic rendering model. The canonical handoff schemas are defined in [Runtime Contracts](architecture/RUNTIME_CONTRACTS.md), evidence release is defined in [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), and the state transitions are defined in [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md).
+ADR-0004 remains the historical basis for deterministic control, conditional routing, request-internal parallelism, bounded retries, and Claim Gate behavior. [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) supersedes its mandatory Specialist and Verifier Agent topology. [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) separates answer disposition from execution failure and fixes the initial recovery and deadline policy. [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) fixes the evidence authority, atomic Claim, structured AnswerPlan, and deterministic rendering model. [ADR-0022](decisions/ADR-0022-use-ontology-grounded-intent-resolution.md) amends only the internal Intent Resolver boundary: the model proposes bounded semantic IDs and typed context links, while deterministic validation and compilation own the unchanged external `QueryPlan`. The canonical handoff schemas are defined in [Runtime Contracts](architecture/RUNTIME_CONTRACTS.md), evidence release is defined in [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), and the state transitions are defined in [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md).
 
 ## 13. Decision Records
 
@@ -255,6 +255,8 @@ Accepted and superseded decisions live in `docs/planning/decisions/`. Each recor
 - [ADR-0016: Use the 2026-08-24 Organizer Baseline](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)
 - [ADR-0017: Adopt the Current Cutoff While Preserving Legacy Datasets](decisions/ADR-0017-adopt-current-cutoff-with-legacy-preservation.md)
 - [ADR-0018: Keep the Minimal Ontology with Canonical Multi-Role Products](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md)
+- [ADR-0021: Amend the Minimal Ontology for Question-Contract Semantics](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md)
+- [ADR-0022: Use Ontology-Grounded Intent Resolution](decisions/ADR-0022-use-ontology-grounded-intent-resolution.md)
 
 ## 14. Change Procedure
 

@@ -1,0 +1,106 @@
+{
+  "$defs": {
+    "ContractFileHash": {
+      "additionalProperties": false,
+      "properties": {
+        "relative_path": {
+          "title": "Relative Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "relative_path",
+        "sha256"
+      ],
+      "title": "ContractFileHash",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "adapter_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Adapter Version",
+      "type": "string"
+    },
+    "candidate_policy_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Candidate Policy Version",
+      "type": "string"
+    },
+    "catalog_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Catalog Hash",
+      "type": "string"
+    },
+    "catalog_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Catalog Version",
+      "type": "string"
+    },
+    "normalizer_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Normalizer Version",
+      "type": "string"
+    },
+    "ontology_hashes": {
+      "items": {
+        "$ref": "#/$defs/ContractFileHash"
+      },
+      "title": "Ontology Hashes",
+      "type": "array"
+    },
+    "overlay_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Overlay Hash",
+      "type": "string"
+    },
+    "overlay_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Overlay Version",
+      "type": "string"
+    },
+    "prompt_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "resolver_schema_version": {
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+      "title": "Resolver Schema Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "catalog_version",
+    "catalog_hash",
+    "ontology_hashes",
+    "overlay_version",
+    "overlay_hash",
+    "normalizer_version",
+    "candidate_policy_version",
+    "resolver_schema_version",
+    "prompt_version",
+    "adapter_version"
+  ],
+  "title": "ResolverBuildManifest",
+  "type": "object"
+}

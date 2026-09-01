@@ -1,6 +1,6 @@
 # Financial Product Agent 계획·구현 현황
 
-**Updated:** 2026-08-29
+**Updated:** 2026-09-01
 
 이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.
 
@@ -9,12 +9,13 @@
 | 구분 | 현재 상태 | 기준 문서 |
 | --- | --- | --- |
 | 전체 대회 Stage 로드맵 | Stage 01~09 확정; 종점은 제출과 공식 평가 운영 기간 종료 | [Competition Stage Roadmap](ROADMAP.md), [ADR-0012](decisions/ADR-0012-use-nine-stage-competition-delivery-roadmap.md) |
-| Task 1 요구사항·평가 질문·추가 데이터 | 내부 52개 회귀 질문은 유지; 새 공식 35문항 유형과 `2026-08-24` 데이터 공지로 재베이스 진행 중 | [Official Data Notice](../reference/official-data-notice-2026-08-24.md), [Rebaseline Design](specs/2026-08-24-stage-03-organizer-rebaseline-design.md) |
+| Task 1 요구사항·평가 질문·추가 데이터 | 내부 52개 회귀 질문의 지원 상태를 유지하고 schema `1.3` 여섯 요구사항 그룹·명시적 Capability route로 정규화 완료; 실제 DB 실행 검증은 `not_run`으로 분리 | [Core Evaluation Set](specs/core-evaluation-set.md), [Question Contract Normalization](specs/2026-08-29-question-capability-contract-normalization-design.md) |
 | Task 2 상위 아키텍처 | 확정; 2개 제한 LLM 역할 + 결정론적 Orchestrator·Capability·Verifier | [Planning Harness](HARNESS.md), [ADR-0005](decisions/ADR-0005-bounded-llm-typed-capability-execution.md) |
 | 실패·판정·시간 예산 | 확정 기본안; 55초 내부 마감은 NCP 벤치마크 후 단계별 재배분 가능 | [Failure and Disposition Policy](architecture/FAILURE_AND_DISPOSITION_POLICY.md), [ADR-0006](decisions/ADR-0006-separate-disposition-and-bound-recovery.md) |
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
-| 온톨로지 논리 구조 | 최소 클래스·13개 관계 유지, canonical 다중 역할·SourceRecord 경계·2026-08-24 ABox 제약 승인; TTL·SHACL 구현 대기 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md) |
+| 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute·문서 provenance 경계 승인; TTL·SHACL·Evidence-bound ABox·읽기 전용 Fuseki를 포함한 Graph Phase 1 core 로컬 완료, Stage 04는 미완료 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
+| Intent Resolver Phase 1 | 구현·로컬 검증 완료; 승인된 HCX-007 12-case smoke는 provider success `0/12`로 끝나 semantic gate를 측정하지 못했다. `candidate_recall_at_5` 실패와 미측정 live gate로 default 승격은 계속 차단되며, QueryPlan compiler·Orchestrator 설계는 아직 시작하지 않음 | [Intent Resolver Design](specs/2026-08-31-intent-resolver-design.md), [Verification Report](reports/2026-08-31-intent-resolver-phase1-verification.md), [ADR-0022](decisions/ADR-0022-use-ontology-grounded-intent-resolution.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 | Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
 
@@ -128,6 +129,51 @@
 
 다음 필수 결정은 공식 source 수집 범위와 embedding 후보를 실제 평가셋으로 비교하는 benchmark 계획이다.
 
+### Stage 04 Graph·Vector 투영과 데이터셋 활성화
+
+**상태: Graph Phase 1 core 로컬 완료; Stage 04 미완료**
+
+- 13개 승인 predicate의 TBox·SHACL, 명시적 문서·위험요인 provenance, 날짜별 holding-weight observation, PostgreSQL 반복 가능 읽기 전용 투영, 결정론적 N-Quads·검증 산출물에 결합된 Graph component manifest, Evidence-bound SPARQL 읽기 경로와 읽기 전용 Fuseki 적합성 게이트를 구현했다. 실제 문서 ABox는 만들지 않고 합성 fixture만 사용했다.
+- 2026-08-30 최종 로컬 검증은 외부 서비스 없는 Graph gate `197 passed, 13 deselected in 21.26s`, 기존 non-live 회귀 `896 passed, 361 deselected in 22.60s`, 전용 폐기 가능 PostgreSQL `15.19` 투영 gate `12 passed in 0.45s`, Apache Jena/Fuseki `6.0.0`·Java `24` exact-runtime gate `13 passed in 21.78s`를 모두 통과했다. PostgreSQL gate는 두 연결 사이 커밋을 사용해 relation/Evidence를 섞어 읽지 않는 단일 `REPEATABLE READ, READ ONLY` snapshot도 검증했다.
+- Graph 모듈은 `record_dataset_readiness`, `activate_dataset`, `active_dataset` 또는 SQL 변경 경로를 두지 않는다. 정적 스캔의 유일한 `INSERT` 문구는 없는 `/update` endpoint가 HTTP 404/405로 거부함을 검증하는 음성 probe이다.
+- 관리형 sandbox에서 PostgreSQL shared memory와 임시 loopback port bind는 승인된 로컬 실행을 필요로 했다. 모든 gate는 완료됐고 PostgreSQL 클러스터, Fuseki JVM, TDB2·N-Quads·검증 임시 디렉터리는 종료·삭제했다. 체크섬을 검증한 Jena/Fuseki 외부 binary home은 저장소 밖에만 유지한다.
+- 이 결과는 후속 Graph Phase 2 범위나 Stage 04 완료를 의미하지 않는다. Vector, 실제 관계·문서 데이터, PostgreSQL·Graph·Vector·Evidence 간 manifest 동일성, readiness·activation, NCP 배포, Graph 경로가 필요한 23개 질문의 dataset-relative 커버리지는 후속 Phase 2·최종 Stage 작업으로 남아 있다.
+
+기준 계획: [Stage 04 Graph Phase 1](tasks/2026-08-30-stage-04-graph-phase-1-implementation-plan.md)
+
+### Stage 06 Intent Resolver Phase 1
+
+**상태: Phase 1 implemented; promotion deferred by `candidate_recall_at_5` and unmeasured required gates**
+
+- 온톨로지 기반 semantic catalog, 한국어 정규화·literal·candidate·bounded view,
+  strict HCX adapter, semantic/context validator, one-call service, 불변
+  `intent_resolution` 저장, 160-case held-out evaluation과 fail-closed promotion
+  판정 경계를 구현했다.
+- 2026-09-01 entity-role final hardening의 fresh intent/evaluation suite는
+   `369 passed`; v1·v2 schema freshness check와 v1 no-drift check도 통과했다.
+   외부 marker를 제외한 broad offline suite는 `1301 passed, 1 skipped,
+   378 deselected`였다. 명시적 PostgreSQL evidence는 이 final fix에서는 실행하지
+  않았고, URL 미설정으로 계속 `unmeasured`다.
+- resolver view의 exact catalog entity-type registry는 fresh `155/155` reachability
+  (unreachable case `0`)를 유지한다. 결정론적 candidate reproducibility도
+  `155/155`지만 recall@5는 `118/196` (`60.2040816%`)로 승인된 `>=99%` gate에
+  미달한다.
+- 승인된 HCX-007 12-case smoke는 retry 없이 한 번만 실행했으며 provider success는
+  `0/12` (timeout `10`, rate-limited `2`)였다. 따라서 live/stored validation,
+  first-pass, frame, context, OOD metric은 여전히 미측정이고 default promotion은
+  fail-closed/deferred 상태다. Promotion evidence는 frozen v3 SHA와 complete
+  population에 결합되며, role-required frame evidence가 비어 있거나 부분
+  denominator/coverage이면 `unmeasured`다.
+  `model_copy`·`model_construct`로 우회 생성된 기존 증거도 exact type·stored field
+  keys·strict JSON 재검증을 통과하지 못하면 판정 전에 예외로 차단한다.
+- 이 호스트에는 Docker 계열 runtime이 없어 Linux/amd64 build/run/Compose는
+  실행하지 않았다. 위 HCX smoke 외에는 NCP·HCX를 호출하지 않았고, smoke는
+  provider 성공 output·semantic metric·retry를 만들지 않았다.
+- QueryPlan compiler와 Orchestrator는 Phase 2 범위이며 구현을 시작하지 않았다.
+  다음 live HCX benchmark는 비용·호출에 대한 별도 사용자 승인 후에만 수행한다.
+
+기준 보고서: [Intent Resolver Phase 1 Verification](reports/2026-08-31-intent-resolver-phase1-verification.md)
+
 ## 3. 현재 실행하면 안 되는 계획
 
 [2026-08-10 Core Implementation Plan](tasks/2026-08-10-financial-agent-core-implementation-plan.md)은 질문·데이터·온톨로지 요구사항의 역사적 출처로만 유지한다. DuckDB, 로컬 인덱스, 옛 ADR 번호, 이전 에이전트 역할을 포함한 실행 순서는 현재 아키텍처와 맞지 않으므로 그대로 구현하지 않는다.
@@ -141,9 +187,9 @@
 | Stage | 범위 | 상태 |
 | --- | --- | --- |
 | 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | current organizer 로컬 결정성 검증 완료; current KRX holdings 로컬 통합과 나머지 공식 source 동결 대기; NCP acceptance는 Stage 08로 이연 |
-| 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 대기 |
+| 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | Graph Phase 1 core 로컬 완료; Vector·실제 관계/문서·manifest 동일성·readiness/activation·NCP·23질문 커버리지 대기, Stage 04 미완료 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
-| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | 대기 |
+| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Intent Resolver Phase 1 구현·로컬 비라이브 검증 완료; candidate recall 실패와 live 미측정 gate로 승격 차단; QueryPlan compiler·Orchestrator 설계 대기 |
 | 07 | Verifier, Claim Gate Registry, Answer Composer, Renderer와 검증된 응답 캐시 | 대기 |
 | 08 | 공식 `GET /answer`, NCP 이중화·Load Balancer·모니터링·복구 | 대기 |
 | 09 | 52개 종합 평가, 제출 동결, 공식 평가 운영과 종료 기록 | 대기 |
@@ -190,7 +236,11 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 34. ~~두 로컬 PostgreSQL에서 current organizer 비활성 결정성 검증~~ — 2026-08-26 완료
 35. ~~current KRX ETF holdings 1,161개 exact binding·로컬 비활성 적재·대표 질의 검증~~ — 2026-08-27 완료
 36. 나머지 current 공식 외부 source 동결과 Stage 03 로컬 완료 게이트 — [구현 계획](tasks/2026-08-27-stage-03-local-completion-plan.md) 승인, Task 1~6 완료; 52개 질문 커버리지를 `supported` 16, `limited` 18, `requires_additional_data` 11, `unsupported` 7로 동결
-37. 최소 TBox·SHACL·Evidence-bound ABox 구현부터 로컬 평가 API까지 Stage 04~07 순차 구현
-38. Stage 08에서 최종 NCP 비활성 적재·Graph/Vector·권한·성능·복구·공개 API acceptance
+37. ~~52개 질문 계약 schema `1.3` 정규화와 온톨로지 논리 보정 승인~~ — 2026-08-30 완료; 지원 상태 수량 유지, 실제 DB 실행은 전건 `not_run`
+38. Stage 04 Graph Phase 1 core 로컬 구현·검증 완료; Vector·실제 관계/문서·manifest 동일성·readiness/activation을 완료한 뒤 로컬 평가 API까지 Stage 04~07 순차 구현
+39. Stage 08에서 최종 NCP 비활성 적재·Graph/Vector·권한·성능·복구·공개 API acceptance
+40. ~~Stage 06 Phase 1 Intent Resolver의 온톨로지 기반 분류·한국어 문맥 해소·OOD·검증·평가 설계 승인~~ — 2026-08-31 완료; 상세 구현 계획과 런타임 변경은 별도 승인 대기
+41. ~~Stage 06 Phase 1 Intent Resolver 상세 구현·로컬 비라이브·PostgreSQL 검증~~ — 2026-09-01 완료; Linux/amd64 container 미실행, candidate recall 실패와 live 미측정 gate로 승격 차단
+42. Stage 06 Phase 1 live HCX benchmark — 비용·호출·runtime credential·Structured Outputs preflight에 대한 별도 사용자 승인 대기; QueryPlan compiler·Orchestrator는 이후 Phase 2·3 설계 범위
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

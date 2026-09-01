@@ -1,8 +1,10 @@
 # 금융상품 Agent 최소 온톨로지 설계
 
-**Status:** 2026-08-24 데이터 기준 승인안; TTL·SHACL 구현 대기
+**Status:** 2026-08-30 질문 계약 보정 승인; 논리 경계 확정, TTL·SHACL 구현 대기
 
 **Date:** 2026-08-25
+
+**Amended:** 2026-08-30 under [ADR-0021](../decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md)
 
 **Cutoff:** `2026-08-24` under [ADR-0016](../decisions/ADR-0016-use-2026-08-24-organizer-baseline.md)
 
@@ -91,13 +93,21 @@ ETF와 ETN은 분리된 클래스이며 기본 검색에서 섞지 않는다. �
 | `Market` | 거래소·상장시장 | 상장 여부와 시장 확인 |
 | `Region` | 투자지역 | 국가·지역 필터와 유사도 |
 | `AssetClass` | 기초자산·자산군 | 주식·채권·원자재 등 구분 |
-| `RiskGrade` | 승인된 위험등급 개념 | 허용된 등급 체계 검증 |
+| `ProductRiskGrade` | 상품 위험등급 | `product_risk_grade_v1` 허용값·스킴 버전 검증 |
+| `CreditGrade` | 채권 신용등급 | `credit_grade_v1` 허용값·승인된 스킴 안의 순서 검증 |
+| `PolicyProgram` | 정책·제도 프로그램 | 공식 문서의 주제; `FinancialProduct` 하위 유형이 아님 |
 | `OfficialDocument` | 공식 문서 | 상품 구조·전략·위험·동향 근거 |
 | `DocumentChunk` | 페이지·절에 묶인 문서 구간 | Keyword·Vector 후보와 Evidence 연결 |
 | `RiskFactor` | 문서로 입증된 위험요인 | 위험 설명; 추론 생성 금지 |
 | `RelationAssertion` | 기준일·출처를 가진 관계 주장 | Graph edge의 시간·근거 보존 |
 
-`Currency`, `ReturnMetric`, `FeeMetric`, `AvailabilityStatus`는 제어 어휘로 정의하되, 실제 수치와 시계열은 PostgreSQL `observation`이 권위를 갖는다.
+`ProductRiskGrade`와 `CreditGrade`는 이름이나 숫자가 비슷해도 서로 비교하지
+않는다. 각 값은 스킴 ID·버전, 공식 출처와 적용일을 가져야 하며, 순서 비교는
+승인된 신용등급 스킴 안에서만 허용한다.
+
+`PolicyProgram`은 정책형 공식 문서의 주제를 정확히 해소하기 위한 독립
+엔티티다. 공식 상품 식별 근거가 없는 정책·제도를 `FinancialProduct`로
+강제하지 않는다.
 
 ### 3.4 원천 레코드는 온톨로지 엔티티가 아니다
 
@@ -114,7 +124,27 @@ Canonical Product
 ```
 
 해석할 수 없는 내부 코드도 SourceRecord/Evidence에 원문으로 남긴다. 공식
-코드표 없이 `Industry`, `Region`, `AssetClass`, `RiskGrade`로 승격하지 않는다.
+코드표 없이 `Industry`, `Region`, `AssetClass`, `ProductRiskGrade`,
+`CreditGrade`로 승격하지 않는다.
+
+### 3.5 의미 속성의 권위 경계
+
+질문 계약 schema `1.3`은 모든 요구사항을 Entity, Attribute, Metric,
+Relation, Document Claim, Control Check로 분리한다. 이 분류는 같은 이름을
+여러 저장소의 권위 사실로 중복 구현하지 않기 위한 경계다.
+
+| 구분 | 포함 | 권위와 검증 |
+| --- | --- | --- |
+| Graph domain relation | 4절의 13개 관계 | PostgreSQL `RelationAssertion`이 권위이고 Graph는 탐색 투영본 |
+| Controlled attribute | `Region`, `AssetClass`, 상품 위험등급, 채권 신용등급, 통화, 판매·가용 상태, 연금 적격성, 환헤지, 공모 유형, 금리 구조 | PostgreSQL 구조화 상품 사실이 권위이고 온톨로지·SHACL은 유형·어휘·스킴·적용일을 검증 |
+| Metric | AUM, 수익률, 가격, NAV, 보수, 수익률 지표, 만기·잔존기간과 보유비중 | PostgreSQL `Observation` 또는 `RelationAssertion` 속성이 권위이며 값·단위·통화·기간·적용일을 함께 검증 |
+| Document claim | 구조, 전략, 위험요인, 공식 변경·동향 | `DocumentChunk → EvidenceRecord → AtomicClaim`으로 원문 위치까지 역추적 |
+| Control check | 결측, 비교 가능성, 커버리지, 중복, 컷오프, 정책 | 결정론적 규칙과 `VerificationReport`가 판정 |
+
+`publisher_organization_id`, `published_at`, `effective_from`, `effective_to`,
+`available_at`, `document_version`, `source_object_id`, `document_chunk_id`,
+`source_span`은 문서 provenance다. `publishedBy`, `investsInRegion`,
+`investsInAssetClass`를 Graph domain predicate로 추가하지 않는다.
 
 ## 4. 핵심 관계 13개
 
@@ -133,8 +163,8 @@ Canonical Product
 | `classifiedAsIndustry` | 산업·섹터로 분류된다 | `Company/Security → Industry` | 반도체 등 공식 분류체계·버전 필요 |
 | `associatedWithTheme` | 테마와 연결된다 | `FinancialProduct/Index/Company → Theme` | 최근 6개월 관계. `valid_from`, `valid_to`, `published_at`, `available_at` 필수 |
 | `hasShareClass` | 클래스를 가진다 | `RepresentativeFund → FundShareClass` | 클래스별 비용·판매조건과 대표펀드 중복 방지 |
-| `documentedBy` | 공식 문서로 설명된다 | `FinancialProduct/Organization → OfficialDocument` | 구조·전략·동향·상품 설명의 원문 연결 |
-| `hasRiskFactor` | 위험요인을 가진다 | `FinancialProduct → RiskFactor` | 반드시 `OfficialDocument` 페이지·절·구절 Evidence로 지지 |
+| `documentedBy` | 공식 문서로 설명된다 | `FinancialProduct/Organization/PolicyProgram → OfficialDocument` | 구조·전략·동향·상품 설명의 원문 연결 |
+| `hasRiskFactor` | 위험요인을 가진다 | `FinancialProduct → RiskFactor` | 반드시 `DocumentChunk`의 페이지·절·`source_span`과 Evidence record로 지지 |
 
 역관계는 질의 편의를 위해 OWL이나 질의 번역기에서 생성할 수 있지만, 별도 원천 사실로 카운트하지 않는다. 예를 들어 `managedBy`의 역관계인 “이 운용사가 이 상품을 운용한다”는 같은 관계다.
 
@@ -203,7 +233,8 @@ Company(EcoPro)
 ← holdsSecurity ← ETF
 → PostgreSQL AUM 순위
 → hasRiskFactor → RiskFactor
-→ OfficialDocument 문서 구절 Evidence
+ETF → documentedBy → OfficialDocument → DocumentChunk
+RiskFactor Claim → DocumentChunk 페이지·절·원문 span Evidence
 ```
 
 ### 최근 6개월 우주항공 테마 ETF
@@ -269,11 +300,13 @@ SHACL은 `DomesticETF`와 `FundShareClass`의 근거 있는 다중 typing을 허
 3. 도메인, 레인지, 시간, 카디널리티, Evidence 조건을 함께 정의한다.
 4. 기존 컴피텐시 질문과 SHACL 회귀 테스트를 통과한 뒤 버전을 올린다.
 
-## 9. 구현 전 남은 검증
+## 9. TTL·SHACL 구현 입력과 남은 검증
 
-이 문서는 논리 기본안을 고정한다. TTL·SHACL 구현 계획은 다음을 다시 검증한 후 별도로 작성한다.
+이 문서는 논리 기본안을 고정한다. 질문 계약의 의미 분류는 완료했지만
+TTL·SHACL·ABox·Fuseki는 아직 구현하지 않았다. 별도 구현 계획은 아래의 완료
+입력과 남은 검증을 구분해 사용한다.
 
-1. 52개 질문의 `required_relations` 전체가 13개 관계 또는 PostgreSQL 관측값 조회로 연결되는지
-2. 승인된 280필드 매트릭스의 relation 필드가 13개 관계에 연결되고 observation·Evidence 필드가 Graph로 잘못 승격되지 않는지
-3. ETF 구성종목, 기업 지배관계, 테마 이력, 공식 문서의 스냅샷을 2026-08-24 컷오프로 확보할 수 있는지
-4. RDF 적재량과 SPARQL 경로의 NCP Fuseki 실측 지연이 응답 예산 안에 드는지
+1. **완료:** schema `1.3`의 52개 질문은 여섯 요구사항 그룹으로 정규화됐다. Graph 경로가 필요한 23개 질문은 승인된 13개 관계 중 12개만 사용하며, `containsSecurity`는 지수 구성종목 경로를 위해 유지한다.
+2. 승인된 280필드 매트릭스의 relation 필드가 13개 관계에 연결되고 observation·Evidence 필드가 Graph로 잘못 승격되지 않는지 검증한다.
+3. ETF 구성종목, 기업 지배관계, 테마 이력, 공식 문서의 스냅샷을 2026-08-24 컷오프로 확보할 수 있는지 검증한다.
+4. RDF 적재량과 SPARQL 경로의 NCP Fuseki 실측 지연이 응답 예산 안에 드는지 검증한다.

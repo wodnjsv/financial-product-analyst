@@ -1,0 +1,33 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:product a fp:FinancialProduct ; fp:documentedBy fp:document ; fp:hasRiskFactor fp:risk .
+  fp:publisher a fp:Organization .
+  fp:document a fp:OfficialDocument ;
+    fp:publisherOrganization fp:publisher ;
+    fp:publishedAt "2026-08-20T09:00:00+09:00"^^xsd:dateTime ;
+    fp:effectiveFrom "2026-08-01"^^xsd:date ;
+    fp:effectiveTo "2026-08-24"^^xsd:date ;
+    fp:availableAt "2026-08-20T10:00:00+09:00"^^xsd:dateTime ;
+    fp:documentVersion "v1" ;
+    fp:sourceObjectId "source-object-1" .
+  fp:risk a fp:RiskFactor ; fp:documentChunk fp:chunk-1, fp:chunk-2 .
+  fp:chunk-1 a fp:DocumentChunk ; fp:page 7 ; fp:section "Risk Factors" ;
+    fp:sourceSpan "Synthetic risk-factor source span one." ;
+    fp:evidenceRecord fp:evidence-1 .
+  fp:chunk-2 a fp:DocumentChunk ; fp:page 8 ; fp:section "Additional Risks" ;
+    fp:sourceSpan "Synthetic risk-factor source span two." ;
+    fp:evidenceRecord fp:evidence-2 .
+  fp:evidence-1 a fp:EvidenceRecord ; fp:sourceRecord fp:source .
+  fp:evidence-2 a fp:EvidenceRecord ; fp:sourceRecord fp:source .
+  fp:source a fp:SourceRecord .
+  fp:ra-document a fp:RelationAssertion ; fp:subject fp:product ;
+    fp:predicate fp:documentedBy ; fp:object fp:document ;
+    fp:relationId "documented-by" ; fp:datasetVersion "2026-08-24-v1" ;
+    fp:supportedBy fp:evidence-1, fp:evidence-2 .
+  fp:ra-risk a fp:RelationAssertion ; fp:subject fp:product ;
+    fp:predicate fp:hasRiskFactor ; fp:object fp:risk ;
+    fp:relationId "has-risk-factor" ; fp:datasetVersion "2026-08-24-v1" ;
+    fp:supportedBy fp:evidence-1, fp:evidence-2 .
+}
