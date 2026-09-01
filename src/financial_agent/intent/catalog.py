@@ -201,7 +201,12 @@ def _index_axis_definitions(
         **{item.value: "product_family" for item in ProductFamily},
         **{item.value: "action" for item in IntentType},
     }
-    indexed = {definition.axis_id: definition for definition in definitions}
+    indexed = {
+        definition.axis_id: definition.model_copy(
+            update={"surface_forms": tuple(sorted(definition.surface_forms))}
+        )
+        for definition in definitions
+    }
     if len(indexed) != len(definitions):
         raise ValueError("axis definitions must be unique")
     if set(indexed) != set(expected_kinds):

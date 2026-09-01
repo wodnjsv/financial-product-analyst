@@ -140,14 +140,133 @@ def test_v2_overlay_covers_every_runtime_axis_once() -> None:
     assert tuple(snapshot.axis_definitions) == tuple(
         sorted([item.value for item in ProductFamily] + [item.value for item in IntentType])
     )
+    assert {
+        axis_id: (
+            definition.axis_kind,
+            definition.preferred_label_ko,
+            definition.definition_ko,
+            definition.surface_forms,
+        )
+        for axis_id, definition in snapshot.axis_definitions.items()
+    } == {
+        "domestic_bond": (
+            "product_family",
+            "국내채권",
+            "국내에서 발행·유통되는 채권 상품 범위",
+            tuple(sorted(("국내채권", "채권"))),
+        ),
+        "domestic_etf": (
+            "product_family",
+            "국내ETF",
+            "국내 거래소에 상장된 ETF 상품 범위",
+            tuple(sorted(("국내 ETF", "국내 상장 ETF"))),
+        ),
+        "overseas_etf": (
+            "product_family",
+            "해외ETF",
+            "해외 거래소에 상장된 ETF 상품 범위",
+            tuple(sorted(("해외 ETF", "미국 ETF"))),
+        ),
+        "public_fund": (
+            "product_family",
+            "공모펀드",
+            "일반 투자자에게 공개 모집되는 비상장 공모펀드 범위",
+            tuple(sorted(("공모펀드", "펀드"))),
+        ),
+        "lookup": (
+            "action",
+            "조회",
+            "특정 상품이나 속성의 값을 확인하는 질문",
+            tuple(sorted(("알려줘", "조회", "얼마"))),
+        ),
+        "screen": (
+            "action",
+            "조건검색",
+            "명시한 조건을 만족하는 후보를 찾는 질문",
+            tuple(sorted(("찾아줘", "골라줘", "추천해줘"))),
+        ),
+        "rank": (
+            "action",
+            "순위",
+            "정렬 기준에 따라 상위·하위 상품을 구하는 질문",
+            tuple(sorted(("상위", "하위", "순위", "1위"))),
+        ),
+        "compare": (
+            "action",
+            "비교",
+            "둘 이상의 상품·집단의 차이를 대조하는 질문",
+            tuple(sorted(("비교", "더 높은", "차이"))),
+        ),
+        "aggregate": (
+            "action",
+            "집계",
+            "상품 집합을 세거나 그룹별 통계를 구하는 질문",
+            tuple(sorted(("몇 개", "분포", "평균", "합계"))),
+        ),
+        "calculate": (
+            "action",
+            "계산",
+            "제공된 값과 등록된 산식으로 파생값을 구하는 질문",
+            tuple(sorted(("계산", "환산"))),
+        ),
+        "similar": (
+            "action",
+            "유사상품",
+            "기준 상품과 등록된 축에서 유사한 후보를 찾는 질문",
+            tuple(sorted(("비슷한", "유사한"))),
+        ),
+        "explain": (
+            "action",
+            "설명",
+            "상품·속성·관계의 의미나 근거를 설명하는 질문",
+            tuple(sorted(("설명", "의미", "왜"))),
+        ),
+    }
 
 
-def test_generic_recommendation_is_not_a_personalized_policy_cue() -> None:
+def test_v2_overlay_has_exact_bounded_policy_cues() -> None:
     snapshot = load_catalog(PROJECT_ROOT)
-    surfaces = {cue.surface for cue in snapshot.policy_cues}
 
-    assert "추천해줘" not in surfaces
-    assert {"내 투자성향에 맞춰", "매수해줘"} <= surfaces
+    assert tuple((cue.semantic_tag, cue.surface) for cue in snapshot.policy_cues) == (
+        ("FUTURE_FORECAST", "앞으로 오를"),
+        ("ORDER_EXECUTION", "매수해줘"),
+        ("ORDER_EXECUTION", "주문해줘"),
+        ("PERSONALIZED_ADVICE", "내 상황에 맞는 상품"),
+        ("PERSONALIZED_ADVICE", "내 투자성향에 맞춰"),
+        ("REALTIME_REQUIRED", "지금 가격"),
+    )
+
+
+def test_catalog_axis_projection_canonicalizes_surface_form_order() -> None:
+    catalog_payload = (PROJECT_ROOT / "config/intent/semantic-query-catalog.v1.json").read_bytes()
+    overlay = json.loads(
+        (PROJECT_ROOT / "config/intent/korean-nlu-overlay.v2.json").read_text("utf-8")
+    )
+    overseas_etf = next(
+        definition
+        for definition in overlay["axis_definitions"]
+        if definition["axis_id"] == "overseas_etf"
+    )
+    overseas_etf["surface_forms"].reverse()
+    reordered_payload = json.dumps(overlay, ensure_ascii=False).encode("utf-8")
+    paths = tuple(PROJECT_ROOT / path for path in TBOX_RELATIVE_PATHS)
+    shape_paths = tuple(PROJECT_ROOT / path for path in SHACL_RELATIVE_PATHS)
+
+    original = compile_catalog(
+        catalog_payload,
+        (PROJECT_ROOT / "config/intent/korean-nlu-overlay.v2.json").read_bytes(),
+        ontology_paths=paths,
+        shacl_paths=shape_paths,
+    )
+    reordered = compile_catalog(
+        catalog_payload,
+        reordered_payload,
+        ontology_paths=paths,
+        shacl_paths=shape_paths,
+    )
+
+    assert reordered.overlay_hash == original.overlay_hash
+    assert reordered.axis_definitions == original.axis_definitions
 
 
 def test_catalog_has_exact_initial_concepts_and_family_applicability() -> None:
