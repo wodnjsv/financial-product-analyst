@@ -304,6 +304,81 @@ def test_intent_resolution_and_query_plan_model_metadata_policy() -> None:
 
 
 @pytest.mark.parametrize(
+    ("resolver_schema_version", "expected_model"),
+    (
+        ("1.0", ValidatedIntentResolution),
+        ("2.0", ValidatedIntentResolutionV2),
+    ),
+)
+def test_intent_resolution_dispatch_accepts_only_known_schema_versions(
+    resolver_schema_version: str,
+    expected_model: type[ValidatedIntentResolution],
+) -> None:
+    from financial_agent.db.repositories.artifacts import _artifact_model
+
+    payload = json.dumps(
+        {"build_manifest": {"resolver_schema_version": resolver_schema_version}}
+    )
+
+    assert _artifact_model("intent_resolution", payload) is expected_model
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {},
+        {"build_manifest": None},
+        {"build_manifest": []},
+        {"build_manifest": {}},
+        {"build_manifest": {"resolver_schema_version": None}},
+        {"build_manifest": {"resolver_schema_version": 2}},
+        {"build_manifest": {"resolver_schema_version": "3.0"}},
+    ),
+)
+def test_intent_resolution_dispatch_rejects_missing_or_unknown_schema_versions(
+    payload: object,
+) -> None:
+    from financial_agent.db.repositories.artifacts import _artifact_model
+
+    with pytest.raises(ValueError, match="INTENT_RESOLUTION_SCHEMA_VERSION_INVALID"):
+        _artifact_model("intent_resolution", json.dumps(payload))
+
+
+@pytest.mark.asyncio
+async def test_repository_append_rejects_unknown_intent_resolution_schema_version() -> None:
+    from financial_agent.db.repositories.artifacts import (
+        ArtifactValidationError,
+        RequestArtifactRepository,
+    )
+
+    context = ArtifactContext(
+        dataset_version="artifact-invalid-version",
+        run_id="run-invalid-version",
+        request_key="a" * 64,
+        question_id="Q-invalid-version",
+        question="Synthetic invalid schema version",
+        created_at=datetime(2026, 8, 17, tzinfo=UTC),
+    )
+    resolution = _artifact("intent_resolution", context)
+    invalid_resolution = resolution.model_copy(
+        update={
+            "build_manifest": resolution.build_manifest.model_copy(
+                update={"resolver_schema_version": "3.0"}
+            )
+        }
+    )
+    repository = RequestArtifactRepository(None)  # type: ignore[arg-type]
+
+    with pytest.raises(ArtifactValidationError, match="ARTIFACT_PAYLOAD_INVALID"):
+        await repository.append(
+            "intent_resolution",
+            invalid_resolution,
+            model_id="hcx-model",
+            prompt_version="prompt-v3",
+        )
+
+
+@pytest.mark.parametrize(
     ("artifact_type", "model_id", "prompt_version"),
     (
         ("intent_resolution", " ", "intent-resolver-ko-v1"),
@@ -961,6 +1036,44 @@ async def test_repository_round_trips_v2_intent_resolution(
     )
 
     assert await repository.get(context.run_id, artifact_record_id) == resolution
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_repository_restore_rejects_unknown_intent_resolution_schema_version(
+    migrated_database_url: str,
+    artifact_engine: AsyncEngine,
+) -> None:
+    from financial_agent.db.repositories.artifacts import (
+        ArtifactPersistenceError,
+        RequestArtifactRepository,
+    )
+
+    context = _artifact_context(migrated_database_url)
+    resolution = _artifact("intent_resolution", context)
+    invalid_resolution = resolution.model_copy(
+        update={
+            "build_manifest": resolution.build_manifest.model_copy(
+                update={"resolver_schema_version": "3.0"}
+            )
+        }
+    )
+    canonical_payload = canonical_json_bytes(invalid_resolution).decode("utf-8")
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        artifact_record_id = connection.execute(
+            "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+            (
+                "intent_resolution",
+                "hcx-model",
+                "prompt-v3",
+                canonical_payload,
+            ),
+        ).fetchone()[0]
+
+    repository = RequestArtifactRepository(artifact_engine)
+
+    with pytest.raises(ArtifactPersistenceError, match="ARTIFACT_RESTORE_INVALID"):
+        await repository.get(context.run_id, artifact_record_id)
 
 
 @pytest.mark.postgres

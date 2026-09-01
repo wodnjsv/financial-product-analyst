@@ -108,17 +108,17 @@ def _artifact_model(
     if artifact_type != "intent_resolution":
         return ARTIFACT_MODELS[artifact_type]
     parsed_payload = json.loads(payload)
-    manifest = (
-        parsed_payload.get("build_manifest")
-        if isinstance(parsed_payload, Mapping)
-        else None
-    )
-    if (
-        isinstance(manifest, Mapping)
-        and manifest.get("resolver_schema_version") == "2.0"
-    ):
+    if not isinstance(parsed_payload, Mapping):
+        raise ValueError("INTENT_RESOLUTION_SCHEMA_VERSION_INVALID")
+    manifest = parsed_payload.get("build_manifest")
+    if not isinstance(manifest, Mapping):
+        raise ValueError("INTENT_RESOLUTION_SCHEMA_VERSION_INVALID")
+    resolver_schema_version = manifest.get("resolver_schema_version")
+    if resolver_schema_version == "1.0":
+        return ValidatedIntentResolution
+    if resolver_schema_version == "2.0":
         return ValidatedIntentResolutionV2
-    return ValidatedIntentResolution
+    raise ValueError("INTENT_RESOLUTION_SCHEMA_VERSION_INVALID")
 
 
 class RequestArtifactRepository:
@@ -188,7 +188,7 @@ class RequestArtifactRepository:
             validated = model.model_validate_json(artifact_payload)
             validated.model_dump(mode="json")
             canonical_payload = canonical_json_bytes(validated).decode("utf-8")
-        except (TypeError, UnicodeError, json.JSONDecodeError, ValidationError) as error:
+        except (TypeError, UnicodeError, ValueError) as error:
             raise ArtifactValidationError() from error
 
         statement = sa.text(
@@ -241,5 +241,5 @@ class RequestArtifactRepository:
         try:
             model = _artifact_model(row.artifact_type, row.canonical_payload)
             return model.model_validate_json(row.canonical_payload)
-        except (TypeError, json.JSONDecodeError, ValidationError) as error:
+        except (TypeError, ValueError) as error:
             raise ArtifactPersistenceError("ARTIFACT_RESTORE_INVALID") from error
