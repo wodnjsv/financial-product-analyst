@@ -1184,6 +1184,21 @@ def evaluate_coverage(
             for case, prediction in aligned
             if case.ood_type == ood_type
         )
+
+        def expected_coverage(case: EvaluationCase) -> tuple[CoverageState, CoverageReason]:
+            if case.expected_semantic_coverage is not None:
+                return (
+                    case.expected_semantic_coverage.state,
+                    case.expected_semantic_coverage.reason,
+                )
+            return (
+                "covered",
+                "none",
+            ) if ood_type == "combination" else (
+                "unmapped",
+                "lexical_ood" if ood_type == "vocabulary" else "domain_ood",
+            )
+
         if ood_type == "context":
             return _exact_match(
                 values,
@@ -1195,10 +1210,8 @@ def evaluate_coverage(
                 numerator=sum(
                     bool(prediction.frames)
                     and all(
-                        state == case.expected_semantic_coverage.state
-                        if case.expected_semantic_coverage is not None
-                        else state == "covered"
-                        for state in _coverage_states(prediction.frames)
+                        (state, reason) == expected_coverage(case)
+                        for state, reason in _coverage_outcomes(prediction.frames)
                     )
                     for case, prediction in values
                 ),
@@ -1207,15 +1220,7 @@ def evaluate_coverage(
         return CountMetric(
             numerator=sum(
                 any(
-                    state in ("partial", "unmapped")
-                    and reason
-                    == (
-                        case.expected_semantic_coverage.reason
-                        if case.expected_semantic_coverage is not None
-                        else "lexical_ood"
-                        if ood_type == "vocabulary"
-                        else "domain_ood"
-                    )
+                    (state, reason) == expected_coverage(case)
                     for state, reason in _coverage_outcomes(prediction.frames)
                 )
                 for case, prediction in values

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import asyncio
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -20,6 +22,7 @@ from financial_agent.intent.evaluation import (
     EvaluationCase,
     EvaluationDataset,
     EvaluationFrame,
+    EvaluationFrameCoverage,
     EvaluationPrediction,
     EvaluationProbe,
     EvaluationSegment,
@@ -456,6 +459,48 @@ def test_combination_ood_is_covered_but_never_false_fast() -> None:
 
     assert (report.coverage.combination_ood.numerator, report.coverage.combination_ood.denominator) == (1, 1)
     assert report.ood.false_fast_rate.denominator == 0
+
+
+@pytest.mark.parametrize(
+    ("ood_type", "reason"),
+    (("vocabulary", "lexical_ood"), ("domain", "domain_ood")),
+)
+def test_ood_coverage_rejects_partial_state_with_the_right_reason(
+    ood_type: str, reason: str
+) -> None:
+    case_payload = _synthetic_cases()[0].model_dump()
+    case_payload.update(
+        {
+            "ood_type": ood_type,
+            "expected_semantic_coverage": {"state": "unmapped", "reason": reason},
+            "expected_references": (),
+            "expected_context_links": (),
+            "expected_slot_mutations": (),
+            "validation_probes": (),
+        }
+    )
+    case = EvaluationCase.model_validate(case_payload)
+    frame = EvaluationFrame.model_validate(
+        {
+            **_frame(0).model_dump(),
+            "semantic_coverage": {"state": "partial", "reason": reason},
+        }
+    )
+    prediction = _synthetic_predictions()[0].model_copy(
+        update={
+            "frames": (frame,),
+            "references": (),
+            "context_links": (),
+            "slot_mutations": (),
+            "validation_probe_outcomes": (),
+            "predicted_ood_type": ood_type,
+        }
+    )
+
+    report = evaluate_predictions((case,), (prediction,))
+
+    metric = report.coverage.lexical_ood if ood_type == "vocabulary" else report.coverage.domain_ood
+    assert metric == CountMetric(numerator=0, denominator=1)
 
 
 def test_exact_match_canonicalizes_case_local_frame_and_context_ids() -> None:
@@ -1003,6 +1048,7 @@ def test_deterministic_cli_is_reproducible_aggregate_only_and_provenanced(
     assert report["metrics"]["frame"] is None
     assert report["metrics"]["context"] is None
     assert report["metrics"]["ood"] is None
+    assert report["metrics"]["coverage"] is None
     assert report["provenance"]["catalog_hash"]
     assert report["provenance"]["ontology_hashes"]
     assert report["provenance"]["dataset_sha256"] == HELDOUT_SHA256
@@ -1055,16 +1101,101 @@ def test_live_cli_uses_one_second_default_pacing_and_private_tmp_report() -> Non
         [
             "--model",
             "HCX-007",
-            "--case-limit",
-            "12",
             "--report-path",
             "/private/tmp/intent-resolver-v2-live-report.json",
         ]
     )
 
     assert args.request_interval_seconds == 1.0
-    assert args.case_limit == 12
     assert args.report_path == "/private/tmp/intent-resolver-v2-live-report.json"
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "--model",
+                "HCX-007",
+                "--base-url",
+                "https://unapproved.example.test",
+                "--report-path",
+                "/private/tmp/intent-resolver-v2-live-report.json",
+            ]
+        )
+
+
+def test_live_smoke_manifest_is_stratified_without_question_text() -> None:
+    namespace = _cli_namespace()
+    dataset = parse_strict_json(HELDOUT_PATH.read_bytes(), EvaluationDataset)
+
+    cases = namespace["_live_smoke_cases"](dataset)
+
+    assert tuple(case.case_id for case in cases) == (
+        "HKO-PAR-001", "HKO-PAR-002", "HKO-PAR-003",
+        "HKO-CMP-001", "HKO-CMP-002", "HKO-CMP-003",
+        "HKO-CTX-001", "HKO-CTX-002", "HKO-CTX-003",
+        "HKO-OOD-VOC-001", "HKO-OOD-DOM-001", "HKO-OOD-CTX-001",
+    )
+    assert Counter(
+        "simple" if case.category == "paraphrase_spacing_particle"
+        else "compound" if case.category == "compound_no_punctuation_correction"
+        else "context" if case.category == "context_resolution"
+        else "ood"
+        for case in cases
+    ) == {"simple": 3, "compound": 3, "context": 3, "ood": 3}
+
+
+def test_live_schema_failure_counts_as_attempted_invalid_but_provider_failure_does_not() -> None:
+    namespace = _cli_namespace()
+    case = _synthetic_cases()[0]
+    schema_failure = namespace["_live_failed_prediction"](
+        case.case_id,
+        (),
+        provider_success=True,
+        stable_code="MODEL_PROPOSAL_SCHEMA_INVALID",
+        latency_ms=1,
+    )
+    provider_failure = namespace["_live_failed_prediction"](
+        case.case_id,
+        (),
+        provider_success=False,
+        stable_code="MODEL_PROVIDER_UNAVAILABLE",
+        latency_ms=1,
+    )
+
+    assert schema_failure.first_pass_schema.status == "invalid"
+    assert evaluate_predictions((case,), (schema_failure,)).validation.schema_validity == CountMetric(numerator=0, denominator=1)
+    assert provider_failure.first_pass_schema.status == "not_attempted"
+    assert evaluate_predictions((case,), (provider_failure,)).validation.schema_validity.denominator == 0
+
+
+def test_live_runner_awaits_between_cases_without_a_final_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = _cli_namespace()
+    waits: list[float] = []
+
+    async def fake_prediction(case: EvaluationCase, *_: object) -> EvaluationPrediction:
+        return namespace["_live_failed_prediction"](
+            case.case_id,
+            (),
+            provider_success=False,
+            stable_code="MODEL_PROVIDER_UNAVAILABLE",
+            latency_ms=0,
+        )
+
+    async def fake_sleep(seconds: float) -> None:
+        waits.append(seconds)
+
+    monkeypatch.setitem(namespace["_run_live_cases"].__globals__, "_live_prediction", fake_prediction)
+    monkeypatch.setattr(namespace["asyncio"], "sleep", fake_sleep)
+    monkeypatch.setitem(namespace["_run_live_cases"].__globals__, "_write_live_report", lambda *_: None)
+    args = argparse.Namespace(
+        model="HCX-007",
+        case_limit=12,
+        request_interval_seconds=0.25,
+        report_path="/private/tmp/intent-resolver-v2-live-report.json",
+    )
+
+    assert asyncio.run(namespace["_run_live_cases"](args, "test-key")) == 0
+    assert waits == [0.25] * 11
 
 
 def test_cli_refuses_overwriting_a_supplied_dataset(tmp_path: Path) -> None:

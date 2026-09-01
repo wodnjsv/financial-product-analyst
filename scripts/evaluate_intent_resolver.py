@@ -95,6 +95,20 @@ FIXED_CREATED_AT = datetime(2026, 8, 31, tzinfo=UTC)
 LIVE_BASE_URL = "https://clovastudio.stream.ntruss.com"
 LIVE_DATASET_VERSION = "synthetic-intent-eval-v3"
 LIVE_REPORT_DIRECTORY = Path("/private/tmp")
+LIVE_SMOKE_CASE_IDS = (
+    "HKO-PAR-001",
+    "HKO-PAR-002",
+    "HKO-PAR-003",
+    "HKO-CMP-001",
+    "HKO-CMP-002",
+    "HKO-CMP-003",
+    "HKO-CTX-001",
+    "HKO-CTX-002",
+    "HKO-CTX-003",
+    "HKO-OOD-VOC-001",
+    "HKO-OOD-DOM-001",
+    "HKO-OOD-CTX-001",
+)
 
 
 class EvaluationCliError(ValueError):
@@ -146,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
                 "frame": None,
                 "context": None,
                 "ood": None,
+                "coverage": None,
                 "validation": None,
                 "diagnostics": None,
                 "runtime": None,
@@ -288,9 +303,7 @@ def _parser() -> argparse.ArgumentParser:
 def _live_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run a sanitized HCX intent preflight.")
     parser.add_argument("--model", required=True)
-    parser.add_argument("--base-url", default=LIVE_BASE_URL)
     parser.add_argument("--request-interval-seconds", type=float, default=1.0)
-    parser.add_argument("--case-limit", type=int, required=True)
     parser.add_argument("--report-path", required=True)
     return parser
 
@@ -302,7 +315,7 @@ class _EmptyEntityRepository:
 
 def _run_live(argv: list[str]) -> int:
     args = _live_parser().parse_args(argv)
-    if args.case_limit <= 0 or args.request_interval_seconds < 0:
+    if args.request_interval_seconds < 0:
         print("LIVE_EVALUATION_ARGUMENT_INVALID", file=sys.stderr)
         return 2
     report_path = Path(args.report_path)
@@ -321,17 +334,15 @@ def _run_live(argv: list[str]) -> int:
 
 
 async def _run_live_cases(args: argparse.Namespace, api_key: str) -> int:
-    dataset_bytes = Path(args.dataset if hasattr(args, "dataset") else DEFAULT_DATASET).read_bytes()
+    dataset_bytes = DEFAULT_DATASET.read_bytes()
     dataset = parse_strict_json(dataset_bytes, EvaluationDataset)
-    cases = dataset.cases[: args.case_limit]
-    if len(cases) != args.case_limit:
-        raise ValueError("LIVE_EVALUATION_CASE_LIMIT_INVALID")
+    cases = _live_smoke_cases(dataset)
     catalog = load_catalog(PROJECT_ROOT)
     manifest = _current_manifest(catalog)
     adapter = ClovaStructuredOutputAdapter(
         ClovaResolverConfig(
             api_key=SecretStr(api_key),
-            base_url=args.base_url,
+            base_url=LIVE_BASE_URL,
             model_id=args.model,
         )
     )
@@ -349,7 +360,7 @@ async def _run_live_cases(args: argparse.Namespace, api_key: str) -> int:
     for index, case in enumerate(cases):
         predictions.append(await _live_prediction(case, service, adapter, catalog))
         if index + 1 < len(cases):
-            time.sleep(args.request_interval_seconds)
+            await asyncio.sleep(args.request_interval_seconds)
     report = evaluate_predictions(cases, predictions)
     payload: dict[str, object] = {
         "schema_version": "1.0",
@@ -361,6 +372,16 @@ async def _run_live_cases(args: argparse.Namespace, api_key: str) -> int:
     payload["report_hash"] = _sha256(canonical_json_bytes(payload))
     _write_live_report(Path(args.report_path), canonical_json_bytes(payload) + b"\n")
     return 0
+
+
+def _live_smoke_cases(dataset: EvaluationDataset) -> tuple[Any, ...]:
+    by_id = {case.case_id: case for case in dataset.cases}
+    if set(by_id) != {case.case_id for case in dataset.cases}:
+        raise ValueError("LIVE_EVALUATION_CASE_SET_INVALID")
+    try:
+        return tuple(by_id[case_id] for case_id in LIVE_SMOKE_CASE_IDS)
+    except KeyError as error:
+        raise ValueError("LIVE_EVALUATION_CASE_SET_INVALID") from error
 
 
 async def _live_prediction(
@@ -484,6 +505,13 @@ def _live_failed_prediction(
     completion_tokens: int = 0,
     schema_valid: bool = False,
 ) -> EvaluationPrediction:
+    schema_status = (
+        "invalid"
+        if stable_code == MODEL_PROPOSAL_SCHEMA_INVALID
+        else "valid"
+        if schema_valid
+        else "not_attempted"
+    )
     return EvaluationPrediction(
         case_id=case_id,
         candidate_groups=candidate_groups, candidate_reproducible=None, frames=(),
@@ -491,8 +519,12 @@ def _live_failed_prediction(
         pipeline_outcome="model_resolution_failed", provider_success=provider_success,
         predicted_ood_type=None, tags=(), blocking_issue_codes=(stable_code,),
         first_pass_schema=FirstPassSchemaOutcome(
-            status="valid" if schema_valid else "not_attempted",
-            validator_event_code="SCHEMA_VALID" if schema_valid else "SCHEMA_NOT_ATTEMPTED",
+            status=schema_status,
+            validator_event_code={
+                "invalid": "SCHEMA_INVALID",
+                "valid": "SCHEMA_VALID",
+                "not_attempted": "SCHEMA_NOT_ATTEMPTED",
+            }[schema_status],
         ),
         repair=RepairOutcome(status="not_attempted", validator_event_code="REPAIR_NOT_ATTEMPTED"),
         validation_probe_outcomes=(), latency_ms=latency_ms,
