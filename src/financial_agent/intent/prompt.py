@@ -69,11 +69,9 @@ def build_clova_response_schema(view: ResolverView) -> dict[str, object]:
     segment_ids = _segment_ids(view)
     evidence_identifier = _restricted_identifier_array(evidence_ids)
     reason_code = _enum_strings(REASON_CODES)
-    action_choice = _axis_choice(
-        _enum_strings(tuple(view.action_ids)), evidence_identifier, reason_code
-    )
+    action_choice = _axis_choice(tuple(view.action_ids), evidence_identifier, reason_code)
     product_family_choice = _axis_choice(
-        _enum_strings(tuple(view.product_family_ids)), evidence_identifier, reason_code
+        tuple(view.product_family_ids), evidence_identifier, reason_code
     )
     slot_assignment = _slot_assignment_schema(view, evidence_identifier, reason_code)
     entity_hint = _object(
@@ -271,14 +269,14 @@ def _concept_ids(view: ResolverView, kinds: set[str]) -> tuple[str, ...]:
 
 
 def _axis_choice(
-    selected_ids: dict[str, object],
+    selected_ids: tuple[str, ...],
     evidence_identifier: dict[str, object],
     reason_code: dict[str, object],
 ) -> dict[str, object]:
     return _object(
         {
             "state": _enum_members(ChoiceState),
-            "selected_ids": _array(selected_ids),
+            "selected_ids": _restricted_identifier_array(selected_ids),
             "evidence_ids": evidence_identifier,
             "reason_code": reason_code,
         }

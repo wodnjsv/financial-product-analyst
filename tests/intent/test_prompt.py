@@ -203,6 +203,34 @@ def test_response_schema_uses_empty_arrays_when_no_dynamic_id_is_offered() -> No
     assert selector_literal_candidate_id['items'] == {'type': 'string'}
 
 
+def test_response_schema_closes_selected_actions_when_none_are_offered() -> None:
+    schema = build_clova_response_schema(make_view().model_copy(update={'action_ids': ()}))
+    selected_ids = schema['properties']['frames']['items']['properties']['action_choice'][
+        'properties'
+    ]['selected_ids']
+
+    assert selected_ids == {
+        'type': 'array',
+        'items': {'type': 'string'},
+        'maxItems': 0,
+    }
+
+
+def test_response_schema_closes_selected_product_families_when_none_are_offered() -> None:
+    schema = build_clova_response_schema(
+        make_view().model_copy(update={'product_family_ids': ()})
+    )
+    selected_ids = schema['properties']['frames']['items']['properties'][
+        'product_family_choice'
+    ]['properties']['selected_ids']
+
+    assert selected_ids == {
+        'type': 'array',
+        'items': {'type': 'string'},
+        'maxItems': 0,
+    }
+
+
 def test_response_schema_only_allows_offered_entity_mention_and_evidence_ids() -> None:
     schema = build_clova_response_schema(make_view())
     frame = schema['properties']['frames']['items']['properties']
