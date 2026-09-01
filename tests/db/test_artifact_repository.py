@@ -36,7 +36,10 @@ from financial_agent.contracts import (
     canonical_json_bytes,
 )
 from financial_agent.db.preflight import normalize_psycopg_url
-from financial_agent.intent.resolution import ValidatedIntentResolution
+from financial_agent.intent.resolution import (
+    ValidatedIntentResolution,
+    ValidatedIntentResolutionV2,
+)
 from tests.fixtures.db.synthetic_dataset import (
     CREATED_AT,
     VALID_RECORD_HASH,
@@ -244,6 +247,41 @@ def _artifact(
     return MODEL_BY_TYPE[artifact_type].model_validate_json(
         json.dumps(payload, ensure_ascii=False)
     )
+
+
+def _v2_intent_resolution(context: ArtifactContext) -> ValidatedIntentResolutionV2:
+    payload = json.loads(canonical_json_bytes(_artifact("intent_resolution", context)))
+    payload["build_manifest"]["resolver_schema_version"] = "2.0"
+    payload["canonical_frames"] = [
+        {
+            "frame_id": "frame-syn-001",
+            "ordinal": 0,
+            "frame_status": "resolved",
+            "segment_ids": ["segment-syn-001"],
+            "evidence_span_ids": [],
+            "action_choice": {
+                "state": "selected",
+                "selected_ids": ["lookup"],
+                "evidence_span_ids": [],
+                "reason_code": "explicit",
+            },
+            "product_family_choice": {
+                "state": "selected",
+                "selected_ids": ["domestic_etf"],
+                "evidence_span_ids": [],
+                "reason_code": "explicit",
+            },
+            "entity_type_ids": [],
+            "entity_hint_ids": [],
+            "slot_assignments": [],
+            "produced_result_roles": [],
+            "slot_mutations": [],
+            "semantic_coverage": [
+                {"state": "covered", "reason": "none", "evidence_ids": []}
+            ],
+        }
+    ]
+    return ValidatedIntentResolutionV2.model_validate(payload)
 
 
 def test_intent_resolution_and_query_plan_model_metadata_policy() -> None:
@@ -901,6 +939,28 @@ async def test_repository_round_trips_all_registered_models(
         ).fetchall()
     assert dict(rows) == expected_contract_ids
     assert len(set(stored.values())) == 9
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_repository_round_trips_v2_intent_resolution(
+    migrated_database_url: str,
+    artifact_engine: AsyncEngine,
+) -> None:
+    from financial_agent.db.repositories.artifacts import RequestArtifactRepository
+
+    context = _artifact_context(migrated_database_url)
+    resolution = _v2_intent_resolution(context)
+    repository = RequestArtifactRepository(artifact_engine)
+
+    artifact_record_id = await repository.append(
+        "intent_resolution",
+        resolution,
+        model_id="hcx-model",
+        prompt_version="prompt-v2",
+    )
+
+    assert await repository.get(context.run_id, artifact_record_id) == resolution
 
 
 @pytest.mark.postgres

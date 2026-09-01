@@ -3,9 +3,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
 
-from .draft import IntentResolutionDraft
+from .draft import IntentResolutionDraft, IntentResolutionDraftV2
 from .proposal import IntentResolutionProposalV2
-from .resolution import ResolverBuildManifest, ValidatedIntentResolution
+from .resolution import (
+    ResolverBuildManifest,
+    ValidatedIntentResolution,
+    ValidatedIntentResolutionV2,
+)
 
 SCHEMA_REGISTRY = {
     "intent-resolution-draft": IntentResolutionDraft,
@@ -14,6 +18,9 @@ SCHEMA_REGISTRY = {
 }
 V2_SCHEMA_REGISTRY = {
     "intent-resolution-proposal": IntentResolutionProposalV2,
+    "resolver-build-manifest": ResolverBuildManifest,
+    "intent-resolution-draft": IntentResolutionDraftV2,
+    "validated-intent-resolution": ValidatedIntentResolutionV2,
 }
 
 

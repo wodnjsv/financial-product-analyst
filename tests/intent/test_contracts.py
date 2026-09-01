@@ -171,6 +171,15 @@ def test_v1_validated_resolution_schema_and_serialization_exclude_v2_coverage() 
     )
 
 
+def test_historical_v1_validated_resolution_json_still_parses_as_v1() -> None:
+    historical_payload = json.dumps(valid_validated_resolution_payload())
+
+    resolution = ValidatedIntentResolution.model_validate_json(historical_payload)
+
+    assert type(resolution) is ValidatedIntentResolution
+    assert resolution.build_manifest.resolver_schema_version == "1.0"
+
+
 def test_v2_draft_requires_exactly_one_semantic_coverage() -> None:
     payload = valid_draft_payload()
     frames = payload["intent_frames"]
