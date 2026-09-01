@@ -104,6 +104,7 @@ from financial_agent.intent.view import (
     ResolverViewSemanticCandidateGroup,
     build_manifest,
 )
+from tests.intent.view_fixtures import complete_axis_definitions
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -1163,6 +1164,9 @@ def _stored_artifacts(
         relation_definitions=(),
         literal_candidates=(),
         entity_candidates=(),
+        axis_definitions=complete_axis_definitions(),
+        evidence_candidates=(),
+        reference_candidates=(),
     )
     span = EvidenceSpan(
         span_id="span-1", segment_id="s1", start_char=0, end_char=2, text="국내"
