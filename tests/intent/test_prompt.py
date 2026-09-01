@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from financial_agent.contracts.canonical import build_request_key
 from financial_agent.contracts.request import RequestContext, Segment
+from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
 from financial_agent.intent.prompt import build_clova_response_schema, build_prompt
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
 from financial_agent.intent.view import (
@@ -14,6 +15,7 @@ from financial_agent.intent.view import (
     ResolverViewEntityCandidate,
     ResolverViewEntityCandidateGroup,
     ResolverViewLiteralCandidate,
+    ResolverViewReferenceCandidate,
     ResolverViewSemanticCandidate,
     ResolverViewSemanticCandidateGroup,
 )
@@ -107,8 +109,26 @@ def make_view() -> ResolverView:
             ),
         ),
         axis_definitions=complete_axis_definitions(),
-        evidence_candidates=(),
-        reference_candidates=(),
+        evidence_candidates=(
+            EvidenceCandidate(
+                evidence_id='evidence-aum',
+                segment_id='s1',
+                start_char=0,
+                end_char=3,
+                text='AUM',
+                source_kinds=(EvidenceSourceKind.SEMANTIC,),
+                offered_semantic_ids=('aum',),
+            ),
+        ),
+        reference_candidates=(
+            ResolverViewReferenceCandidate(
+                reference_id='reference-that',
+                segment_id='s1',
+                text='그것',
+                start_char=0,
+                end_char=2,
+            ),
+        ),
     )
 
 
@@ -134,11 +154,13 @@ def assert_supported_schema(value: object) -> None:
         'enum',
         'anyOf',
         'format',
+        'additionalProperties',
     }
     if isinstance(value, dict):
         assert set(value) <= allowed
         if value.get('type') == 'object':
             assert set(value['required']) == set(value['properties'])
+            assert value['additionalProperties'] is False
         nested_values = (
             value['properties'].values()
             if 'properties' in value
@@ -171,9 +193,9 @@ def test_response_schema_enums_only_offered_semantic_ids() -> None:
     assert_supported_schema(schema)
 
 
-def test_response_schema_uses_an_empty_array_when_no_dynamic_id_is_offered() -> None:
+def test_response_schema_uses_empty_arrays_when_no_dynamic_id_is_offered() -> None:
     schema = build_clova_response_schema(make_view().model_copy(update={'literal_candidates': ()}))
-    selector_literal_candidate_id = schema['properties']['context_link_hints']['items']['properties'][
+    selector_literal_candidate_id = schema['properties']['context_links']['items']['properties'][
         'selector_literal_candidate_id'
     ]
 
@@ -181,22 +203,19 @@ def test_response_schema_uses_an_empty_array_when_no_dynamic_id_is_offered() -> 
     assert selector_literal_candidate_id['items'] == {'type': 'string'}
 
 
-def test_response_schema_only_allows_offered_entity_mention_ids() -> None:
+def test_response_schema_only_allows_offered_entity_mention_and_evidence_ids() -> None:
     schema = build_clova_response_schema(make_view())
-    entity_hint = schema['properties']['entity_hints']['items']['properties']
-    reference_hint = schema['properties']['reference_hints']['items']['properties']
+    frame = schema['properties']['frames']['items']['properties']
+    entity_hint = frame['entity_hints']['items']['properties']
 
     assert entity_hint['mention_id'] == {
         'type': 'array',
         'items': {'type': 'string', 'enum': ['mention-entity-1']},
         'maxItems': 1,
     }
-    assert reference_hint['candidate_target_mention_ids'] == {
+    assert frame['action_choice']['properties']['evidence_ids'] == {
         'type': 'array',
-        'items': {
-            'type': 'string',
-            'enum': ['mention-1', 'mention-entity-1'],
-        },
+        'items': {'type': 'string', 'enum': ['evidence-aum']},
     }
 
 
@@ -204,24 +223,29 @@ def test_response_schema_closes_entity_mention_ids_when_none_are_offered() -> No
     schema = build_clova_response_schema(
         make_view().model_copy(update={'entity_candidates': (), 'semantic_candidates': ()})
     )
-    entity_hint = schema['properties']['entity_hints']['items']['properties']
-    reference_hint = schema['properties']['reference_hints']['items']['properties']
+    entity_hint = schema['properties']['frames']['items']['properties']['entity_hints']['items'][
+        'properties'
+    ]
 
     assert entity_hint['mention_id'] == {
         'type': 'array',
         'items': {'type': 'string'},
         'maxItems': 0,
     }
-    assert reference_hint['candidate_target_mention_ids'] == {
-        'type': 'array',
-        'items': {'type': 'string'},
-        'maxItems': 0,
-    }
+
+
+def test_response_schema_closes_reference_arrays_when_none_are_offered() -> None:
+    schema = build_clova_response_schema(
+        make_view().model_copy(update={'reference_candidates': ()})
+    )
+
+    assert schema['properties']['references']['maxItems'] == 0
+    assert schema['properties']['context_links']['maxItems'] == 0
 
 
 def test_response_schema_uses_stable_reason_codes() -> None:
     schema = build_clova_response_schema(make_view())
-    frame = schema['properties']['intent_frames']['items']['properties']
+    frame = schema['properties']['frames']['items']['properties']
     expected = {
         'type': 'string',
         'enum': ['ambiguous', 'explicit', 'implicit', 'policy_explicit', 'unmapped'],
@@ -234,7 +258,7 @@ def test_response_schema_uses_stable_reason_codes() -> None:
 
 def test_response_schema_restricts_value_ids_by_slot_kind() -> None:
     schema = build_clova_response_schema(make_view())
-    slot_schema = schema['properties']['intent_frames']['items']['properties'][
+    slot_schema = schema['properties']['frames']['items']['properties'][
         'slot_assignments'
     ]['items']
     variants = {
@@ -254,4 +278,24 @@ def test_response_schema_restricts_value_ids_by_slot_kind() -> None:
         'type': 'array',
         'items': {'type': 'string'},
         'maxItems': 0,
+    }
+
+
+def test_response_schema_uses_bounded_frame_ordinals_and_offered_references() -> None:
+    schema = build_clova_response_schema(make_view())
+    context_link = schema['properties']['context_links']['items']['properties']
+
+    assert context_link['producer_frame_ordinal'] == {
+        'type': 'integer',
+        'minimum': 0,
+        'maximum': 15,
+    }
+    assert context_link['consumer_frame_ordinal'] == {
+        'type': 'integer',
+        'minimum': 0,
+        'maximum': 15,
+    }
+    assert context_link['reference_id'] == {
+        'type': 'string',
+        'enum': ['reference-that'],
     }

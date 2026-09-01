@@ -16,6 +16,20 @@ class ResolutionStatus(str, Enum):
     CONTEXT_UNRESOLVED = "context_unresolved"
 
 
+class SemanticCoverageState(str, Enum):
+    COVERED = "covered"
+    PARTIAL = "partial"
+    UNMAPPED = "unmapped"
+
+
+class SemanticCoverageReason(str, Enum):
+    NONE = "none"
+    LEXICAL_OOD = "lexical_ood"
+    DOMAIN_OOD = "domain_ood"
+    UNSUPPORTED_OPERATION = "unsupported_operation"
+    MISSING_CRITICAL_SEMANTIC = "missing_critical_semantic"
+
+
 class ReferenceForm(str, Enum):
     DEMONSTRATIVE = "demonstrative"
     ZERO_ANAPHORA = "zero_anaphora"

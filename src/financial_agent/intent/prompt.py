@@ -1,4 +1,4 @@
-"""Prompt serialization and HCX-compatible response-schema construction."""
+"""Prompt serialization and HCX-compatible proposal response schemas."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from financial_agent.contracts.request import RequestContext
 from financial_agent.contracts.enums import Cardinality, ReferenceMentionType
+from financial_agent.contracts.request import RequestContext
 
 from .types import (
     ChoiceState,
@@ -15,6 +15,8 @@ from .types import (
     ReferenceForm,
     ReferenceTargetKind,
     Selector,
+    SemanticCoverageReason,
+    SemanticCoverageState,
     SemanticTag,
     SlotKind,
     SlotMutationKind,
@@ -25,12 +27,13 @@ from .view import ResolverView
 
 SYSTEM_MESSAGE = (
     "You are the financial-product intent resolver. Return only one JSON object "
-    "that conforms to the supplied response schema. Select only offered identifiers; "
-    "do not guess. Every selected conclusion must be supported by exact original-text "
-    "evidence spans."
+    "that conforms to the supplied response schema. Use the supplied definitions "
+    "and original text to select only offered identifiers and frame ordinals. "
+    "Do not create identifiers, evidence, text, or offsets."
 )
 
 REASON_CODES = ("ambiguous", "explicit", "implicit", "policy_explicit", "unmapped")
+_FRAME_ORDINAL = {"type": "integer", "minimum": 0, "maximum": 15}
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,121 +61,131 @@ def build_prompt(context: RequestContext, view: ResolverView) -> ResolverPromptE
 
 
 def build_clova_response_schema(view: ResolverView) -> dict[str, object]:
-    """Build the restricted JSON Schema subset accepted by HCX Structured Outputs."""
+    """Build the restricted HCX schema for IntentResolutionProposalV2 only."""
+    evidence_ids = _evidence_ids(view)
+    reference_ids = _reference_ids(view)
     entity_ids = _entity_ids(view)
     entity_mention_ids = _entity_mention_ids(view)
-    target_mention_ids = _target_mention_ids(view)
-    entity_type_ids = _entity_type_ids(view)
-
-    identifier = _string()
-    entity_identifier = _restricted_identifier_array(entity_ids)
-    entity_type_identifier = _restricted_identifier_array(entity_type_ids)
+    segment_ids = _segment_ids(view)
+    evidence_identifier = _restricted_identifier_array(evidence_ids)
     reason_code = _enum_strings(REASON_CODES)
-    evidence_span = _object(
-        {
-            "span_id": identifier,
-            "segment_id": identifier,
-            "start_char": _integer(minimum=0),
-            "end_char": _integer(minimum=0),
-            "text": _string(),
-        }
+    action_choice = _axis_choice(
+        _enum_strings(tuple(view.action_ids)), evidence_identifier, reason_code
     )
-    action_choice = _axis_choice(_enum_strings(tuple(view.action_ids)), reason_code)
     product_family_choice = _axis_choice(
-        _enum_strings(tuple(view.product_family_ids)), reason_code
+        _enum_strings(tuple(view.product_family_ids)), evidence_identifier, reason_code
     )
-    slot_assignment = _slot_assignment_schema(view, identifier, reason_code)
+    slot_assignment = _slot_assignment_schema(view, evidence_identifier, reason_code)
     entity_hint = _object(
         {
-            "entity_hint_id": identifier,
             "mention_id": _restricted_identifier_array(entity_mention_ids, max_items=1),
-            "evidence_span_ids": _array(identifier),
-            "expected_entity_type_ids": entity_type_identifier,
-            "candidate_entity_ids": entity_identifier,
-            "selected_candidate_ids": _restricted_identifier_array(entity_ids, max_items=1),
-            "reason_code": reason_code,
+            "candidate_entity_ids": _restricted_identifier_array(entity_ids),
         }
     )
-    reference_hint = _object(
+    frame = _object(
         {
-            "reference_id": identifier,
-            "segment_id": identifier,
-            "evidence_span_ids": _array(identifier),
+            "segment_ids": _restricted_identifier_array(segment_ids),
+            "action_choice": action_choice,
+            "product_family_choice": product_family_choice,
+            "semantic_coverage": _semantic_coverage_schema(evidence_identifier),
+            "slot_assignments": _array(slot_assignment),
+            "entity_hints": _array(entity_hint),
+            "produced_result_hints": _array(_enum_members(SourceRole)),
+        }
+    )
+    reference = _object(
+        {
+            "reference_id": _restricted_identifier(reference_ids),
+            "producer_frame_ordinals": _array(_FRAME_ORDINAL),
             "surface_presence": _enum_members(ReferenceMentionType),
             "reference_form": _enum_members(ReferenceForm),
-            "grammatical_number": _optional(_enum_strings(("singular", "plural", "unknown"))),
+            "grammatical_number": _optional(
+                _enum_strings(("singular", "plural", "unknown"))
+            ),
             "expected_target_kind": _optional(_enum_members(ReferenceTargetKind)),
             "expected_cardinality": _optional(_enum_members(Cardinality)),
-            "candidate_target_frame_ids": _array(identifier),
-            "candidate_target_mention_ids": _restricted_identifier_array(target_mention_ids),
             "status": _enum_strings(("resolved", "ambiguous", "unresolved")),
             "reason_code": reason_code,
         }
     )
-    context_link_hint = _object(
+    context_link = _object(
         {
-            "context_link_id": identifier,
-            "reference_id": identifier,
+            "reference_id": _restricted_identifier(reference_ids),
             "link_type": _enum_members(ContextLinkType),
             "source_role": _enum_members(SourceRole),
             "selector": _optional(_enum_members(Selector)),
             "selector_literal_candidate_id": _restricted_identifier_array(
                 _literal_ids(view), max_items=1
             ),
-            "producer_frame_id": identifier,
-            "consumer_frame_id": identifier,
+            "producer_frame_ordinal": _FRAME_ORDINAL,
+            "consumer_frame_ordinal": _FRAME_ORDINAL,
             "target_slot_kind": _optional(_enum_members(SlotKind)),
         }
     )
     slot_mutation = _object(
         {
-            "slot_mutation_id": identifier,
-            "consumer_frame_id": identifier,
+            "consumer_frame_ordinal": _FRAME_ORDINAL,
             "slot_kind": _enum_members(SlotKind),
             "mutation_kind": _enum_members(SlotMutationKind),
-            "source_frame_id": _optional(identifier),
-            "evidence_span_ids": _array(identifier),
+            "source_frame_ordinal": _optional(_FRAME_ORDINAL),
+            "evidence_ids": evidence_identifier,
             "reason_code": reason_code,
         }
     )
-    semantic_flag_hint = _object(
+    semantic_flag = _object(
         {
             "semantic_tag": _enum_members(SemanticTag),
-            "evidence_span_ids": _array(identifier),
+            "evidence_ids": evidence_identifier,
             "reason_code": reason_code,
-        }
-    )
-    intent_frame = _object(
-        {
-            "frame_id": identifier,
-            "ordinal": _integer(minimum=0),
-            "segment_ids": _array(identifier),
-            "evidence_span_ids": _array(identifier),
-            "normalized_intent_argument": _string(),
-            "action_choice": action_choice,
-            "product_family_choice": product_family_choice,
-            "entity_type_ids": entity_type_identifier,
-            "entity_hint_ids": _array(identifier),
-            "slot_assignments": _array(slot_assignment),
-            "produced_result_hints": _array(_enum_members(SourceRole)),
         }
     )
     return _object(
         {
-            "evidence_spans": _array(evidence_span),
-            "intent_frames": _array(intent_frame, max_items=16),
-            "entity_hints": _array(entity_hint),
-            "reference_hints": _array(reference_hint),
-            "context_link_hints": _array(context_link_hint),
+            "proposal_schema_version": _enum_strings(("2.0",)),
+            "frames": _array(frame, max_items=16),
+            "references": _array(reference, max_items=0 if not reference_ids else None),
+            "context_links": _array(
+                context_link, max_items=0 if not reference_ids else None
+            ),
             "slot_mutations": _array(slot_mutation),
-            "semantic_flag_hints": _array(semantic_flag_hint),
+            "semantic_flag_hints": _array(semantic_flag),
             "frame_limit_exceeded": {"type": "boolean"},
+        }
+    )
+
+
+def _semantic_coverage_schema(evidence_identifier: dict[str, object]) -> dict[str, object]:
+    return _object(
+        {
+            "state": _enum_members(SemanticCoverageState),
+            "reason": _enum_members(SemanticCoverageReason),
+            "evidence_ids": evidence_identifier,
         }
     )
 
 
 def _literal_ids(view: ResolverView) -> tuple[str, ...]:
     return tuple(sorted(item.literal_id for item in view.literal_candidates))
+
+
+def _evidence_ids(view: ResolverView) -> tuple[str, ...]:
+    return tuple(sorted(item.evidence_id for item in view.evidence_candidates))
+
+
+def _reference_ids(view: ResolverView) -> tuple[str, ...]:
+    return tuple(sorted(item.reference_id for item in view.reference_candidates))
+
+
+def _segment_ids(view: ResolverView) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                *(item.segment_id for item in view.evidence_candidates),
+                *(item.segment_id for item in view.reference_candidates),
+                *(item.segment_id for item in view.literal_candidates),
+            }
+        )
+    )
 
 
 def _entity_ids(view: ResolverView) -> tuple[str, ...]:
@@ -185,50 +198,20 @@ def _entity_mention_ids(view: ResolverView) -> tuple[str, ...]:
     return tuple(sorted(group.mention_id for group in view.entity_candidates))
 
 
-def _target_mention_ids(view: ResolverView) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            {
-                *(group.mention_id for group in view.semantic_candidates),
-                *(group.mention_id for group in view.entity_candidates),
-            }
-        )
-    )
-
-
-def _entity_type_ids(view: ResolverView) -> tuple[str, ...]:
-    return tuple(
-        sorted(
-            {
-                *(
-                    ontology_type_id
-                    for group in view.entity_candidates
-                    for item in group.items
-                    for ontology_type_id in item.ontology_type_ids
-                ),
-                *(item for concept in view.concept_definitions for item in concept.allowed_ontology_types),
-                *(item for relation in view.relation_definitions for item in relation.subject_ontology_types),
-                *(item for relation in view.relation_definitions for item in relation.object_ontology_types),
-            }
-        )
-    )
-
-
 def _slot_assignment_schema(
     view: ResolverView,
-    identifier: dict[str, object],
+    evidence_identifier: dict[str, object],
     reason_code: dict[str, object],
 ) -> dict[str, object]:
     return {
         "anyOf": [
             _object(
                 {
-                    "slot_assignment_id": identifier,
                     "slot_kind": _enum_strings((slot_kind.value,)),
                     "value_ids": _restricted_identifier_array(
                         _slot_value_ids(view, slot_kind)
                     ),
-                    "evidence_span_ids": _array(identifier),
+                    "evidence_ids": evidence_identifier,
                     "reason_code": reason_code,
                 }
             )
@@ -288,20 +271,27 @@ def _concept_ids(view: ResolverView, kinds: set[str]) -> tuple[str, ...]:
 
 
 def _axis_choice(
-    selected_ids: dict[str, object], reason_code: dict[str, object]
+    selected_ids: dict[str, object],
+    evidence_identifier: dict[str, object],
+    reason_code: dict[str, object],
 ) -> dict[str, object]:
     return _object(
         {
             "state": _enum_members(ChoiceState),
             "selected_ids": _array(selected_ids),
-            "evidence_span_ids": _array(_string()),
+            "evidence_ids": evidence_identifier,
             "reason_code": reason_code,
         }
     )
 
 
 def _object(properties: dict[str, object]) -> dict[str, object]:
-    return {"type": "object", "properties": properties, "required": list(properties)}
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
 
 
 def _array(items: dict[str, object], *, max_items: int | None = None) -> dict[str, object]:
@@ -323,12 +313,14 @@ def _restricted_identifier_array(
     return _array(_string(), max_items=0)
 
 
+def _restricted_identifier(values: tuple[str, ...]) -> dict[str, object]:
+    if values:
+        return _enum_strings(values)
+    return _string()
+
+
 def _string() -> dict[str, object]:
     return {"type": "string"}
-
-
-def _integer(*, minimum: int) -> dict[str, object]:
-    return {"type": "integer", "minimum": minimum}
 
 
 def _enum_strings(values: tuple[str, ...]) -> dict[str, object]:
