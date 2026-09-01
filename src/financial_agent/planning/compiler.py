@@ -176,6 +176,40 @@ class QueryPlanCompiler:
         subtasks: list[Subtask] = []
         for frame in resolution.canonical_frames:
             action = frame.action_choice.selected_ids[0]
+            family_parameters = tuple(
+                f"family:{family.value}"
+                for family in frame.product_family_choice.selected_ids
+            )
+            coverage_parameters = tuple(
+                f"evidence:{evidence_id}"
+                for coverage in frame.semantic_coverage
+                for evidence_id in coverage.evidence_ids
+            )
+            entity_parameters = tuple(
+                f"entity:{value_id}"
+                for assignment in lowered.assignments_by_frame[frame.frame_id]
+                if assignment.slot_kind is SlotKind.ENTITY
+                for value_id in assignment.value_ids
+            ) + tuple(
+                f"entity_request:resolve:{hint.entity_hint_id}"
+                for hint in resolution.entity_hints
+                if hint.entity_hint_id in frame.entity_hint_ids
+                and not hint.selected_candidate_ids
+            )
+            semantic_slot_parameters = tuple(
+                f"slot:{assignment.slot_kind.value}:{value_id}"
+                for assignment in lowered.assignments_by_frame[frame.frame_id]
+                if assignment.slot_kind
+                in {
+                    SlotKind.METRIC,
+                    SlotKind.SORT_KEY,
+                    SlotKind.RELATION,
+                    SlotKind.COMPARISON_BASIS,
+                    SlotKind.SIMILARITY_ANCHOR,
+                    SlotKind.DOCUMENT_TOPIC,
+                }
+                for value_id in assignment.value_ids
+            )
             frame_primitives = (
                 ("explore-catalog",)
                 if explore
@@ -205,8 +239,16 @@ class QueryPlanCompiler:
                 parameter_ids = tuple(
                     parameter
                     for parameter in primitive.parameter_ids
-                    if parameter in present_slots or parameter == "semantic_evidence"
-                ) + link_parameters
+                    if parameter in present_slots
+                    or parameter == "semantic_evidence"
+                    or parameter.startswith("policy:")
+                ) + (
+                    link_parameters
+                    + family_parameters
+                    + coverage_parameters
+                    + entity_parameters
+                    + semantic_slot_parameters
+                )
                 operations.append(
                     OperationSpec(
                         subtask_id=frame.frame_id,

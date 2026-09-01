@@ -375,3 +375,29 @@ def resolution(
         invalid_attempt_hashes=(),
         entity_hints=(),
     )
+
+
+def cross_family_resolution() -> ValidatedIntentResolutionV2:
+    source = resolution(
+        tags=(SemanticTag.CROSS_FAMILY, SemanticTag.NORMALIZATION_REQUIRED)
+    )
+    cross_family_frame = source.canonical_frames[0].model_copy(
+        update={
+            "product_family_choice": source.canonical_frames[
+                0
+            ].product_family_choice.model_copy(
+                update={
+                    "selected_ids": (
+                        ProductFamily.DOMESTIC_ETF,
+                        ProductFamily.OVERSEAS_ETF,
+                    )
+                }
+            )
+        }
+    )
+    return source.model_copy(
+        update={
+            "canonical_frames": (cross_family_frame,),
+            "resolution_id": "resolution-cross-family",
+        }
+    )

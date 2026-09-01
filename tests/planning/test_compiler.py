@@ -1,23 +1,37 @@
 from pathlib import Path
 
+import pytest
+
 from financial_agent.contracts.enums import (
     Capability,
     InitialAnswerability,
+    IntentType,
     ReferenceTargetKind,
 )
 from financial_agent.contracts.values import decode_contract_value
 from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.draft import EntityHintV2
 from financial_agent.intent.types import (
+    EntitySemanticRole,
     ResolutionStatus,
     SemanticCoverageState,
     SemanticTag,
+    SlotKind,
 )
 from financial_agent.planning.compiler import QueryPlanCompiler
 from financial_agent.planning.compiler import CompilerInvariantError
 from financial_agent.planning.contracts import CompilationRoute
 from financial_agent.planning.registry import load_planning_registry
 
-from .fixtures import resolution, screen_resolution, view
+from .fixtures import (
+    cross_family_resolution,
+    concept,
+    frame,
+    resolution,
+    screen_resolution,
+    slot,
+    view,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -47,6 +61,47 @@ def test_single_family_rank_lowers_literals_and_uses_fast_archetype() -> None:
     )
     assert decode_contract_value(limit.value) == 5
     assert result.query_plan.initial_answerability is InitialAnswerability.SUPPORTED
+    rank = result.query_plan.operations[-1]
+    assert "policy:rank-coverage.v1" in rank.parameter_ids
+
+
+def test_selected_entity_is_carried_into_each_scoped_operation() -> None:
+    """Catches a product-specific question widening to the full family universe."""
+    source = resolution()
+    hint = EntityHintV2(
+        entity_hint_id="hint-1",
+        mention_id=(),
+        evidence_span_ids=(),
+        expected_entity_type_ids=("ETF",),
+        candidate_entity_ids=("entity-kodex-200",),
+        selected_candidate_ids=("entity-kodex-200",),
+        reason_code="exact",
+        semantic_role=EntitySemanticRole.FRAME_SUBJECT,
+        relation_id=(),
+    )
+    selected_frame = source.canonical_frames[0].model_copy(
+        update={
+            "entity_hint_ids": ("hint-1",),
+            "slot_assignments": (
+                *source.canonical_frames[0].slot_assignments,
+                slot("slot-entity", SlotKind.ENTITY, ("entity-kodex-200",)),
+            ),
+        }
+    )
+    selected = source.model_copy(
+        update={
+            "canonical_frames": (selected_frame,),
+            "entity_hints": (hint,),
+        }
+    )
+
+    result = compiler().compile(selected, view())
+
+    assert result.query_plan is not None
+    assert all(
+        "entity:entity-kodex-200" in item.parameter_ids
+        for item in result.query_plan.operations
+    )
 
 
 def test_context_rerank_lowers_binding_reference_and_dependency() -> None:
@@ -78,6 +133,110 @@ def test_context_rerank_lowers_binding_reference_and_dependency() -> None:
         "operation:frame-2:rank-products"
     ]
     assert "binding:frame-1:top_k_products" in second_operations[0].parameter_ids
+
+
+def test_cross_family_rank_keeps_comparability_and_normalization_operations() -> None:
+    """Catches a Fast plan directly merging values with incompatible units."""
+    result = compiler().compile(cross_family_resolution(), view())
+
+    assert result.route is CompilationRoute.FAST
+    assert result.matched_archetype_id == "rank.cross-family.v1"
+    assert result.query_plan is not None
+    assert [item.operation_id for item in result.query_plan.operations] == [
+        "operation:frame-1:lookup-products",
+        "operation:frame-1:check-comparability",
+        "operation:frame-1:normalize-values",
+        "operation:frame-1:rank-products",
+    ]
+    for operation in result.query_plan.operations:
+        assert "family:domestic_etf" in operation.parameter_ids
+        assert "family:overseas_etf" in operation.parameter_ids
+
+
+@pytest.mark.parametrize(
+    ("action", "assignments", "tags", "expected"),
+    (
+        (
+            IntentType.COMPARE,
+            (slot("slot-metric", SlotKind.METRIC, ("aum",)),),
+            (),
+            ("lookup-products", "compare-products"),
+        ),
+        (
+            IntentType.AGGREGATE,
+            (slot("slot-metric", SlotKind.METRIC, ("aum",)),),
+            (),
+            ("lookup-products", "aggregate-products"),
+        ),
+        (
+            IntentType.CALCULATE,
+            (slot("slot-metric", SlotKind.METRIC, ("aum",)),),
+            (),
+            ("lookup-products", "calculate-products"),
+        ),
+        (
+            IntentType.SIMILAR,
+            (slot("slot-anchor", SlotKind.SIMILARITY_ANCHOR, ("aum",)),),
+            (),
+            ("lookup-products", "similar-products"),
+        ),
+        (
+            IntentType.EXPLAIN,
+            (
+                slot(
+                    "slot-topic",
+                    SlotKind.DOCUMENT_TOPIC,
+                    ("product_structure",),
+                ),
+            ),
+            (SemanticTag.DOCUMENT_GROUNDED,),
+            ("lookup-products", "search-documents"),
+        ),
+    ),
+)
+def test_registered_archetypes_compile_the_expected_operation_chain(
+    action,
+    assignments,
+    tags,
+    expected,
+) -> None:
+    source = resolution(tags=tags)
+    action_frame = frame(
+        "frame-1",
+        0,
+        metric_id="aum",
+        limit_id="literal-limit-5",
+        action=action,
+        assignments=assignments,
+    )
+    resolved = source.model_copy(update={"canonical_frames": (action_frame,)})
+    source_view = view()
+    if action is IntentType.EXPLAIN:
+        source_view = source_view.model_copy(
+            update={
+                "concept_definitions": (
+                    *source_view.concept_definitions,
+                    concept("product_structure", "document_topic"),
+                )
+            }
+        )
+
+    result = compiler().compile(resolved, source_view)
+
+    assert result.route is CompilationRoute.FAST
+    assert result.query_plan is not None
+    assert tuple(
+        item.operation_id.rsplit(":", 1)[-1]
+        for item in result.query_plan.operations
+    ) == expected
+    if action is IntentType.SIMILAR:
+        assert "policy:similarity-coverage.v1" in (
+            result.query_plan.operations[-1].parameter_ids
+        )
+    if action is IntentType.EXPLAIN:
+        assert "slot:document_topic:product_structure" in (
+            result.query_plan.operations[-1].parameter_ids
+        )
 
 
 def test_policy_and_context_boundaries_never_reach_fast() -> None:
@@ -159,16 +318,8 @@ def test_ambiguous_filter_group_fails_closed() -> None:
 def test_valid_unregistered_action_combination_uses_compose() -> None:
     """Catches the archetype catalog being mistaken for total intent coverage."""
     source = resolution(context=True)
-    second = source.canonical_frames[1].model_copy(
-        update={
-            "action_choice": source.canonical_frames[1].action_choice.model_copy(
-                update={"selected_ids": (source.canonical_frames[1].action_choice.selected_ids[0].COMPARE,)}
-            )
-        }
-    )
     composed = source.model_copy(
         update={
-            "canonical_frames": (source.canonical_frames[0], second),
             "context_links": (),
             "final_tags": (SemanticTag.MULTI_STEP,),
         }
@@ -181,7 +332,7 @@ def test_valid_unregistered_action_combination_uses_compose() -> None:
     assert result.query_plan is not None
     assert [item.intent_type.value for item in result.query_plan.subtasks] == [
         "rank",
-        "compare",
+        "rank",
     ]
 
 
@@ -194,8 +345,6 @@ def test_compiler_rejects_resolution_and_view_pin_mismatch() -> None:
             )
         }
     )
-
-    import pytest
 
     with pytest.raises(CompilerInvariantError, match="DATASET_PIN_MISMATCH"):
         compiler().compile(resolution(), mismatched)
