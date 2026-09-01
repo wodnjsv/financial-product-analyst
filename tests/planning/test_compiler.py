@@ -71,6 +71,13 @@ def test_context_rerank_lowers_binding_reference_and_dependency() -> None:
         "aum",
         "trailing_1y_historical_cumulative_return",
     ]
+    second_operations = [
+        item for item in result.query_plan.operations if item.subtask_id == "frame-2"
+    ]
+    assert [item.operation_id for item in second_operations] == [
+        "operation:frame-2:rank-products"
+    ]
+    assert "binding:frame-1:top_k_products" in second_operations[0].parameter_ids
 
 
 def test_policy_and_context_boundaries_never_reach_fast() -> None:

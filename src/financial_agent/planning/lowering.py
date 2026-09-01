@@ -186,6 +186,7 @@ def lower_inputs(
             )
         )
         params = link_parameters.setdefault(link.consumer_frame_id, [])
+        params.append(target)
         params.append(f"link:{link.link_type.value}")
         params.extend(f"selector:{item.value}" for item in link.selector)
         records.append(

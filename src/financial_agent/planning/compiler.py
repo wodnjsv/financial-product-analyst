@@ -194,6 +194,10 @@ class QueryPlanCompiler:
             }
             link_parameters = lowered.link_parameters_by_frame.get(frame.frame_id, ())
             for primitive_id in frame_primitives:
+                if primitive_id == "lookup-products" and any(
+                    item.startswith("binding:") for item in link_parameters
+                ):
+                    continue
                 primitive = self._registry.primitives_by_id[primitive_id]
                 if not explore and not set(primitive.required_slots) <= present_slots:
                     continue
