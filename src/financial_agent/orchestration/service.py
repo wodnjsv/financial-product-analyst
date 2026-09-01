@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from financial_agent.contracts.enums import ExecutionOutcome, SubtaskImportance, ToolStatus
@@ -51,6 +52,7 @@ class Orchestrator:
         executors: ExecutorRegistry,
         hard_deadline_ms: int = 55_000,
         max_concurrency: int = 4,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not 0 < hard_deadline_ms <= 55_000:
             raise ValueError("hard deadline must be within 55 seconds")
@@ -60,6 +62,7 @@ class Orchestrator:
         self._executors = executors
         self._hard_deadline_ms = hard_deadline_ms
         self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._clock = clock
 
     async def execute(
         self,
@@ -78,7 +81,7 @@ class Orchestrator:
             )
             for item in graph.binding_specs
         )
-        start = time.monotonic()
+        start = self._clock()
         deadline = start + self._hard_deadline_ms / 1000
         retry_budget = _RetryBudget(2)
         pending = {item.task_id: item for item in graph.tasks}
@@ -215,8 +218,8 @@ class Orchestrator:
         )
         attempt_records: list[ExecutionAttempt] = []
         for attempt_number in (1, 2):
-            attempt_started = time.monotonic()
-            remaining = deadline - time.monotonic()
+            attempt_started = self._clock()
+            remaining = deadline - self._clock()
             if remaining <= 0:
                 result = build_tool_result(
                     request,
@@ -264,7 +267,7 @@ class Orchestrator:
                             status=ToolStatus.PERMANENT_ERROR,
                             latency_ms=max(
                                 0,
-                                int((time.monotonic() - attempt_started) * 1000),
+                                int((self._clock() - attempt_started) * 1000),
                             ),
                         )
                     )
@@ -291,7 +294,7 @@ class Orchestrator:
             if (
                 result.status not in _TRANSIENT
                 or attempt_number == 2
-                or deadline <= time.monotonic()
+                or deadline <= self._clock()
                 or not await retry_budget.consume()
             ):
                 return _TaskOutcome(
