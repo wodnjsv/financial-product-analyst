@@ -43,7 +43,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -111,7 +115,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -179,7 +187,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -247,7 +259,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -315,7 +331,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -389,7 +409,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -464,7 +488,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -539,7 +567,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -614,7 +646,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -689,7 +725,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -758,7 +798,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -814,7 +858,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -870,7 +918,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -926,7 +978,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -982,7 +1038,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1032,7 +1092,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1082,7 +1146,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1132,7 +1200,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1182,7 +1254,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1232,7 +1308,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1290,7 +1370,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1349,7 +1433,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1408,7 +1496,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1467,7 +1559,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1526,7 +1622,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1577,7 +1677,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1627,7 +1731,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1677,7 +1785,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1727,7 +1839,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1777,7 +1893,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1827,7 +1947,11 @@
           ],
           "action_ids": [
             "calculate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1877,7 +2001,11 @@
           ],
           "action_ids": [
             "calculate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1927,7 +2055,11 @@
           ],
           "action_ids": [
             "calculate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -1977,7 +2109,11 @@
           ],
           "action_ids": [
             "calculate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -2027,7 +2163,11 @@
           ],
           "action_ids": [
             "calculate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -2077,7 +2217,11 @@
           ],
           "action_ids": [
             "similar"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -2124,7 +2268,11 @@
           ],
           "action_ids": [
             "similar"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -2171,7 +2319,11 @@
           ],
           "action_ids": [
             "similar"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -2218,7 +2370,11 @@
           ],
           "action_ids": [
             "similar"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -2265,7 +2421,11 @@
           ],
           "action_ids": [
             "similar"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -2313,7 +2473,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -2340,7 +2504,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -2379,7 +2547,7 @@
         "NORMALIZATION_REQUIRED",
         "OPERATIONAL_STATUS"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [
         {
@@ -2393,7 +2561,11 @@
           "subject_ids": [],
           "expected_rejection_code": "INVALID_CONTEXT_GRAPH"
         }
-      ]
+      ],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-002",
@@ -2431,7 +2603,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -2458,7 +2634,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -2497,7 +2677,7 @@
         "NORMALIZATION_REQUIRED",
         "OPERATIONAL_STATUS"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [
         {
@@ -2511,7 +2691,11 @@
           "subject_ids": [],
           "expected_rejection_code": "INVALID_CONTEXT_GRAPH"
         }
-      ]
+      ],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-003",
@@ -2549,7 +2733,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -2576,7 +2764,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -2615,7 +2807,7 @@
         "NORMALIZATION_REQUIRED",
         "OPERATIONAL_STATUS"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [
         {
@@ -2629,7 +2821,11 @@
           "subject_ids": [],
           "expected_rejection_code": "INVALID_CONTEXT_GRAPH"
         }
-      ]
+      ],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-004",
@@ -2667,7 +2863,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -2688,7 +2888,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -2726,7 +2930,7 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [
         {
@@ -2740,7 +2944,11 @@
           "subject_ids": [],
           "expected_rejection_code": "INVALID_CONTEXT_GRAPH"
         }
-      ]
+      ],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-005",
@@ -2778,7 +2986,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -2799,7 +3011,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -2837,7 +3053,7 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [
         {
@@ -2851,7 +3067,11 @@
           "subject_ids": [],
           "expected_rejection_code": "INVALID_CONTEXT_GRAPH"
         }
-      ]
+      ],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-006",
@@ -2889,7 +3109,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -2910,7 +3134,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -2948,7 +3176,7 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [
         {
@@ -2962,7 +3190,11 @@
           "subject_ids": [],
           "expected_rejection_code": "INVALID_CONTEXT_GRAPH"
         }
-      ]
+      ],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-007",
@@ -3000,7 +3232,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -3027,7 +3263,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -3066,7 +3306,7 @@
         "NORMALIZATION_REQUIRED",
         "TEMPORAL"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [
         {
@@ -3080,7 +3320,11 @@
           "subject_ids": [],
           "expected_rejection_code": "INVALID_CONTEXT_GRAPH"
         }
-      ]
+      ],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-008",
@@ -3118,7 +3362,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -3145,7 +3393,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -3184,7 +3436,7 @@
         "NORMALIZATION_REQUIRED",
         "TEMPORAL"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [
         {
@@ -3198,7 +3450,11 @@
           "subject_ids": [],
           "expected_rejection_code": "INVALID_CONTEXT_GRAPH"
         }
-      ]
+      ],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-009",
@@ -3236,7 +3492,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -3263,7 +3523,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -3302,7 +3566,7 @@
         "NORMALIZATION_REQUIRED",
         "TEMPORAL"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [
         {
@@ -3316,7 +3580,11 @@
           "subject_ids": [],
           "expected_rejection_code": "INVALID_CONTEXT_GRAPH"
         }
-      ]
+      ],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-010",
@@ -3354,7 +3622,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -3375,7 +3647,11 @@
           ],
           "action_ids": [
             "explain"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -3388,9 +3664,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-011",
@@ -3428,7 +3708,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -3449,7 +3733,11 @@
           ],
           "action_ids": [
             "explain"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -3462,9 +3750,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-012",
@@ -3502,7 +3794,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -3523,7 +3819,11 @@
           ],
           "action_ids": [
             "explain"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -3536,9 +3836,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-013",
@@ -3581,7 +3885,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -3608,7 +3916,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -3621,9 +3933,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-014",
@@ -3666,7 +3982,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -3693,7 +4013,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -3706,9 +4030,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-015",
@@ -3751,7 +4079,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -3778,7 +4110,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -3791,9 +4127,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-016",
@@ -3831,7 +4171,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -3882,7 +4226,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -3933,7 +4281,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -3990,7 +4342,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -4047,7 +4403,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -4104,7 +4464,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -4154,7 +4518,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -4175,7 +4543,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -4213,7 +4585,7 @@
         "MULTI_STEP",
         "RELATIONSHIP_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [
         {
@@ -4227,7 +4599,11 @@
           "subject_ids": [],
           "expected_rejection_code": "INVALID_CONTEXT_GRAPH"
         }
-      ]
+      ],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-023",
@@ -4264,7 +4640,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -4285,7 +4665,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -4323,9 +4707,13 @@
         "MULTI_STEP",
         "RELATIONSHIP_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-024",
@@ -4362,7 +4750,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -4383,7 +4775,11 @@
           ],
           "action_ids": [
             "aggregate"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -4421,9 +4817,13 @@
         "MULTI_STEP",
         "RELATIONSHIP_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-025",
@@ -4460,7 +4860,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -4481,7 +4885,11 @@
           ],
           "action_ids": [
             "similar"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -4519,9 +4927,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-026",
@@ -4558,7 +4970,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -4579,7 +4995,11 @@
           ],
           "action_ids": [
             "similar"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -4617,9 +5037,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-027",
@@ -4656,7 +5080,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -4677,7 +5105,11 @@
           ],
           "action_ids": [
             "similar"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -4715,9 +5147,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-028",
@@ -4755,7 +5191,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -4776,7 +5216,11 @@
           ],
           "action_ids": [
             "explain"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -4815,9 +5259,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-029",
@@ -4855,7 +5303,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -4876,7 +5328,11 @@
           ],
           "action_ids": [
             "explain"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -4915,9 +5371,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CMP-030",
@@ -4955,7 +5415,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -4976,7 +5440,11 @@
           ],
           "action_ids": [
             "explain"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -5015,9 +5483,13 @@
         "MULTI_STEP",
         "NORMALIZATION_REQUIRED"
       ],
-      "ood_type": null,
+      "ood_type": "combination",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "covered",
+        "reason": "none"
+      }
     },
     {
       "case_id": "HKO-CTX-001",
@@ -5066,7 +5538,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -5099,7 +5575,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -5189,7 +5669,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -5222,7 +5706,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -5312,7 +5800,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -5345,7 +5837,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -5435,7 +5931,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -5468,7 +5968,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -5558,7 +6062,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -5591,7 +6099,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -5681,7 +6193,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -5714,7 +6230,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -5804,7 +6324,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -5837,7 +6361,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -5927,7 +6455,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -5960,7 +6492,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -6044,7 +6580,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -6065,7 +6605,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -6148,7 +6692,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -6169,7 +6717,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -6252,7 +6804,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -6273,7 +6829,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -6357,7 +6917,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -6378,7 +6942,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -6461,7 +7029,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -6482,7 +7054,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -6565,7 +7141,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -6586,7 +7166,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -6668,7 +7252,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -6689,7 +7277,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -6772,7 +7364,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -6793,7 +7389,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -6882,7 +7482,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -6903,7 +7507,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -6992,7 +7600,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -7013,7 +7625,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -7102,7 +7718,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -7123,7 +7743,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -7212,7 +7836,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -7233,7 +7861,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -7322,7 +7954,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -7343,7 +7979,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -7432,7 +8072,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -7453,7 +8097,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -7542,7 +8190,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -7563,7 +8215,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -7652,7 +8308,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -7673,7 +8333,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -7756,7 +8420,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -7777,7 +8445,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -7860,7 +8532,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -7881,7 +8557,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -7964,7 +8644,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -7985,7 +8669,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -8067,7 +8755,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -8088,7 +8780,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -8171,7 +8867,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -8192,7 +8892,11 @@
           ],
           "action_ids": [
             "similar"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -8275,7 +8979,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -8296,7 +9004,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -8380,7 +9092,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -8401,7 +9117,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -8484,7 +9204,11 @@
           ],
           "action_ids": [
             "compare"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -8505,7 +9229,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -8600,7 +9328,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -8627,7 +9359,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -8724,7 +9460,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -8751,7 +9491,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -8849,7 +9593,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -8876,7 +9624,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -8974,7 +9726,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -9001,7 +9757,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -9098,7 +9858,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -9131,7 +9895,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -9228,7 +9996,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -9255,7 +10027,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -9352,7 +10128,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -9379,7 +10159,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -9477,7 +10261,11 @@
           ],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         },
         {
           "frame_id": "f2",
@@ -9504,7 +10292,11 @@
           ],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -9569,7 +10361,11 @@
       "expected_tags": [],
       "ood_type": "vocabulary",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "lexical_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-VOC-002",
@@ -9592,7 +10388,11 @@
       "expected_tags": [],
       "ood_type": "vocabulary",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "lexical_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-VOC-003",
@@ -9615,7 +10415,11 @@
       "expected_tags": [],
       "ood_type": "vocabulary",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "lexical_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-VOC-004",
@@ -9638,7 +10442,11 @@
       "expected_tags": [],
       "ood_type": "vocabulary",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "lexical_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-VOC-005",
@@ -9661,7 +10469,11 @@
       "expected_tags": [],
       "ood_type": "vocabulary",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "lexical_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-VOC-006",
@@ -9684,7 +10496,11 @@
       "expected_tags": [],
       "ood_type": "vocabulary",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "lexical_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-VOC-007",
@@ -9707,7 +10523,11 @@
       "expected_tags": [],
       "ood_type": "vocabulary",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "lexical_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-VOC-008",
@@ -9730,7 +10550,11 @@
       "expected_tags": [],
       "ood_type": "vocabulary",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "lexical_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-VOC-009",
@@ -9753,7 +10577,11 @@
       "expected_tags": [],
       "ood_type": "vocabulary",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "lexical_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-VOC-010",
@@ -9776,7 +10604,11 @@
       "expected_tags": [],
       "ood_type": "vocabulary",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "lexical_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-DOM-001",
@@ -9799,7 +10631,11 @@
       "expected_tags": [],
       "ood_type": "domain",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "domain_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-DOM-002",
@@ -9822,7 +10658,11 @@
       "expected_tags": [],
       "ood_type": "domain",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "domain_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-DOM-003",
@@ -9845,7 +10685,11 @@
       "expected_tags": [],
       "ood_type": "domain",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "domain_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-DOM-004",
@@ -9868,7 +10712,11 @@
       "expected_tags": [],
       "ood_type": "domain",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "domain_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-DOM-005",
@@ -9891,7 +10739,11 @@
       "expected_tags": [],
       "ood_type": "domain",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "domain_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-DOM-006",
@@ -9914,7 +10766,11 @@
       "expected_tags": [],
       "ood_type": "domain",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "domain_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-DOM-007",
@@ -9937,7 +10793,11 @@
       "expected_tags": [],
       "ood_type": "domain",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "domain_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-DOM-008",
@@ -9960,7 +10820,11 @@
       "expected_tags": [],
       "ood_type": "domain",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "domain_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-DOM-009",
@@ -9983,7 +10847,11 @@
       "expected_tags": [],
       "ood_type": "domain",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "domain_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-DOM-010",
@@ -10006,7 +10874,11 @@
       "expected_tags": [],
       "ood_type": "domain",
       "expected_pipeline_outcome": "semantic_resolution",
-      "validation_probes": []
+      "validation_probes": [],
+      "expected_semantic_coverage": {
+        "state": "unmapped",
+        "reason": "domain_ood"
+      }
     },
     {
       "case_id": "HKO-OOD-CTX-001",
@@ -10041,7 +10913,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -10095,7 +10971,11 @@
           ],
           "action_ids": [
             "similar"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -10146,7 +11026,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -10200,7 +11084,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -10254,7 +11142,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -10307,7 +11199,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -10361,7 +11257,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -10415,7 +11315,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -10469,7 +11373,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -10523,7 +11431,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [
@@ -10570,7 +11482,11 @@
           "slots": [],
           "action_ids": [
             "rank"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -10610,7 +11526,11 @@
           "slots": [],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -10650,7 +11570,11 @@
           "slots": [],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -10690,7 +11614,11 @@
           "slots": [],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -10730,7 +11658,11 @@
           "slots": [],
           "action_ids": [
             "screen"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -10780,7 +11712,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -10830,7 +11766,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -10880,7 +11820,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -10930,7 +11874,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -10980,7 +11928,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -11029,7 +11981,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -11079,7 +12035,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -11129,7 +12089,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -11179,7 +12143,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],
@@ -11229,7 +12197,11 @@
           ],
           "action_ids": [
             "lookup"
-          ]
+          ],
+          "semantic_coverage": {
+            "state": "covered",
+            "reason": "none"
+          }
         }
       ],
       "expected_references": [],

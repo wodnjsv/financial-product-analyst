@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from datetime import UTC, datetime, timedelta
 import hashlib
 import os
@@ -11,10 +12,11 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import time
 from typing import Any
 import uuid
 
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from financial_agent.contracts.canonical import (
     build_request_key,
@@ -46,16 +48,25 @@ from financial_agent.intent.evaluation import (
     parse_strict_json,
     replay_validation_probes,
 )
+from financial_agent.intent.assembler import assemble_proposal
+from financial_agent.intent.clova import ClovaStructuredOutputAdapter
+from financial_agent.intent.config import ClovaResolverConfig
 from financial_agent.intent.context import (
     ResolutionFinalizationMetadata,
     finalize_resolution,
     validate_context_graph,
 )
-from financial_agent.intent.errors import ResolverContractError
+from financial_agent.intent.errors import (
+    MODEL_PROPOSAL_SCHEMA_INVALID,
+    ModelInvocationError,
+    ResolverContractError,
+)
 from financial_agent.intent.literals import extract_literals
 from financial_agent.intent.normalization import RequestNormalizationError, normalize_request
 from financial_agent.intent.resolution import ResolverBuildManifest
+from financial_agent.intent.service import IntentResolverService
 from financial_agent.intent.validation import validate_semantics
+from financial_agent.intent.proposal import IntentResolutionProposalV2
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
     CANDIDATE_POLICY_VERSION,
@@ -81,6 +92,9 @@ DEFAULT_DATASET = (
 FIXTURE_DIRECTORY = DEFAULT_DATASET.parent
 SYNTHETIC_DATASET_VERSION = "synthetic-intent-eval-v3"
 FIXED_CREATED_AT = datetime(2026, 8, 31, tzinfo=UTC)
+LIVE_BASE_URL = "https://clovastudio.stream.ntruss.com"
+LIVE_DATASET_VERSION = "synthetic-intent-eval-v3"
+LIVE_REPORT_DIRECTORY = Path("/private/tmp")
 
 
 class EvaluationCliError(ValueError):
@@ -91,6 +105,9 @@ class EvaluationCliError(ValueError):
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "live":
+        return _run_live(argv[1:])
     args = _parser().parse_args(argv)
     report_directory_fd: int | None = None
     try:
@@ -266,6 +283,258 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-traces")
     parser.add_argument("--output", required=True)
     return parser
+
+
+def _live_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run a sanitized HCX intent preflight.")
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--base-url", default=LIVE_BASE_URL)
+    parser.add_argument("--request-interval-seconds", type=float, default=1.0)
+    parser.add_argument("--case-limit", type=int, required=True)
+    parser.add_argument("--report-path", required=True)
+    return parser
+
+
+class _EmptyEntityRepository:
+    async def search_batch(self, dataset_version: str, mentions: object) -> dict[str, object]:
+        return {}
+
+
+def _run_live(argv: list[str]) -> int:
+    args = _live_parser().parse_args(argv)
+    if args.case_limit <= 0 or args.request_interval_seconds < 0:
+        print("LIVE_EVALUATION_ARGUMENT_INVALID", file=sys.stderr)
+        return 2
+    report_path = Path(args.report_path)
+    if report_path.parent != LIVE_REPORT_DIRECTORY or report_path.suffix != ".json":
+        print("LIVE_EVALUATION_REPORT_PATH_INVALID", file=sys.stderr)
+        return 2
+    api_key = os.environ.get("NCP_CLOVA_STUDIO_API")
+    if not api_key:
+        print("LIVE_EVALUATION_CREDENTIAL_MISSING", file=sys.stderr)
+        return 3
+    try:
+        return asyncio.run(_run_live_cases(args, api_key))
+    except (OSError, ValidationError, ValueError):
+        print("LIVE_EVALUATION_INPUT_INVALID", file=sys.stderr)
+        return 2
+
+
+async def _run_live_cases(args: argparse.Namespace, api_key: str) -> int:
+    dataset_bytes = Path(args.dataset if hasattr(args, "dataset") else DEFAULT_DATASET).read_bytes()
+    dataset = parse_strict_json(dataset_bytes, EvaluationDataset)
+    cases = dataset.cases[: args.case_limit]
+    if len(cases) != args.case_limit:
+        raise ValueError("LIVE_EVALUATION_CASE_LIMIT_INVALID")
+    catalog = load_catalog(PROJECT_ROOT)
+    manifest = _current_manifest(catalog)
+    adapter = ClovaStructuredOutputAdapter(
+        ClovaResolverConfig(
+            api_key=SecretStr(api_key),
+            base_url=args.base_url,
+            model_id=args.model,
+        )
+    )
+    service = IntentResolverService(
+        adapter=adapter,
+        entity_repository=_EmptyEntityRepository(),
+        catalog=catalog,
+        manifest=manifest,
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version=LIVE_DATASET_VERSION,
+            manifest_hash="0" * 64,
+        ),
+    )
+    predictions: list[EvaluationPrediction] = []
+    for index, case in enumerate(cases):
+        predictions.append(await _live_prediction(case, service, adapter, catalog))
+        if index + 1 < len(cases):
+            time.sleep(args.request_interval_seconds)
+    report = evaluate_predictions(cases, predictions)
+    payload: dict[str, object] = {
+        "schema_version": "1.0",
+        "mode": "live",
+        "model_id": args.model,
+        "case_ids": [case.case_id for case in cases],
+        "metrics": report.model_dump(mode="json"),
+    }
+    payload["report_hash"] = _sha256(canonical_json_bytes(payload))
+    _write_live_report(Path(args.report_path), canonical_json_bytes(payload) + b"\n")
+    return 0
+
+
+async def _live_prediction(
+    case: Any,
+    service: IntentResolverService,
+    adapter: ClovaStructuredOutputAdapter,
+    catalog: SemanticCatalogSnapshot,
+) -> EvaluationPrediction:
+    created_at = datetime.now(UTC)
+    context = RequestContext(
+        request_key=build_request_key(
+            case.case_id, case.question, LIVE_DATASET_VERSION, "1.0"
+        ),
+        run_id=f"live-{case.case_id}",
+        dataset_version=LIVE_DATASET_VERSION,
+        producer="intent-evaluator",
+        created_at=created_at,
+        question_id=case.case_id,
+        question=case.question,
+        segments=tuple(
+            Segment(
+                segment_id=segment.segment_id,
+                ordinal=segment.ordinal,
+                text=segment.text,
+            )
+            for segment in case.segments
+        ),
+        deadline_at=created_at + timedelta(seconds=55),
+    )
+    started = time.perf_counter()
+    try:
+        prepared = await service.prepare(context)
+    except (RequestNormalizationError, ResolverContractError, ValueError):
+        return _live_pre_model_prediction(case.case_id, _elapsed_ms(started))
+    try:
+        model_result = await adapter.invoke(prepared.prompt, timeout_seconds=20.0)
+    except ModelInvocationError as error:
+        return _live_failed_prediction(
+            case.case_id,
+            _candidate_groups_from_view(prepared.view),
+            provider_success=False,
+            stable_code=error.code,
+            latency_ms=_elapsed_ms(started),
+        )
+    try:
+        proposal = IntentResolutionProposalV2.model_validate_json(model_result.content)
+        draft = assemble_proposal(proposal, prepared.normalized, prepared.view)
+        resolution = service.validate_response(prepared, model_result.content)
+        probes = replay_validation_probes(
+            case,
+            draft,
+            context,
+            prepared.normalized,
+            prepared.view,
+            catalog,
+        )
+    except (ResolverContractError, ValidationError) as error:
+        stable_code = (
+            error.code if isinstance(error, ResolverContractError) else MODEL_PROPOSAL_SCHEMA_INVALID
+        )
+        return _live_failed_prediction(
+            case.case_id,
+            _candidate_groups_from_view(prepared.view),
+            provider_success=True,
+            stable_code=stable_code,
+            latency_ms=_elapsed_ms(started),
+            prompt_tokens=model_result.usage["promptTokens"],
+            completion_tokens=model_result.usage["completionTokens"],
+            schema_valid=stable_code != MODEL_PROPOSAL_SCHEMA_INVALID,
+        )
+    return EvaluationPrediction(
+        case_id=case.case_id,
+        candidate_groups=_candidate_groups_from_view(prepared.view),
+        candidate_reproducible=None,
+        frames=_frames_from_resolution(resolution),
+        references=_references_from_draft(draft),
+        context_links=_links_from_resolution(resolution),
+        slot_mutations=_mutations_from_resolution(resolution),
+        resolution_status=resolution.resolution_status.value,
+        pipeline_outcome="semantic_resolution",
+        provider_success=True,
+        predicted_ood_type=_predicted_ood_type(resolution),
+        tags=tuple(sorted(tag.value for tag in resolution.final_tags)),
+        blocking_issue_codes=tuple(sorted({issue.code for issue in resolution.issues})),
+        first_pass_schema=FirstPassSchemaOutcome(
+            status="valid", validator_event_code="SCHEMA_VALID"
+        ),
+        repair=RepairOutcome(
+            status="not_attempted", validator_event_code="REPAIR_NOT_ATTEMPTED"
+        ),
+        validation_probe_outcomes=probes,
+        latency_ms=_elapsed_ms(started),
+        prompt_tokens=model_result.usage["promptTokens"],
+        completion_tokens=model_result.usage["completionTokens"],
+        stable_error_codes=(),
+    )
+
+
+def _live_pre_model_prediction(case_id: str, latency_ms: int) -> EvaluationPrediction:
+    return EvaluationPrediction(
+        case_id=case_id,
+        candidate_groups=(), candidate_reproducible=None, frames=(), references=(),
+        context_links=(), slot_mutations=(), resolution_status="unmapped",
+        pipeline_outcome="pre_model_rejected", provider_success=None,
+        predicted_ood_type=None, tags=(), blocking_issue_codes=("REQUEST_CONTRACT_INVALID",),
+        first_pass_schema=FirstPassSchemaOutcome(status="not_attempted", validator_event_code="SCHEMA_NOT_ATTEMPTED"),
+        repair=RepairOutcome(status="not_attempted", validator_event_code="REPAIR_NOT_ATTEMPTED"),
+        validation_probe_outcomes=(), latency_ms=latency_ms, prompt_tokens=0,
+        completion_tokens=0, stable_error_codes=("REQUEST_CONTRACT_INVALID",),
+    )
+
+
+def _live_failed_prediction(
+    case_id: str,
+    candidate_groups: tuple[CandidateGroup, ...],
+    *,
+    provider_success: bool,
+    stable_code: str,
+    latency_ms: int,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    schema_valid: bool = False,
+) -> EvaluationPrediction:
+    return EvaluationPrediction(
+        case_id=case_id,
+        candidate_groups=candidate_groups, candidate_reproducible=None, frames=(),
+        references=(), context_links=(), slot_mutations=(), resolution_status="unmapped",
+        pipeline_outcome="model_resolution_failed", provider_success=provider_success,
+        predicted_ood_type=None, tags=(), blocking_issue_codes=(stable_code,),
+        first_pass_schema=FirstPassSchemaOutcome(
+            status="valid" if schema_valid else "not_attempted",
+            validator_event_code="SCHEMA_VALID" if schema_valid else "SCHEMA_NOT_ATTEMPTED",
+        ),
+        repair=RepairOutcome(status="not_attempted", validator_event_code="REPAIR_NOT_ATTEMPTED"),
+        validation_probe_outcomes=(), latency_ms=latency_ms,
+        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+        stable_error_codes=(stable_code,),
+    )
+
+
+def _predicted_ood_type(resolution: Any) -> str | None:
+    if resolution.resolution_status.value == "context_unresolved":
+        return "context"
+    reasons = {
+        frame.semantic_coverage[0].reason.value
+        for frame in resolution.canonical_frames
+        if frame.semantic_coverage[0].state.value != "covered"
+    }
+    if "lexical_ood" in reasons:
+        return "vocabulary"
+    if "domain_ood" in reasons:
+        return "domain"
+    return None
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)
+
+
+def _write_live_report(path: Path, payload: bytes) -> None:
+    if path.parent != LIVE_REPORT_DIRECTORY or path.suffix != ".json":
+        raise ValueError("LIVE_EVALUATION_REPORT_PATH_INVALID")
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with open(temporary, "xb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _validate_mode_arguments(args: argparse.Namespace) -> None:
@@ -792,6 +1061,7 @@ def _pre_model_prediction(case_id: str, trace: IntentRunTrace) -> EvaluationPred
         slot_mutations=(),
         resolution_status="unmapped",
         pipeline_outcome="pre_model_rejected",
+        provider_success=None,
         predicted_ood_type="context",
         tags=(),
         blocking_issue_codes=("REQUEST_CONTRACT_INVALID",),
@@ -822,6 +1092,7 @@ def _failed_prediction(
         slot_mutations=(),
         resolution_status="unmapped",
         pipeline_outcome="model_resolution_failed",
+        provider_success=True,
         predicted_ood_type=None,
         tags=(),
         blocking_issue_codes=trace.stable_error_codes,
@@ -864,6 +1135,12 @@ def _frames_from_drafts(frames: Any) -> tuple[EvaluationFrame, ...]:
                     frame.slot_assignments, key=lambda item: item.slot_kind.value
                 )
             ),
+            semantic_coverage={
+                "state": frame.semantic_coverage[0].state.value,
+                "reason": frame.semantic_coverage[0].reason.value,
+            }
+            if getattr(frame, "semantic_coverage", ())
+            else {"state": "covered", "reason": "none"},
         )
         for frame in frames
     )
@@ -1011,6 +1288,9 @@ def _deterministic_predictions(
                 slot_mutations=(),
                 resolution_status="unmapped",
                 pipeline_outcome=pipeline_outcome,
+                provider_success=(
+                    True if pipeline_outcome == "semantic_resolution" else None
+                ),
                 predicted_ood_type=None,
                 tags=(),
                 blocking_issue_codes=stable_error_codes,

@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from financial_agent.intent.evaluation import (
     CandidateGroup,
+    CountMetric,
     EvaluationCase,
     EvaluationDataset,
     EvaluationFrame,
@@ -117,7 +118,7 @@ SCRIPT_PATH = PROJECT_ROOT / "scripts" / "evaluate_intent_resolver.py"
 REGRESSION_SHA256 = "5f917cbd326d4b4a27d260aecaf63460dffa4302dcabd5e9599efe7c90b1b18b"
 HELDOUT_V1_SHA256 = "d23eae797026ed66fa2f52ae49a602f991bd9b6d02b890c799342c0a6145f63e"
 HELDOUT_V2_SHA256 = "de015673ad4fa327ed3369997120f8465fb9b14e4998a924a8b90eaf45c450fb"
-HELDOUT_SHA256 = "f0cb6313d7954a9f75d1fe1c691a2021c0b2e53d6681f07eb0f3e2787a9944b4"
+HELDOUT_SHA256 = "dbce9e94700ef575eb6b9075961e688b54b193b0b6f700dbf5d030761fd26926"
 
 
 def _frame(
@@ -400,6 +401,61 @@ def test_combination_ood_is_confused_separately_but_not_counted_as_false_fast() 
     ] == [("combination", "fast", 1)]
     assert metrics.false_fast_rate.denominator == 0
     assert metrics.false_fast_rate.value == Decimal("0")
+
+
+def test_provider_failure_is_not_counted_as_semantic_miss() -> None:
+    cases = _synthetic_cases()[:2]
+    failed = _synthetic_predictions()[0].model_copy(
+        update={
+            "frames": (),
+            "references": (),
+            "context_links": (),
+            "slot_mutations": (),
+            "resolution_status": "unmapped",
+            "pipeline_outcome": "model_resolution_failed",
+            "provider_success": False,
+            "predicted_ood_type": None,
+            "tags": (),
+            "blocking_issue_codes": ("MODEL_RATE_LIMITED",),
+            "first_pass_schema": FirstPassSchemaOutcome(
+                status="not_attempted", validator_event_code="SCHEMA_NOT_ATTEMPTED"
+            ),
+            "repair": RepairOutcome(
+                status="not_attempted", validator_event_code="REPAIR_NOT_ATTEMPTED"
+            ),
+            "validation_probe_outcomes": (),
+            "stable_error_codes": ("MODEL_RATE_LIMITED",),
+        }
+    )
+    report = evaluate_predictions(cases, (failed, _synthetic_predictions()[1]))
+
+    assert (report.runtime.provider_success.numerator, report.runtime.provider_success.denominator) == (1, 2)
+    assert report.frame.joint_exact_match.denominator == 1
+    assert report.context.link_exact_match.denominator == 1
+
+
+def test_combination_ood_is_covered_but_never_false_fast() -> None:
+    case_payload = _synthetic_cases()[0].model_dump()
+    case_payload.update(
+        {
+            "ood_type": "combination",
+            "expected_resolution_status": "resolved",
+            "expected_tags": (),
+        }
+    )
+    case = EvaluationCase.model_validate(case_payload)
+    prediction = _synthetic_predictions()[0].model_copy(
+        update={
+            "resolution_status": "resolved",
+            "predicted_ood_type": None,
+            "blocking_issue_codes": (),
+        }
+    )
+
+    report = evaluate_predictions((case,), (prediction,))
+
+    assert (report.coverage.combination_ood.numerator, report.coverage.combination_ood.denominator) == (1, 1)
+    assert report.ood.false_fast_rate.denominator == 0
 
 
 def test_exact_match_canonicalizes_case_local_frame_and_context_ids() -> None:
@@ -992,6 +1048,25 @@ def test_cli_refuses_fixture_overwrite_and_live_execution() -> None:
     assert not (PROJECT_ROOT / "build" / "reports" / "must-not-exist.json").exists()
 
 
+def test_live_cli_uses_one_second_default_pacing_and_private_tmp_report() -> None:
+    namespace = _cli_namespace()
+    parser = namespace["_live_parser"]()
+    args = parser.parse_args(
+        [
+            "--model",
+            "HCX-007",
+            "--case-limit",
+            "12",
+            "--report-path",
+            "/private/tmp/intent-resolver-v2-live-report.json",
+        ]
+    )
+
+    assert args.request_interval_seconds == 1.0
+    assert args.case_limit == 12
+    assert args.report_path == "/private/tmp/intent-resolver-v2-live-report.json"
+
+
 def test_cli_refuses_overwriting_a_supplied_dataset(tmp_path: Path) -> None:
     supplied = tmp_path / "supplied-fixture.json"
     supplied.write_bytes(HELDOUT_PATH.read_bytes())
@@ -1435,7 +1510,7 @@ def test_stored_modes_bind_dataset_predictions_and_real_strict_sidecars(
         assert report["metrics"]["candidate"]["reproducibility_coverage"][
             "evidence_sufficient"
         ] is False
-        assert report["metrics"]["frame"]["joint_exact_match"]["numerator"] == 2
+        assert report["metrics"]["frame"]["joint_exact_match"]["numerator"] == 1
         assert report["metrics"]["validation"]["unknown_id_acceptance"][
             "denominator"
         ] == 1
@@ -2493,12 +2568,12 @@ def test_round3_terminal_repair_failure_remains_in_all_metrics() -> None:
         assert failed.validation_probe_outcomes == ()
         assert report.candidate.recall_at_1.numerator == 1
         assert report.candidate.reproducibility.denominator == 0
-        assert report.frame.joint_exact_match.numerator == 1
-        assert report.context.reference_exact_match.numerator == 1
-        assert report.context.link_exact_match.numerator == 1
-        assert report.context.mutation_exact_match.numerator == 1
-        assert report.diagnostics.resolution_status_exact.numerator == 1
-        assert report.diagnostics.tags_exact.numerator == 1
+        assert report.frame.joint_exact_match == CountMetric(numerator=0, denominator=1)
+        assert report.context.reference_exact_match == CountMetric(numerator=1, denominator=1)
+        assert report.context.link_exact_match == CountMetric(numerator=1, denominator=1)
+        assert report.context.mutation_exact_match == CountMetric(numerator=1, denominator=1)
+        assert report.diagnostics.resolution_status_exact == CountMetric(numerator=0, denominator=1)
+        assert report.diagnostics.tags_exact == CountMetric(numerator=1, denominator=1)
         assert report.diagnostics.pipeline_outcome_exact.numerator == 1
         assert report.validation.unknown_id_acceptance.denominator == 0
         assert report.validation.unknown_id_acceptance.defined is False

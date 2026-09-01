@@ -37,6 +37,14 @@ ActualPipelineOutcome = Literal[
     "semantic_resolution", "pre_model_rejected", "model_resolution_failed"
 ]
 OodType = Literal["combination", "vocabulary", "domain", "context"]
+CoverageState = Literal["covered", "partial", "unmapped"]
+CoverageReason = Literal[
+    "none",
+    "lexical_ood",
+    "domain_ood",
+    "unsupported_operation",
+    "missing_critical_semantic",
+]
 EvaluationMode = Literal["decoupled", "full"]
 ProbeKind = Literal["unknown_id", "invalid_context_graph"]
 ProbeDecision = Literal["accepted", "rejected"]
@@ -71,6 +79,17 @@ class ExpectedSlot(ContractModel):
         return self
 
 
+class EvaluationFrameCoverage(ContractModel):
+    state: CoverageState = "covered"
+    reason: CoverageReason = "none"
+
+    @model_validator(mode="after")
+    def validate_state_reason(self) -> "EvaluationFrameCoverage":
+        if (self.state == "covered") != (self.reason == "none"):
+            raise ValueError("coverage state and reason contradict each other")
+        return self
+
+
 class EvaluationFrame(ContractModel):
     frame_id: Identifier
     ordinal: int = Field(ge=0)
@@ -80,6 +99,9 @@ class EvaluationFrame(ContractModel):
     product_family_ids: tuple[Identifier, ...]
     entity_type_ids: tuple[Identifier, ...]
     slots: tuple[ExpectedSlot, ...]
+    semantic_coverage: EvaluationFrameCoverage = Field(
+        default_factory=EvaluationFrameCoverage
+    )
 
     @field_validator("action_ids", mode="before")
     @classmethod
@@ -202,6 +224,7 @@ class EvaluationCase(ContractModel):
     expected_pipeline_outcome: ExpectedPipelineOutcome
     validation_probes: tuple[EvaluationProbe, ...]
     ood_type: OodType | None = None
+    expected_semantic_coverage: EvaluationFrameCoverage | None = None
 
     @model_validator(mode="after")
     def validate_case(self) -> "EvaluationCase":
@@ -332,6 +355,7 @@ class EvaluationPrediction(ContractModel):
     slot_mutations: tuple[ExpectedSlotMutation, ...]
     resolution_status: ResolutionStatusLabel
     pipeline_outcome: ActualPipelineOutcome
+    provider_success: bool | None = True
     predicted_ood_type: OodType | None = None
     tags: tuple[Identifier, ...]
     blocking_issue_codes: tuple[Identifier, ...]
@@ -672,7 +696,7 @@ PromotionGateName = Literal[
 PromotionGateStatus = Literal["passed", "failed", "unmeasured"]
 PromotionComparison = Literal["equal", "at_least", "at_most"]
 _FROZEN_PROMOTION_DATASET_SHA256 = (
-    "f0cb6313d7954a9f75d1fe1c691a2021c0b2e53d6681f07eb0f3e2787a9944b4"
+    "dbce9e94700ef575eb6b9075961e688b54b193b0b6f700dbf5d030761fd26926"
 )
 
 
@@ -885,6 +909,14 @@ class OodMetrics(ContractModel):
     false_fast_rate: CountMetric
 
 
+class CoverageMetrics(ContractModel):
+    lexical_ood: CountMetric
+    domain_ood: CountMetric
+    combination_ood: CountMetric
+    context_unresolved: CountMetric
+    policy_tags: PrecisionRecallF1
+
+
 class ValidationMetrics(ContractModel):
     schema_validity: CountMetric
     unknown_id_acceptance: CountMetric
@@ -906,6 +938,7 @@ class StableErrorCount(ContractModel):
 
 
 class RuntimeMetrics(ContractModel):
+    provider_success: CountMetric
     p50_latency_ms: int | None = Field(default=None, ge=0)
     p95_latency_ms: int | None = Field(default=None, ge=0)
     prompt_tokens: int = Field(ge=0)
@@ -918,6 +951,7 @@ class EvaluationReport(ContractModel):
     frame: FrameMetrics
     context: ContextMetrics
     ood: OodMetrics
+    coverage: CoverageMetrics
     validation: ValidationMetrics
     diagnostics: DiagnosticMetrics
     runtime: RuntimeMetrics
@@ -1111,6 +1145,8 @@ def evaluate_ood(
     false_fast = 0
     ood_total = 0
     for case, prediction in aligned:
+        if not _is_semantic_result(prediction):
+            continue
         expected = case.ood_type or "in_domain"
         predicted = (
             "fast"
@@ -1129,6 +1165,80 @@ def evaluate_ood(
             for (expected, predicted), count in sorted(confusion.items())
         ),
         false_fast_rate=CountMetric(numerator=false_fast, denominator=ood_total),
+    )
+
+
+def evaluate_coverage(
+    cases: Sequence[EvaluationCase],
+    predictions: Sequence[EvaluationPrediction],
+) -> CoverageMetrics:
+    aligned = tuple(
+        (case, prediction)
+        for case, prediction in _align(cases, predictions)
+        if _is_semantic_result(prediction)
+    )
+
+    def ood_coverage(ood_type: OodType) -> CountMetric:
+        values = tuple(
+            (case, prediction)
+            for case, prediction in aligned
+            if case.ood_type == ood_type
+        )
+        if ood_type == "context":
+            return _exact_match(
+                values,
+                lambda _case: "context_unresolved",
+                lambda prediction: prediction.resolution_status,
+            )
+        if ood_type == "combination":
+            return CountMetric(
+                numerator=sum(
+                    bool(prediction.frames)
+                    and all(
+                        state == case.expected_semantic_coverage.state
+                        if case.expected_semantic_coverage is not None
+                        else state == "covered"
+                        for state in _coverage_states(prediction.frames)
+                    )
+                    for case, prediction in values
+                ),
+                denominator=len(values),
+            )
+        return CountMetric(
+            numerator=sum(
+                any(
+                    state in ("partial", "unmapped")
+                    and reason
+                    == (
+                        case.expected_semantic_coverage.reason
+                        if case.expected_semantic_coverage is not None
+                        else "lexical_ood"
+                        if ood_type == "vocabulary"
+                        else "domain_ood"
+                    )
+                    for state, reason in _coverage_outcomes(prediction.frames)
+                )
+                for case, prediction in values
+            ),
+            denominator=len(values),
+        )
+
+    policy = tuple(
+        (case, prediction)
+        for case, prediction in aligned
+        if case.category == "policy_injection_unicode_oversized"
+        and case.subcategory == "policy"
+    )
+    return CoverageMetrics(
+        lexical_ood=ood_coverage("vocabulary"),
+        domain_ood=ood_coverage("domain"),
+        combination_ood=ood_coverage("combination"),
+        context_unresolved=ood_coverage("context"),
+        policy_tags=_micro_prf(
+            policy,
+            lambda case: frozenset(case.expected_tags),
+            lambda prediction: frozenset(prediction.tags),
+        ),
     )
 
 
@@ -1167,6 +1277,7 @@ def evaluate_predictions(
         frame=evaluate_frames(cases, predictions),
         context=evaluate_context(cases, predictions),
         ood=evaluate_ood(cases, predictions),
+        coverage=evaluate_coverage(cases, predictions),
         validation=ValidationMetrics(
             schema_validity=CountMetric(
                 numerator=sum(item.first_pass_schema.status == "valid" for item in values),
@@ -1215,6 +1326,16 @@ def evaluate_predictions(
             ),
         ),
         runtime=RuntimeMetrics(
+            provider_success=CountMetric(
+                numerator=sum(
+                    prediction.provider_success is True
+                    for prediction in values
+                ),
+                denominator=sum(
+                    prediction.provider_success is not None
+                    for prediction in values
+                ),
+            ),
             p50_latency_ms=_nearest_rank(latencies, 50),
             p95_latency_ms=_nearest_rank(latencies, 95),
             prompt_tokens=sum(item.prompt_tokens for item in values),
@@ -1400,14 +1521,37 @@ def _semantic_exact_match[V](
     expected: Callable[[EvaluationCase], V],
     predicted: Callable[[EvaluationPrediction], V],
 ) -> CountMetric:
+    semantic = tuple(
+        (case, prediction)
+        for case, prediction in aligned
+        if _is_semantic_result(prediction)
+    )
     return CountMetric(
         numerator=sum(
-            prediction.pipeline_outcome != "model_resolution_failed"
-            and expected(case) == predicted(prediction)
-            for case, prediction in aligned
+            expected(case) == predicted(prediction) for case, prediction in semantic
         ),
-        denominator=len(aligned),
+        denominator=len(semantic),
     )
+
+
+def _is_semantic_result(prediction: EvaluationPrediction) -> bool:
+    return (
+        prediction.pipeline_outcome != "pre_model_rejected"
+        and prediction.provider_success is True
+    )
+
+
+def _coverage_outcomes(
+    frames: Sequence[EvaluationFrame],
+) -> tuple[tuple[CoverageState, CoverageReason], ...]:
+    return tuple(
+        (frame.semantic_coverage.state, frame.semantic_coverage.reason)
+        for frame in frames
+    )
+
+
+def _coverage_states(frames: Sequence[EvaluationFrame]) -> tuple[CoverageState, ...]:
+    return tuple(frame.semantic_coverage.state for frame in frames)
 
 
 def _frame_axis(
@@ -1524,6 +1668,10 @@ def _micro_prf[T, U, V](
 ) -> PrecisionRecallF1:
     true_positive = false_positive = false_negative = 0
     for case, prediction in aligned:
+        if isinstance(prediction, EvaluationPrediction) and not _is_semantic_result(
+            prediction
+        ):
+            continue
         expected_items = expected(case)
         predicted_items = predicted(prediction)
         true_positive += len(expected_items & predicted_items)
