@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -23,16 +24,17 @@ from .candidates import (
     SemanticCandidateSet,
 )
 from .catalog import SemanticCatalogSnapshot
+from .evidence import EvidenceCandidate, build_evidence_candidates
 from .literals import LiteralCandidate
 from .normalization import NormalizedRequest
 from .resolution import ContractFileHash, ResolverBuildManifest
 
 
 NORMALIZER_VERSION = "intent-normalizer-v1"
-CANDIDATE_POLICY_VERSION = "intent-candidate-v1"
-RESOLVER_SCHEMA_VERSION = "1.0"
-PROMPT_VERSION = "intent-resolver-ko-v2"
-ADAPTER_VERSION = "clova-chat-v3-structured-v2"
+CANDIDATE_POLICY_VERSION = "intent-candidate-v2"
+RESOLVER_SCHEMA_VERSION = "2.0"
+PROMPT_VERSION = "intent-resolver-ko-v3"
+ADAPTER_VERSION = "clova-chat-v3-proposal-v2"
 
 MAX_CANDIDATES_PER_MENTION = 5
 MAX_SEMANTIC_CANDIDATES = 80
@@ -70,6 +72,28 @@ class ResolverInvariantError(RuntimeError):
 class ActiveDatasetPin(ContractModel):
     dataset_version: Identifier
     manifest_hash: Sha256Hex
+
+
+class AxisDefinition(ContractModel):
+    axis_kind: Literal["product_family", "action"]
+    axis_id: Identifier
+    preferred_label_ko: str = Field(min_length=1)
+    definition_ko: str = Field(min_length=1)
+    surface_forms: tuple[str, ...]
+
+
+class ResolverViewReferenceCandidate(ContractModel):
+    reference_id: Identifier
+    segment_id: Identifier
+    text: str = Field(min_length=1)
+    start_char: int = Field(ge=0)
+    end_char: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_coordinates(self) -> "ResolverViewReferenceCandidate":
+        if self.end_char <= self.start_char:
+            raise ValueError("reference end_char must be after start_char")
+        return self
 
 
 class ResolverViewSemanticCandidate(ContractModel):
@@ -152,6 +176,9 @@ class ResolverView(ContractModel):
     relation_definitions: tuple[ResolverViewRelationDefinition, ...]
     literal_candidates: tuple[ResolverViewLiteralCandidate, ...]
     entity_candidates: tuple[ResolverViewEntityCandidateGroup, ...]
+    axis_definitions: tuple[AxisDefinition, ...] = ()
+    evidence_candidates: tuple[EvidenceCandidate, ...] = ()
+    reference_candidates: tuple[ResolverViewReferenceCandidate, ...] = ()
 
     @model_validator(mode="after")
     def validate_entity_candidate_bounds(self) -> "ResolverView":
@@ -235,6 +262,36 @@ def build_resolver_view(
             for item in sorted(literals, key=lambda item: item.literal_id)
         ),
         entity_candidates=_entity_candidate_groups(entity_candidates),
+        axis_definitions=tuple(
+            AxisDefinition(
+                axis_kind=definition.axis_kind,
+                axis_id=definition.axis_id,
+                preferred_label_ko=definition.preferred_label_ko,
+                definition_ko=definition.definition_ko,
+                surface_forms=definition.surface_forms,
+            )
+            for definition in sorted(
+                catalog.axis_definitions.values(),
+                key=lambda definition: (definition.axis_kind, definition.axis_id),
+            )
+        ),
+        evidence_candidates=build_evidence_candidates(
+            normalized=normalized,
+            literals=literals,
+            semantic_candidates=semantic_candidates,
+            entity_candidates=entity_candidates,
+            policy_cues=catalog.policy_cues,
+        ),
+        reference_candidates=tuple(
+            ResolverViewReferenceCandidate(
+                reference_id=reference.reference_id,
+                segment_id=reference.segment_id,
+                text=reference.text,
+                start_char=reference.start_char,
+                end_char=reference.end_char,
+            )
+            for reference in normalized.reference_candidates
+        ),
     )
 
 
@@ -260,7 +317,7 @@ def validate_resolver_pins(
         or manifest.overlay_version != catalog.overlay_version
         or manifest.overlay_hash != catalog.overlay_hash
         or manifest.ontology_hashes != catalog_hashes
-        or manifest.schema_version != RESOLVER_SCHEMA_VERSION
+        or manifest.schema_version != "1.0"
         or any(
             getattr(manifest, field_name) != expected
             for field_name, expected in _VERSION_FIELDS.items()

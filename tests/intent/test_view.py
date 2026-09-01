@@ -99,6 +99,41 @@ def test_view_is_byte_reproducible(resolver_inputs: dict[str, object]) -> None:
     assert canonical_json_bytes(first) == canonical_json_bytes(second)
 
 
+def test_view_projects_sorted_axes_evidence_and_normalizer_references(
+    resolver_inputs: dict[str, object],
+) -> None:
+    """Catches a v2 view losing server-owned evidence or request-order references."""
+    question = "그 상품들 위험등급과 3개를 알려줘"
+    context = resolver_inputs["context"].model_copy(
+        update={
+            "question": question,
+            "segments": (Segment(segment_id="s1", ordinal=0, text=question),),
+        }
+    )
+    snapshot = resolver_inputs["catalog"]
+    normalized = normalize_request(context)
+    resolver_inputs.update(
+        context=context,
+        normalized=normalized,
+        literals=extract_literals(normalized),
+        semantic_candidates=generate_semantic_candidates(normalized, snapshot),
+        entity_candidates={},
+    )
+
+    view = build_resolver_view(**resolver_inputs)
+
+    assert [(item.axis_kind, item.axis_id) for item in view.axis_definitions] == sorted(
+        (item.axis_kind, item.axis_id) for item in view.axis_definitions
+    )
+    risk_grade = next(
+        item for item in view.evidence_candidates if item.text == "위험등급"
+    )
+    assert risk_grade.offered_semantic_ids == ("credit_grade", "product_risk_grade")
+    assert [(item.reference_id, item.text) for item in view.reference_candidates] == [
+        ("ref-s1-0-5", "그 상품들")
+    ]
+
+
 def test_view_rejects_dataset_manifest_mismatch(
     resolver_inputs: dict[str, object],
 ) -> None:
@@ -118,7 +153,7 @@ def test_view_rejects_dataset_manifest_mismatch(
         ("schema_version", "2.0"),
         ("normalizer_version", "different-normalizer"),
         ("candidate_policy_version", "different-policy"),
-        ("resolver_schema_version", "2.0"),
+        ("resolver_schema_version", "1.0"),
         ("prompt_version", "different-prompt"),
         ("adapter_version", "different-adapter"),
     ],
@@ -214,6 +249,9 @@ def _rebuild_view(
         relation_definitions=view.relation_definitions,
         literal_candidates=view.literal_candidates,
         entity_candidates=entity_candidates,
+        axis_definitions=view.axis_definitions,
+        evidence_candidates=view.evidence_candidates,
+        reference_candidates=view.reference_candidates,
     )
 
 
