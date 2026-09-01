@@ -21,6 +21,7 @@ from financial_agent.intent.draft import (
     IntentResolutionDraft,
     IntentResolutionDraftV2,
     ProductFamilyChoice,
+    SemanticFlagHint,
     SlotAssignment,
 )
 from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
@@ -51,6 +52,8 @@ from financial_agent.intent.view import (
     ResolverViewEntityCandidateGroup,
     ResolverViewLiteralCandidate,
     ResolverViewRelationDefinition,
+    ResolverViewSemanticCandidate,
+    ResolverViewSemanticCandidateGroup,
 )
 
 from .view_fixtures import complete_axis_definitions
@@ -508,6 +511,89 @@ def test_covered_semantic_slot_requires_offered_evidence(
         validate_semantics(draft=draft, **replace(validation_inputs, view=view).rest)
 
 
+@pytest.mark.parametrize(
+    ("match_kind", "candidate_ids", "should_resolve"),
+    [
+        ("ambiguous_alias", ("aum", "fee_rate"), False),
+        ("trigram", ("aum", "fee_rate"), False),
+        ("ambiguous_alias", ("aum", "credit_grade"), True),
+    ],
+)
+def test_covered_fuzzy_semantic_requires_one_applicable_candidate(
+    validation_inputs: ValidationInputs,
+    match_kind: str,
+    candidate_ids: tuple[str, str],
+    should_resolve: bool,
+) -> None:
+    """Catches covered fuzzy matches that leave two applicable meanings open."""
+    draft = _v2_draft(
+        validation_inputs.draft,
+        (
+            _coverage(SemanticCoverageState.COVERED, SemanticCoverageReason.NONE),
+            _coverage(SemanticCoverageState.COVERED, SemanticCoverageReason.NONE),
+        ),
+    )
+    view = _v2_view(
+        validation_inputs.view,
+        (
+            EvidenceCandidate(
+                evidence_id="span-1",
+                segment_id="s1",
+                start_char=0,
+                end_char=2,
+                text="국내",
+                source_kinds=(EvidenceSourceKind.SEMANTIC,),
+                offered_semantic_ids=(*candidate_ids, "managedBy"),
+            ),
+        ),
+    ).model_copy(
+        update={
+            "concept_definitions": (
+                *validation_inputs.view.concept_definitions,
+                ResolverViewConcept(
+                    concept_id="fee_rate",
+                    kind="metric",
+                    definition_ko="총보수율",
+                    value_kind="percentage",
+                    allowed_product_families=(
+                        "domestic_etf",
+                        "overseas_etf",
+                        "public_fund",
+                    ),
+                    allowed_ontology_types=("FinancialProduct",),
+                    required_qualifiers=(),
+                    allowed_operators=("equals",),
+                    missingness_sensitive=True,
+                    normalization_rule="none",
+                ),
+            ),
+            "semantic_candidates": (
+                ResolverViewSemanticCandidateGroup(
+                    mention_id="mention-coverage",
+                    items=tuple(
+                        ResolverViewSemanticCandidate(
+                            semantic_id=semantic_id,
+                            match_kind=match_kind,
+                            score=900_000,
+                        )
+                        for semantic_id in candidate_ids
+                    ),
+                ),
+            ),
+        }
+    )
+
+    if should_resolve:
+        assert (
+            validate_semantics(draft=draft, **replace(validation_inputs, view=view).rest)
+            .resolution_status
+            is ResolutionStatus.RESOLVED
+        )
+    else:
+        with pytest.raises(ResolverContractError, match="MODEL_INVALID_SEMANTIC_COVERAGE"):
+            validate_semantics(draft=draft, **replace(validation_inputs, view=view).rest)
+
+
 def test_registered_new_combination_remains_covered(
     validation_inputs: ValidationInputs,
 ) -> None:
@@ -546,16 +632,23 @@ def test_registered_new_combination_remains_covered(
 
 
 @pytest.mark.parametrize(
-    ("question", "evidence_tag", "expected_tag"),
+    ("question", "evidence_tag", "model_tag", "expected_tag"),
     [
-        ("매수해줘", "ORDER_EXECUTION", SemanticTag.ORDER_EXECUTION),
-        ("추천해줘", None, None),
+        ("매수해줘", "ORDER_EXECUTION", None, SemanticTag.ORDER_EXECUTION),
+        ("추천해줘", None, SemanticTag.PERSONALIZED_ADVICE, None),
+        (
+            "내 투자성향에 맞춰 골라줘",
+            "PERSONALIZED_ADVICE",
+            SemanticTag.PERSONALIZED_ADVICE,
+            SemanticTag.PERSONALIZED_ADVICE,
+        ),
     ],
 )
 def test_exact_policy_cue_enrichment_does_not_depend_on_model_hint(
     validation_inputs: ValidationInputs,
     question: str,
     evidence_tag: str | None,
+    model_tag: SemanticTag | None,
     expected_tag: SemanticTag | None,
 ) -> None:
     """Catches a missing model flag removing a bounded policy cue tag."""
@@ -598,7 +691,15 @@ def test_exact_policy_cue_enrichment_does_not_depend_on_model_hint(
         reference_hints=(),
         context_link_hints=(),
         slot_mutations=(),
-        semantic_flag_hints=(),
+        semantic_flag_hints=(
+            SemanticFlagHint(
+                semantic_tag=model_tag,
+                evidence_span_ids=("span-1",),
+                reason_code="policy_explicit",
+            ),
+        )
+        if model_tag is not None
+        else (),
         frame_limit_exceeded=False,
     )
     source_kind = (
@@ -627,7 +728,10 @@ def test_exact_policy_cue_enrichment_does_not_depend_on_model_hint(
         catalog=validation_inputs.catalog,
     )
 
-    assert (expected_tag in state.final_tags) is (expected_tag is not None)
+    if expected_tag is not None:
+        assert expected_tag in state.final_tags
+    if model_tag is not None and model_tag is not expected_tag:
+        assert model_tag not in state.final_tags
 
 
 def test_unknown_id_is_contract_failure(validation_inputs: ValidationInputs) -> None:

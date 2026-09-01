@@ -15,6 +15,7 @@ from .draft import (
     IntentResolutionDraft,
     IntentResolutionDraftV2,
 )
+from .evidence import EvidenceSourceKind
 from .errors import ResolverContractError
 from .normalization import NormalizedRequest
 from .resolution import ResolutionIssue, ValidationEvent
@@ -113,7 +114,7 @@ def validate_semantics(
     _validate_applicability(draft, catalog, offered.concept_ids, offered.relation_ids)
     _validate_ontology_relations(draft, catalog, offered.relation_ids)
     _validate_literal_types(draft, normalized, view, offered)
-    _validate_v2_semantic_coverage(draft, view)
+    _validate_v2_semantic_coverage(draft, view, catalog)
 
     canonical_frames = tuple(_canonical_frame(frame) for frame in draft.intent_frames)
     issues = _issues(draft)
@@ -459,7 +460,9 @@ def _validate_literal_types(
 
 
 def _validate_v2_semantic_coverage(
-    draft: IntentResolutionDraft, view: ResolverView
+    draft: IntentResolutionDraft,
+    view: ResolverView,
+    catalog: SemanticCatalogSnapshot,
 ) -> None:
     if not isinstance(draft, IntentResolutionDraftV2):
         return
@@ -470,7 +473,7 @@ def _validate_v2_semantic_coverage(
     for frame in draft.intent_frames:
         coverage = frame.semantic_coverage[0]
         if coverage.state is SemanticCoverageState.COVERED:
-            _validate_covered_semantic_slots(frame, evidence_by_id)
+            _validate_covered_semantic_slots(frame, evidence_by_id, view, catalog)
             continue
         if (
             coverage.reason is SemanticCoverageReason.NONE
@@ -482,7 +485,10 @@ def _validate_v2_semantic_coverage(
 
 
 def _validate_covered_semantic_slots(
-    frame: IntentFrameDraft, evidence_by_id: dict[str, object]
+    frame: IntentFrameDraft,
+    evidence_by_id: dict[str, object],
+    view: ResolverView,
+    catalog: SemanticCatalogSnapshot,
 ) -> None:
     for assignment in frame.slot_assignments:
         if assignment.slot_kind not in _CONCEPT_SLOTS | {
@@ -499,6 +505,73 @@ def _validate_covered_semantic_slots(
         }
         if not set(assignment.value_ids) <= offered_ids:
             raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+        _validate_fuzzy_coverage_candidates(
+            frame, assignment.slot_kind, assignment.value_ids, offered_ids, view, catalog
+        )
+
+
+def _validate_fuzzy_coverage_candidates(
+    frame: IntentFrameDraft,
+    slot_kind: SlotKind,
+    selected_ids: tuple[str, ...],
+    evidence_semantic_ids: set[str],
+    view: ResolverView,
+    catalog: SemanticCatalogSnapshot,
+) -> None:
+    for selected_id in selected_ids:
+        for group in view.semantic_candidates:
+            group_ids = {item.semantic_id for item in group.items}
+            selected = tuple(
+                item for item in group.items if item.semantic_id == selected_id
+            )
+            if (
+                not selected
+                or not group_ids <= evidence_semantic_ids
+                or not any(
+                    item.match_kind in {"ambiguous_alias", "trigram"}
+                    for item in selected
+                )
+            ):
+                continue
+            applicable = tuple(
+                item
+                for item in group.items
+                if item.semantic_id in evidence_semantic_ids
+                and _is_applicable_slot_semantic(
+                    item.semantic_id, slot_kind, frame, catalog
+                )
+            )
+            if len(applicable) != 1:
+                raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+
+
+def _is_applicable_slot_semantic(
+    semantic_id: str,
+    slot_kind: SlotKind,
+    frame: IntentFrameDraft,
+    catalog: SemanticCatalogSnapshot,
+) -> bool:
+    concept = catalog.concepts_by_id.get(semantic_id)
+    if concept is None:
+        return False
+    if slot_kind is SlotKind.RELATION:
+        if concept.kind != "relation":
+            return False
+    elif slot_kind in _CONCEPT_SLOTS | {SlotKind.DOCUMENT_TOPIC}:
+        if concept.kind == "relation":
+            return False
+    else:
+        return False
+    return (
+        set(frame.product_family_choice.selected_ids)
+        <= set(concept.allowed_product_families)
+        and all(
+            _type_is_compatible(
+                type_id, set(concept.allowed_ontology_types), catalog
+            )
+            for type_id in frame.entity_type_ids
+        )
+    )
 
 
 def _canonical_frame(frame: IntentFrameDraft) -> IntentFrameDraft:
@@ -583,11 +656,33 @@ def derive_semantic_tags(
             hint.semantic_tag in _POLICY_TAGS
             and hint.evidence_span_ids
             and hint.reason_code in _POLICY_REASON_CODES
+            and (
+                view is None
+                or _has_policy_evidence(
+                    hint.semantic_tag, hint.evidence_span_ids, view
+                )
+            )
         ):
             tags.add(hint.semantic_tag)
     if normalized is not None and view is not None:
         tags.update(_exact_policy_cue_tags(normalized, view, catalog))
     return tuple(sorted(tags, key=lambda item: item.value))
+
+
+def _has_policy_evidence(
+    tag: SemanticTag,
+    evidence_ids: tuple[str, ...],
+    view: ResolverView | None,
+) -> bool:
+    if view is None:
+        return False
+    evidence_by_id = {item.evidence_id: item for item in view.evidence_candidates}
+    return any(
+        EvidenceSourceKind.POLICY in evidence.source_kinds
+        and tag.value in evidence.offered_semantic_ids
+        for evidence_id in evidence_ids
+        if (evidence := evidence_by_id.get(evidence_id)) is not None
+    )
 
 
 def _exact_policy_cue_tags(
