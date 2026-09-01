@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-01
 
-**Status:** Proposed — approved direction; written design pending review
+**Status:** Accepted
 
 **Scope:** Stage 06 Phase 1 contract hardening only
 

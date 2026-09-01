@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-01
 
-**Status:** Proposed — direction approved in conversation; written design pending review
+**Status:** Accepted
 
 **Amends:** [ADR-0022](ADR-0022-use-ontology-grounded-intent-resolution.md)
 only at the model-facing proposal boundary. The external `RequestContext → Intent
