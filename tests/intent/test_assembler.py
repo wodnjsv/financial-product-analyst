@@ -16,7 +16,7 @@ from financial_agent.intent.errors import (
 from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.proposal import IntentResolutionProposalV2
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
-from financial_agent.intent.types import SlotKind, SourceRole
+from financial_agent.intent.types import EntitySemanticRole, SlotKind, SourceRole
 from financial_agent.intent.view import (
     ActiveDatasetPin,
     ResolverView,
@@ -24,6 +24,7 @@ from financial_agent.intent.view import (
     ResolverViewEntityCandidateGroup,
     ResolverViewLiteralCandidate,
     ResolverViewReferenceCandidate,
+    ResolverViewRelationDefinition,
 )
 
 from .view_fixtures import complete_axis_definitions, complete_entity_type_ids
@@ -372,6 +373,43 @@ def unsupported_unit_mutation(
     )
 
 
+def relation_object_without_selected_relation(
+    value: IntentResolutionProposalV2,
+) -> IntentResolutionProposalV2:
+    frame = value.frames[0]
+    hint = frame.entity_hints[0].model_copy(
+        update={
+            "semantic_role": EntitySemanticRole.RELATION_OBJECT,
+            "relation_id": ("managedBy",),
+            "expected_entity_type_ids": ("AssetManager",),
+        }
+    )
+    return value.model_copy(
+        update={
+            "frames": (
+                frame.model_copy(update={"entity_hints": (hint,)}),
+                *value.frames[1:],
+            )
+        }
+    )
+
+
+def view_with_managed_by() -> ResolverView:
+    return view().model_copy(
+        update={
+            "relation_definitions": (
+                ResolverViewRelationDefinition(
+                    relation_id="managedBy",
+                    definition_ko="상품을 운용하는 기관",
+                    subject_ontology_types=("FinancialProduct",),
+                    object_ontology_types=("AssetManager",),
+                    required_qualifiers=(),
+                ),
+            )
+        }
+    )
+
+
 def test_assembly_is_byte_stable_and_server_assigns_ids() -> None:
     first = assemble_proposal(proposal(), normalized(), view())
     second = assemble_proposal(proposal(), normalized(), view())
@@ -390,8 +428,38 @@ def test_assembly_is_byte_stable_and_server_assigns_ids() -> None:
     assert first.context_link_hints[0].context_link_id == "link-0000"
     assert first.slot_mutations[0].slot_mutation_id == "mutation-0000"
     assert first.intent_frames[0].entity_type_ids == ("ETF",)
+    assert first.entity_hints[0].semantic_role is EntitySemanticRole.FRAME_SUBJECT
+    assert first.entity_hints[0].relation_id == ()
     assert first.entity_hints[0].expected_entity_type_ids == ("ETF",)
     assert first.entity_hints[0].selected_candidate_ids == ("entity-1",)
+
+
+def test_assembler_bounds_expected_entity_types_to_the_registered_view() -> None:
+    value = proposal()
+    frame = value.frames[0]
+    hint = frame.entity_hints[0].model_copy(
+        update={"expected_entity_type_ids": ("UnknownEntityType",)}
+    )
+    value = value.model_copy(
+        update={
+            "frames": (
+                frame.model_copy(update={"entity_hints": (hint,)}),
+                *value.frames[1:],
+            )
+        }
+    )
+
+    with pytest.raises(ResolverContractError, match=MODEL_PROPOSAL_SCHEMA_INVALID):
+        assemble_proposal(value, normalized(), view())
+
+
+def test_assembler_rejects_managed_by_object_when_relation_is_not_selected() -> None:
+    with pytest.raises(ResolverContractError, match=MODEL_PROPOSAL_SCHEMA_INVALID):
+        assemble_proposal(
+            relation_object_without_selected_relation(proposal()),
+            normalized(),
+            view_with_managed_by(),
+        )
 
 
 @pytest.mark.parametrize(

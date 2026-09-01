@@ -37,6 +37,7 @@ from financial_agent.intent.resolution import ContractFileHash, ResolverBuildMan
 from financial_agent.intent.types import (
     ChoiceState,
     ContextLinkType,
+    EntitySemanticRole,
     ResolutionStatus,
     SemanticCoverageReason,
     SemanticCoverageState,
@@ -378,6 +379,158 @@ def _v2_view(
             "evidence_candidates": evidence,
         }
     )
+
+
+def _managed_by_proposal(
+    *,
+    frame_types: tuple[str, ...],
+    role: str,
+    relation_id: tuple[str, ...],
+    expected_types: tuple[str, ...],
+    selected_entity_id: str,
+) -> IntentResolutionProposalV2:
+    return IntentResolutionProposalV2.model_validate_json(
+        json.dumps(
+            {
+                "proposal_schema_version": "2.0",
+                "frames": [
+                    {
+                        "segment_ids": ["s1"],
+                        "action_choice": {
+                            "state": "selected",
+                            "selected_ids": ["compare"],
+                            "evidence_ids": ["span-1"],
+                            "reason_code": "explicit",
+                        },
+                        "product_family_choice": {
+                            "state": "selected",
+                            "selected_ids": ["domestic_etf"],
+                            "evidence_ids": ["span-1"],
+                            "reason_code": "explicit",
+                        },
+                        "entity_type_ids": list(frame_types),
+                        "semantic_coverage": {
+                            "state": "covered",
+                            "reason": "none",
+                            "evidence_ids": [],
+                        },
+                        "slot_assignments": [
+                            {
+                                "slot_kind": "relation",
+                                "value_ids": ["managedBy"],
+                                "evidence_ids": ["span-1"],
+                                "reason_code": "explicit",
+                            }
+                        ],
+                        "entity_hints": [
+                            {
+                                "semantic_role": role,
+                                "relation_id": list(relation_id),
+                                "expected_entity_type_ids": list(expected_types),
+                                "mention_id": ["mention-entity"],
+                                "candidate_entity_ids": [selected_entity_id],
+                                "selected_candidate_ids": [selected_entity_id],
+                            }
+                        ],
+                        "produced_result_hints": ["relation_target"],
+                    }
+                ],
+                "references": [],
+                "context_links": [],
+                "slot_mutations": [],
+                "semantic_flag_hints": [],
+                "frame_limit_exceeded": False,
+            }
+        )
+    )
+
+
+def _managed_by_view(inputs: ValidationInputs) -> ResolverView:
+    return _v2_view(
+        inputs.view,
+        (
+            EvidenceCandidate(
+                evidence_id="span-1",
+                segment_id="s1",
+                start_char=0,
+                end_char=2,
+                text="국내",
+                source_kinds=(EvidenceSourceKind.SEMANTIC,),
+                offered_semantic_ids=("managedBy",),
+            ),
+        ),
+    )
+
+
+def test_managed_by_accepts_asset_manager_as_relation_object(
+    validation_inputs: ValidationInputs,
+) -> None:
+    view = _managed_by_view(validation_inputs)
+    proposal = _managed_by_proposal(
+        frame_types=("ETF",),
+        role="relation_object",
+        relation_id=("managedBy",),
+        expected_types=("AssetManager",),
+        selected_entity_id="entity-manager",
+    )
+
+    draft = assemble_proposal(proposal, validation_inputs.normalized, view)
+    state = validate_semantics(
+        draft,
+        validation_inputs.context,
+        validation_inputs.normalized,
+        view,
+        validation_inputs.catalog,
+    )
+
+    assert state.resolution_status is ResolutionStatus.RESOLVED
+    assert draft.entity_hints[0].semantic_role is EntitySemanticRole.RELATION_OBJECT
+    assert draft.entity_hints[0].relation_id == ("managedBy",)
+    assert draft.entity_hints[0].expected_entity_type_ids == ("AssetManager",)
+
+
+@pytest.mark.parametrize(
+    ("role", "expected_types", "entity_id", "code"),
+    [
+        (
+            "frame_subject",
+            ("AssetManager",),
+            "entity-manager",
+            "MODEL_INVALID_ENTITY_TYPE",
+        ),
+        (
+            "relation_object",
+            ("ETF",),
+            "entity-product",
+            "MODEL_INVALID_RELATION",
+        ),
+    ],
+)
+def test_managed_by_rejects_endpoint_reversal(
+    validation_inputs: ValidationInputs,
+    role: str,
+    expected_types: tuple[str, ...],
+    entity_id: str,
+    code: str,
+) -> None:
+    view = _managed_by_view(validation_inputs)
+    proposal = _managed_by_proposal(
+        frame_types=("ETF",),
+        role=role,
+        relation_id=("managedBy",) if role == "relation_object" else (),
+        expected_types=expected_types,
+        selected_entity_id=entity_id,
+    )
+    draft = assemble_proposal(proposal, validation_inputs.normalized, view)
+
+    with pytest.raises(ResolverContractError, match=code):
+        validate_semantics(
+            draft,
+            validation_inputs.context,
+            validation_inputs.normalized,
+            view,
+            validation_inputs.catalog,
+        )
 
 
 def _coverage(

@@ -9,7 +9,7 @@ from financial_agent.contracts.enums import IntentType, ProductFamily
 from .draft import (
     ActionChoice,
     ContextLinkHint,
-    EntityHint,
+    EntityHintV2,
     EvidenceSpan,
     IntentFrameDraft,
     IntentFrameDraftV2,
@@ -36,6 +36,7 @@ from .proposal import (
 )
 from .types import (
     ChoiceState,
+    EntitySemanticRole,
     SemanticCoverageReason,
     SemanticCoverageState,
     SlotKind,
@@ -172,6 +173,28 @@ def _validate_offered_ids(proposal: IntentResolutionProposalV2, view: ResolverVi
                 operator_ids,
             )
         for hint in frame.entity_hints:
+            if not hint.expected_entity_type_ids:
+                _schema_invalid()
+            _require_subset(
+                hint.expected_entity_type_ids, offered_entity_type_ids(view)
+            )
+            if hint.semantic_role is EntitySemanticRole.FRAME_SUBJECT:
+                if hint.relation_id:
+                    _schema_invalid()
+            elif hint.semantic_role is EntitySemanticRole.RELATION_OBJECT:
+                if len(hint.relation_id) != 1:
+                    _schema_invalid()
+                _require_subset(hint.relation_id, relation_ids)
+                selected_relation_ids = {
+                    relation_id
+                    for assignment in frame.slot_assignments
+                    if assignment.slot_kind is SlotKind.RELATION
+                    for relation_id in assignment.value_ids
+                }
+                if hint.relation_id[0] not in selected_relation_ids:
+                    _schema_invalid()
+            else:
+                _schema_invalid()
             if hint.mention_id:
                 mention_id = hint.mention_id[0]
                 allowed = entity_ids_by_mention.get(mention_id)
@@ -352,13 +375,15 @@ def _assemble_frame(
 
 def _assemble_entity_hints(
     proposal: IntentResolutionProposalV2,
-) -> tuple[EntityHint, ...]:
+) -> tuple[EntityHintV2, ...]:
     return tuple(
-        EntityHint(
+        EntityHintV2(
             entity_hint_id=f"entity-hint-{frame_index:04d}-{hint_index:04d}",
+            semantic_role=hint.semantic_role,
+            relation_id=hint.relation_id,
             mention_id=hint.mention_id,
             evidence_span_ids=(),
-            expected_entity_type_ids=frame.entity_type_ids,
+            expected_entity_type_ids=hint.expected_entity_type_ids,
             candidate_entity_ids=hint.candidate_entity_ids,
             selected_candidate_ids=hint.selected_candidate_ids,
             reason_code="implicit",

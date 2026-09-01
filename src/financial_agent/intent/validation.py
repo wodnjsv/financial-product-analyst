@@ -10,6 +10,7 @@ from .catalog import SemanticCatalogSnapshot
 from .draft import (
     AxisChoice,
     EntityHint,
+    EntityHintV2,
     IntentFrameDraft,
     IntentFrameDraftV2,
     IntentResolutionDraft,
@@ -19,8 +20,15 @@ from .evidence import EvidenceSourceKind
 from .errors import MODEL_UNKNOWN_EVIDENCE_ID, ResolverContractError
 from .normalization import NormalizedRequest
 from .resolution import ResolutionIssue, ValidationEvent
-from .types import ChoiceState, ResolutionStatus, SemanticTag, SlotKind
-from .types import SemanticCoverageReason, SemanticCoverageState
+from .types import (
+    ChoiceState,
+    EntitySemanticRole,
+    ResolutionStatus,
+    SemanticCoverageReason,
+    SemanticCoverageState,
+    SemanticTag,
+    SlotKind,
+)
 from .view import ResolverView, ResolverViewEntityCandidate
 
 
@@ -108,7 +116,7 @@ def validate_semantics(
     """
 
     _validate_schema(draft)
-    offered = _offered(view, catalog)
+    offered = _offered(view)
     _validate_offered_ids(draft, context, offered, catalog)
     _validate_evidence_spans(draft, context)
     _validate_applicability(draft, catalog, offered.concept_ids, offered.relation_ids)
@@ -153,27 +161,15 @@ class _Offered:
     operator_ids: frozenset[str]
 
 
-def _offered(view: ResolverView, catalog: SemanticCatalogSnapshot) -> _Offered:
+def _offered(view: ResolverView) -> _Offered:
     concept_ids = frozenset(item.concept_id for item in view.concept_definitions)
     relation_ids = frozenset(item.relation_id for item in view.relation_definitions)
-    entity_type_ids = {
-        ontology_type_id
-        for group in view.entity_candidates
-        for item in group.items
-        for ontology_type_id in item.ontology_type_ids
-        if ontology_type_id in catalog.class_ancestor_ids
-    }
-    for concept in view.concept_definitions:
-        entity_type_ids.update(concept.allowed_ontology_types)
-    for relation in view.relation_definitions:
-        entity_type_ids.update(relation.subject_ontology_types)
-        entity_type_ids.update(relation.object_ontology_types)
     return _Offered(
         product_family_ids=frozenset(view.product_family_ids),
         action_ids=frozenset(view.action_ids),
         concept_ids=concept_ids,
         relation_ids=relation_ids,
-        entity_type_ids=frozenset(entity_type_ids),
+        entity_type_ids=frozenset(view.entity_type_ids),
         entity_candidates_by_mention={
             group.mention_id: {item.entity_id: item for item in group.items}
             for group in view.entity_candidates
@@ -254,7 +250,7 @@ def _validate_offered_ids(
             _require_subset(hint.candidate_entity_ids, allowed_entity_ids)
             _require_subset(hint.selected_candidate_ids, hint.candidate_entity_ids)
             _validate_selected_entity_types(
-                draft, hint.entity_hint_id, hint, candidates, catalog
+                hint, candidates, catalog
             )
         else:
             if hint.candidate_entity_ids or hint.selected_candidate_ids:
@@ -304,16 +300,11 @@ def _all_entity_ids(offered: _Offered) -> frozenset[str]:
 
 
 def _validate_selected_entity_types(
-    draft: IntentResolutionDraft,
-    hint_id: str,
     hint: EntityHint,
     candidates: dict[str, ResolverViewEntityCandidate],
     catalog: SemanticCatalogSnapshot,
 ) -> None:
     expected_types = set(hint.expected_entity_type_ids)
-    referencing_frames = tuple(
-        frame for frame in draft.intent_frames if hint_id in frame.entity_hint_ids
-    )
     for entity_id in hint.selected_candidate_ids:
         candidate_types = candidates[entity_id].ontology_type_ids
         if any(
@@ -324,17 +315,6 @@ def _validate_selected_entity_types(
         if expected_types and not any(
             _type_is_compatible(candidate_type, expected_types, catalog)
             for candidate_type in candidate_types
-        ):
-            raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
-        if any(
-            frame.entity_type_ids
-            and not any(
-                _type_is_compatible(
-                    candidate_type, set(frame.entity_type_ids), catalog
-                )
-                for candidate_type in candidate_types
-            )
-            for frame in referencing_frames
         ):
             raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
 
@@ -409,6 +389,17 @@ def _validate_ontology_relations(
 ) -> None:
     hints_by_id = {hint.entity_hint_id: hint for hint in draft.entity_hints}
     for frame in draft.intent_frames:
+        if isinstance(frame, IntentFrameDraftV2):
+            for hint_id in frame.entity_hint_ids:
+                hint = hints_by_id[hint_id]
+                if not isinstance(hint, EntityHintV2):
+                    raise ResolverContractError("MODEL_SCHEMA_INVALID")
+                if hint.semantic_role is EntitySemanticRole.FRAME_SUBJECT:
+                    _validate_frame_subject_hint(frame, hint, catalog)
+                elif hint.semantic_role is EntitySemanticRole.RELATION_OBJECT:
+                    _validate_relation_object_hint(frame, hint, catalog)
+                else:
+                    raise ResolverContractError("MODEL_SCHEMA_INVALID")
         for assignment in frame.slot_assignments:
             if assignment.slot_kind is not SlotKind.RELATION:
                 continue
@@ -429,8 +420,12 @@ def _validate_ontology_relations(
                     or not object_types
                 ):
                     raise ResolverContractError("MODEL_INVALID_RELATION")
+                if isinstance(frame, IntentFrameDraftV2):
+                    continue
                 for hint_id in frame.entity_hint_ids:
-                    expected_types = set(hints_by_id[hint_id].expected_entity_type_ids)
+                    expected_types = set(
+                        hints_by_id[hint_id].expected_entity_type_ids
+                    )
                     if expected_types and not (
                         all(
                             _type_is_compatible(type_id, subject_types, catalog)
@@ -442,6 +437,45 @@ def _validate_ontology_relations(
                         )
                     ):
                         raise ResolverContractError("MODEL_INVALID_RELATION")
+
+
+def _validate_frame_subject_hint(
+    frame: IntentFrameDraftV2,
+    hint: EntityHintV2,
+    catalog: SemanticCatalogSnapshot,
+) -> None:
+    if not all(
+        _type_is_compatible(expected, set(frame.entity_type_ids), catalog)
+        for expected in hint.expected_entity_type_ids
+    ):
+        raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
+
+
+def _validate_relation_object_hint(
+    frame: IntentFrameDraftV2,
+    hint: EntityHintV2,
+    catalog: SemanticCatalogSnapshot,
+) -> None:
+    selected_relation_ids = {
+        relation_id
+        for assignment in frame.slot_assignments
+        if assignment.slot_kind is SlotKind.RELATION
+        for relation_id in assignment.value_ids
+    }
+    if (
+        len(hint.relation_id) != 1
+        or hint.relation_id[0] not in selected_relation_ids
+    ):
+        raise ResolverContractError("MODEL_SCHEMA_INVALID")
+    relation = catalog.concepts_by_id.get(hint.relation_id[0])
+    if relation is None or relation.kind != "relation":
+        raise ResolverContractError("MODEL_INVALID_RELATION")
+    allowed = set(relation.object_ontology_types)
+    if not all(
+        _type_is_compatible(expected, allowed, catalog)
+        for expected in hint.expected_entity_type_ids
+    ):
+        raise ResolverContractError("MODEL_INVALID_RELATION")
 
 
 def _type_is_compatible(

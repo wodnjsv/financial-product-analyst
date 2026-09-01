@@ -16,6 +16,7 @@ from financial_agent.intent.view import (
     ResolverViewEntityCandidateGroup,
     ResolverViewLiteralCandidate,
     ResolverViewReferenceCandidate,
+    ResolverViewRelationDefinition,
     ResolverViewSemanticCandidate,
     ResolverViewSemanticCandidateGroup,
 )
@@ -82,7 +83,15 @@ def make_view() -> ResolverView:
                 normalization_rule='none',
             ),
         ),
-        relation_definitions=(),
+        relation_definitions=(
+            ResolverViewRelationDefinition(
+                relation_id='managedBy',
+                definition_ko='상품을 운용하는 기관',
+                subject_ontology_types=('FinancialProduct',),
+                object_ontology_types=('AssetManager',),
+                required_qualifiers=(),
+            ),
+        ),
         literal_candidates=(
             ResolverViewLiteralCandidate(
                 literal_id='literal-1',
@@ -185,6 +194,17 @@ def test_prompt_keeps_untrusted_request_data_out_of_system_message() -> None:
     assert user_data['view']['concept_definitions'][0]['definition_ko'] == '운용자산 규모'
 
 
+def test_prompt_explains_subject_and_relation_object_type_roles() -> None:
+    envelope = build_prompt(make_context(), make_view())
+
+    assert 'frame.entity_type_ids는 분석 대상 또는 관계 주체의 타입이다.' in envelope.system_message
+    assert (
+        'entity_hints.semantic_role=relation_object이면 relation_id를 하나 선택하고, '
+        'expected_entity_type_ids에는 그 관계의 객체 타입을 선택한다.'
+        in envelope.system_message
+    )
+
+
 def test_response_schema_enums_only_offered_semantic_ids() -> None:
     schema = build_clova_response_schema(make_view())
     enums = collect_enums(schema)
@@ -267,6 +287,35 @@ def test_response_schema_only_allows_offered_entity_mention_and_evidence_ids() -
     assert frame['action_choice']['properties']['evidence_ids'] == {
         'type': 'array',
         'items': {'type': 'string', 'enum': ['evidence-aum']},
+    }
+
+
+def test_response_schema_requires_bounded_entity_hint_roles_and_types() -> None:
+    schema = build_clova_response_schema(make_view())
+    hint = schema['properties']['frames']['items']['properties']['entity_hints']['items']
+    properties = hint['properties']
+
+    assert set(hint['required']) == {
+        'semantic_role',
+        'relation_id',
+        'expected_entity_type_ids',
+        'mention_id',
+        'candidate_entity_ids',
+        'selected_candidate_ids',
+    }
+    assert properties['semantic_role'] == {
+        'type': 'string',
+        'enum': ['frame_subject', 'relation_object'],
+    }
+    assert properties['relation_id'] == {
+        'type': 'array',
+        'items': {'type': 'string', 'enum': ['managedBy']},
+        'maxItems': 1,
+    }
+    assert properties['expected_entity_type_ids'] == {
+        'type': 'array',
+        'items': {'type': 'string', 'enum': list(complete_entity_type_ids())},
+        'minItems': 1,
     }
 
 

@@ -15,6 +15,7 @@ from financial_agent.contracts.request import (
     Segment,
 )
 from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.candidates import EntityCandidate
 from financial_agent.intent.clova import ModelInvocationResult
 from financial_agent.intent.errors import (
     MODEL_INVALID_FRAME_REFERENCE,
@@ -32,7 +33,7 @@ from financial_agent.intent.service import (
     IntentResolverService,
     build_repair_envelope,
 )
-from financial_agent.intent.types import ResolutionStatus
+from financial_agent.intent.types import EntitySemanticRole, ResolutionStatus
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
     CANDIDATE_POLICY_VERSION,
@@ -135,6 +136,64 @@ def _valid_proposal_json() -> str:
     )
 
 
+def _managed_by_proposal_json(evidence_id: str) -> str:
+    return json.dumps(
+        {
+            "proposal_schema_version": "2.0",
+            "frames": [
+                {
+                    "segment_ids": ["s1"],
+                    "action_choice": {
+                        "state": "selected",
+                        "selected_ids": ["lookup"],
+                        "evidence_ids": [evidence_id],
+                        "reason_code": "explicit",
+                    },
+                    "product_family_choice": {
+                        "state": "selected",
+                        "selected_ids": ["domestic_etf"],
+                        "evidence_ids": [evidence_id],
+                        "reason_code": "explicit",
+                    },
+                    "entity_type_ids": ["ETF"],
+                    "semantic_coverage": {
+                        "state": "covered",
+                        "reason": "none",
+                        "evidence_ids": [],
+                    },
+                    "slot_assignments": [
+                        {
+                            "slot_kind": "relation",
+                            "value_ids": ["managedBy"],
+                            "evidence_ids": [evidence_id],
+                            "reason_code": "explicit",
+                        }
+                    ],
+                    "entity_hints": [
+                        {
+                            "semantic_role": "relation_object",
+                            "relation_id": ["managedBy"],
+                            "expected_entity_type_ids": ["AssetManager"],
+                            "mention_id": ["mention-manager"],
+                            "candidate_entity_ids": ["manager-samsung"],
+                            "selected_candidate_ids": ["manager-samsung"],
+                        }
+                    ],
+                    "produced_result_hints": ["relation_target"],
+                }
+            ],
+            "references": [],
+            "context_links": [],
+            "slot_mutations": [],
+            "semantic_flag_hints": [],
+            "frame_limit_exceeded": False,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
 class FakeAdapter:
     def __init__(self, content: str = "") -> None:
         self.content = content or _valid_proposal_json()
@@ -153,10 +212,11 @@ class FakeAdapter:
 class EmptyEntityRepository:
     def __init__(self) -> None:
         self.call_count = 0
+        self.responses = MappingProxyType({})
 
     async def search_batch(self, dataset_version: str, mentions: object):
         self.call_count += 1
-        return MappingProxyType({})
+        return self.responses
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +267,72 @@ async def test_resolve_once_parses_proposal_then_assembles_once(
     assert isinstance(result.resolution, ValidatedIntentResolutionV2)
     assert result.resolution.canonical_frames[0].frame_id == "frame-0000"
     assert result.resolution.resolution_status is ResolutionStatus.RESOLVED
+
+
+@pytest.mark.asyncio
+async def test_service_preserves_managed_by_object_role(
+    service_fixture: ServiceFixture,
+) -> None:
+    question = "KODEX 200 운용사 삼성자산운용"
+    context = _context(question).model_copy(
+        update={
+            "named_entities": (
+                NamedEntityMention(
+                    mention_id="mention-etf",
+                    segment_id="s1",
+                    text="KODEX 200",
+                    expected_entity_types=("ETF",),
+                ),
+                NamedEntityMention(
+                    mention_id="mention-manager",
+                    segment_id="s1",
+                    text="삼성자산운용",
+                    expected_entity_types=("AssetManager",),
+                ),
+            )
+        }
+    )
+    service_fixture.entity_repository.responses = MappingProxyType(
+        {
+            "mention-etf": (
+                EntityCandidate(
+                    entity_id="etf-kodex200",
+                    canonical_name="KODEX 200",
+                    ontology_type_ids=("DomesticETF", "ETF", "FinancialProduct"),
+                    product_family="domestic_etf",
+                    match_kind="exact_name",
+                    score=1_000_000,
+                    source_id="source-etf-kodex200",
+                ),
+            ),
+            "mention-manager": (
+                EntityCandidate(
+                    entity_id="manager-samsung",
+                    canonical_name="삼성자산운용",
+                    ontology_type_ids=("AssetManager", "Organization"),
+                    product_family=None,
+                    match_kind="exact_name",
+                    score=1_000_000,
+                    source_id="source-manager-samsung",
+                ),
+            ),
+        }
+    )
+    prepared = await service_fixture.service.prepare(context)
+    relation_evidence_id = next(
+        item.evidence_id
+        for item in prepared.view.evidence_candidates
+        if "managedBy" in item.offered_semantic_ids
+    )
+    service_fixture.adapter.content = _managed_by_proposal_json(relation_evidence_id)
+
+    attempt = await service_fixture.service.resolve_once(context)
+    hint = attempt.resolution.entity_hints[0]
+
+    assert service_fixture.adapter.call_count == 1
+    assert hint.semantic_role is EntitySemanticRole.RELATION_OBJECT
+    assert hint.relation_id == ("managedBy",)
+    assert hint.expected_entity_type_ids == ("AssetManager",)
 
 
 @pytest.mark.asyncio

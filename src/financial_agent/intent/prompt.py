@@ -12,6 +12,7 @@ from financial_agent.contracts.request import RequestContext
 from .types import (
     ChoiceState,
     ContextLinkType,
+    EntitySemanticRole,
     ReferenceForm,
     ReferenceTargetKind,
     Selector,
@@ -29,7 +30,10 @@ SYSTEM_MESSAGE = (
     "You are the financial-product intent resolver. Return only one JSON object "
     "that conforms to the supplied response schema. Use the supplied definitions "
     "and original text to select only offered identifiers and frame ordinals. "
-    "Do not create identifiers, evidence, text, or offsets."
+    "Do not create identifiers, evidence, text, or offsets. "
+    "frame.entity_type_ids는 분석 대상 또는 관계 주체의 타입이다. "
+    "entity_hints.semantic_role=relation_object이면 relation_id를 하나 선택하고, "
+    "expected_entity_type_ids에는 그 관계의 객체 타입을 선택한다."
 )
 
 REASON_CODES = ("ambiguous", "explicit", "implicit", "policy_explicit", "unmapped")
@@ -79,6 +83,13 @@ def build_clova_response_schema(view: ResolverView) -> dict[str, object]:
     slot_assignment = _slot_assignment_schema(view, evidence_identifier, reason_code)
     entity_hint = _object(
         {
+            "semantic_role": _enum_members(EntitySemanticRole),
+            "relation_id": _restricted_identifier_array(
+                _relation_ids(view), max_items=1
+            ),
+            "expected_entity_type_ids": _restricted_identifier_array(
+                view.entity_type_ids, min_items=1
+            ),
             "mention_id": _restricted_identifier_array(entity_mention_ids, max_items=1),
             "candidate_entity_ids": _restricted_identifier_array(entity_ids),
             "selected_candidate_ids": _restricted_identifier_array(
@@ -187,6 +198,10 @@ def _reference_ids(view: ResolverView) -> tuple[str, ...]:
     return tuple(sorted(item.reference_id for item in view.reference_candidates))
 
 
+def _relation_ids(view: ResolverView) -> tuple[str, ...]:
+    return tuple(sorted(item.relation_id for item in view.relation_definitions))
+
+
 def _segment_ids(view: ResolverView) -> tuple[str, ...]:
     return tuple(
         sorted(
@@ -235,7 +250,7 @@ def _slot_value_ids(view: ResolverView, slot_kind: SlotKind) -> tuple[str, ...]:
     if slot_kind is SlotKind.ENTITY:
         return _entity_ids(view)
     if slot_kind is SlotKind.RELATION:
-        return tuple(sorted(item.relation_id for item in view.relation_definitions))
+        return _relation_ids(view)
     if slot_kind is SlotKind.DOCUMENT_TOPIC:
         return _concept_ids(view, {"document_topic"})
     if slot_kind is SlotKind.METRIC:
