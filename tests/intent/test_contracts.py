@@ -192,6 +192,37 @@ def test_v2_draft_requires_exactly_one_semantic_coverage() -> None:
         IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
 
 
+def test_v2_draft_rejects_an_empty_resolution() -> None:
+    payload = valid_draft_payload()
+    payload["intent_frames"] = []
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
+
+
+def test_v2_draft_rejects_empty_frame_segments_and_two_selected_actions() -> None:
+    payload = valid_draft_payload()
+    frames = payload["intent_frames"]
+    assert isinstance(frames, list)
+    frame_payload = frames[0]
+    assert isinstance(frame_payload, dict)
+    frame_payload["semantic_coverage"] = [
+        {"state": "covered", "reason": "none", "evidence_ids": []}
+    ]
+    frame_payload["segment_ids"] = []
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
+
+    frame_payload["segment_ids"] = ["s1"]
+    action = frame_payload["action_choice"]
+    assert isinstance(action, dict)
+    action["selected_ids"] = ["lookup", "compare"]
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
+
+
 def test_v2_validated_resolution_requires_v2_manifest_and_one_coverage_per_frame() -> None:
     payload = valid_validated_resolution_payload()
     payload["build_manifest"]["resolver_schema_version"] = "2.0"  # type: ignore[index]
@@ -207,6 +238,30 @@ def test_v2_validated_resolution_requires_v2_manifest_and_one_coverage_per_frame
     resolution = ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
 
     assert resolution.canonical_frames[0].semantic_coverage[0].state.value == "covered"
+
+
+def test_v2_validated_resolution_rejects_empty_frames_segments_and_two_actions() -> None:
+    payload = valid_validated_resolution_payload()
+    payload["build_manifest"]["resolver_schema_version"] = "2.0"  # type: ignore[index]
+
+    with pytest.raises(ValidationError):
+        ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
+
+    frame_payload = {
+        **validated_frame("f1", 0),
+        "semantic_coverage": [
+            {"state": "covered", "reason": "none", "evidence_ids": []}
+        ],
+    }
+    payload["canonical_frames"] = [frame_payload]
+    frame_payload["segment_ids"] = []
+    with pytest.raises(ValidationError):
+        ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
+
+    frame_payload["segment_ids"] = ["s1"]
+    frame_payload["action_choice"]["selected_ids"] = ["lookup", "compare"]
+    with pytest.raises(ValidationError):
+        ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
 
 
 @pytest.mark.parametrize(

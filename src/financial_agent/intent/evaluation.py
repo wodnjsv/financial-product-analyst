@@ -21,10 +21,14 @@ from financial_agent.contracts.canonical import canonical_sha256
 
 from .catalog import SemanticCatalogSnapshot
 from .context import validate_context_graph
-from .draft import IntentResolutionDraft
+from .draft import IntentResolutionDraft, IntentResolutionDraftV2
 from .errors import ResolverContractError
 from .normalization import NormalizedRequest
-from .resolution import ResolverBuildManifest, ValidatedIntentResolution
+from .resolution import (
+    ResolverBuildManifest,
+    ValidatedIntentResolution,
+    ValidatedIntentResolutionV2,
+)
 from .validation import validate_semantics
 from .view import MAX_CANDIDATES_PER_MENTION, ResolverView
 
@@ -435,6 +439,28 @@ class IntentDraftBundle(ContractModel):
         return self
 
 
+# Explicit aliases preserve the frozen v1 model names and schema titles while
+# allowing artifact readers to dispatch by the pinned resolver schema version.
+IntentDraftCaseArtifactV1 = IntentDraftCaseArtifact
+IntentDraftBundleV1 = IntentDraftBundle
+
+
+class IntentDraftCaseArtifactV2(ContractModel):
+    case_id: Identifier
+    artifact: IntentResolutionDraftV2 | None
+
+
+class IntentDraftBundleV2(ContractModel):
+    schema_version: Literal["2.0"] = "2.0"
+    dataset_id: Identifier
+    cases: tuple[IntentDraftCaseArtifactV2, ...]
+
+    @model_validator(mode="after")
+    def validate_case_ids(self) -> "IntentDraftBundleV2":
+        _require_unique((case.case_id for case in self.cases), "draft bundle case IDs")
+        return self
+
+
 class ValidatedResolutionCaseArtifact(ContractModel):
     case_id: Identifier
     artifact: ValidatedIntentResolution | None
@@ -451,6 +477,34 @@ class ValidatedResolutionBundle(ContractModel):
             (case.case_id for case in self.cases), "resolution bundle case IDs"
         )
         return self
+
+
+ValidatedResolutionCaseArtifactV1 = ValidatedResolutionCaseArtifact
+ValidatedResolutionBundleV1 = ValidatedResolutionBundle
+
+
+class ValidatedResolutionCaseArtifactV2(ContractModel):
+    case_id: Identifier
+    artifact: ValidatedIntentResolutionV2 | None
+
+
+class ValidatedResolutionBundleV2(ContractModel):
+    schema_version: Literal["2.0"] = "2.0"
+    dataset_id: Identifier
+    cases: tuple[ValidatedResolutionCaseArtifactV2, ...]
+
+    @model_validator(mode="after")
+    def validate_case_ids(self) -> "ValidatedResolutionBundleV2":
+        _require_unique(
+            (case.case_id for case in self.cases), "resolution bundle case IDs"
+        )
+        return self
+
+
+IntentDraftBundleAny = IntentDraftBundle | IntentDraftBundleV2
+ValidatedResolutionBundleAny = (
+    ValidatedResolutionBundle | ValidatedResolutionBundleV2
+)
 
 
 class AttemptTrace(ContractModel):
@@ -696,7 +750,7 @@ PromotionGateName = Literal[
 PromotionGateStatus = Literal["passed", "failed", "unmeasured"]
 PromotionComparison = Literal["equal", "at_least", "at_most"]
 _FROZEN_PROMOTION_DATASET_SHA256 = (
-    "dbce9e94700ef575eb6b9075961e688b54b193b0b6f700dbf5d030761fd26926"
+    "2142f4da110c7a83daba902c7b77df62168649c7f0a412867495fa6930acf211"
 )
 
 
@@ -786,8 +840,8 @@ _PROMOTION_GATE_POPULATIONS: dict[PromotionGateName, int] = {
     "deterministic_candidate_reproducibility": 155,
     "candidate_recall_at_5": 196,
     "first_pass_structured_output_validity": 155,
-    "held_out_joint_frame_exact_match": 160,
-    "held_out_context_link_exact_match": 160,
+    "held_out_joint_frame_exact_match": 155,
+    "held_out_context_link_exact_match": 155,
     "ood_false_fast_rate": 30,
 }
 _PROMOTION_COVERAGE_POPULATIONS = {

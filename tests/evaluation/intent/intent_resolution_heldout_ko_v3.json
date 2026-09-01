@@ -10353,7 +10353,26 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [
+            "domestic_etf"
+          ],
+          "entity_type_ids": [
+            "ETF"
+          ],
+          "slots": [],
+          "action_ids": [
+            "screen"
+          ],
+          "semantic_coverage": {
+            "state": "partial",
+            "reason": "lexical_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10363,7 +10382,7 @@
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [],
       "expected_semantic_coverage": {
-        "state": "unmapped",
+        "state": "partial",
         "reason": "lexical_ood"
       }
     },
@@ -10380,7 +10399,26 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [
+            "overseas_etf"
+          ],
+          "entity_type_ids": [
+            "ETF"
+          ],
+          "slots": [],
+          "action_ids": [
+            "screen"
+          ],
+          "semantic_coverage": {
+            "state": "partial",
+            "reason": "lexical_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10390,7 +10428,7 @@
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [],
       "expected_semantic_coverage": {
-        "state": "unmapped",
+        "state": "partial",
         "reason": "lexical_ood"
       }
     },
@@ -10407,7 +10445,26 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [
+            "public_fund"
+          ],
+          "entity_type_ids": [
+            "PublicFund"
+          ],
+          "slots": [],
+          "action_ids": [
+            "rank"
+          ],
+          "semantic_coverage": {
+            "state": "partial",
+            "reason": "lexical_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10417,7 +10474,7 @@
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [],
       "expected_semantic_coverage": {
-        "state": "unmapped",
+        "state": "partial",
         "reason": "lexical_ood"
       }
     },
@@ -10434,7 +10491,26 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [
+            "domestic_bond"
+          ],
+          "entity_type_ids": [
+            "FinancialProduct"
+          ],
+          "slots": [],
+          "action_ids": [
+            "compare"
+          ],
+          "semantic_coverage": {
+            "state": "partial",
+            "reason": "lexical_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10444,7 +10520,7 @@
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [],
       "expected_semantic_coverage": {
-        "state": "unmapped",
+        "state": "partial",
         "reason": "lexical_ood"
       }
     },
@@ -10461,7 +10537,24 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [
+            "ETF"
+          ],
+          "slots": [],
+          "action_ids": [
+            "rank"
+          ],
+          "semantic_coverage": {
+            "state": "partial",
+            "reason": "lexical_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10471,7 +10564,7 @@
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [],
       "expected_semantic_coverage": {
-        "state": "unmapped",
+        "state": "partial",
         "reason": "lexical_ood"
       }
     },
@@ -10488,7 +10581,26 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [
+            "public_fund"
+          ],
+          "entity_type_ids": [
+            "PublicFund"
+          ],
+          "slots": [],
+          "action_ids": [
+            "lookup"
+          ],
+          "semantic_coverage": {
+            "state": "partial",
+            "reason": "lexical_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10498,7 +10610,7 @@
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [],
       "expected_semantic_coverage": {
-        "state": "unmapped",
+        "state": "partial",
         "reason": "lexical_ood"
       }
     },
@@ -10515,7 +10627,26 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [
+            "overseas_etf"
+          ],
+          "entity_type_ids": [
+            "ETF"
+          ],
+          "slots": [],
+          "action_ids": [
+            "screen"
+          ],
+          "semantic_coverage": {
+            "state": "partial",
+            "reason": "lexical_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10525,7 +10656,7 @@
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [],
       "expected_semantic_coverage": {
-        "state": "unmapped",
+        "state": "partial",
         "reason": "lexical_ood"
       }
     },
@@ -10542,7 +10673,26 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [
+            "domestic_bond"
+          ],
+          "entity_type_ids": [
+            "FinancialProduct"
+          ],
+          "slots": [],
+          "action_ids": [
+            "lookup"
+          ],
+          "semantic_coverage": {
+            "state": "partial",
+            "reason": "lexical_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10552,7 +10702,7 @@
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [],
       "expected_semantic_coverage": {
-        "state": "unmapped",
+        "state": "partial",
         "reason": "lexical_ood"
       }
     },
@@ -10569,7 +10719,24 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [
+            "ETF"
+          ],
+          "slots": [],
+          "action_ids": [
+            "compare"
+          ],
+          "semantic_coverage": {
+            "state": "partial",
+            "reason": "lexical_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10579,7 +10746,7 @@
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [],
       "expected_semantic_coverage": {
-        "state": "unmapped",
+        "state": "partial",
         "reason": "lexical_ood"
       }
     },
@@ -10596,7 +10763,26 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [
+            "public_fund"
+          ],
+          "entity_type_ids": [
+            "PublicFund"
+          ],
+          "slots": [],
+          "action_ids": [
+            "lookup"
+          ],
+          "semantic_coverage": {
+            "state": "partial",
+            "reason": "lexical_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10606,7 +10792,7 @@
       "expected_pipeline_outcome": "semantic_resolution",
       "validation_probes": [],
       "expected_semantic_coverage": {
-        "state": "unmapped",
+        "state": "partial",
         "reason": "lexical_ood"
       }
     },
@@ -10623,7 +10809,20 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [],
+          "slots": [],
+          "action_ids": [],
+          "semantic_coverage": {
+            "state": "unmapped",
+            "reason": "domain_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10650,7 +10849,20 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [],
+          "slots": [],
+          "action_ids": [],
+          "semantic_coverage": {
+            "state": "unmapped",
+            "reason": "domain_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10677,7 +10889,20 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [],
+          "slots": [],
+          "action_ids": [],
+          "semantic_coverage": {
+            "state": "unmapped",
+            "reason": "domain_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10704,7 +10929,20 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [],
+          "slots": [],
+          "action_ids": [],
+          "semantic_coverage": {
+            "state": "unmapped",
+            "reason": "domain_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10731,7 +10969,20 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [],
+          "slots": [],
+          "action_ids": [],
+          "semantic_coverage": {
+            "state": "unmapped",
+            "reason": "domain_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10758,7 +11009,20 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [],
+          "slots": [],
+          "action_ids": [],
+          "semantic_coverage": {
+            "state": "unmapped",
+            "reason": "domain_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10785,7 +11049,20 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [],
+          "slots": [],
+          "action_ids": [],
+          "semantic_coverage": {
+            "state": "unmapped",
+            "reason": "domain_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10812,7 +11089,20 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [],
+          "slots": [],
+          "action_ids": [],
+          "semantic_coverage": {
+            "state": "unmapped",
+            "reason": "domain_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10839,7 +11129,20 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [],
+          "slots": [],
+          "action_ids": [],
+          "semantic_coverage": {
+            "state": "unmapped",
+            "reason": "domain_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],
@@ -10866,7 +11169,20 @@
         }
       ],
       "expected_candidate_ids": [],
-      "expected_frames": [],
+      "expected_frames": [
+        {
+          "frame_id": "f1",
+          "ordinal": 0,
+          "product_family_ids": [],
+          "entity_type_ids": [],
+          "slots": [],
+          "action_ids": [],
+          "semantic_coverage": {
+            "state": "unmapped",
+            "reason": "domain_ood"
+          }
+        }
+      ],
       "expected_references": [],
       "expected_context_links": [],
       "expected_slot_mutations": [],

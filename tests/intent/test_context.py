@@ -567,6 +567,27 @@ def test_singular_demonstrative_with_two_candidates_is_ambiguous(context_inputs:
     assert {issue.code for issue in resolution.issues} == {"REFERENCE_AMBIGUOUS"}
 
 
+def test_resolved_reference_with_candidate_but_no_link_is_context_unresolved(
+    context_inputs: ContextInputs,
+) -> None:
+    state = _state(
+        references=(
+            _reference(
+                candidates=("f1",),
+                status="resolved",
+            ),
+        ),
+        links=(),
+    )
+
+    resolution = _finalize(state, context_inputs)
+
+    assert resolution.context_links == ()
+    assert resolution.resolution_status is ResolutionStatus.CONTEXT_UNRESOLVED
+    assert {issue.code for issue in resolution.issues} == {"REFERENCE_UNRESOLVED"}
+    assert resolution.canonical_frames[1].frame_status is ResolutionStatus.CONTEXT_UNRESOLVED
+
+
 def test_anchorless_similarity_is_context_unresolved(context_inputs: ContextInputs) -> None:
     """Catches marking a similarity request executable without an anchor."""
     state = _state(frames=(_frame("f1", 0, action=IntentType.SIMILAR, roles=()),))

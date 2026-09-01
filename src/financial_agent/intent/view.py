@@ -203,6 +203,37 @@ class ResolverView(ContractModel):
         return self
 
 
+def offered_entity_type_ids(view: ResolverView) -> tuple[str, ...]:
+    """Return the exact ontology-type IDs exposed by this request view."""
+    return tuple(
+        sorted(
+            {
+                *(
+                    ontology_type_id
+                    for group in view.entity_candidates
+                    for item in group.items
+                    for ontology_type_id in item.ontology_type_ids
+                ),
+                *(
+                    ontology_type_id
+                    for concept in view.concept_definitions
+                    for ontology_type_id in concept.allowed_ontology_types
+                ),
+                *(
+                    ontology_type_id
+                    for relation in view.relation_definitions
+                    for ontology_type_id in relation.subject_ontology_types
+                ),
+                *(
+                    ontology_type_id
+                    for relation in view.relation_definitions
+                    for ontology_type_id in relation.object_ontology_types
+                ),
+            }
+        )
+    )
+
+
 def build_manifest(
     snapshot: SemanticCatalogSnapshot, versions: Mapping[str, str]
 ) -> ResolverBuildManifest:

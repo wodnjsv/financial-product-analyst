@@ -629,6 +629,7 @@
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
             "type": "string"
           },
+          "minItems": 1,
           "title": "Segment Ids",
           "type": "array"
         },
@@ -772,6 +773,7 @@
         "$ref": "#/$defs/ValidatedIntentFrameV2"
       },
       "maxItems": 16,
+      "minItems": 1,
       "title": "Canonical Frames",
       "type": "array"
     },

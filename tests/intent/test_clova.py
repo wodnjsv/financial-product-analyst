@@ -29,7 +29,32 @@ def valid_proposal_json() -> str:
     return json.dumps(
         {
             'proposal_schema_version': '2.0',
-            'frames': [],
+            'frames': [
+                {
+                    'segment_ids': ['s1'],
+                    'action_choice': {
+                        'state': 'selected',
+                        'selected_ids': ['lookup'],
+                        'evidence_ids': [],
+                        'reason_code': 'explicit',
+                    },
+                    'product_family_choice': {
+                        'state': 'selected',
+                        'selected_ids': ['domestic_etf'],
+                        'evidence_ids': [],
+                        'reason_code': 'explicit',
+                    },
+                    'entity_type_ids': ['ETF'],
+                    'semantic_coverage': {
+                        'state': 'covered',
+                        'reason': 'none',
+                        'evidence_ids': [],
+                    },
+                    'slot_assignments': [],
+                    'entity_hints': [],
+                    'produced_result_hints': [],
+                }
+            ],
             'references': [],
             'context_links': [],
             'slot_mutations': [],
@@ -212,7 +237,6 @@ async def test_clova_adapter_maps_transport_failures_without_retry(exception: Ex
     'response',
     [
         httpx.Response(200, text='not-json'),
-        httpx.Response(200, json=provider_payload('not-json')),
         httpx.Response(200, json={'status': {'code': '20000'}}),
     ],
 )
@@ -276,18 +300,24 @@ async def test_clova_adapter_rejects_duplicate_provider_response_keys() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clova_adapter_rejects_duplicate_model_content_keys() -> None:
+@pytest.mark.parametrize('model_content', ('not-json', '{"frames":[],"frames":[]}'))
+async def test_clova_adapter_preserves_model_content_for_resolver_validation(
+    model_content: str,
+) -> None:
     calls: list[httpx.Request] = []
-    duplicate_content = '{"frames":[],"frames":[]}'
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)
-        return httpx.Response(200, json=provider_payload(duplicate_content), request=request)
+        return httpx.Response(200, json=provider_payload(model_content), request=request)
 
     adapter = ClovaStructuredOutputAdapter(make_config(), transport=httpx.MockTransport(handler))
 
-    with pytest.raises(ModelInvocationError, match='MODEL_SCHEMA_INVALID') as failure:
-        await adapter.invoke(make_prompt(), timeout_seconds=4.0)
+    result = await adapter.invoke(make_prompt(), timeout_seconds=4.0)
 
     assert len(calls) == 1
-    assert duplicate_content not in str(failure.value)
+    assert result.content == model_content
+    assert result.usage == {
+        'promptTokens': 10,
+        'completionTokens': 20,
+        'totalTokens': 30,
+    }

@@ -16,7 +16,7 @@ from .draft import (
     IntentResolutionDraftV2,
 )
 from .evidence import EvidenceSourceKind
-from .errors import ResolverContractError
+from .errors import MODEL_UNKNOWN_EVIDENCE_ID, ResolverContractError
 from .normalization import NormalizedRequest
 from .resolution import ResolutionIssue, ValidationEvent
 from .types import ChoiceState, ResolutionStatus, SemanticTag, SlotKind
@@ -210,6 +210,7 @@ def _validate_offered_ids(
 ) -> None:
     segment_ids = {segment.segment_id for segment in context.segments}
     span_ids = {span.span_id for span in draft.evidence_spans}
+    span_segments = {span.span_id: span.segment_id for span in draft.evidence_spans}
     entity_hint_ids = {hint.entity_hint_id for hint in draft.entity_hints}
 
     for frame in draft.intent_frames:
@@ -222,6 +223,24 @@ def _validate_offered_ids(
         for assignment in frame.slot_assignments:
             _require_subset(assignment.evidence_span_ids, span_ids)
             _validate_slot_ids(assignment.slot_kind, assignment.value_ids, offered)
+        frame_evidence_ids = {
+            *frame.evidence_span_ids,
+            *frame.action_choice.evidence_span_ids,
+            *frame.product_family_choice.evidence_span_ids,
+            *(
+                evidence_id
+                for assignment in frame.slot_assignments
+                for evidence_id in assignment.evidence_span_ids
+            ),
+        }
+        if isinstance(frame, IntentFrameDraftV2):
+            _require_subset(frame.semantic_coverage[0].evidence_ids, span_ids)
+            frame_evidence_ids.update(frame.semantic_coverage[0].evidence_ids)
+        if any(
+            span_segments[evidence_id] not in frame.segment_ids
+            for evidence_id in frame_evidence_ids
+        ):
+            raise ResolverContractError(MODEL_UNKNOWN_EVIDENCE_ID)
 
     for hint in draft.entity_hints:
         _require_subset(hint.evidence_span_ids, span_ids)

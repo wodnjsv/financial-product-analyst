@@ -430,8 +430,6 @@ def _append_context_issues(
             )
         elif (
             reference.status == "resolved"
-            and not reference.candidate_target_frame_ids
-            and not reference.candidate_target_mention_ids
             and reference.reference_id not in linked_reference_ids
         ):
             records.append(("REFERENCE_UNRESOLVED", (reference.reference_id,), reference.evidence_span_ids))

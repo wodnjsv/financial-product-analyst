@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from financial_agent.contracts.canonical import build_request_key
 from financial_agent.contracts.enums import IntentType, ProductFamily
 from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.assembler import assemble_proposal
 from financial_agent.intent.draft import (
     ActionChoice,
     AxisChoice,
@@ -26,7 +28,10 @@ from financial_agent.intent.draft import (
 )
 from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
 from financial_agent.intent.errors import ResolverContractError
-from financial_agent.intent.proposal import FrameSemanticCoverage
+from financial_agent.intent.proposal import (
+    FrameSemanticCoverage,
+    IntentResolutionProposalV2,
+)
 from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
 from financial_agent.intent.types import (
@@ -424,6 +429,175 @@ def test_esg_lexical_ood_cannot_finish_resolved(
 
     assert state.resolution_status is ResolutionStatus.UNMAPPED
     assert [issue.code for issue in state.issues] == ["SEMANTIC_CONCEPT_UNMAPPED"]
+
+
+def test_relation_slot_from_proposal_preserves_frame_entity_type(
+    validation_inputs: ValidationInputs,
+) -> None:
+    view = _v2_view(
+        validation_inputs.view,
+        (
+            EvidenceCandidate(
+                evidence_id="span-1",
+                segment_id="s1",
+                start_char=0,
+                end_char=2,
+                text="국내",
+                source_kinds=(EvidenceSourceKind.SEMANTIC,),
+                offered_semantic_ids=("managedBy",),
+            ),
+        ),
+    )
+    proposal = IntentResolutionProposalV2.model_validate_json(
+        json.dumps(
+            {
+                "proposal_schema_version": "2.0",
+                "frames": [
+                    {
+                        "segment_ids": ["s1"],
+                        "action_choice": {
+                            "state": "selected",
+                            "selected_ids": ["compare"],
+                            "evidence_ids": ["span-1"],
+                            "reason_code": "explicit",
+                        },
+                        "product_family_choice": {
+                            "state": "selected",
+                            "selected_ids": ["overseas_etf"],
+                            "evidence_ids": ["span-1"],
+                            "reason_code": "explicit",
+                        },
+                        "entity_type_ids": ["FinancialProduct"],
+                        "semantic_coverage": {
+                            "state": "covered",
+                            "reason": "none",
+                            "evidence_ids": [],
+                        },
+                        "slot_assignments": [
+                            {
+                                "slot_kind": "relation",
+                                "value_ids": ["managedBy"],
+                                "evidence_ids": ["span-1"],
+                                "reason_code": "explicit",
+                            }
+                        ],
+                        "entity_hints": [],
+                        "produced_result_hints": ["relation_target"],
+                    }
+                ],
+                "references": [],
+                "context_links": [],
+                "slot_mutations": [],
+                "semantic_flag_hints": [],
+                "frame_limit_exceeded": False,
+            }
+        )
+    )
+    draft = assemble_proposal(
+        proposal, validation_inputs.normalized, view
+    )
+
+    state = validate_semantics(
+        draft,
+        validation_inputs.context,
+        validation_inputs.normalized,
+        view,
+        validation_inputs.catalog,
+    )
+
+    assert state.canonical_frames[0].entity_type_ids == ("FinancialProduct",)
+    assert state.resolution_status is ResolutionStatus.RESOLVED
+
+
+def test_v2_validation_rejects_frame_evidence_from_an_unrelated_segment(
+    validation_inputs: ValidationInputs,
+) -> None:
+    second_text = "다른 질문"
+    question = f"{validation_inputs.context.question} {second_text}"
+    context = RequestContext(
+        request_key=build_request_key(
+            "q-validation-evidence", question, "dataset-v1", "1.0"
+        ),
+        run_id="run-validation-evidence",
+        dataset_version="dataset-v1",
+        producer="test",
+        created_at=validation_inputs.context.created_at,
+        question_id="q-validation-evidence",
+        question=question,
+        segments=(
+            validation_inputs.context.segments[0],
+            Segment(segment_id="s2", ordinal=1, text=second_text),
+        ),
+        deadline_at=validation_inputs.context.deadline_at,
+    )
+    draft = _v2_draft(
+        validation_inputs.draft,
+        (
+            _coverage(SemanticCoverageState.COVERED, SemanticCoverageReason.NONE),
+            _coverage(SemanticCoverageState.COVERED, SemanticCoverageReason.NONE),
+        ),
+    )
+    first = draft.intent_frames[0]
+    draft = draft.model_copy(
+        update={
+            "evidence_spans": (
+                *draft.evidence_spans,
+                EvidenceSpan(
+                    span_id="span-other",
+                    segment_id="s2",
+                    start_char=0,
+                    end_char=2,
+                    text="다른",
+                ),
+            ),
+            "intent_frames": (
+                first.model_copy(
+                    update={
+                        "evidence_span_ids": (
+                            *first.evidence_span_ids,
+                            "span-other",
+                        ),
+                        "action_choice": first.action_choice.model_copy(
+                            update={"evidence_span_ids": ("span-other",)}
+                        ),
+                    }
+                ),
+                *draft.intent_frames[1:],
+            ),
+        }
+    )
+    view = _v2_view(
+        validation_inputs.view,
+        (
+            EvidenceCandidate(
+                evidence_id="span-1",
+                segment_id="s1",
+                start_char=0,
+                end_char=2,
+                text="국내",
+                source_kinds=(EvidenceSourceKind.SEMANTIC,),
+                offered_semantic_ids=("aum", "managedBy"),
+            ),
+            EvidenceCandidate(
+                evidence_id="span-other",
+                segment_id="s2",
+                start_char=0,
+                end_char=2,
+                text="다른",
+                source_kinds=(EvidenceSourceKind.SURFACE,),
+                offered_semantic_ids=(),
+            ),
+        ),
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_EVIDENCE_ID"):
+        validate_semantics(
+            draft,
+            context,
+            normalize_request(context),
+            view,
+            validation_inputs.catalog,
+        )
 
 
 @pytest.mark.parametrize(

@@ -51,7 +51,7 @@ PROMOTION_GATE_NAMES = (
     "ood_false_fast_rate",
 )
 FROZEN_V3_DATASET_SHA256 = (
-    "dbce9e94700ef575eb6b9075961e688b54b193b0b6f700dbf5d030761fd26926"
+    "2142f4da110c7a83daba902c7b77df62168649c7f0a412867495fa6930acf211"
 )
 APPROVED_CMD_TOKENS = (
     "python",
@@ -300,10 +300,10 @@ def _passing_promotion_evidence() -> PromotionEvidence:
             numerator=154, denominator=155
         ),
         held_out_joint_frame_exact_match=CountMetric(
-            numerator=144, denominator=160
+            numerator=140, denominator=155
         ),
         held_out_context_link_exact_match=CountMetric(
-            numerator=152, denominator=160
+            numerator=148, denominator=155
         ),
         ood_false_fast_rate=CountMetric(numerator=0, denominator=30),
     )
@@ -654,8 +654,8 @@ def test_promotion_does_not_treat_zero_denominators_as_passing() -> None:
     (
         ("candidate_recall_at_5", 194, 196),
         ("first_pass_structured_output_validity", 153, 155),
-        ("held_out_joint_frame_exact_match", 143, 160),
-        ("held_out_context_link_exact_match", 151, 160),
+        ("held_out_joint_frame_exact_match", 139, 155),
+        ("held_out_context_link_exact_match", 147, 155),
         ("ood_false_fast_rate", 1, 30),
     ),
 )

@@ -55,6 +55,23 @@ class ProposedAxisChoice(ContractModel):
     reason_code: Identifier
 
 
+def require_valid_action_cardinality(
+    state: ChoiceState,
+    selected_ids: tuple[object, ...],
+    coverage_state: SemanticCoverageState,
+) -> None:
+    if state is ChoiceState.SELECTED:
+        if len(selected_ids) != 1:
+            raise ValueError("selected action requires exactly one action ID")
+    elif selected_ids:
+        raise ValueError("unselected action cannot carry action IDs")
+    elif (
+        state is not ChoiceState.AMBIGUOUS
+        and coverage_state is SemanticCoverageState.COVERED
+    ):
+        raise ValueError("an actionless frame requires uncovered or ambiguous semantics")
+
+
 class ProposedSlotAssignment(ContractModel):
     slot_kind: SlotKind
     value_ids: tuple[Identifier, ...]
@@ -65,16 +82,33 @@ class ProposedSlotAssignment(ContractModel):
 class ProposedEntityHint(ContractModel):
     mention_id: OptionalIdentifier
     candidate_entity_ids: tuple[Identifier, ...]
+    selected_candidate_ids: OptionalIdentifier
+
+    @model_validator(mode="after")
+    def validate_selected_candidates(self) -> "ProposedEntityHint":
+        if not set(self.selected_candidate_ids) <= set(self.candidate_entity_ids):
+            raise ValueError("selected entity candidates must be proposed candidates")
+        return self
 
 
 class ProposedIntentFrame(ContractModel):
-    segment_ids: tuple[Identifier, ...]
+    segment_ids: Annotated[tuple[Identifier, ...], Field(min_length=1)]
     action_choice: ProposedAxisChoice
     product_family_choice: ProposedAxisChoice
+    entity_type_ids: tuple[Identifier, ...]
     semantic_coverage: FrameSemanticCoverage
     slot_assignments: tuple[ProposedSlotAssignment, ...]
     entity_hints: tuple[ProposedEntityHint, ...]
     produced_result_hints: tuple[SourceRole, ...]
+
+    @model_validator(mode="after")
+    def validate_action_cardinality(self) -> "ProposedIntentFrame":
+        require_valid_action_cardinality(
+            self.action_choice.state,
+            self.action_choice.selected_ids,
+            self.semantic_coverage.state,
+        )
+        return self
 
 
 class ProposedReference(ContractModel):
@@ -119,7 +153,9 @@ class ProposedSemanticFlag(ContractModel):
 
 class IntentResolutionProposalV2(ContractModel):
     proposal_schema_version: Literal["2.0"] = "2.0"
-    frames: Annotated[tuple[ProposedIntentFrame, ...], Field(max_length=16)]
+    frames: Annotated[
+        tuple[ProposedIntentFrame, ...], Field(min_length=1, max_length=16)
+    ]
     references: tuple[ProposedReference, ...]
     context_links: tuple[ProposedContextLink, ...]
     slot_mutations: tuple[ProposedSlotMutation, ...]

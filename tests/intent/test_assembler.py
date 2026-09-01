@@ -9,13 +9,14 @@ from financial_agent.intent.assembler import assemble_proposal
 from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
 from financial_agent.intent.errors import (
     MODEL_INVALID_FRAME_REFERENCE,
+    MODEL_PROPOSAL_SCHEMA_INVALID,
     MODEL_UNKNOWN_EVIDENCE_ID,
     ResolverContractError,
 )
 from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.proposal import IntentResolutionProposalV2
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
-from financial_agent.intent.types import SourceRole
+from financial_agent.intent.types import SlotKind, SourceRole
 from financial_agent.intent.view import (
     ActiveDatasetPin,
     ResolverView,
@@ -42,6 +43,31 @@ def normalized():
             question_id="q-1",
             question="ETF를 찾아서 그 상품을 비교해줘",
             segments=(Segment(segment_id="s1", ordinal=0, text="ETF를 찾아서 그 상품을 비교해줘"),),
+            deadline_at=created_at.replace(second=10),
+        )
+    )
+
+
+def normalized_with_unrelated_segment():
+    created_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    first = "ETF를 찾아서 그 상품을 비교해줘"
+    second = "다른 질문"
+    question = f"{first} {second}"
+    return normalize_request(
+        RequestContext(
+            request_key=build_request_key(
+                "q-2", question, "dataset-v1", "1.0"
+            ),
+            run_id="run-2",
+            dataset_version="dataset-v1",
+            producer="test",
+            created_at=created_at,
+            question_id="q-2",
+            question=question,
+            segments=(
+                Segment(segment_id="s1", ordinal=0, text=first),
+                Segment(segment_id="s2", ordinal=1, text=second),
+            ),
             deadline_at=created_at.replace(second=10),
         )
     )
@@ -130,6 +156,26 @@ def view() -> ResolverView:
     )
 
 
+def view_with_unrelated_evidence() -> ResolverView:
+    base = view()
+    return base.model_copy(
+        update={
+            "evidence_candidates": (
+                *base.evidence_candidates,
+                EvidenceCandidate(
+                    evidence_id="evidence-other",
+                    segment_id="s2",
+                    start_char=0,
+                    end_char=2,
+                    text="다른",
+                    source_kinds=(EvidenceSourceKind.SURFACE,),
+                    offered_semantic_ids=(),
+                ),
+            )
+        }
+    )
+
+
 def proposal() -> IntentResolutionProposalV2:
     return IntentResolutionProposalV2.model_validate_json(
         json.dumps(
@@ -140,15 +186,17 @@ def proposal() -> IntentResolutionProposalV2:
                     "segment_ids": ["s1"],
                     "action_choice": {"state": "selected", "selected_ids": ["lookup"], "evidence_ids": ["evidence-1"], "reason_code": "explicit"},
                     "product_family_choice": {"state": "selected", "selected_ids": ["domestic_etf"], "evidence_ids": ["evidence-1"], "reason_code": "explicit"},
+                    "entity_type_ids": ["ETF"],
                     "semantic_coverage": {"state": "covered", "reason": "none", "evidence_ids": []},
                     "slot_assignments": [{"slot_kind": "result_limit", "value_ids": ["literal-1"], "evidence_ids": ["evidence-1"], "reason_code": "explicit"}],
-                    "entity_hints": [{"mention_id": ["mention-1"], "candidate_entity_ids": ["entity-1"]}],
+                    "entity_hints": [{"mention_id": ["mention-1"], "candidate_entity_ids": ["entity-1"], "selected_candidate_ids": ["entity-1"]}],
                     "produced_result_hints": ["candidates"],
                 },
                 {
                     "segment_ids": ["s1"],
                     "action_choice": {"state": "selected", "selected_ids": ["compare"], "evidence_ids": ["evidence-2"], "reason_code": "explicit"},
                     "product_family_choice": {"state": "selected", "selected_ids": ["domestic_etf"], "evidence_ids": ["evidence-2"], "reason_code": "explicit"},
+                    "entity_type_ids": ["ETF"],
                     "semantic_coverage": {"state": "covered", "reason": "none", "evidence_ids": []},
                     "slot_assignments": [],
                     "entity_hints": [],
@@ -250,6 +298,79 @@ def unproduced_source_role(value: IntentResolutionProposalV2) -> IntentResolutio
     )
 
 
+def unrelated_frame_evidence(
+    value: IntentResolutionProposalV2, field: str
+) -> IntentResolutionProposalV2:
+    frame = value.frames[0]
+    if field == "action":
+        replacement = frame.model_copy(
+            update={
+                "action_choice": frame.action_choice.model_copy(
+                    update={"evidence_ids": ("evidence-other",)}
+                )
+            }
+        )
+    elif field == "family":
+        replacement = frame.model_copy(
+            update={
+                "product_family_choice": frame.product_family_choice.model_copy(
+                    update={"evidence_ids": ("evidence-other",)}
+                )
+            }
+        )
+    elif field == "slot":
+        replacement = frame.model_copy(
+            update={
+                "slot_assignments": (
+                    frame.slot_assignments[0].model_copy(
+                        update={"evidence_ids": ("evidence-other",)}
+                    ),
+                )
+            }
+        )
+    else:
+        replacement = frame.model_copy(
+            update={
+                "semantic_coverage": frame.semantic_coverage.model_copy(
+                    update={
+                        "state": "partial",
+                        "reason": "lexical_ood",
+                        "evidence_ids": ("evidence-other",),
+                    }
+                )
+            }
+        )
+    return value.model_copy(update={"frames": (replacement, *value.frames[1:])})
+
+
+def unsupported_unit_link(
+    value: IntentResolutionProposalV2,
+) -> IntentResolutionProposalV2:
+    return value.model_copy(
+        update={
+            "context_links": (
+                value.context_links[0].model_copy(
+                    update={"target_slot_kind": (SlotKind.UNIT,)}
+                ),
+            )
+        }
+    )
+
+
+def unsupported_unit_mutation(
+    value: IntentResolutionProposalV2,
+) -> IntentResolutionProposalV2:
+    return value.model_copy(
+        update={
+            "slot_mutations": (
+                value.slot_mutations[0].model_copy(
+                    update={"slot_kind": SlotKind.UNIT}
+                ),
+            )
+        }
+    )
+
+
 def test_assembly_is_byte_stable_and_server_assigns_ids() -> None:
     first = assemble_proposal(proposal(), normalized(), view())
     second = assemble_proposal(proposal(), normalized(), view())
@@ -267,6 +388,9 @@ def test_assembly_is_byte_stable_and_server_assigns_ids() -> None:
     assert first.evidence_spans[0].text == "ETF"
     assert first.context_link_hints[0].context_link_id == "link-0000"
     assert first.slot_mutations[0].slot_mutation_id == "mutation-0000"
+    assert first.intent_frames[0].entity_type_ids == ("ETF",)
+    assert first.entity_hints[0].expected_entity_type_ids == ("ETF",)
+    assert first.entity_hints[0].selected_candidate_ids == ("entity-1",)
 
 
 @pytest.mark.parametrize(
@@ -280,4 +404,24 @@ def test_assembly_is_byte_stable_and_server_assigns_ids() -> None:
 )
 def test_assembler_rejects_unoffered_or_invalid_references(mutation, code: str) -> None:
     with pytest.raises(ResolverContractError, match=code):
+        assemble_proposal(mutation(proposal()), normalized(), view())
+
+
+@pytest.mark.parametrize("field", ("action", "family", "slot", "coverage"))
+def test_assembler_rejects_frame_evidence_from_an_unrelated_segment(
+    field: str,
+) -> None:
+    with pytest.raises(ResolverContractError, match=MODEL_UNKNOWN_EVIDENCE_ID):
+        assemble_proposal(
+            unrelated_frame_evidence(proposal(), field),
+            normalized_with_unrelated_segment(),
+            view_with_unrelated_evidence(),
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation", (unsupported_unit_link, unsupported_unit_mutation)
+)
+def test_assembler_rejects_unit_in_model_facing_slot_positions(mutation) -> None:
+    with pytest.raises(ResolverContractError, match=MODEL_PROPOSAL_SCHEMA_INVALID):
         assemble_proposal(mutation(proposal()), normalized(), view())

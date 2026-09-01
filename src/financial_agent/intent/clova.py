@@ -108,9 +108,6 @@ def _parse_success(response: httpx.Response) -> ModelInvocationResult:
             raise TypeError
         if not isinstance(content, str) or not isinstance(usage, dict):
             raise TypeError
-        parsed_content = _strict_json_loads(content)
-        if not isinstance(parsed_content, dict):
-            raise TypeError
         parsed_usage = {
             name: usage[name]
             for name in ("promptTokens", "completionTokens", "totalTokens")

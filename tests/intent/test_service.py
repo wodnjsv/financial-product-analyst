@@ -103,6 +103,7 @@ def _valid_proposal_json() -> str:
                         ],
                         "reason_code": "explicit",
                     },
+                    "entity_type_ids": ["FinancialProduct"],
                     "semantic_coverage": {
                         "state": "covered",
                         "reason": "none",
@@ -213,6 +214,30 @@ async def test_schema_failure_does_not_retry_inside_service(
     service_fixture: ServiceFixture,
 ) -> None:
     service_fixture.adapter.content = "{}"
+
+    with pytest.raises(ResolverContractError, match=MODEL_PROPOSAL_SCHEMA_INVALID):
+        await service_fixture.service.resolve_once(service_fixture.context)
+
+    assert service_fixture.adapter.call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda payload: payload.update({"frames": []}),
+        lambda payload: payload["frames"][0]["action_choice"].update(
+            {"selected_ids": ["lookup", "compare"]}
+        ),
+    ),
+)
+async def test_empty_resolution_and_two_actions_are_rejected_end_to_end(
+    service_fixture: ServiceFixture,
+    mutation,
+) -> None:
+    payload = json.loads(_valid_proposal_json())
+    mutation(payload)
+    service_fixture.adapter.content = json.dumps(payload, ensure_ascii=False)
 
     with pytest.raises(ResolverContractError, match=MODEL_PROPOSAL_SCHEMA_INVALID):
         await service_fixture.service.resolve_once(service_fixture.context)

@@ -32,6 +32,7 @@ from .proposal import (
     FrameSemanticCoverage,
     IntentResolutionProposalV2,
     ProposedIntentFrame,
+    require_valid_action_cardinality,
 )
 from .types import (
     ChoiceState,
@@ -40,7 +41,7 @@ from .types import (
     SlotKind,
 )
 from .normalization import NormalizedRequest
-from .view import ResolverView
+from .view import ResolverView, offered_entity_type_ids
 
 
 _CONCEPT_SLOTS = frozenset(
@@ -96,6 +97,9 @@ def assemble_proposal(
 
 def _validate_offered_ids(proposal: IntentResolutionProposalV2, view: ResolverView) -> None:
     evidence_ids = {item.evidence_id for item in view.evidence_candidates}
+    evidence_segments = {
+        item.evidence_id: item.segment_id for item in view.evidence_candidates
+    }
     segment_ids = {
         item.segment_id
         for item in (
@@ -134,12 +138,25 @@ def _validate_offered_ids(proposal: IntentResolutionProposalV2, view: ResolverVi
 
     for frame in proposal.frames:
         _require_subset(frame.segment_ids, segment_ids)
-        _validate_choice(frame.action_choice.state, frame.action_choice.selected_ids, view.action_ids)
+        _validate_choice(
+            frame.action_choice.state,
+            frame.action_choice.selected_ids,
+            view.action_ids,
+        )
+        try:
+            require_valid_action_cardinality(
+                frame.action_choice.state,
+                frame.action_choice.selected_ids,
+                frame.semantic_coverage.state,
+            )
+        except ValueError:
+            _schema_invalid()
         _validate_choice(
             frame.product_family_choice.state,
             frame.product_family_choice.selected_ids,
             view.product_family_ids,
         )
+        _require_subset(frame.entity_type_ids, offered_entity_type_ids(view))
         _require_evidence(frame.action_choice.evidence_ids, evidence_ids)
         _require_evidence(frame.product_family_choice.evidence_ids, evidence_ids)
         _require_evidence(frame.semantic_coverage.evidence_ids, evidence_ids)
@@ -161,10 +178,18 @@ def _validate_offered_ids(proposal: IntentResolutionProposalV2, view: ResolverVi
                 if allowed is None:
                     _schema_invalid()
                 _require_subset(hint.candidate_entity_ids, allowed)
+                _require_subset(
+                    hint.selected_candidate_ids, hint.candidate_entity_ids
+                )
             elif hint.candidate_entity_ids:
                 _schema_invalid()
             else:
                 _require_subset(hint.candidate_entity_ids, entity_ids)
+        if any(
+            evidence_segments[evidence_id] not in frame.segment_ids
+            for evidence_id in _frame_evidence_ids(frame)
+        ):
+            raise ResolverContractError(MODEL_UNKNOWN_EVIDENCE_ID)
 
     if len({item.reference_id for item in proposal.references}) != len(proposal.references):
         _schema_invalid()
@@ -181,7 +206,11 @@ def _validate_offered_ids(proposal: IntentResolutionProposalV2, view: ResolverVi
     for link in proposal.context_links:
         _require_subset((link.reference_id,), reference_ids)
         _require_subset(link.selector_literal_candidate_id, literal_by_id)
+        if link.target_slot_kind == (SlotKind.UNIT,):
+            _schema_invalid()
     for mutation in proposal.slot_mutations:
+        if mutation.slot_kind is SlotKind.UNIT:
+            _schema_invalid()
         _require_evidence(mutation.evidence_ids, evidence_ids)
     for flag in proposal.semantic_flag_hints:
         _require_evidence(flag.evidence_ids, evidence_ids)
@@ -304,7 +333,7 @@ def _assemble_frame(
             evidence_span_ids=item.product_family_choice.evidence_ids,
             reason_code=item.product_family_choice.reason_code,
         ),
-        entity_type_ids=(),
+        entity_type_ids=item.entity_type_ids,
         entity_hint_ids=entity_hint_ids,
         slot_assignments=tuple(
             SlotAssignment(
@@ -329,9 +358,9 @@ def _assemble_entity_hints(
             entity_hint_id=f"entity-hint-{frame_index:04d}-{hint_index:04d}",
             mention_id=hint.mention_id,
             evidence_span_ids=(),
-            expected_entity_type_ids=(),
+            expected_entity_type_ids=frame.entity_type_ids,
             candidate_entity_ids=hint.candidate_entity_ids,
-            selected_candidate_ids=(),
+            selected_candidate_ids=hint.selected_candidate_ids,
             reason_code="implicit",
         )
         for frame_index, frame in enumerate(proposal.frames)

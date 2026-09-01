@@ -12,7 +12,7 @@ from financial_agent.contracts.enums import Cardinality
 from financial_agent.contracts.validation import require_unique_ids
 
 from .draft import ActionChoice, ProductFamilyChoice, SlotAssignment
-from .proposal import FrameSemanticCoverage
+from .proposal import FrameSemanticCoverage, require_valid_action_cardinality
 from .types import (
     ContextLinkType,
     ReferenceTargetKind,
@@ -97,9 +97,19 @@ class ValidatedIntentFrame(ContractModel):
 
 
 class ValidatedIntentFrameV2(ValidatedIntentFrame):
+    segment_ids: Annotated[tuple[Identifier, ...], Field(min_length=1)]
     semantic_coverage: Annotated[
         tuple[FrameSemanticCoverage, ...], Field(min_length=1, max_length=1)
     ]
+
+    @model_validator(mode="after")
+    def validate_v2_action_cardinality(self) -> "ValidatedIntentFrameV2":
+        require_valid_action_cardinality(
+            self.action_choice.state,
+            self.action_choice.selected_ids,
+            self.semantic_coverage[0].state,
+        )
+        return self
 
 
 class ValidatedContextLink(ContractModel):
@@ -173,7 +183,7 @@ class ValidatedIntentResolution(RuntimeArtifact):
 
 class ValidatedIntentResolutionV2(ValidatedIntentResolution):
     canonical_frames: Annotated[
-        tuple[ValidatedIntentFrameV2, ...], Field(max_length=16)
+        tuple[ValidatedIntentFrameV2, ...], Field(min_length=1, max_length=16)
     ]
 
     @model_validator(mode="after")

@@ -12,9 +12,11 @@ from pathlib import Path
 import runpy
 import subprocess
 import sys
+from types import SimpleNamespace
 
+import httpx
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from financial_agent.intent.evaluation import (
     CandidateGroup,
@@ -32,18 +34,25 @@ from financial_agent.intent.evaluation import (
     ExpectedSlotMutation,
     FirstPassSchemaOutcome,
     IntentDraftBundle,
-    IntentDraftCaseArtifact,
+    IntentDraftBundleV1,
+    IntentDraftBundleV2,
+    IntentDraftCaseArtifactV1,
+    IntentDraftCaseArtifactV2,
     IntentRunTrace,
     IntentRunTraceBundle,
     AttemptTrace,
     PredictionDataset,
+    PromotionEvidence,
     RegressionDataset,
     RepairOutcome,
     ResolverViewBundle,
     ResolverViewCaseArtifact,
     ValidatedResolutionBundle,
-    ValidatedResolutionCaseArtifact,
+    ValidatedResolutionBundleV1,
+    ValidatedResolutionBundleV2,
+    ValidatedResolutionCaseArtifactV2,
     ValidationProbeOutcome,
+    assess_promotion,
     evaluate_candidates,
     evaluate_context,
     evaluate_frames,
@@ -65,17 +74,22 @@ from financial_agent.contracts.enums import (
 )
 from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.candidates import generate_semantic_candidates
+from financial_agent.intent.assembler import assemble_proposal
+from financial_agent.intent.clova import ClovaStructuredOutputAdapter
+from financial_agent.intent.config import ClovaResolverConfig
 from financial_agent.intent.draft import (
     ActionChoice,
     ContextLinkHint,
     EvidenceSpan,
     IntentFrameDraft,
     IntentResolutionDraft,
+    IntentResolutionDraftV2,
     ProductFamilyChoice,
     ReferenceHint,
     SemanticFlagHint,
     SlotAssignment,
 )
+from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
 from financial_agent.intent.errors import ResolverContractError
 from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.context import (
@@ -84,6 +98,9 @@ from financial_agent.intent.context import (
     validate_context_graph,
 )
 from financial_agent.intent.normalization import normalize_request
+from financial_agent.intent.proposal import IntentResolutionProposalV2
+from financial_agent.intent.prompt import ResolverPromptEnvelope
+from financial_agent.intent.resolution import ValidatedIntentResolutionV2
 from financial_agent.intent.types import (
     ChoiceState,
     ContextLinkType,
@@ -121,7 +138,7 @@ SCRIPT_PATH = PROJECT_ROOT / "scripts" / "evaluate_intent_resolver.py"
 REGRESSION_SHA256 = "5f917cbd326d4b4a27d260aecaf63460dffa4302dcabd5e9599efe7c90b1b18b"
 HELDOUT_V1_SHA256 = "d23eae797026ed66fa2f52ae49a602f991bd9b6d02b890c799342c0a6145f63e"
 HELDOUT_V2_SHA256 = "de015673ad4fa327ed3369997120f8465fb9b14e4998a924a8b90eaf45c450fb"
-HELDOUT_SHA256 = "dbce9e94700ef575eb6b9075961e688b54b193b0b6f700dbf5d030761fd26926"
+HELDOUT_SHA256 = "2142f4da110c7a83daba902c7b77df62168649c7f0a412867495fa6930acf211"
 
 
 def _frame(
@@ -679,6 +696,20 @@ def test_heldout_fixture_has_frozen_distribution_and_safe_synthetic_content() ->
         "domain": 10,
         "context": 10,
     }
+    vocabulary_cases = tuple(case for case in cases if case.ood_type == "vocabulary")
+    domain_cases = tuple(case for case in cases if case.ood_type == "domain")
+    assert all(len(case.expected_frames) == 1 for case in vocabulary_cases)
+    assert all(
+        case.expected_frames[0].semantic_coverage
+        == EvaluationFrameCoverage(state="partial", reason="lexical_ood")
+        for case in vocabulary_cases
+    )
+    assert all(len(case.expected_frames) == 1 for case in domain_cases)
+    assert all(
+        case.expected_frames[0].semantic_coverage
+        == EvaluationFrameCoverage(state="unmapped", reason="domain_ood")
+        for case in domain_cases
+    )
     assert Counter(
         case.subcategory
         for case in cases
@@ -726,7 +757,8 @@ def test_heldout_fixture_has_frozen_distribution_and_safe_synthetic_content() ->
         set(case.expected_candidate_ids) <= registered_candidates for case in cases
     )
     assert all(
-        frame.action_id in catalog.action_ids
+        len(frame.action_ids) <= 1
+        and set(frame.action_ids) <= set(catalog.action_ids)
         and set(frame.product_family_ids) <= set(catalog.product_family_ids)
         and set(frame.entity_type_ids) <= set(catalog.entity_type_ids)
         for case in cases
@@ -758,6 +790,92 @@ def test_fixture_hashes_are_literal_and_frozen() -> None:
         == HELDOUT_V2_SHA256
     )
     assert hashlib.sha256(HELDOUT_PATH.read_bytes()).hexdigest() == HELDOUT_SHA256
+
+
+def test_completely_correct_semantic_predictions_satisfy_promotion_gates() -> None:
+    dataset = parse_strict_json(HELDOUT_PATH.read_bytes(), EvaluationDataset)
+    blocking_code_by_ood_type = {
+        "vocabulary": "SEMANTIC_CONCEPT_UNMAPPED",
+        "domain": "SEMANTIC_DOMAIN_UNMAPPED",
+        "context": "REFERENCE_UNRESOLVED",
+    }
+    predictions: list[EvaluationPrediction] = []
+    for case in dataset.cases:
+        pre_model = case.expected_pipeline_outcome == "pre_model_rejected"
+        blocking_code = blocking_code_by_ood_type.get(case.ood_type)
+        predictions.append(
+            EvaluationPrediction(
+                case_id=case.case_id,
+                candidate_groups=tuple(
+                    CandidateGroup(
+                        mention_id=f"gold-{index}", candidate_ids=(candidate_id,)
+                    )
+                    for index, candidate_id in enumerate(case.expected_candidate_ids)
+                ),
+                candidate_reproducible=None if pre_model else True,
+                frames=case.expected_frames,
+                references=case.expected_references,
+                context_links=case.expected_context_links,
+                slot_mutations=case.expected_slot_mutations,
+                resolution_status=case.expected_resolution_status,
+                pipeline_outcome=case.expected_pipeline_outcome,
+                provider_success=None if pre_model else True,
+                predicted_ood_type=case.ood_type,
+                tags=case.expected_tags,
+                blocking_issue_codes=(blocking_code,) if blocking_code else (),
+                first_pass_schema=FirstPassSchemaOutcome(
+                    status="not_attempted" if pre_model else "valid",
+                    validator_event_code=(
+                        "SCHEMA_NOT_ATTEMPTED" if pre_model else "SCHEMA_VALID"
+                    ),
+                ),
+                repair=RepairOutcome(
+                    status="not_attempted",
+                    validator_event_code="REPAIR_NOT_ATTEMPTED",
+                ),
+                validation_probe_outcomes=tuple(
+                    ValidationProbeOutcome(
+                        probe_id=probe.probe_id,
+                        kind=probe.kind,
+                        subject_ids=(probe.subject_id,),
+                        decision="rejected",
+                        validator_event_code=(
+                            "UNKNOWN_ID_REJECTED"
+                            if probe.kind == "unknown_id"
+                            else "INVALID_GRAPH_REJECTED"
+                        ),
+                        stable_code=probe.expected_rejection_code,
+                    )
+                    for probe in case.validation_probes
+                    if probe.subject_id is not None
+                ),
+                latency_ms=1,
+                prompt_tokens=1 if not pre_model else 0,
+                completion_tokens=1 if not pre_model else 0,
+                stable_error_codes=(blocking_code,) if blocking_code else (),
+            )
+        )
+
+    report = evaluate_predictions(dataset.cases, tuple(predictions))
+    evidence = PromotionEvidence(
+        evaluation_dataset_sha256=HELDOUT_SHA256,
+        unknown_registered_id_acceptance=report.validation.unknown_id_acceptance,
+        invalid_context_graph_acceptance=report.validation.invalid_graph_acceptance,
+        validation_probe_coverage=report.validation.probe_coverage,
+        deterministic_candidate_reproducibility=report.candidate.reproducibility,
+        deterministic_candidate_reproducibility_coverage=(
+            report.candidate.reproducibility_coverage
+        ),
+        candidate_recall_at_5=report.candidate.recall_at_5,
+        first_pass_structured_output_validity=report.validation.schema_validity,
+        held_out_joint_frame_exact_match=report.frame.joint_exact_match,
+        held_out_context_link_exact_match=report.context.link_exact_match,
+        ood_false_fast_rate=report.ood.false_fast_rate,
+    )
+
+    assert report.frame.joint_exact_match.denominator == 155
+    assert report.context.link_exact_match.denominator == 155
+    assert assess_promotion(evidence).eligible is True
 
 
 def test_v2_preserves_v1_questions_and_candidate_gold_without_tuning() -> None:
@@ -1166,6 +1284,65 @@ def test_live_schema_failure_counts_as_attempted_invalid_but_provider_failure_do
     assert evaluate_predictions((case,), (provider_failure,)).validation.schema_validity.denominator == 0
 
 
+def test_live_runner_counts_adapter_returned_malformed_content_as_schema_failure() -> None:
+    namespace = _cli_namespace()
+    case = _synthetic_cases()[0]
+    catalog = load_catalog(PROJECT_ROOT)
+    _, views, _, _, _ = _stored_artifacts(_resolver_manifest())
+    view = views.cases[0].artifact
+    assert view is not None
+
+    class FakeService:
+        async def prepare(self, context: RequestContext) -> object:
+            return SimpleNamespace(
+                normalized=normalize_request(context),
+                view=view,
+                prompt=ResolverPromptEnvelope(
+                    system_message="test",
+                    user_message="{}",
+                    response_schema={},
+                ),
+            )
+
+        def validate_response(self, *_: object) -> object:
+            raise AssertionError("schema-invalid model content must not be validated")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "result": {
+                    "message": {"content": "not-json"},
+                    "usage": {
+                        "promptTokens": 10,
+                        "completionTokens": 20,
+                        "totalTokens": 30,
+                    },
+                }
+            },
+            request=request,
+        )
+
+    adapter = ClovaStructuredOutputAdapter(
+        ClovaResolverConfig(
+            api_key=SecretStr("test-api-key-not-a-secret"),
+            base_url="https://clova.example.test",
+            model_id="test-model",
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    prediction = asyncio.run(
+        namespace["_live_prediction"](case, FakeService(), adapter, catalog)
+    )
+    report = evaluate_predictions((case,), (prediction,))
+
+    assert prediction.provider_success is True
+    assert prediction.first_pass_schema.status == "invalid"
+    assert prediction.stable_error_codes == ("MODEL_PROPOSAL_SCHEMA_INVALID",)
+    assert report.validation.schema_validity == CountMetric(numerator=0, denominator=1)
+
+
 def test_live_runner_awaits_between_cases_without_a_final_wait(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1281,8 +1458,8 @@ def _stored_artifacts(
 ) -> tuple[
     EvaluationDataset,
     ResolverViewBundle,
-    IntentDraftBundle,
-    ValidatedResolutionBundle,
+    IntentDraftBundleV2,
+    ValidatedResolutionBundleV2,
     IntentRunTraceBundle,
 ]:
     dataset_version = "synthetic-dataset-v3"
@@ -1371,53 +1548,36 @@ def _stored_artifacts(
         literal_candidates=(),
         entity_candidates=(),
         axis_definitions=complete_axis_definitions(),
-        evidence_candidates=(),
-        reference_candidates=(),
-    )
-    span = EvidenceSpan(
-        span_id="span-1", segment_id="s1", start_char=0, end_char=2, text="국내"
-    )
-    draft = IntentResolutionDraft(
-        evidence_spans=(span,),
-        intent_frames=(
-            IntentFrameDraft(
-                frame_id="f1",
-                ordinal=0,
-                segment_ids=("s1",),
-                evidence_span_ids=("span-1",),
-                normalized_intent_argument=question,
-                action_choice=ActionChoice(
-                    state=ChoiceState.SELECTED,
-                    selected_ids=(IntentType.COMPARE,),
-                    evidence_span_ids=("span-1",),
-                    reason_code="explicit",
-                ),
-                product_family_choice=ProductFamilyChoice(
-                    state=ChoiceState.SELECTED,
-                    selected_ids=(ProductFamily.DOMESTIC_ETF,),
-                    evidence_span_ids=("span-1",),
-                    reason_code="explicit",
-                ),
-                entity_type_ids=("FinancialProduct",),
-                entity_hint_ids=(),
-                slot_assignments=(
-                    SlotAssignment(
-                        slot_assignment_id="slot-aum",
-                        slot_kind=SlotKind.METRIC,
-                        value_ids=("aum",),
-                        evidence_span_ids=("span-1",),
-                        reason_code="explicit",
-                    ),
-                ),
-                produced_result_hints=(SourceRole.CANDIDATES,),
+        evidence_candidates=(
+            EvidenceCandidate(
+                evidence_id="evidence-family",
+                segment_id="s1",
+                start_char=0,
+                end_char=6,
+                text="국내 ETF",
+                source_kinds=(EvidenceSourceKind.SURFACE,),
+                offered_semantic_ids=(),
+            ),
+            EvidenceCandidate(
+                evidence_id="evidence-metric",
+                segment_id="s1",
+                start_char=7,
+                end_char=10,
+                text="순자산",
+                source_kinds=(EvidenceSourceKind.SEMANTIC,),
+                offered_semantic_ids=("aum",),
+            ),
+            EvidenceCandidate(
+                evidence_id="evidence-action",
+                segment_id="s1",
+                start_char=12,
+                end_char=16,
+                text="비교해줘",
+                source_kinds=(EvidenceSourceKind.SURFACE,),
+                offered_semantic_ids=(),
             ),
         ),
-        entity_hints=(),
-        reference_hints=(),
-        context_link_hints=(),
-        slot_mutations=(),
-        semantic_flag_hints=(),
-        frame_limit_exceeded=False,
+        reference_candidates=(),
     )
     created_at = datetime(2026, 8, 31, tzinfo=UTC)
     context = RequestContext(
@@ -1431,8 +1591,57 @@ def _stored_artifacts(
         segments=(Segment(segment_id="s1", ordinal=0, text=question),),
         deadline_at=created_at + timedelta(seconds=55),
     )
+    normalized = normalize_request(context)
+    proposal = IntentResolutionProposalV2.model_validate_json(
+        json.dumps(
+            {
+                "proposal_schema_version": "2.0",
+                "frames": [
+                    {
+                        "segment_ids": ["s1"],
+                        "action_choice": {
+                            "state": "selected",
+                            "selected_ids": ["compare"],
+                            "evidence_ids": ["evidence-action"],
+                            "reason_code": "explicit",
+                        },
+                        "product_family_choice": {
+                            "state": "selected",
+                            "selected_ids": ["domestic_etf"],
+                            "evidence_ids": ["evidence-family"],
+                            "reason_code": "explicit",
+                        },
+                        "entity_type_ids": ["FinancialProduct"],
+                        "semantic_coverage": {
+                            "state": "covered",
+                            "reason": "none",
+                            "evidence_ids": [],
+                        },
+                        "slot_assignments": [
+                            {
+                                "slot_kind": "metric",
+                                "value_ids": ["aum"],
+                                "evidence_ids": ["evidence-metric"],
+                                "reason_code": "explicit",
+                            }
+                        ],
+                        "entity_hints": [],
+                        "produced_result_hints": ["candidates"],
+                    }
+                ],
+                "references": [],
+                "context_links": [],
+                "slot_mutations": [],
+                "semantic_flag_hints": [],
+                "frame_limit_exceeded": False,
+            },
+            ensure_ascii=False,
+        )
+    )
+    draft = assemble_proposal(proposal, normalized, view)
+    assert isinstance(draft, IntentResolutionDraftV2)
     semantic = validate_semantics(
-        draft, context, normalize_request(context), view, catalog
+        draft, context, normalized, view, catalog
     )
     resolution = finalize_resolution(
         validate_context_graph(semantic),
@@ -1448,6 +1657,7 @@ def _stored_artifacts(
             active_dataset_manifest_hash=dataset_manifest_hash,
         ),
     )
+    assert isinstance(resolution, ValidatedIntentResolutionV2)
     trace = IntentRunTrace(
         case_id=case.case_id,
         model_event="model_called",
@@ -1488,22 +1698,22 @@ def _stored_artifacts(
                 ),
             ),
         ),
-        IntentDraftBundle(
+        IntentDraftBundleV2(
             dataset_id="synthetic-cli",
             cases=(
-                IntentDraftCaseArtifact(case_id=case.case_id, artifact=draft),
-                IntentDraftCaseArtifact(
+                IntentDraftCaseArtifactV2(case_id=case.case_id, artifact=draft),
+                IntentDraftCaseArtifactV2(
                     case_id=pre_model_case.case_id, artifact=None
                 ),
             ),
         ),
-        ValidatedResolutionBundle(
+        ValidatedResolutionBundleV2(
             dataset_id="synthetic-cli",
             cases=(
-                ValidatedResolutionCaseArtifact(
+                ValidatedResolutionCaseArtifactV2(
                     case_id=case.case_id, artifact=resolution
                 ),
-                ValidatedResolutionCaseArtifact(
+                ValidatedResolutionCaseArtifactV2(
                     case_id=pre_model_case.case_id, artifact=None
                 ),
             ),
@@ -1512,6 +1722,63 @@ def _stored_artifacts(
             dataset_id="synthetic-cli", cases=(trace, pre_model_trace)
         ),
     )
+
+
+def test_stored_bundle_contracts_round_trip_real_v2_and_reject_mislabeled_v1() -> None:
+    catalog = load_catalog(PROJECT_ROOT)
+    manifest = build_manifest(
+        catalog,
+        {
+            "normalizer_version": NORMALIZER_VERSION,
+            "candidate_policy_version": CANDIDATE_POLICY_VERSION,
+            "resolver_schema_version": RESOLVER_SCHEMA_VERSION,
+            "prompt_version": PROMPT_VERSION,
+            "adapter_version": ADAPTER_VERSION,
+        },
+    )
+    _, _, draft_bundle, resolution_bundle, _ = _stored_artifacts(manifest)
+
+    assert IntentDraftBundleV1 is IntentDraftBundle
+    assert ValidatedResolutionBundleV1 is ValidatedResolutionBundle
+
+    parsed_drafts = parse_strict_json(
+        canonical_json_bytes(draft_bundle), IntentDraftBundleV2
+    )
+    parsed_resolutions = parse_strict_json(
+        canonical_json_bytes(resolution_bundle), ValidatedResolutionBundleV2
+    )
+
+    assert isinstance(parsed_drafts.cases[0].artifact, IntentResolutionDraftV2)
+    assert isinstance(
+        parsed_resolutions.cases[0].artifact, ValidatedIntentResolutionV2
+    )
+
+    v2_draft = parsed_drafts.cases[0].artifact
+    assert v2_draft is not None
+    v1_draft = IntentResolutionDraft(
+        evidence_spans=v2_draft.evidence_spans,
+        intent_frames=tuple(
+            IntentFrameDraft.model_validate(
+                frame.model_dump(exclude={"semantic_coverage"})
+            )
+            for frame in v2_draft.intent_frames
+        ),
+        entity_hints=v2_draft.entity_hints,
+        reference_hints=v2_draft.reference_hints,
+        context_link_hints=v2_draft.context_link_hints,
+        slot_mutations=v2_draft.slot_mutations,
+        semantic_flag_hints=v2_draft.semantic_flag_hints,
+        frame_limit_exceeded=v2_draft.frame_limit_exceeded,
+    )
+    v1_bundle = IntentDraftBundleV1(
+        dataset_id="synthetic-cli",
+        cases=(IntentDraftCaseArtifactV1(case_id="stored-001", artifact=v1_draft),),
+    )
+    mislabeled = v1_bundle.model_dump(mode="json")
+    mislabeled["schema_version"] = "2.0"
+
+    with pytest.raises(ValidationError):
+        IntentDraftBundleV2.model_validate_json(json.dumps(mislabeled))
 
 
 def _write_contract(path: Path, value: object) -> bytes:
@@ -1848,6 +2115,8 @@ def test_round2_validation_probes_replay_production_validators() -> None:
         ("rejected", "MODEL_UNKNOWN_ID")
     ]
 
+    producer_frame_id = draft.intent_frames[0].frame_id
+    reference_evidence_id = draft.evidence_spans[0].span_id
     second = draft.intent_frames[0].model_copy(
         update={
             "frame_id": "f2",
@@ -1863,13 +2132,13 @@ def test_round2_validation_probes_replay_production_validators() -> None:
                 ReferenceHint(
                     reference_id="ref-1",
                     segment_id="s1",
-                    evidence_span_ids=("span-1",),
+                    evidence_span_ids=(reference_evidence_id,),
                     surface_presence=ReferenceMentionType.EXPLICIT,
                     reference_form=ReferenceForm.DEMONSTRATIVE,
                     grammatical_number=("plural",),
                     expected_target_kind=(ReferenceTargetKind.RESULT_SET,),
                     expected_cardinality=(Cardinality.MANY,),
-                    candidate_target_frame_ids=("f1",),
+                    candidate_target_frame_ids=(producer_frame_id,),
                     candidate_target_mention_ids=(),
                     status="resolved",
                     reason_code="explicit",
@@ -1883,7 +2152,7 @@ def test_round2_validation_probes_replay_production_validators() -> None:
                     source_role=SourceRole.CANDIDATES,
                     selector=(Selector.ALL,),
                     selector_literal_candidate_id=(),
-                    producer_frame_id="f1",
+                    producer_frame_id=producer_frame_id,
                     consumer_frame_id="f2",
                     target_slot_kind=(),
                 ),
@@ -2549,17 +2818,19 @@ def test_round3_projection_deduplicates_repeated_production_issue_codes() -> Non
     draft = drafts.cases[0].artifact
     trace = traces.cases[0]
     assert view is not None and draft is not None
+    producer_frame_id = draft.intent_frames[0].frame_id
+    reference_evidence_id = draft.evidence_spans[0].span_id
     references = tuple(
         ReferenceHint(
             reference_id=f"unresolved-{index}",
             segment_id="s1",
-            evidence_span_ids=("span-1",),
+            evidence_span_ids=(reference_evidence_id,),
             surface_presence=ReferenceMentionType.EXPLICIT,
             reference_form=ReferenceForm.DEMONSTRATIVE,
             grammatical_number=("plural",),
             expected_target_kind=(ReferenceTargetKind.RESULT_SET,),
             expected_cardinality=(Cardinality.MANY,),
-            candidate_target_frame_ids=("f1",),
+            candidate_target_frame_ids=(producer_frame_id,),
             candidate_target_mention_ids=(),
             status="unresolved",
             reason_code="explicit",

@@ -24,6 +24,7 @@ def valid_proposal_payload() -> dict[str, object]:
                     "evidence_ids": ["e1"],
                     "reason_code": "explicit",
                 },
+                "entity_type_ids": [],
                 "semantic_coverage": {
                     "state": "covered",
                     "reason": "none",
@@ -68,6 +69,65 @@ def test_proposal_accepts_server_selected_ids_and_positional_frames() -> None:
     assert proposal.frames[0].segment_ids == ("s1",)
 
 
+def test_proposal_preserves_explicit_entity_types_and_selected_candidates() -> None:
+    payload = valid_proposal_payload()
+    payload["frames"][0]["entity_type_ids"] = ["ETF"]
+    payload["frames"][0]["entity_hints"] = [
+        {
+            "mention_id": ["mention-etf"],
+            "candidate_entity_ids": ["entity-etf"],
+            "selected_candidate_ids": ["entity-etf"],
+        }
+    ]
+
+    proposal = IntentResolutionProposalV2.model_validate_json(json.dumps(payload))
+
+    assert proposal.frames[0].entity_type_ids == ("ETF",)
+    assert proposal.frames[0].entity_hints[0].selected_candidate_ids == ("entity-etf",)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda payload: payload.update({"frames": []}),
+        lambda payload: payload["frames"][0].update({"segment_ids": []}),
+    ),
+)
+def test_proposal_rejects_empty_resolution_or_frame_segments(mutation) -> None:
+    payload = valid_proposal_payload()
+    mutation(payload)
+
+    with pytest.raises(ValidationError):
+        IntentResolutionProposalV2.model_validate_json(json.dumps(payload))
+
+
+def test_proposal_rejects_two_selected_actions() -> None:
+    payload = valid_proposal_payload()
+    payload["frames"][0]["action_choice"]["selected_ids"] = ["lookup", "compare"]
+
+    with pytest.raises(ValidationError):
+        IntentResolutionProposalV2.model_validate_json(json.dumps(payload))
+
+
+def test_proposal_allows_no_action_only_for_an_uncovered_or_ambiguous_frame() -> None:
+    payload = valid_proposal_payload()
+    payload["frames"][0]["action_choice"] = {
+        "state": "unmapped",
+        "selected_ids": [],
+        "evidence_ids": ["e1"],
+        "reason_code": "unmapped",
+    }
+    payload["frames"][0]["semantic_coverage"] = {
+        "state": "unmapped",
+        "reason": "unsupported_operation",
+        "evidence_ids": ["e1"],
+    }
+
+    proposal = IntentResolutionProposalV2.model_validate_json(json.dumps(payload))
+
+    assert proposal.frames[0].action_choice.selected_ids == ()
+
+
 def test_covered_frame_rejects_ood_reason_and_evidence() -> None:
     payload = valid_proposal_payload()
     payload["frames"][0]["semantic_coverage"] = {
@@ -77,7 +137,7 @@ def test_covered_frame_rejects_ood_reason_and_evidence() -> None:
     }
 
     with pytest.raises(ValidationError):
-        IntentResolutionProposalV2.model_validate(payload)
+        IntentResolutionProposalV2.model_validate_json(json.dumps(payload))
 
 
 @pytest.mark.parametrize(
@@ -94,4 +154,4 @@ def test_uncovered_frames_require_an_ood_reason_and_evidence(
     payload["frames"][0]["semantic_coverage"] = coverage
 
     with pytest.raises(ValidationError):
-        IntentResolutionProposalV2.model_validate(payload)
+        IntentResolutionProposalV2.model_validate_json(json.dumps(payload))

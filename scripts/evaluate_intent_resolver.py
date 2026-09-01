@@ -37,12 +37,16 @@ from financial_agent.intent.evaluation import (
     ExpectedSlotMutation,
     FirstPassSchemaOutcome,
     IntentDraftBundle,
+    IntentDraftBundleAny,
+    IntentDraftBundleV2,
     IntentRunTrace,
     IntentRunTraceBundle,
     PredictionDataset,
     RepairOutcome,
     ResolverViewBundle,
     ValidatedResolutionBundle,
+    ValidatedResolutionBundleAny,
+    ValidatedResolutionBundleV2,
     evaluate_candidates,
     evaluate_predictions,
     parse_strict_json,
@@ -179,13 +183,16 @@ def main(argv: list[str] | None = None) -> int:
             view_raw, view_bundle, view_canonical = _read_bundle(
                 Path(args.bounded_views), ResolverViewBundle
             )
+            draft_model, resolution_model = _artifact_bundle_models(
+                prediction_bundle.build_manifest.resolver_schema_version
+            )
             draft_raw, draft_bundle, draft_canonical = _read_bundle(
-                Path(args.drafts), IntentDraftBundle
+                Path(args.drafts), draft_model
             )
             trace_raw, trace_bundle, trace_canonical = _read_bundle(
                 Path(args.run_traces), IntentRunTraceBundle
             )
-            resolution_bundle: ValidatedResolutionBundle | None = None
+            resolution_bundle: ValidatedResolutionBundleAny | None = None
             resolution_raw: bytes | None = None
             resolution_canonical: bytes | None = None
             if args.mode == "decoupled":
@@ -204,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
             else:
                 resolution_raw, resolution_bundle, resolution_canonical = _read_bundle(
-                    Path(args.resolutions), ValidatedResolutionBundle
+                    Path(args.resolutions), resolution_model
                 )
                 _validate_full_evidence(
                     dataset,
@@ -718,6 +725,16 @@ def _read_bundle[T](path: Path, model: type[T]) -> tuple[bytes, T, bytes]:
     return raw, bundle, canonical_json_bytes(bundle)
 
 
+def _artifact_bundle_models(
+    resolver_schema_version: str,
+) -> tuple[type[IntentDraftBundleAny], type[ValidatedResolutionBundleAny]]:
+    if resolver_schema_version == "1.0":
+        return IntentDraftBundle, ValidatedResolutionBundle
+    if resolver_schema_version == "2.0":
+        return IntentDraftBundleV2, ValidatedResolutionBundleV2
+    raise EvaluationCliError("EVALUATION_INPUT_MISMATCH")
+
+
 def _validate_prediction_bundle(
     *,
     mode: str,
@@ -739,7 +756,7 @@ def _validate_decoupled_evidence(
     dataset: EvaluationDataset,
     predictions: PredictionDataset,
     views: ResolverViewBundle,
-    drafts: IntentDraftBundle,
+    drafts: IntentDraftBundleAny,
     view_raw: bytes,
     view_canonical: bytes,
     draft_raw: bytes,
@@ -782,8 +799,8 @@ def _validate_full_evidence(
     dataset: EvaluationDataset,
     predictions: PredictionDataset,
     views: ResolverViewBundle,
-    drafts: IntentDraftBundle,
-    resolutions: ValidatedResolutionBundle,
+    drafts: IntentDraftBundleAny,
+    resolutions: ValidatedResolutionBundleAny,
     traces: IntentRunTraceBundle,
     view_raw: bytes,
     view_canonical: bytes,
@@ -843,9 +860,9 @@ def _validate_full_evidence(
 def _validate_artifact_presence(
     dataset: EvaluationDataset,
     views: ResolverViewBundle,
-    drafts: IntentDraftBundle,
+    drafts: IntentDraftBundleAny,
     traces: IntentRunTraceBundle,
-    resolutions: ValidatedResolutionBundle | None,
+    resolutions: ValidatedResolutionBundleAny | None,
 ) -> None:
     view_index = {item.case_id: item.artifact for item in views.cases}
     draft_index = {item.case_id: item.artifact for item in drafts.cases}
@@ -896,9 +913,9 @@ def _project_stored_predictions(
     *,
     dataset: EvaluationDataset,
     views: ResolverViewBundle,
-    drafts: IntentDraftBundle,
+    drafts: IntentDraftBundleAny,
     traces: IntentRunTraceBundle,
-    resolutions: ValidatedResolutionBundle | None,
+    resolutions: ValidatedResolutionBundleAny | None,
     catalog: SemanticCatalogSnapshot,
     dataset_version: str,
 ) -> tuple[EvaluationPrediction, ...]:

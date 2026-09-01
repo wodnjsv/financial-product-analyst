@@ -186,11 +186,22 @@
           "maxItems": 1,
           "title": "Mention Id",
           "type": "array"
+        },
+        "selected_candidate_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Selected Candidate Ids",
+          "type": "array"
         }
       },
       "required": [
         "mention_id",
-        "candidate_entity_ids"
+        "candidate_entity_ids",
+        "selected_candidate_ids"
       ],
       "title": "ProposedEntityHint",
       "type": "object"
@@ -206,6 +217,15 @@
             "$ref": "#/$defs/ProposedEntityHint"
           },
           "title": "Entity Hints",
+          "type": "array"
+        },
+        "entity_type_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Entity Type Ids",
           "type": "array"
         },
         "produced_result_hints": {
@@ -224,6 +244,7 @@
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
             "type": "string"
           },
+          "minItems": 1,
           "title": "Segment Ids",
           "type": "array"
         },
@@ -242,6 +263,7 @@
         "segment_ids",
         "action_choice",
         "product_family_choice",
+        "entity_type_ids",
         "semantic_coverage",
         "slot_assignments",
         "entity_hints",
@@ -603,6 +625,7 @@
         "$ref": "#/$defs/ProposedIntentFrame"
       },
       "maxItems": 16,
+      "minItems": 1,
       "title": "Frames",
       "type": "array"
     },

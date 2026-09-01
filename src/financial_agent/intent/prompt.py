@@ -22,7 +22,7 @@ from .types import (
     SlotMutationKind,
     SourceRole,
 )
-from .view import ResolverView
+from .view import ResolverView, offered_entity_type_ids
 
 
 SYSTEM_MESSAGE = (
@@ -34,6 +34,7 @@ SYSTEM_MESSAGE = (
 
 REASON_CODES = ("ambiguous", "explicit", "implicit", "policy_explicit", "unmapped")
 _FRAME_ORDINAL = {"type": "integer", "minimum": 0, "maximum": 15}
+_MODEL_SLOT_KINDS = tuple(item for item in SlotKind if item is not SlotKind.UNIT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +70,9 @@ def build_clova_response_schema(view: ResolverView) -> dict[str, object]:
     segment_ids = _segment_ids(view)
     evidence_identifier = _restricted_identifier_array(evidence_ids)
     reason_code = _enum_strings(REASON_CODES)
-    action_choice = _axis_choice(tuple(view.action_ids), evidence_identifier, reason_code)
+    action_choice = _axis_choice(
+        tuple(view.action_ids), evidence_identifier, reason_code, max_selected_items=1
+    )
     product_family_choice = _axis_choice(
         tuple(view.product_family_ids), evidence_identifier, reason_code
     )
@@ -78,13 +81,19 @@ def build_clova_response_schema(view: ResolverView) -> dict[str, object]:
         {
             "mention_id": _restricted_identifier_array(entity_mention_ids, max_items=1),
             "candidate_entity_ids": _restricted_identifier_array(entity_ids),
+            "selected_candidate_ids": _restricted_identifier_array(
+                entity_ids, max_items=1
+            ),
         }
     )
     frame = _object(
         {
-            "segment_ids": _restricted_identifier_array(segment_ids),
+            "segment_ids": _restricted_identifier_array(segment_ids, min_items=1),
             "action_choice": action_choice,
             "product_family_choice": product_family_choice,
+            "entity_type_ids": _restricted_identifier_array(
+                offered_entity_type_ids(view)
+            ),
             "semantic_coverage": _semantic_coverage_schema(evidence_identifier),
             "slot_assignments": _array(slot_assignment),
             "entity_hints": _array(entity_hint),
@@ -117,13 +126,17 @@ def build_clova_response_schema(view: ResolverView) -> dict[str, object]:
             ),
             "producer_frame_ordinal": _FRAME_ORDINAL,
             "consumer_frame_ordinal": _FRAME_ORDINAL,
-            "target_slot_kind": _optional(_enum_members(SlotKind)),
+            "target_slot_kind": _optional(
+                _enum_strings(tuple(item.value for item in _MODEL_SLOT_KINDS))
+            ),
         }
     )
     slot_mutation = _object(
         {
             "consumer_frame_ordinal": _FRAME_ORDINAL,
-            "slot_kind": _enum_members(SlotKind),
+            "slot_kind": _enum_strings(
+                tuple(item.value for item in _MODEL_SLOT_KINDS)
+            ),
             "mutation_kind": _enum_members(SlotMutationKind),
             "source_frame_ordinal": _optional(_FRAME_ORDINAL),
             "evidence_ids": evidence_identifier,
@@ -140,7 +153,7 @@ def build_clova_response_schema(view: ResolverView) -> dict[str, object]:
     return _object(
         {
             "proposal_schema_version": _enum_strings(("2.0",)),
-            "frames": _array(frame, max_items=16),
+            "frames": _array(frame, min_items=1, max_items=16),
             "references": _array(reference, max_items=0 if not reference_ids else None),
             "context_links": _array(
                 context_link, max_items=0 if not reference_ids else None
@@ -213,7 +226,7 @@ def _slot_assignment_schema(
                     "reason_code": reason_code,
                 }
             )
-            for slot_kind in SlotKind
+            for slot_kind in _MODEL_SLOT_KINDS
         ]
     }
 
@@ -272,11 +285,15 @@ def _axis_choice(
     selected_ids: tuple[str, ...],
     evidence_identifier: dict[str, object],
     reason_code: dict[str, object],
+    *,
+    max_selected_items: int | None = None,
 ) -> dict[str, object]:
     return _object(
         {
             "state": _enum_members(ChoiceState),
-            "selected_ids": _restricted_identifier_array(selected_ids),
+            "selected_ids": _restricted_identifier_array(
+                selected_ids, max_items=max_selected_items
+            ),
             "evidence_ids": evidence_identifier,
             "reason_code": reason_code,
         }
@@ -292,8 +309,15 @@ def _object(properties: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _array(items: dict[str, object], *, max_items: int | None = None) -> dict[str, object]:
+def _array(
+    items: dict[str, object],
+    *,
+    min_items: int | None = None,
+    max_items: int | None = None,
+) -> dict[str, object]:
     schema: dict[str, object] = {"type": "array", "items": items}
+    if min_items is not None:
+        schema["minItems"] = min_items
     if max_items is not None:
         schema["maxItems"] = max_items
     return schema
@@ -304,10 +328,15 @@ def _optional(items: dict[str, object]) -> dict[str, object]:
 
 
 def _restricted_identifier_array(
-    values: tuple[str, ...], *, max_items: int | None = None
+    values: tuple[str, ...],
+    *,
+    min_items: int | None = None,
+    max_items: int | None = None,
 ) -> dict[str, object]:
     if values:
-        return _array(_enum_strings(values), max_items=max_items)
+        return _array(
+            _enum_strings(values), min_items=min_items, max_items=max_items
+        )
     return _array(_string(), max_items=0)
 
 

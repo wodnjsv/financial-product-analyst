@@ -193,6 +193,16 @@ def test_response_schema_enums_only_offered_semantic_ids() -> None:
     assert_supported_schema(schema)
 
 
+def test_response_schema_requires_a_frame_segment_and_at_most_one_action() -> None:
+    schema = build_clova_response_schema(make_view())
+    frames = schema['properties']['frames']
+    frame = frames['items']['properties']
+
+    assert frames['minItems'] == 1
+    assert frame['segment_ids']['minItems'] == 1
+    assert frame['action_choice']['properties']['selected_ids']['maxItems'] == 1
+
+
 def test_response_schema_uses_empty_arrays_when_no_dynamic_id_is_offered() -> None:
     schema = build_clova_response_schema(make_view().model_copy(update={'literal_candidates': ()}))
     selector_literal_candidate_id = schema['properties']['context_links']['items']['properties'][
@@ -239,6 +249,18 @@ def test_response_schema_only_allows_offered_entity_mention_and_evidence_ids() -
     assert entity_hint['mention_id'] == {
         'type': 'array',
         'items': {'type': 'string', 'enum': ['mention-entity-1']},
+        'maxItems': 1,
+    }
+    assert frame['entity_type_ids'] == {
+        'type': 'array',
+        'items': {
+            'type': 'string',
+            'enum': ['DomesticETF', 'ETF', 'FinancialProduct'],
+        },
+    }
+    assert entity_hint['selected_candidate_ids'] == {
+        'type': 'array',
+        'items': {'type': 'string', 'enum': ['entity-kodex']},
         'maxItems': 1,
     }
     assert frame['action_choice']['properties']['evidence_ids'] == {
@@ -302,11 +324,13 @@ def test_response_schema_restricts_value_ids_by_slot_kind() -> None:
         'items': {'type': 'string'},
         'maxItems': 0,
     }
-    assert variants['unit'] == {
-        'type': 'array',
-        'items': {'type': 'string'},
-        'maxItems': 0,
-    }
+    assert 'unit' not in variants
+
+
+def test_response_schema_does_not_advertise_the_unsupported_unit_slot() -> None:
+    schema = build_clova_response_schema(make_view())
+
+    assert 'unit' not in collect_enums(schema)
 
 
 def test_response_schema_uses_bounded_frame_ordinals_and_offered_references() -> None:
