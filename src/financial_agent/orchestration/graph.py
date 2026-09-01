@@ -165,6 +165,7 @@ def _literal_inputs(plan, operation, primitive_id: str) -> tuple[NamedValue, ...
                 "entity:",
                 "entity_request:",
                 "policy:",
+                "target_slot:",
             )
         ):
             values.append(

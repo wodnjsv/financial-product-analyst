@@ -189,11 +189,31 @@ def lower_inputs(
         params.append(target)
         params.append(f"link:{link.link_type.value}")
         params.extend(f"selector:{item.value}" for item in link.selector)
+        target_ids = [link.reference_id, target]
+        if link.selector_literal_candidate_id:
+            literal_id = link.selector_literal_candidate_id[0]
+            literal = literals.get(literal_id)
+            if literal is None:
+                raise LoweringError("UNKNOWN_LITERAL", (literal_id,))
+            field_id = f"selector_value:{link.context_link_id}"
+            filters.append(
+                FilterSpec(
+                    subtask_id=link.consumer_frame_id,
+                    field_id=field_id,
+                    operator_id="assign",
+                    value=encode_contract_value(_literal_primitive(literal)),
+                )
+            )
+            params.append(field_id)
+            target_ids.append(field_id)
+        params.extend(
+            f"target_slot:{item.value}" for item in link.target_slot_kind
+        )
         records.append(
             LoweringRecord(
                 source_id=link.context_link_id,
                 target_kind="context_binding",
-                target_ids=(link.reference_id, target),
+                target_ids=tuple(target_ids),
             )
         )
 
@@ -355,7 +375,17 @@ def _effective_assignments(
                             "CARRYOVER_SOURCE_MISSING",
                             (mutation.slot_mutation_id,),
                         )
-                    current[kind] = list(source[kind])
+                    current[kind] = [
+                        assignment.model_copy(
+                            update={
+                                "slot_assignment_id": (
+                                    f"{mutation.slot_mutation_id}:"
+                                    f"{assignment.slot_assignment_id}"
+                                )
+                            }
+                        )
+                        for assignment in source[kind]
+                    ]
             elif mutation.mutation_kind is SlotMutationKind.UPDATE and kind not in current:
                 raise LoweringError(
                     "UPDATE_VALUE_REQUIRED",

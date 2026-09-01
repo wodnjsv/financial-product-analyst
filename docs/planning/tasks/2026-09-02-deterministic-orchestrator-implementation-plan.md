@@ -21,10 +21,10 @@ dependency, concurrency, retry, and deadline controls.
 **Files:** create `src/financial_agent/orchestration/graph.py`; test in
 `tests/orchestration/test_graph.py`.
 
-- [ ] Write failing tests for deterministic expansion, dependencies, fan-out,
+- [x] Write failing tests for deterministic expansion, dependencies, fan-out,
   binding producers, evidence requirements, budgets, and critical path.
-- [ ] Implement the smallest graph compiler using the Phase 2 registry.
-- [ ] Run focused and frozen contract tests; commit.
+- [x] Implement the smallest graph compiler using the Phase 2 registry.
+- [x] Run focused and frozen contract tests; commit.
 
 ### Task 2: Executor boundary and result validation
 
@@ -32,10 +32,10 @@ dependency, concurrency, retry, and deadline controls.
 `src/financial_agent/orchestration/validation.py`; test in
 `tests/orchestration/test_executors.py`.
 
-- [ ] Write failing tests for duplicate/missing executor registration and invalid
+- [x] Write failing tests for duplicate/missing executor registration and invalid
   task ID, result type, binding, evidence, pin, and hash outputs.
-- [ ] Implement the protocol, registry, immutable input, and validator.
-- [ ] Run focused tests; commit.
+- [x] Implement the protocol, registry, immutable input, and validator.
+- [x] Run focused tests; commit.
 
 ### Task 3: Bounded async Orchestrator
 
@@ -43,19 +43,19 @@ dependency, concurrency, retry, and deadline controls.
 `src/financial_agent/orchestration/contracts.py`; test in
 `tests/orchestration/test_service.py`.
 
-- [ ] Write failing tests for parallel ready tasks, dependency ordering,
+- [x] Write failing tests for parallel ready tasks, dependency ordering,
   transient retry limits, permanent no-retry, deadline cancellation, missing
   bindings, and completed/completed-with-failures/failed outcomes.
-- [ ] Implement the scheduler with injected clock and executor registry.
-- [ ] Run focused and contract tests; commit.
+- [x] Implement the scheduler with injected clock and executor registry.
+- [x] Run focused and contract tests; commit.
 
 ### Task 4: Combined Phase 1-3 verification
 
 **Files:** create `tests/integration/test_intent_plan_orchestration.py`; update
 `docs/planning/STATUS.md` and add a dated verification report.
 
-- [ ] Write an in-memory end-to-end test for rank, contextual re-rank,
+- [x] Write an in-memory end-to-end test for rank, contextual re-rank,
   cross-family composition, Explore, and policy Abstain.
-- [ ] Run Phase 1-3 focused suites, schema checks, and broad offline tests.
-- [ ] Inspect the final diff for scope, secrets, source data, and generated files.
-- [ ] Record measured limitations and commit the verified deliverable.
+- [x] Run Phase 1-3 focused suites, schema checks, and broad offline tests.
+- [x] Inspect the final diff for scope, secrets, source data, and generated files.
+- [x] Record measured limitations and commit the verified deliverable.

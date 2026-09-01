@@ -64,10 +64,12 @@ arbitrary text.
 
 Archetypes cover exact lookup, single-family screen/rank/aggregate, explicit
 compare/calculate, anchored similarity, document explanation, cross-family
-rank, and context re-rank. Primitives cover entity resolution, RDB lookup,
-Graph traversal, document search, missingness policy, comparability,
-normalization, ranking, aggregation, calculation, similarity, and bounded
-catalog exploration.
+rank, and context re-rank. Registered primitives cover RDB lookup, Graph
+traversal, document search, comparability, normalization, ranking, aggregation,
+calculation, similarity, and bounded catalog exploration. Entity resolution
+requests and selected entities are immutable operation inputs. Missingness and
+coverage rules are versioned policy inputs on screen, rank, and similarity
+operations rather than model-authored plan text.
 
 ## Errors and promotion
 

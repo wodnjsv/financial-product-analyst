@@ -1,6 +1,6 @@
 # Financial Product Agent 계획·구현 현황
 
-**Updated:** 2026-09-01
+**Updated:** 2026-09-02
 
 이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.
 
@@ -15,7 +15,7 @@
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute·문서 provenance 경계 승인; TTL·SHACL·Evidence-bound ABox·읽기 전용 Fuseki를 포함한 Graph Phase 1 core 로컬 완료, Stage 04는 미완료 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
-| Intent Resolver Phase 1 | 구현·로컬 검증 완료; 승인된 HCX-007 12-case smoke는 provider success `0/12`로 끝나 semantic gate를 측정하지 못했다. `candidate_recall_at_5` 실패와 미측정 live gate로 default 승격은 계속 차단되며, QueryPlan compiler·Orchestrator 설계는 아직 시작하지 않음 | [Intent Resolver Design](specs/2026-08-31-intent-resolver-design.md), [Verification Report](reports/2026-08-31-intent-resolver-phase1-verification.md), [ADR-0022](decisions/ADR-0022-use-ontology-grounded-intent-resolution.md) |
+| Intent Resolver·QueryPlan·Orchestrator | Phase 1 Resolver, Phase 2 결정론적 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator 경계를 로컬 구현·검증 완료. 단, Phase 1 `candidate_recall_at_5` 실패와 live gate 미측정으로 운영 승격은 계속 차단되며, 실제 SQL·Graph·검색·계산 executor는 Stage 05 범위 | [Phase 1 Report](reports/2026-08-31-intent-resolver-phase1-verification.md), [Phase 2·3 Report](reports/2026-09-02-query-plan-orchestrator-verification.md), [ADR-0025](decisions/ADR-0025-use-deterministic-query-plan-compilation-and-four-path-routing.md), [ADR-0026](decisions/ADR-0026-use-a-deterministic-bounded-orchestrator.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 | Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
 
@@ -141,9 +141,9 @@
 
 기준 계획: [Stage 04 Graph Phase 1](tasks/2026-08-30-stage-04-graph-phase-1-implementation-plan.md)
 
-### Stage 06 Intent Resolver Phase 1
+### Stage 06 Intent Resolver·QueryPlan·Orchestrator
 
-**상태: Phase 1 implemented; promotion deferred by `candidate_recall_at_5` and unmeasured required gates**
+**상태: Phase 1-3 로컬 경계 구현 완료; live promotion은 `candidate_recall_at_5`와 미측정 required gate로 보류**
 
 - 온톨로지 기반 semantic catalog, 한국어 정규화·literal·candidate·bounded view,
   strict HCX adapter, semantic/context validator, one-call service, 불변
@@ -169,10 +169,23 @@
 - 이 호스트에는 Docker 계열 runtime이 없어 Linux/amd64 build/run/Compose는
   실행하지 않았다. 위 HCX smoke 외에는 NCP·HCX를 호출하지 않았고, smoke는
   provider 성공 output·semantic metric·retry를 만들지 않았다.
-- QueryPlan compiler와 Orchestrator는 Phase 2 범위이며 구현을 시작하지 않았다.
-  다음 live HCX benchmark는 비용·호출에 대한 별도 사용자 승인 후에만 수행한다.
+- Phase 2는 검증된 resolution과 exact ResolverView를 versioned registry에 따라
+  `fast`, `compose`, `explore`, `abstain`으로 라우팅하고 기존 QueryPlan 계약으로
+  손실 없이 내리는 compiler를 구현했다. 교차 상품군 순위에는 comparability와
+  normalization이 순위보다 앞서며, rank/screen/similarity에는 versioned
+  coverage·missingness policy ID가 전달된다.
+- Phase 3는 QueryPlanCompilation을 ExecutionGraph로 결정론적으로 확장하고,
+  typed executor registry, 직접 선행 결과와 context binding 전달, 최대 55초
+  deadline, bounded concurrency, 요청 전체 transient retry 2회, 결과 hash·pin·
+  evidence 검증, terminal outcome 분류를 구현했다.
+- 한 요청 안의 `ETF 상위 5개 → 그 상품 중 수익률 1위`는 첫 결과 binding을
+  두 번째 subtask로 전달하며 전체 상품군 조회를 반복하지 않는다.
+- 로컬 in-memory executor 경계까지 완료한 것이며 실제 SQL·Graph·Keyword·
+  Vector·금융 계산 executor와 답변 생성은 각각 Stage 05·07 범위다. Phase 1
+  live 승격 차단도 유지된다. 다음 live HCX benchmark는 별도 승인 없이는 실행하지
+  않는다.
 
-기준 보고서: [Intent Resolver Phase 1 Verification](reports/2026-08-31-intent-resolver-phase1-verification.md)
+기준 보고서: [Intent Resolver Phase 1 Verification](reports/2026-08-31-intent-resolver-phase1-verification.md), [QueryPlan and Orchestrator Verification](reports/2026-09-02-query-plan-orchestrator-verification.md)
 
 ## 3. 현재 실행하면 안 되는 계획
 
@@ -189,7 +202,7 @@
 | 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | current organizer 로컬 결정성 검증 완료; current KRX holdings 로컬 통합과 나머지 공식 source 동결 대기; NCP acceptance는 Stage 08로 이연 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | Graph Phase 1 core 로컬 완료; Vector·실제 관계/문서·manifest 동일성·readiness/activation·NCP·23질문 커버리지 대기, Stage 04 미완료 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
-| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Intent Resolver Phase 1 구현·로컬 비라이브 검증 완료; candidate recall 실패와 live 미측정 gate로 승격 차단; QueryPlan compiler·Orchestrator 설계 대기 |
+| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Phase 1 Resolver와 Phase 2 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator 로컬 경계 완료; Phase 1 승격 차단 유지, production executor는 Stage 05 대기 |
 | 07 | Verifier, Claim Gate Registry, Answer Composer, Renderer와 검증된 응답 캐시 | 대기 |
 | 08 | 공식 `GET /answer`, NCP 이중화·Load Balancer·모니터링·복구 | 대기 |
 | 09 | 52개 종합 평가, 제출 동결, 공식 평가 운영과 종료 기록 | 대기 |
@@ -241,6 +254,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 39. Stage 08에서 최종 NCP 비활성 적재·Graph/Vector·권한·성능·복구·공개 API acceptance
 40. ~~Stage 06 Phase 1 Intent Resolver의 온톨로지 기반 분류·한국어 문맥 해소·OOD·검증·평가 설계 승인~~ — 2026-08-31 완료; 상세 구현 계획과 런타임 변경은 별도 승인 대기
 41. ~~Stage 06 Phase 1 Intent Resolver 상세 구현·로컬 비라이브·PostgreSQL 검증~~ — 2026-09-01 완료; Linux/amd64 container 미실행, candidate recall 실패와 live 미측정 gate로 승격 차단
-42. Stage 06 Phase 1 live HCX benchmark — 비용·호출·runtime credential·Structured Outputs preflight에 대한 별도 사용자 승인 대기; QueryPlan compiler·Orchestrator는 이후 Phase 2·3 설계 범위
+42. ~~Stage 06 Phase 2 QueryPlan compiler·4경로 router와 Phase 3 bounded Orchestrator 로컬 구현·통합 검증~~ — 2026-09-02 완료; production executor와 답변 생성은 포함하지 않음
+43. Stage 06 Phase 1 live HCX benchmark — `candidate_recall_at_5` 보강과 비용·호출·runtime credential·Structured Outputs preflight에 대한 별도 사용자 승인 대기
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

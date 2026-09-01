@@ -82,7 +82,12 @@ class QueryPlanCompiler:
             )
         try:
             lowered = lower_inputs(resolution, view)
-            primitive_ids = self._primitive_ids(resolution, decision.route, decision.archetype)
+            primitive_ids = self._primitive_ids(
+                resolution,
+                decision.route,
+                decision.archetype,
+                lowered.assignments_by_frame,
+            )
             self._validate_applicability(resolution, lowered.assignments_by_frame)
             query_plan = self._build_query_plan(
                 resolution,
@@ -137,7 +142,13 @@ class QueryPlanCompiler:
         ):
             raise CompilerInvariantError("CATALOG_PIN_MISMATCH")
 
-    def _primitive_ids(self, resolution, route, archetype) -> tuple[str, ...]:
+    def _primitive_ids(
+        self,
+        resolution,
+        route,
+        archetype,
+        assignments_by_frame,
+    ) -> tuple[str, ...]:
         if route is CompilationRoute.EXPLORE:
             return ("explore-catalog",)
         if archetype is not None:
@@ -145,6 +156,9 @@ class QueryPlanCompiler:
         selected: list[str] = []
         for frame in resolution.canonical_frames:
             action = frame.action_choice.selected_ids[0]
+            slot_kinds = {
+                item.slot_kind for item in assignments_by_frame[frame.frame_id]
+            }
             if (
                 action is IntentType.RANK
                 and len(frame.product_family_choice.selected_ids) > 1
@@ -157,12 +171,17 @@ class QueryPlanCompiler:
                         "rank-products",
                     )
                 )
+            elif (
+                action is IntentType.SCREEN
+                and SlotKind.FILTER_VALUE not in slot_kinds
+                and SlotKind.RELATION in slot_kinds
+            ):
+                selected.append("lookup-products")
             else:
                 selected.extend(_ACTION_PRIMITIVES[action])
-            kinds = {item.slot_kind for item in frame.slot_assignments}
-            if SlotKind.RELATION in kinds:
+            if SlotKind.RELATION in slot_kinds:
                 selected.append("traverse-relations")
-            if SlotKind.DOCUMENT_TOPIC in kinds:
+            if SlotKind.DOCUMENT_TOPIC in slot_kinds:
                 selected.append("search-documents")
         return _unique(selected)
 
@@ -247,7 +266,10 @@ class QueryPlanCompiler:
                     continue
                 primitive = self._registry.primitives_by_id[primitive_id]
                 if not explore and not set(primitive.required_slots) <= present_slots:
-                    continue
+                    raise LoweringError(
+                        "REQUIRED_SLOT_MISSING",
+                        (frame.frame_id, primitive_id),
+                    )
                 operation_id = f"operation:{frame.frame_id}:{primitive_id}"
                 parameter_ids = tuple(
                     parameter
