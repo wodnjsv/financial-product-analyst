@@ -15,6 +15,7 @@ from financial_agent.intent.errors import (
 from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.proposal import IntentResolutionProposalV2
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
+from financial_agent.intent.types import SourceRole
 from financial_agent.intent.view import (
     ActiveDatasetPin,
     ResolverView,
@@ -238,6 +239,17 @@ def bad_ordinal(value: IntentResolutionProposalV2) -> IntentResolutionProposalV2
     )
 
 
+def unproduced_source_role(value: IntentResolutionProposalV2) -> IntentResolutionProposalV2:
+    link = value.context_links[0]
+    return value.model_copy(
+        update={
+            "context_links": (
+                link.model_copy(update={"source_role": SourceRole.METRIC_VALUE}),
+            )
+        }
+    )
+
+
 def test_assembly_is_byte_stable_and_server_assigns_ids() -> None:
     first = assemble_proposal(proposal(), normalized(), view())
     second = assemble_proposal(proposal(), normalized(), view())
@@ -263,6 +275,7 @@ def test_assembly_is_byte_stable_and_server_assigns_ids() -> None:
         (unknown_evidence, MODEL_UNKNOWN_EVIDENCE_ID),
         (forward_link, MODEL_INVALID_FRAME_REFERENCE),
         (bad_ordinal, MODEL_INVALID_FRAME_REFERENCE),
+        (unproduced_source_role, MODEL_INVALID_FRAME_REFERENCE),
     ],
 )
 def test_assembler_rejects_unoffered_or_invalid_references(mutation, code: str) -> None:

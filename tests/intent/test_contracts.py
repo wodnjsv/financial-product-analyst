@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from financial_agent.intent.draft import IntentResolutionDraft
+from financial_agent.intent.draft import IntentResolutionDraft, IntentResolutionDraftV2
 from financial_agent.intent.resolution import (
     ContractFileHash,
     ResolverBuildManifest,
@@ -148,7 +148,27 @@ def test_one_surface_segment_can_produce_two_frames() -> None:
 
     assert [item.frame_id for item in draft.intent_frames] == ["f1", "f2"]
     assert {item.segment_ids for item in draft.intent_frames} == {("s1",)}
-    assert all(item.semantic_coverage == () for item in draft.intent_frames)
+
+
+def test_v1_draft_schema_and_serialization_exclude_v2_coverage() -> None:
+    draft = IntentResolutionDraft.model_validate_json(json.dumps(valid_draft_payload()))
+
+    assert "semantic_coverage" not in draft.model_dump(mode="json")
+    assert "semantic_coverage" not in json.dumps(
+        IntentResolutionDraft.model_json_schema(), sort_keys=True
+    )
+
+
+def test_v2_draft_requires_exactly_one_semantic_coverage() -> None:
+    payload = valid_draft_payload()
+    frames = payload["intent_frames"]
+    assert isinstance(frames, list)
+    frame_payload = frames[0]
+    assert isinstance(frame_payload, dict)
+    frame_payload["semantic_coverage"] = []
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
 
 
 @pytest.mark.parametrize(

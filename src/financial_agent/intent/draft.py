@@ -128,9 +128,6 @@ class IntentFrameDraft(ContractModel):
     entity_hint_ids: tuple[Identifier, ...]
     slot_assignments: tuple[SlotAssignment, ...]
     produced_result_hints: tuple[SourceRole, ...]
-    semantic_coverage: Annotated[
-        tuple[FrameSemanticCoverage, ...], Field(max_length=1)
-    ] = ()
 
     @model_validator(mode="after")
     def validate_slot_assignments(self) -> "IntentFrameDraft":
@@ -139,6 +136,12 @@ class IntentFrameDraft(ContractModel):
             label="slot assignments",
         )
         return self
+
+
+class IntentFrameDraftV2(IntentFrameDraft):
+    semantic_coverage: Annotated[
+        tuple[FrameSemanticCoverage, ...], Field(min_length=1, max_length=1)
+    ]
 
 
 class IntentResolutionDraft(ContractModel):
@@ -180,3 +183,7 @@ class IntentResolutionDraft(ContractModel):
         ):
             raise ValueError("intent frame ordinals must match tuple order")
         return self
+
+
+class IntentResolutionDraftV2(IntentResolutionDraft):
+    intent_frames: Annotated[tuple[IntentFrameDraftV2, ...], Field(max_length=16)]

@@ -12,7 +12,9 @@ from .draft import (
     EntityHint,
     EvidenceSpan,
     IntentFrameDraft,
+    IntentFrameDraftV2,
     IntentResolutionDraft,
+    IntentResolutionDraftV2,
     ProductFamilyChoice,
     ReferenceHint,
     SemanticFlagHint,
@@ -80,7 +82,7 @@ def assemble_proposal(
         _assemble_frame(index, item, normalized)
         for index, item in enumerate(proposal.frames)
     )
-    return IntentResolutionDraft(
+    return IntentResolutionDraftV2(
         evidence_spans=_selected_evidence_spans(proposal, view),
         intent_frames=frames,
         entity_hints=_assemble_entity_hints(proposal),
@@ -237,6 +239,8 @@ def _validate_ordinals(proposal: IntentResolutionProposalV2) -> None:
             link.producer_frame_ordinal >= link.consumer_frame_ordinal
             or link.reference_id not in reference_ordinals
             or link.producer_frame_ordinal not in reference_ordinals[link.reference_id]
+            or link.source_role
+            not in proposal.frames[link.producer_frame_ordinal].produced_result_hints
         ):
             raise ResolverContractError(MODEL_INVALID_FRAME_REFERENCE)
     for mutation in proposal.slot_mutations:
@@ -272,13 +276,13 @@ def _validate_normalized_segments(
 
 def _assemble_frame(
     index: int, item: ProposedIntentFrame, normalized: NormalizedRequest
-) -> IntentFrameDraft:
+) -> IntentFrameDraftV2:
     entity_hint_ids = tuple(
         f"entity-hint-{index:04d}-{entity_index:04d}"
         for entity_index, _ in enumerate(item.entity_hints)
     )
     normalized_by_id = {segment.segment_id: segment for segment in normalized.segments}
-    return IntentFrameDraft(
+    return IntentFrameDraftV2(
         frame_id=f"frame-{index:04d}",
         ordinal=index,
         segment_ids=item.segment_ids,
