@@ -21,6 +21,7 @@ from financial_agent.intent.draft import (
     ActionChoice,
     ContextLinkHint,
     EvidenceSpan,
+    EntityHintV2,
     IntentFrameDraft,
     IntentFrameDraftV2,
     IntentResolutionDraft,
@@ -37,6 +38,7 @@ from financial_agent.intent.resolution import ContractFileHash, ResolverBuildMan
 from financial_agent.intent.types import (
     ChoiceState,
     ContextLinkType,
+    EntitySemanticRole,
     ReferenceForm,
     ReferenceTargetKind,
     ResolutionStatus,
@@ -400,6 +402,62 @@ def test_v2_finalization_preserves_coverage_without_changing_context_validation(
     assert isinstance(resolution, ValidatedIntentResolutionV2)
     assert resolution.canonical_frames[0].semantic_coverage == (covered,)
     assert resolution.context_links[0].link_type is ContextLinkType.CONSUME_RESULT_SET
+
+
+def test_v2_finalization_preserves_relation_object_role(
+    context_inputs: ContextInputs,
+) -> None:
+    covered = FrameSemanticCoverage(
+        state=SemanticCoverageState.COVERED,
+        reason=SemanticCoverageReason.NONE,
+        evidence_ids=(),
+    )
+    hint = EntityHintV2(
+        entity_hint_id="entity-hint-1",
+        semantic_role=EntitySemanticRole.RELATION_OBJECT,
+        relation_id=("managedBy",),
+        mention_id=("mention-manager",),
+        evidence_span_ids=("span-1",),
+        expected_entity_type_ids=("AssetManager",),
+        candidate_entity_ids=("manager-1",),
+        selected_candidate_ids=("manager-1",),
+        reason_code="explicit",
+    )
+    frame = IntentFrameDraftV2(
+        **_frame("f1", 0).model_copy(
+            update={"entity_hint_ids": (hint.entity_hint_id,)}
+        ).model_dump(),
+        semantic_coverage=(covered,),
+    )
+    base = _state(frames=(frame,))
+    draft = IntentResolutionDraftV2(
+        evidence_spans=base.draft.evidence_spans,
+        intent_frames=(frame,),
+        entity_hints=(hint,),
+        reference_hints=(),
+        context_link_hints=(),
+        slot_mutations=(),
+        semantic_flag_hints=(),
+        frame_limit_exceeded=False,
+    )
+    state = replace(base, draft=draft, canonical_frames=(frame,))
+    metadata = context_inputs.metadata.model_copy(
+        update={
+            "build_manifest": context_inputs.metadata.build_manifest.model_copy(
+                update={"resolver_schema_version": "2.0"}
+            )
+        }
+    )
+
+    resolution = finalize_resolution(validate_context_graph(state), metadata)
+    restored = ValidatedIntentResolutionV2.model_validate_json(
+        resolution.model_dump_json()
+    )
+
+    restored_hint = restored.entity_hints[0]
+    assert restored_hint.semantic_role is EntitySemanticRole.RELATION_OBJECT
+    assert restored_hint.relation_id == ("managedBy",)
+    assert restored_hint.expected_entity_type_ids == ("AssetManager",)
 
 
 @pytest.mark.parametrize(

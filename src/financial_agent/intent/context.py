@@ -162,25 +162,28 @@ def finalize_resolution(
     if is_v2 and metadata.build_manifest.resolver_schema_version != "2.0":
         raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
     resolution_type = ValidatedIntentResolutionV2 if is_v2 else ValidatedIntentResolution
-    return resolution_type(
-        request_key=metadata.request_key,
-        run_id=metadata.run_id,
-        dataset_version=metadata.dataset_version,
-        producer=metadata.producer,
-        created_at=metadata.created_at,
-        resolution_id=metadata.resolution_id,
-        draft_hash=metadata.draft_hash,
-        canonical_frames=canonical_frames,
-        context_links=context_state.context_links,
-        final_tags=context_state.semantic_state.final_tags,
-        resolution_status=context_state.resolution_status,
-        issues=context_state.issues,
-        validation_events=context_state.validation_events,
-        build_manifest=metadata.build_manifest,
-        active_dataset_manifest_hash=metadata.active_dataset_manifest_hash,
-        repair_used=False,
-        invalid_attempt_hashes=(),
-    )
+    resolution_payload: dict[str, object] = {
+        "request_key": metadata.request_key,
+        "run_id": metadata.run_id,
+        "dataset_version": metadata.dataset_version,
+        "producer": metadata.producer,
+        "created_at": metadata.created_at,
+        "resolution_id": metadata.resolution_id,
+        "draft_hash": metadata.draft_hash,
+        "canonical_frames": canonical_frames,
+        "context_links": context_state.context_links,
+        "final_tags": context_state.semantic_state.final_tags,
+        "resolution_status": context_state.resolution_status,
+        "issues": context_state.issues,
+        "validation_events": context_state.validation_events,
+        "build_manifest": metadata.build_manifest,
+        "active_dataset_manifest_hash": metadata.active_dataset_manifest_hash,
+        "repair_used": False,
+        "invalid_attempt_hashes": (),
+    }
+    if is_v2:
+        resolution_payload["entity_hints"] = context_state.semantic_state.draft.entity_hints
+    return resolution_type(**resolution_payload)
 
 
 def _validate_reference_targets(

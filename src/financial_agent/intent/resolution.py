@@ -11,7 +11,7 @@ from financial_agent.contracts.base import (
 from financial_agent.contracts.enums import Cardinality
 from financial_agent.contracts.validation import require_unique_ids
 
-from .draft import ActionChoice, ProductFamilyChoice, SlotAssignment
+from .draft import ActionChoice, EntityHintV2, ProductFamilyChoice, SlotAssignment
 from .proposal import FrameSemanticCoverage, require_valid_action_cardinality
 from .types import (
     ContextLinkType,
@@ -185,6 +185,7 @@ class ValidatedIntentResolutionV2(ValidatedIntentResolution):
     canonical_frames: Annotated[
         tuple[ValidatedIntentFrameV2, ...], Field(min_length=1, max_length=16)
     ]
+    entity_hints: tuple[EntityHintV2, ...]
 
     @model_validator(mode="after")
     def validate_v2_provenance(self) -> "ValidatedIntentResolutionV2":

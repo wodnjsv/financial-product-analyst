@@ -190,7 +190,7 @@ def proposal() -> IntentResolutionProposalV2:
                     "entity_type_ids": ["ETF"],
                     "semantic_coverage": {"state": "covered", "reason": "none", "evidence_ids": []},
                     "slot_assignments": [{"slot_kind": "result_limit", "value_ids": ["literal-1"], "evidence_ids": ["evidence-1"], "reason_code": "explicit"}],
-                    "entity_hints": [{"mention_id": ["mention-1"], "candidate_entity_ids": ["entity-1"], "selected_candidate_ids": ["entity-1"]}],
+                    "entity_hints": [{"semantic_role": "frame_subject", "relation_id": [], "expected_entity_type_ids": ["ETF"], "mention_id": ["mention-1"], "candidate_entity_ids": ["entity-1"], "selected_candidate_ids": ["entity-1"]}],
                     "produced_result_hints": ["candidates"],
                 },
                 {

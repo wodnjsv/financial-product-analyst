@@ -9,6 +9,7 @@ from financial_agent.contracts.validation import require_unique_ids
 from .types import (
     ChoiceState,
     ContextLinkType,
+    EntitySemanticRole,
     ReferenceForm,
     ReferenceTargetKind,
     Selector,
@@ -61,6 +62,11 @@ class EntityHint(ContractModel):
     candidate_entity_ids: tuple[Identifier, ...]
     selected_candidate_ids: OptionalIdentifier
     reason_code: Identifier
+
+
+class EntityHintV2(EntityHint):
+    semantic_role: EntitySemanticRole
+    relation_id: OptionalIdentifier
 
 
 class SlotAssignment(ContractModel):
@@ -199,3 +205,4 @@ class IntentResolutionDraftV2(IntentResolutionDraft):
     intent_frames: Annotated[
         tuple[IntentFrameDraftV2, ...], Field(min_length=1, max_length=16)
     ]
+    entity_hints: tuple[EntityHintV2, ...]

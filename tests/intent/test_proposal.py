@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from financial_agent.intent.proposal import IntentResolutionProposalV2
+from financial_agent.intent.proposal import IntentResolutionProposalV2, ProposedEntityHint
 
 
 def valid_proposal_payload() -> dict[str, object]:
@@ -74,6 +74,9 @@ def test_proposal_preserves_explicit_entity_types_and_selected_candidates() -> N
     payload["frames"][0]["entity_type_ids"] = ["ETF"]
     payload["frames"][0]["entity_hints"] = [
         {
+            "semantic_role": "frame_subject",
+            "relation_id": [],
+            "expected_entity_type_ids": ["ETF"],
             "mention_id": ["mention-etf"],
             "candidate_entity_ids": ["entity-etf"],
             "selected_candidate_ids": ["entity-etf"],
@@ -84,6 +87,30 @@ def test_proposal_preserves_explicit_entity_types_and_selected_candidates() -> N
 
     assert proposal.frames[0].entity_type_ids == ("ETF",)
     assert proposal.frames[0].entity_hints[0].selected_candidate_ids == ("entity-etf",)
+
+
+def test_relation_object_requires_one_relation_and_expected_type() -> None:
+    with pytest.raises(ValidationError):
+        ProposedEntityHint(
+            semantic_role="relation_object",
+            relation_id=(),
+            expected_entity_type_ids=("AssetManager",),
+            mention_id=("mention-manager",),
+            candidate_entity_ids=("manager-1",),
+            selected_candidate_ids=("manager-1",),
+        )
+
+
+def test_frame_subject_rejects_relation_id() -> None:
+    with pytest.raises(ValidationError):
+        ProposedEntityHint(
+            semantic_role="frame_subject",
+            relation_id=("managedBy",),
+            expected_entity_type_ids=("ETF",),
+            mention_id=("mention-etf",),
+            candidate_entity_ids=("etf-1",),
+            selected_candidate_ids=("etf-1",),
+        )
 
 
 @pytest.mark.parametrize(

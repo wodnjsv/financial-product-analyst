@@ -10,6 +10,7 @@ from financial_agent.contracts.enums import Cardinality, ReferenceMentionType
 from .types import (
     ChoiceState,
     ContextLinkType,
+    EntitySemanticRole,
     ReferenceForm,
     ReferenceTargetKind,
     Selector,
@@ -80,12 +81,24 @@ class ProposedSlotAssignment(ContractModel):
 
 
 class ProposedEntityHint(ContractModel):
+    semantic_role: EntitySemanticRole
+    relation_id: OptionalIdentifier
+    expected_entity_type_ids: Annotated[
+        tuple[Identifier, ...], Field(min_length=1)
+    ]
     mention_id: OptionalIdentifier
     candidate_entity_ids: tuple[Identifier, ...]
     selected_candidate_ids: OptionalIdentifier
 
     @model_validator(mode="after")
-    def validate_selected_candidates(self) -> "ProposedEntityHint":
+    def validate_role_shape(self) -> "ProposedEntityHint":
+        if self.semantic_role is EntitySemanticRole.FRAME_SUBJECT and self.relation_id:
+            raise ValueError("frame subject cannot carry a relation ID")
+        if (
+            self.semantic_role is EntitySemanticRole.RELATION_OBJECT
+            and len(self.relation_id) != 1
+        ):
+            raise ValueError("relation object requires exactly one relation ID")
         if not set(self.selected_candidate_ids) <= set(self.candidate_entity_ids):
             raise ValueError("selected entity candidates must be proposed candidates")
         return self

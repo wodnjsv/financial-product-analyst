@@ -30,6 +30,11 @@ class SemanticCoverageReason(str, Enum):
     MISSING_CRITICAL_SEMANTIC = "missing_critical_semantic"
 
 
+class EntitySemanticRole(str, Enum):
+    FRAME_SUBJECT = "frame_subject"
+    RELATION_OBJECT = "relation_object"
+
+
 class ReferenceForm(str, Enum):
     DEMONSTRATIVE = "demonstrative"
     ZERO_ANAPHORA = "zero_anaphora"
