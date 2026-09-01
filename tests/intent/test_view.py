@@ -33,6 +33,7 @@ from financial_agent.intent.view import (
     ResolverViewEntityCandidateGroup,
     build_manifest,
     build_resolver_view,
+    offered_entity_type_ids,
 )
 
 
@@ -98,6 +99,31 @@ def test_view_is_byte_reproducible(resolver_inputs: dict[str, object]) -> None:
     second = build_resolver_view(**resolver_inputs)
 
     assert canonical_json_bytes(first) == canonical_json_bytes(second)
+
+
+def test_resolver_view_offers_complete_sorted_catalog_entity_types(
+    resolver_inputs: dict[str, object],
+) -> None:
+    """Catches a request-local candidate set narrowing the model's type vocabulary."""
+    view = build_resolver_view(**resolver_inputs)
+    catalog = resolver_inputs["catalog"]
+
+    assert view.entity_type_ids == tuple(sorted(catalog.entity_type_ids))
+    assert len(view.entity_type_ids) == 20
+    assert offered_entity_type_ids(view) == view.entity_type_ids
+
+
+def test_resolver_view_rejects_unsorted_or_duplicate_entity_type_registry(
+    resolver_inputs: dict[str, object],
+) -> None:
+    """Catches direct callers bypassing the bounded catalog registry invariant."""
+    view = build_resolver_view(**resolver_inputs)
+
+    with pytest.raises(ValidationError, match="entity type IDs must be unique and sorted"):
+        ResolverView.model_validate(
+            view.model_dump()
+            | {"entity_type_ids": ("ETF", "AssetManager", "ETF")}
+        )
 
 
 def test_view_projects_sorted_axes_evidence_and_normalizer_references(
@@ -261,6 +287,7 @@ def _rebuild_view(
         active_dataset_pin=view.active_dataset_pin,
         product_family_ids=view.product_family_ids,
         action_ids=view.action_ids,
+        entity_type_ids=view.entity_type_ids,
         semantic_candidates=view.semantic_candidates,
         concept_definitions=view.concept_definitions,
         relation_definitions=view.relation_definitions,

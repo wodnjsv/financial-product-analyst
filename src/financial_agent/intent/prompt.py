@@ -22,7 +22,7 @@ from .types import (
     SlotMutationKind,
     SourceRole,
 )
-from .view import ResolverView, offered_entity_type_ids
+from .view import ResolverView
 
 
 SYSTEM_MESSAGE = (
@@ -92,7 +92,7 @@ def build_clova_response_schema(view: ResolverView) -> dict[str, object]:
             "action_choice": action_choice,
             "product_family_choice": product_family_choice,
             "entity_type_ids": _restricted_identifier_array(
-                offered_entity_type_ids(view)
+                view.entity_type_ids
             ),
             "semantic_coverage": _semantic_coverage_schema(evidence_identifier),
             "slot_assignments": _array(slot_assignment),

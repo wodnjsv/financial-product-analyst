@@ -4,6 +4,34 @@ from financial_agent.contracts.enums import IntentType, ProductFamily
 from financial_agent.intent.view import AxisDefinition
 
 
+ENTITY_TYPE_IDS = (
+    "AssetManager",
+    "Company",
+    "CreditGrade",
+    "ETF",
+    "EquitySecurity",
+    "FinancialProduct",
+    "FundShareClass",
+    "Index",
+    "Industry",
+    "Issuer",
+    "Market",
+    "OfficialDocument",
+    "Organization",
+    "PolicyProgram",
+    "ProductRiskGrade",
+    "PublicFund",
+    "RepresentativeFund",
+    "RiskFactor",
+    "Security",
+    "Theme",
+)
+
+
+def complete_entity_type_ids() -> tuple[str, ...]:
+    return ENTITY_TYPE_IDS
+
+
 def complete_axis_definitions() -> tuple[AxisDefinition, ...]:
     return tuple(
         AxisDefinition(

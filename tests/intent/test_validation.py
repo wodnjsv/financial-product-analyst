@@ -61,7 +61,7 @@ from financial_agent.intent.view import (
     ResolverViewSemanticCandidateGroup,
 )
 
-from .view_fixtures import complete_axis_definitions
+from .view_fixtures import complete_axis_definitions, complete_entity_type_ids
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -212,6 +212,7 @@ def validation_inputs() -> ValidationInputs:
         ),
         product_family_ids=("domestic_etf", "overseas_etf"),
         action_ids=("compare",),
+        entity_type_ids=complete_entity_type_ids(),
         semantic_candidates=(),
         concept_definitions=(
             ResolverViewConcept(

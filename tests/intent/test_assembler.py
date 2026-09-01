@@ -26,7 +26,7 @@ from financial_agent.intent.view import (
     ResolverViewReferenceCandidate,
 )
 
-from .view_fixtures import complete_axis_definitions
+from .view_fixtures import complete_axis_definitions, complete_entity_type_ids
 
 
 def normalized():
@@ -94,6 +94,7 @@ def view() -> ResolverView:
         ),
         product_family_ids=("domestic_etf",),
         action_ids=("lookup", "compare"),
+        entity_type_ids=complete_entity_type_ids(),
         semantic_candidates=(),
         concept_definitions=(),
         relation_definitions=(),

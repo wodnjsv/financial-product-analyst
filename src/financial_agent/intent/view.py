@@ -33,7 +33,7 @@ from .resolution import ContractFileHash, ResolverBuildManifest
 NORMALIZER_VERSION = "intent-normalizer-v1"
 CANDIDATE_POLICY_VERSION = "intent-candidate-v2"
 RESOLVER_SCHEMA_VERSION = "2.0"
-PROMPT_VERSION = "intent-resolver-ko-v3"
+PROMPT_VERSION = "intent-resolver-ko-v4"
 ADAPTER_VERSION = "clova-chat-v3-proposal-v2"
 
 MAX_CANDIDATES_PER_MENTION = 5
@@ -171,6 +171,7 @@ class ResolverView(ContractModel):
     active_dataset_pin: ActiveDatasetPin
     product_family_ids: tuple[Identifier, ...]
     action_ids: tuple[Identifier, ...]
+    entity_type_ids: tuple[Identifier, ...]
     semantic_candidates: tuple[ResolverViewSemanticCandidateGroup, ...]
     concept_definitions: tuple[ResolverViewConcept, ...]
     relation_definitions: tuple[ResolverViewRelationDefinition, ...]
@@ -182,6 +183,12 @@ class ResolverView(ContractModel):
 
     @model_validator(mode="after")
     def validate_entity_candidate_bounds(self) -> "ResolverView":
+        if (
+            not self.entity_type_ids
+            or self.entity_type_ids != tuple(sorted(set(self.entity_type_ids)))
+            or not set(self.entity_type_ids) <= APPROVED_RDF_TYPES
+        ):
+            raise ValueError("entity type IDs must be unique and sorted")
         if (
             len(self.entity_candidates) > MAX_ENTITY_MENTIONS
             or sum(len(group.items) for group in self.entity_candidates)
@@ -205,33 +212,7 @@ class ResolverView(ContractModel):
 
 def offered_entity_type_ids(view: ResolverView) -> tuple[str, ...]:
     """Return the exact ontology-type IDs exposed by this request view."""
-    return tuple(
-        sorted(
-            {
-                *(
-                    ontology_type_id
-                    for group in view.entity_candidates
-                    for item in group.items
-                    for ontology_type_id in item.ontology_type_ids
-                ),
-                *(
-                    ontology_type_id
-                    for concept in view.concept_definitions
-                    for ontology_type_id in concept.allowed_ontology_types
-                ),
-                *(
-                    ontology_type_id
-                    for relation in view.relation_definitions
-                    for ontology_type_id in relation.subject_ontology_types
-                ),
-                *(
-                    ontology_type_id
-                    for relation in view.relation_definitions
-                    for ontology_type_id in relation.object_ontology_types
-                ),
-            }
-        )
-    )
+    return view.entity_type_ids
 
 
 def build_manifest(
@@ -276,6 +257,7 @@ def build_resolver_view(
         active_dataset_pin=active_dataset_pin,
         product_family_ids=tuple(sorted(item.value for item in ProductFamily)),
         action_ids=tuple(sorted(item.value for item in IntentType)),
+        entity_type_ids=tuple(sorted(catalog.entity_type_ids)),
         semantic_candidates=tuple(
             ResolverViewSemanticCandidateGroup(
                 mention_id=mention_id,

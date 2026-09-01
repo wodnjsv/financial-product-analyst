@@ -22,7 +22,7 @@ from financial_agent.intent.view import (
     ResolverViewSemanticCandidateGroup,
 )
 
-from .view_fixtures import complete_axis_definitions
+from .view_fixtures import complete_axis_definitions, complete_entity_type_ids
 
 
 def valid_proposal_json() -> str:
@@ -95,6 +95,7 @@ def make_prompt():
         active_dataset_pin=ActiveDatasetPin(dataset_version='dataset-v1', manifest_hash='d' * 64),
         product_family_ids=('domestic_etf',),
         action_ids=('lookup',),
+        entity_type_ids=complete_entity_type_ids(),
         semantic_candidates=(
             ResolverViewSemanticCandidateGroup(
                 mention_id='mention-1',

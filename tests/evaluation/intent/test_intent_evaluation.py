@@ -125,7 +125,7 @@ from financial_agent.intent.view import (
     ResolverViewSemanticCandidateGroup,
     build_manifest,
 )
-from tests.intent.view_fixtures import complete_axis_definitions
+from tests.intent.view_fixtures import complete_axis_definitions, complete_entity_type_ids
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -1518,6 +1518,7 @@ def _stored_artifacts(
         ),
         product_family_ids=("domestic_etf",),
         action_ids=("compare",),
+        entity_type_ids=complete_entity_type_ids(),
         semantic_candidates=(
             ResolverViewSemanticCandidateGroup(
                 mention_id="mention-aum",

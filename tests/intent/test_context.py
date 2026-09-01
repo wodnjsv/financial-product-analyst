@@ -51,7 +51,7 @@ from financial_agent.intent.validation import SemanticValidationState
 from financial_agent.intent.validation import validate_semantics
 from financial_agent.intent.view import ActiveDatasetPin, ResolverView
 
-from .view_fixtures import complete_axis_definitions
+from .view_fixtures import complete_axis_definitions, complete_entity_type_ids
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -321,6 +321,7 @@ def _semantic_korean_state(
         active_dataset_pin=ActiveDatasetPin(dataset_version="dataset-v1", manifest_hash="f" * 64),
         product_family_ids=("domestic_etf",),
         action_ids=("rank",),
+        entity_type_ids=complete_entity_type_ids(),
         semantic_candidates=(),
         concept_definitions=(),
         relation_definitions=(),
