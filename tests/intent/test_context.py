@@ -425,7 +425,18 @@ def test_v2_finalization_preserves_relation_object_role(
     )
     frame = IntentFrameDraftV2(
         **_frame("f1", 0).model_copy(
-            update={"entity_hint_ids": (hint.entity_hint_id,)}
+            update={
+                "entity_hint_ids": (hint.entity_hint_id,),
+                "slot_assignments": (
+                    SlotAssignment(
+                        slot_assignment_id="slot-entity-1",
+                        slot_kind=SlotKind.ENTITY,
+                        value_ids=("manager-1",),
+                        evidence_span_ids=(),
+                        reason_code="implicit",
+                    ),
+                ),
+            }
         ).model_dump(),
         semantic_coverage=(covered,),
     )

@@ -9,6 +9,7 @@ from typing import Any
 from financial_agent.contracts.enums import Cardinality, ReferenceMentionType
 from financial_agent.contracts.request import RequestContext
 
+from .catalog import SemanticCatalogSnapshot
 from .types import (
     ChoiceState,
     ContextLinkType,
@@ -23,7 +24,7 @@ from .types import (
     SlotMutationKind,
     SourceRole,
 )
-from .view import ResolverView
+from .view import ResolverView, validate_resolver_view_catalog
 
 
 SYSTEM_MESSAGE = (
@@ -38,7 +39,9 @@ SYSTEM_MESSAGE = (
 
 REASON_CODES = ("ambiguous", "explicit", "implicit", "policy_explicit", "unmapped")
 _FRAME_ORDINAL = {"type": "integer", "minimum": 0, "maximum": 15}
-_MODEL_SLOT_KINDS = tuple(item for item in SlotKind if item is not SlotKind.UNIT)
+_MODEL_SLOT_KINDS = tuple(
+    item for item in SlotKind if item not in {SlotKind.UNIT, SlotKind.ENTITY}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,8 +51,13 @@ class ResolverPromptEnvelope:
     response_schema: dict[str, object]
 
 
-def build_prompt(context: RequestContext, view: ResolverView) -> ResolverPromptEnvelope:
+def build_prompt(
+    context: RequestContext,
+    view: ResolverView,
+    catalog: SemanticCatalogSnapshot,
+) -> ResolverPromptEnvelope:
     """Serialize request-scoped untrusted input only into the user message."""
+    validate_resolver_view_catalog(view, catalog)
     return ResolverPromptEnvelope(
         system_message=SYSTEM_MESSAGE,
         user_message=json.dumps(
@@ -61,12 +69,15 @@ def build_prompt(context: RequestContext, view: ResolverView) -> ResolverPromptE
             separators=(",", ":"),
             sort_keys=True,
         ),
-        response_schema=build_clova_response_schema(view),
+        response_schema=build_clova_response_schema(view, catalog),
     )
 
 
-def build_clova_response_schema(view: ResolverView) -> dict[str, object]:
+def build_clova_response_schema(
+    view: ResolverView, catalog: SemanticCatalogSnapshot
+) -> dict[str, object]:
     """Build the restricted HCX schema for IntentResolutionProposalV2 only."""
+    validate_resolver_view_catalog(view, catalog)
     evidence_ids = _evidence_ids(view)
     reference_ids = _reference_ids(view)
     entity_ids = _entity_ids(view)
@@ -247,8 +258,6 @@ def _slot_assignment_schema(
 
 
 def _slot_value_ids(view: ResolverView, slot_kind: SlotKind) -> tuple[str, ...]:
-    if slot_kind is SlotKind.ENTITY:
-        return _entity_ids(view)
     if slot_kind is SlotKind.RELATION:
         return _relation_ids(view)
     if slot_kind is SlotKind.DOCUMENT_TOPIC:

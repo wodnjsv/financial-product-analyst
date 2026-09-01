@@ -15,7 +15,7 @@
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute·문서 provenance 경계 승인; TTL·SHACL·Evidence-bound ABox·읽기 전용 Fuseki를 포함한 Graph Phase 1 core 로컬 완료, Stage 04는 미완료 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
-| Intent Resolver Phase 1 | 구현·로컬 비라이브·폐기 가능 PostgreSQL 검증 완료; Linux/amd64 container와 live HCX benchmark는 미실행; `candidate_recall_at_5` 실패와 미측정 live gate로 default 승격 차단, QueryPlan compiler·Orchestrator 설계는 아직 시작하지 않음 | [Intent Resolver Design](specs/2026-08-31-intent-resolver-design.md), [Verification Report](reports/2026-08-31-intent-resolver-phase1-verification.md), [ADR-0022](decisions/ADR-0022-use-ontology-grounded-intent-resolution.md) |
+| Intent Resolver Phase 1 | 구현·로컬 검증 완료; 승인된 HCX-007 12-case smoke는 provider success `0/12`로 끝나 semantic gate를 측정하지 못했다. `candidate_recall_at_5` 실패와 미측정 live gate로 default 승격은 계속 차단되며, QueryPlan compiler·Orchestrator 설계는 아직 시작하지 않음 | [Intent Resolver Design](specs/2026-08-31-intent-resolver-design.md), [Verification Report](reports/2026-08-31-intent-resolver-phase1-verification.md), [ADR-0022](decisions/ADR-0022-use-ontology-grounded-intent-resolution.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 | Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
 
@@ -127,30 +127,32 @@
 
 ### Stage 06 Intent Resolver Phase 1
 
-**상태: Phase 1 implemented; promotion blocked by `candidate_recall_at_5` and unmeasured required gates**
+**상태: Phase 1 implemented; promotion deferred by `candidate_recall_at_5` and unmeasured required gates**
 
 - 온톨로지 기반 semantic catalog, 한국어 정규화·literal·candidate·bounded view,
   strict HCX adapter, semantic/context validator, one-call service, 불변
   `intent_resolution` 저장, 160-case held-out evaluation과 fail-closed promotion
   판정 경계를 구현했다.
-- 2026-09-01 hardening 후 로컬 검증은 Intent `202 passed, 1 deselected`, evaluation
-  `46 passed`, contracts `225 passed`, PostgreSQL 15.19 DB `492 passed,
-  5 deselected`, broad non-live `1171 passed, 1 expected skip, 376 deselected`와
-  두 schema freshness·migration no-drift·DB object manifest를 통과했다.
-- PostgreSQL 수치는 최초 Task 12의 폐기 가능 DB 실측이며 promotion/container
-  hardening fix에서는 DB 동작이 바뀌지 않아 재실행하지 않았다. Fix code revision
-  `4d41325...`에서 focused `50 passed`, fixture freeze `2 passed`, deterministic
-  CLI와 두 schema check를 다시 확인했다.
-- 결정론적 candidate reproducibility는 `155/155`지만 recall@5는 `118/196`
-  (`60.2040816%`)로 승인된 `>=99%` gate에 미달한다. live/stored validation,
-  first-pass, frame, context, OOD metric도 미측정이므로 default 승격은
-  fail-closed 상태다. Promotion 증거는 frozen v3 SHA와 exact full population에
-  결합되며 부분 `1/1` 표본이나 잘못된 denominator/coverage는 `unmeasured`다.
+- 2026-09-01 entity-role final hardening의 fresh intent/evaluation suite는
+  `369 passed`; v1·v2 schema freshness check와 v1 no-drift check도 통과했다.
+  외부 marker를 제외한 broad offline suite는 `1301 passed, 1 skipped,
+  `378 deselected`였다. 명시적 PostgreSQL evidence는 이 final fix에서는 실행하지
+  않았고, URL 미설정으로 계속 `unmeasured`다.
+- resolver view의 exact catalog entity-type registry는 fresh `155/155` reachability
+  (unreachable case `0`)를 유지한다. 결정론적 candidate reproducibility도
+  `155/155`지만 recall@5는 `118/196` (`60.2040816%`)로 승인된 `>=99%` gate에
+  미달한다.
+- 승인된 HCX-007 12-case smoke는 retry 없이 한 번만 실행했으며 provider success는
+  `0/12` (timeout `10`, rate-limited `2`)였다. 따라서 live/stored validation,
+  first-pass, frame, context, OOD metric은 여전히 미측정이고 default promotion은
+  fail-closed/deferred 상태다. Promotion evidence는 frozen v3 SHA와 complete
+  population에 결합되며, role-required frame evidence가 비어 있거나 부분
+  denominator/coverage이면 `unmeasured`다.
   `model_copy`·`model_construct`로 우회 생성된 기존 증거도 exact type·stored field
   keys·strict JSON 재검증을 통과하지 못하면 판정 전에 예외로 차단한다.
 - 이 호스트에는 Docker 계열 runtime이 없어 Linux/amd64 build/run/Compose는
-  실행하지 않았다. live HCX/NCP도 호출하지 않았고 latency·token·repair·비용은
-  측정하지 않았다.
+  실행하지 않았다. 위 HCX smoke 외에는 NCP·HCX를 호출하지 않았고, smoke는
+  provider 성공 output·semantic metric·retry를 만들지 않았다.
 - QueryPlan compiler와 Orchestrator는 Phase 2 범위이며 구현을 시작하지 않았다.
   다음 live HCX benchmark는 비용·호출에 대한 별도 사용자 승인 후에만 수행한다.
 

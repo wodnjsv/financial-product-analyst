@@ -21,9 +21,11 @@ from pydantic import SecretStr, ValidationError
 from financial_agent.intent.evaluation import (
     CandidateGroup,
     CountMetric,
+    CoverageMetric,
     EntityTypeReachabilityEvidence,
     EvaluationCase,
     EvaluationDataset,
+    EvaluationEntityHint,
     EvaluationFrame,
     EvaluationFrameCoverage,
     EvaluationPrediction,
@@ -144,7 +146,7 @@ SCRIPT_PATH = PROJECT_ROOT / "scripts" / "evaluate_intent_resolver.py"
 REGRESSION_SHA256 = "5f917cbd326d4b4a27d260aecaf63460dffa4302dcabd5e9599efe7c90b1b18b"
 HELDOUT_V1_SHA256 = "d23eae797026ed66fa2f52ae49a602f991bd9b6d02b890c799342c0a6145f63e"
 HELDOUT_V2_SHA256 = "de015673ad4fa327ed3369997120f8465fb9b14e4998a924a8b90eaf45c450fb"
-HELDOUT_SHA256 = "2142f4da110c7a83daba902c7b77df62168649c7f0a412867495fa6930acf211"
+HELDOUT_SHA256 = "bd40481c57975d66a84a98005b771761c023ae5461cbd3c232508522bbf4c7de"
 
 
 def _frame(
@@ -405,6 +407,167 @@ def test_zero_denominator_policy_is_decimal_zero() -> None:
     assert frame.joint_exact_match.value == Decimal("0")
     assert context.link_exact_match.value == Decimal("0")
     assert ood.false_fast_rate.value == Decimal("0")
+
+
+def test_joint_frame_exact_match_includes_semantic_coverage() -> None:
+    """Catches a covered frame being scored equal to a domain-OOD frame."""
+    case = _synthetic_cases()[0].model_copy(
+        update={
+            "expected_frames": (
+                _frame(0).model_copy(
+                    update={
+                        "semantic_coverage": EvaluationFrameCoverage(
+                            state="covered", reason="none"
+                        )
+                    }
+                ),
+            ),
+            "expected_references": (),
+            "expected_context_links": (),
+            "expected_slot_mutations": (),
+            "validation_probes": (),
+        }
+    )
+    prediction = _synthetic_predictions()[0].model_copy(
+        update={
+            "frames": (
+                _frame(0).model_copy(
+                    update={
+                        "semantic_coverage": EvaluationFrameCoverage(
+                            state="unmapped", reason="domain_ood"
+                        )
+                    }
+                ),
+            ),
+            "references": (),
+            "context_links": (),
+            "slot_mutations": (),
+            "validation_probe_outcomes": (),
+        }
+    )
+
+    assert evaluate_frames((case,), (prediction,)).joint_exact_match == CountMetric(
+        numerator=0, denominator=1
+    )
+
+
+def test_joint_frame_exact_match_rejects_role_reversal_and_measures_role_coverage() -> None:
+    """Catches a relation object being treated as its frame subject."""
+    expected_hint = EvaluationEntityHint(
+        semantic_role="relation_object",
+        relation_id=("managedBy",),
+        expected_entity_type_ids=("AssetManager",),
+    )
+    reversed_hint = EvaluationEntityHint(
+        semantic_role="frame_subject",
+        relation_id=(),
+        expected_entity_type_ids=("AssetManager",),
+    )
+    frame = _frame(0).model_copy(
+        update={
+            "slots": (ExpectedSlot(slot_kind="relation", value_ids=("managedBy",)),),
+            "entity_hints": (expected_hint,),
+        }
+    )
+    case = _synthetic_cases()[0].model_copy(
+        update={
+            "expected_frames": (frame,),
+            "expected_references": (),
+            "expected_context_links": (),
+            "expected_slot_mutations": (),
+            "validation_probes": (),
+        }
+    )
+    prediction = _synthetic_predictions()[0].model_copy(
+        update={
+            "frames": (frame.model_copy(update={"entity_hints": (reversed_hint,)}),),
+            "references": (),
+            "context_links": (),
+            "slot_mutations": (),
+            "validation_probe_outcomes": (),
+        }
+    )
+
+    metrics = evaluate_frames((case,), (prediction,))
+
+    assert metrics.joint_exact_match == CountMetric(numerator=0, denominator=1)
+    assert metrics.role_conformance == CountMetric(numerator=0, denominator=1)
+    assert metrics.role_coverage.evidence_sufficient is True
+
+
+def test_role_coverage_keeps_missing_required_frame_in_its_denominator() -> None:
+    expected_hint = EvaluationEntityHint(
+        semantic_role="relation_object",
+        relation_id=("managedBy",),
+        expected_entity_type_ids=("AssetManager",),
+    )
+    frame = _frame(0).model_copy(
+        update={
+            "slots": (ExpectedSlot(slot_kind="relation", value_ids=("managedBy",)),),
+            "entity_hints": (expected_hint,),
+        }
+    )
+    case = _synthetic_cases()[0].model_copy(
+        update={
+            "expected_frames": (frame,),
+            "expected_references": (),
+            "expected_context_links": (),
+            "expected_slot_mutations": (),
+            "validation_probes": (),
+        }
+    )
+    prediction = _synthetic_predictions()[0].model_copy(
+        update={
+            "frames": (),
+            "references": (),
+            "context_links": (),
+            "slot_mutations": (),
+            "validation_probe_outcomes": (),
+        }
+    )
+
+    metrics = evaluate_frames((case,), (prediction,))
+
+    assert metrics.role_coverage == CoverageMetric(numerator=0, denominator=1)
+
+
+def test_joint_frame_exact_match_accepts_complete_role_aware_projection() -> None:
+    """Catches a correct role-aware relation frame becoming unattainable evidence."""
+    hint = EvaluationEntityHint(
+        semantic_role="relation_object",
+        relation_id=("managedBy",),
+        expected_entity_type_ids=("AssetManager",),
+    )
+    frame = _frame(0).model_copy(
+        update={
+            "slots": (ExpectedSlot(slot_kind="relation", value_ids=("managedBy",)),),
+            "entity_hints": (hint,),
+        }
+    )
+    case = _synthetic_cases()[0].model_copy(
+        update={
+            "expected_frames": (frame,),
+            "expected_references": (),
+            "expected_context_links": (),
+            "expected_slot_mutations": (),
+            "validation_probes": (),
+        }
+    )
+    prediction = _synthetic_predictions()[0].model_copy(
+        update={
+            "frames": (frame,),
+            "references": (),
+            "context_links": (),
+            "slot_mutations": (),
+            "validation_probe_outcomes": (),
+        }
+    )
+
+    metrics = evaluate_frames((case,), (prediction,))
+
+    assert metrics.joint_exact_match == CountMetric(numerator=1, denominator=1)
+    assert metrics.role_conformance == CountMetric(numerator=1, denominator=1)
+    assert metrics.role_coverage == CoverageMetric(numerator=1, denominator=1)
 
 
 def test_combination_ood_is_confused_separately_but_not_counted_as_false_fast() -> None:
@@ -859,7 +1022,7 @@ def test_all_semantic_cases_can_express_expected_frame_types() -> None:
         if case.expected_pipeline_outcome == "pre_model_rejected":
             continue
         view = build_real_view_for_evaluation_case(case, catalog)
-        schema = build_prompt(case_request_context(case), view).response_schema
+        schema = build_prompt(case_request_context(case), view, catalog).response_schema
         offered = set(
             schema["properties"]["frames"]["items"]["properties"]
             ["entity_type_ids"]["items"]["enum"]
@@ -979,11 +1142,14 @@ def test_perfect_prediction_arithmetic_satisfies_existing_promotion_percentages(
         candidate_recall_at_5=report.candidate.recall_at_5,
         first_pass_structured_output_validity=report.validation.schema_validity,
         held_out_joint_frame_exact_match=report.frame.joint_exact_match,
+        held_out_joint_frame_role_coverage=report.frame.role_coverage,
         held_out_context_link_exact_match=report.context.link_exact_match,
         ood_false_fast_rate=report.ood.false_fast_rate,
     )
 
     assert report.frame.joint_exact_match.denominator == 155
+    assert report.frame.role_conformance == CountMetric(numerator=22, denominator=22)
+    assert report.frame.role_coverage == CoverageMetric(numerator=22, denominator=22)
     assert report.context.link_exact_match.denominator == 155
     assert assess_promotion(evidence).eligible is True
 
@@ -1584,7 +1750,7 @@ def test_round2_output_hardlink_cannot_modify_supplied_input(tmp_path: Path) -> 
 
 
 def _resolve_gold_equivalent_managed_by(
-) -> tuple[IntentResolutionDraftV2, ValidatedIntentResolutionV2]:
+) -> tuple[IntentResolutionDraftV2, ValidatedIntentResolutionV2, object]:
     dataset_version = "entity-role-v2"
     question = "테스트운용사 운용사 ETF 알려줘"
     created_at = datetime(2026, 8, 31, tzinfo=UTC)
@@ -1702,10 +1868,11 @@ def _resolve_gold_equivalent_managed_by(
             ensure_ascii=False,
         )
     )
-    draft = assemble_proposal(proposal, normalized, view)
+    draft = assemble_proposal(proposal, normalized, view, catalog)
     semantic = validate_semantics(draft, context, normalized, view, catalog)
+    context_state = validate_context_graph(semantic)
     resolution = finalize_resolution(
-        validate_context_graph(semantic),
+        context_state,
         ResolutionFinalizationMetadata(
             request_key=context.request_key,
             run_id=context.run_id,
@@ -1720,11 +1887,11 @@ def _resolve_gold_equivalent_managed_by(
     )
     assert isinstance(draft, IntentResolutionDraftV2)
     assert isinstance(resolution, ValidatedIntentResolutionV2)
-    return draft, resolution
+    return draft, resolution, context_state
 
 
 def test_managed_by_proposal_crosses_full_v2_evaluation_boundary() -> None:
-    draft, resolution = _resolve_gold_equivalent_managed_by()
+    draft, resolution, _ = _resolve_gold_equivalent_managed_by()
     draft_bundle = IntentDraftBundleV2(
         dataset_id="entity-role-v2",
         cases=(
@@ -1755,6 +1922,19 @@ def test_managed_by_proposal_crosses_full_v2_evaluation_boundary() -> None:
     assert stored_resolution is not None
     assert stored_draft.entity_hints[0].semantic_role.value == "relation_object"
     assert stored_resolution.entity_hints[0].relation_id == ("managedBy",)
+
+
+def test_stored_v2_resolution_rejects_role_sidecar_mismatch() -> None:
+    """Catches a stored resolution that drops the draft's role-aware hint."""
+    draft, resolution, context_state = _resolve_gold_equivalent_managed_by()
+    mismatched = resolution.model_copy(update={"entity_hints": ()})
+
+    with pytest.raises(ValueError, match="EVALUATION_ARTIFACT_MISMATCH"):
+        _cli_namespace()["_validate_resolution_projection"](
+            draft=draft,
+            context_state=context_state,
+            resolution=mismatched,
+        )
 
 
 def _stored_artifacts(
@@ -1943,7 +2123,7 @@ def _stored_artifacts(
             ensure_ascii=False,
         )
     )
-    draft = assemble_proposal(proposal, normalized, view)
+    draft = assemble_proposal(proposal, normalized, view, catalog)
     assert isinstance(draft, IntentResolutionDraftV2)
     semantic = validate_semantics(
         draft, context, normalized, view, catalog

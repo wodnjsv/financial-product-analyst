@@ -94,6 +94,25 @@ class EvaluationFrameCoverage(ContractModel):
         return self
 
 
+class EvaluationEntityHint(ContractModel):
+    """Sanitized role semantics used only for offline frame conformance."""
+
+    semantic_role: Literal["frame_subject", "relation_object"]
+    relation_id: tuple[Identifier, ...] = Field(max_length=1)
+    expected_entity_type_ids: tuple[Identifier, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_role_shape(self) -> "EvaluationEntityHint":
+        _require_sorted_unique(
+            self.expected_entity_type_ids, "evaluation entity hint type IDs"
+        )
+        if self.semantic_role == "frame_subject" and self.relation_id:
+            raise ValueError("frame subject cannot carry a relation ID")
+        if self.semantic_role == "relation_object" and len(self.relation_id) != 1:
+            raise ValueError("relation object requires exactly one relation ID")
+        return self
+
+
 class EvaluationFrame(ContractModel):
     frame_id: Identifier
     ordinal: int = Field(ge=0)
@@ -106,6 +125,7 @@ class EvaluationFrame(ContractModel):
     semantic_coverage: EvaluationFrameCoverage = Field(
         default_factory=EvaluationFrameCoverage
     )
+    entity_hints: tuple[EvaluationEntityHint, ...] | None = None
 
     @field_validator("action_ids", mode="before")
     @classmethod
@@ -751,7 +771,7 @@ PromotionGateName = Literal[
 PromotionGateStatus = Literal["passed", "failed", "unmeasured"]
 PromotionComparison = Literal["equal", "at_least", "at_most"]
 _FROZEN_PROMOTION_DATASET_SHA256 = (
-    "2142f4da110c7a83daba902c7b77df62168649c7f0a412867495fa6930acf211"
+    "bd40481c57975d66a84a98005b771761c023ae5461cbd3c232508522bbf4c7de"
 )
 _ENTITY_TYPE_REACHABILITY_POPULATION = 155
 
@@ -779,6 +799,7 @@ class PromotionEvidence(ContractModel):
     candidate_recall_at_5: CountMetric | None = None
     first_pass_structured_output_validity: CountMetric | None = None
     held_out_joint_frame_exact_match: CountMetric | None = None
+    held_out_joint_frame_role_coverage: CoverageMetric | None = None
     held_out_context_link_exact_match: CountMetric | None = None
     ood_false_fast_rate: CountMetric | None = None
 
@@ -936,6 +957,13 @@ def assess_promotion(evidence: PromotionEvidence) -> PromotionDecision:
                 and coverage.denominator
                 == _PROMOTION_COVERAGE_POPULATIONS[coverage_name]
             )
+        if name == "held_out_joint_frame_exact_match":
+            role_coverage = evidence.held_out_joint_frame_role_coverage
+            sufficient = (
+                sufficient
+                and role_coverage is not None
+                and role_coverage.evidence_sufficient
+            )
         if not sufficient:
             status: PromotionGateStatus = "unmeasured"
         elif comparison == "equal":
@@ -988,6 +1016,8 @@ class FrameMetrics(ContractModel):
     product_family: PrecisionRecallF1
     entity_type: PrecisionRecallF1
     slot: PrecisionRecallF1
+    role_conformance: CountMetric
+    role_coverage: CoverageMetric
 
 
 class ContextMetrics(ContractModel):
@@ -1135,11 +1165,28 @@ def evaluate_frames(
     predictions: Sequence[EvaluationPrediction],
 ) -> FrameMetrics:
     aligned = _align(cases, predictions)
+    semantic = tuple(
+        (case, prediction)
+        for case, prediction in aligned
+        if _is_semantic_result(prediction)
+    )
+    required_roles: list[tuple[EvaluationFrame, EvaluationFrame | None]] = []
+    for case, prediction in semantic:
+        predicted_by_ordinal = {
+            frame.ordinal: frame for frame in prediction.frames
+        }
+        required_roles.extend(
+            (expected, predicted_by_ordinal.get(expected.ordinal))
+            for expected in case.expected_frames
+            if _requires_entity_role_evidence(expected)
+        )
     return FrameMetrics(
-        joint_exact_match=_semantic_exact_match(
-            aligned,
-            lambda case: _frame_signatures(case.expected_frames),
-            lambda prediction: _frame_signatures(prediction.frames),
+        joint_exact_match=CountMetric(
+            numerator=sum(
+                _joint_frame_match(case.expected_frames, prediction.frames)
+                for case, prediction in semantic
+            ),
+            denominator=len(semantic),
         ),
         action=_micro_prf(
             aligned,
@@ -1162,6 +1209,25 @@ def evaluate_frames(
             aligned,
             lambda case: _slot_axis(case.expected_frames),
             lambda prediction: _slot_axis(prediction.frames),
+        ),
+        role_conformance=CountMetric(
+            numerator=sum(
+                expected.entity_hints is not None
+                and predicted is not None
+                and predicted.entity_hints is not None
+                and expected.entity_hints == predicted.entity_hints
+                for expected, predicted in required_roles
+            ),
+            denominator=len(required_roles),
+        ),
+        role_coverage=CoverageMetric(
+            numerator=sum(
+                expected.entity_hints is not None
+                and predicted is not None
+                and predicted.entity_hints is not None
+                for expected, predicted in required_roles
+            ),
+            denominator=len(required_roles),
         ),
     )
 
@@ -1675,6 +1741,10 @@ def _frame_signatures(frames: Sequence[EvaluationFrame]) -> tuple[object, ...]:
             frame.action_ids,
             frame.product_family_ids,
             frame.entity_type_ids,
+            (
+                frame.semantic_coverage.state,
+                frame.semantic_coverage.reason,
+            ),
             tuple(
                 sorted(
                     ((slot.slot_kind, slot.value_ids) for slot in frame.slots),
@@ -1683,6 +1753,27 @@ def _frame_signatures(frames: Sequence[EvaluationFrame]) -> tuple[object, ...]:
             ),
         )
         for frame in frames
+    )
+
+
+def _requires_entity_role_evidence(frame: EvaluationFrame) -> bool:
+    return any(slot.slot_kind in {"entity", "relation"} for slot in frame.slots)
+
+
+def _joint_frame_match(
+    expected: Sequence[EvaluationFrame], predicted: Sequence[EvaluationFrame]
+) -> bool:
+    if _frame_signatures(expected) != _frame_signatures(predicted):
+        return False
+    predicted_by_ordinal = {frame.ordinal: frame for frame in predicted}
+    return all(
+        not _requires_entity_role_evidence(frame)
+        or frame.entity_hints is None
+        or (
+            (actual := predicted_by_ordinal.get(frame.ordinal)) is not None
+            and actual.entity_hints == frame.entity_hints
+        )
+        for frame in expected
     )
 
 

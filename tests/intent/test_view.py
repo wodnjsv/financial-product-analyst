@@ -34,6 +34,7 @@ from financial_agent.intent.view import (
     build_manifest,
     build_resolver_view,
     offered_entity_type_ids,
+    validate_resolver_view_catalog,
 )
 
 
@@ -124,6 +125,24 @@ def test_resolver_view_rejects_unsorted_or_duplicate_entity_type_registry(
             view.model_dump()
             | {"entity_type_ids": ("ETF", "AssetManager", "ETF")}
         )
+
+
+@pytest.mark.parametrize(
+    "entity_type_ids",
+    (
+        lambda view: view.entity_type_ids[1:],
+        lambda view: tuple(sorted((*view.entity_type_ids, "DomesticETF"))),
+    ),
+)
+def test_catalog_trust_boundary_rejects_incomplete_or_extra_entity_type_registry(
+    resolver_inputs: dict[str, object], entity_type_ids
+) -> None:
+    """Catches restored views that differ from the loaded catalog projection."""
+    view = build_resolver_view(**resolver_inputs)
+    restored = view.model_copy(update={"entity_type_ids": entity_type_ids(view)})
+
+    with pytest.raises(ResolverInvariantError, match="CATALOG_ENTITY_TYPE_MISMATCH"):
+        validate_resolver_view_catalog(restored, resolver_inputs["catalog"])
 
 
 def test_view_projects_sorted_axes_evidence_and_normalizer_references(

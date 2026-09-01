@@ -1,35 +1,19 @@
-"""Complete ResolverView v2 values for focused unit-test fixtures."""
+"""Catalog-backed ResolverView v2 values for focused unit-test fixtures."""
+
+from functools import lru_cache
+from pathlib import Path
 
 from financial_agent.contracts.enums import IntentType, ProductFamily
+from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.view import AxisDefinition
 
 
-ENTITY_TYPE_IDS = (
-    "AssetManager",
-    "Company",
-    "CreditGrade",
-    "ETF",
-    "EquitySecurity",
-    "FinancialProduct",
-    "FundShareClass",
-    "Index",
-    "Industry",
-    "Issuer",
-    "Market",
-    "OfficialDocument",
-    "Organization",
-    "PolicyProgram",
-    "ProductRiskGrade",
-    "PublicFund",
-    "RepresentativeFund",
-    "RiskFactor",
-    "Security",
-    "Theme",
-)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+@lru_cache(maxsize=1)
 def complete_entity_type_ids() -> tuple[str, ...]:
-    return ENTITY_TYPE_IDS
+    return tuple(sorted(load_catalog(PROJECT_ROOT).entity_type_ids))
 
 
 def complete_axis_definitions() -> tuple[AxisDefinition, ...]:

@@ -11,7 +11,13 @@ from financial_agent.contracts.base import (
 from financial_agent.contracts.enums import Cardinality
 from financial_agent.contracts.validation import require_unique_ids
 
-from .draft import ActionChoice, EntityHintV2, ProductFamilyChoice, SlotAssignment
+from .draft import (
+    ActionChoice,
+    EntityHintV2,
+    ProductFamilyChoice,
+    SlotAssignment,
+    validate_v2_entity_hint_ownership,
+)
 from .proposal import FrameSemanticCoverage, require_valid_action_cardinality
 from .types import (
     ContextLinkType,
@@ -191,4 +197,5 @@ class ValidatedIntentResolutionV2(ValidatedIntentResolution):
     def validate_v2_provenance(self) -> "ValidatedIntentResolutionV2":
         if self.build_manifest.resolver_schema_version != "2.0":
             raise ValueError("v2 validated resolutions require resolver schema version 2.0")
+        validate_v2_entity_hint_ownership(self.canonical_frames, self.entity_hints)
         return self

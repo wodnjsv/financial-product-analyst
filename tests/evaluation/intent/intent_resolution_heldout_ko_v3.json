@@ -4522,7 +4522,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -4547,7 +4558,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [
@@ -4644,7 +4666,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -4669,7 +4702,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [
@@ -4754,7 +4798,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -4779,7 +4834,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [
@@ -9332,7 +9398,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -9363,7 +9440,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [
@@ -9464,7 +9552,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -9495,7 +9594,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [
@@ -9597,7 +9707,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -9628,7 +9749,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [
@@ -9730,7 +9862,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -9761,7 +9904,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [
@@ -9862,7 +10016,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -9899,7 +10064,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [
@@ -10000,7 +10176,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -10031,7 +10218,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [
@@ -10132,7 +10330,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -10163,7 +10372,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [
@@ -10265,7 +10485,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         },
         {
           "frame_id": "f2",
@@ -10296,7 +10527,18 @@
           "semantic_coverage": {
             "state": "covered",
             "reason": "none"
-          }
+          },
+          "entity_hints": [
+            {
+              "semantic_role": "relation_object",
+              "relation_id": [
+                "managedBy"
+              ],
+              "expected_entity_type_ids": [
+                "AssetManager"
+              ]
+            }
+          ]
         }
       ],
       "expected_references": [

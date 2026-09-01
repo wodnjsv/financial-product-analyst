@@ -351,6 +351,14 @@ def validate_resolver_pins(
         raise ResolverInvariantError("CATALOG_VERSION_MISMATCH")
 
 
+def validate_resolver_view_catalog(
+    view: ResolverView, catalog: SemanticCatalogSnapshot
+) -> None:
+    """Require a restored view to retain the exact catalog type projection."""
+    if view.entity_type_ids != tuple(sorted(catalog.entity_type_ids)):
+        raise ResolverInvariantError("CATALOG_ENTITY_TYPE_MISMATCH")
+
+
 def _select_semantic_candidates(
     candidates: SemanticCandidateSet,
 ) -> dict[str, tuple[SemanticCandidate, ...]]:

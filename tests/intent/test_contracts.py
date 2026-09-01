@@ -6,9 +6,11 @@ from pydantic import ValidationError
 from financial_agent.contracts.canonical import canonical_json_bytes
 from financial_agent.intent.draft import (
     EntityHint,
+    EntityHintV2,
     IntentResolutionDraft,
     IntentResolutionDraftV2,
 )
+from financial_agent.intent.types import EntitySemanticRole
 from financial_agent.intent.resolution import (
     ContractFileHash,
     ResolverBuildManifest,
@@ -233,6 +235,15 @@ def test_v2_draft_preserves_relation_object_role() -> None:
         {"state": "covered", "reason": "none", "evidence_ids": []}
     ]
     frame_payload["entity_hint_ids"] = ["entity-hint-1"]
+    frame_payload["slot_assignments"] = [
+        {
+            "slot_assignment_id": "slot-entity-1",
+            "slot_kind": "entity",
+            "value_ids": ["manager-1"],
+            "evidence_span_ids": [],
+            "reason_code": "implicit",
+        }
+    ]
     payload["entity_hints"] = [
         {
             "entity_hint_id": "entity-hint-1",
@@ -253,6 +264,47 @@ def test_v2_draft_preserves_relation_object_role() -> None:
     assert hint.semantic_role == "relation_object"
     assert hint.relation_id == ("managedBy",)
     assert hint.expected_entity_type_ids == ("AssetManager",)
+
+
+@pytest.mark.parametrize(
+    ("role", "relation_id", "expected_entity_type_ids"),
+    (
+        (EntitySemanticRole.FRAME_SUBJECT, ("managedBy",), ("ETF",)),
+        (EntitySemanticRole.RELATION_OBJECT, (), ("AssetManager",)),
+        (EntitySemanticRole.FRAME_SUBJECT, (), ()),
+    ),
+)
+def test_v2_entity_hint_rejects_invalid_role_shape(
+    role: EntitySemanticRole,
+    relation_id: tuple[str, ...],
+    expected_entity_type_ids: tuple[str, ...],
+) -> None:
+    """Catches role-bearing v2 artifacts that violate their own endpoint shape."""
+    with pytest.raises(ValidationError):
+        EntityHintV2(
+            entity_hint_id="entity-hint-1",
+            semantic_role=role,
+            relation_id=relation_id,
+            mention_id=("mention-1",),
+            evidence_span_ids=("span-1",),
+            expected_entity_type_ids=expected_entity_type_ids,
+            candidate_entity_ids=("entity-1",),
+            selected_candidate_ids=("entity-1",),
+            reason_code="explicit",
+        )
+
+
+def test_v2_draft_rejects_orphan_entity_hint_reference() -> None:
+    """Catches a sidecar frame pointing at a hint it does not contain."""
+    payload = valid_draft_payload()
+    frame_payload = payload["intent_frames"][0]
+    frame_payload["semantic_coverage"] = [
+        {"state": "covered", "reason": "none", "evidence_ids": []}
+    ]
+    frame_payload["entity_hint_ids"] = ["missing-hint"]
+
+    with pytest.raises(ValidationError):
+        IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
 
 
 def test_v2_draft_rejects_an_empty_resolution() -> None:
@@ -308,6 +360,15 @@ def test_v2_validated_resolution_round_trips_relation_object_role() -> None:
         {
             **validated_frame("f1", 0),
             "entity_hint_ids": ["entity-hint-1"],
+            "slot_assignments": [
+                {
+                    "slot_assignment_id": "slot-entity-1",
+                    "slot_kind": "entity",
+                    "value_ids": ["manager-1"],
+                    "evidence_span_ids": [],
+                    "reason_code": "implicit",
+                }
+            ],
             "semantic_coverage": [
                 {"state": "covered", "reason": "none", "evidence_ids": []}
             ],
@@ -336,6 +397,34 @@ def test_v2_validated_resolution_round_trips_relation_object_role() -> None:
     assert hint.semantic_role == "relation_object"
     assert hint.relation_id == ("managedBy",)
     assert hint.expected_entity_type_ids == ("AssetManager",)
+
+
+def test_v2_validated_resolution_rejects_orphan_role_sidecar() -> None:
+    payload = valid_v2_validated_resolution_payload()
+    payload["canonical_frames"] = [
+        {
+            **validated_frame("f1", 0),
+            "semantic_coverage": [
+                {"state": "covered", "reason": "none", "evidence_ids": []}
+            ],
+        }
+    ]
+    payload["entity_hints"] = [
+        {
+            "entity_hint_id": "entity-hint-1",
+            "semantic_role": "frame_subject",
+            "relation_id": [],
+            "mention_id": [],
+            "evidence_span_ids": [],
+            "expected_entity_type_ids": ["ETF"],
+            "candidate_entity_ids": [],
+            "selected_candidate_ids": [],
+            "reason_code": "implicit",
+        }
+    ]
+
+    with pytest.raises(ValidationError):
+        ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
 
 
 def test_v2_validated_resolution_rejects_empty_frames_segments_and_two_actions() -> None:

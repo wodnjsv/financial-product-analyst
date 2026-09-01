@@ -1,11 +1,14 @@
 import json
 from datetime import datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 
 import pytest
 
 from financial_agent.contracts.canonical import build_request_key, canonical_json_bytes
 from financial_agent.contracts.request import RequestContext, Segment
-from financial_agent.intent.assembler import assemble_proposal
+from financial_agent.intent.assembler import assemble_proposal as _assemble_proposal
+from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
 from financial_agent.intent.errors import (
     MODEL_INVALID_FRAME_REFERENCE,
@@ -28,6 +31,18 @@ from financial_agent.intent.view import (
 )
 
 from .view_fixtures import complete_axis_definitions, complete_entity_type_ids
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+@lru_cache(maxsize=1)
+def _catalog():
+    return load_catalog(PROJECT_ROOT)
+
+
+def assemble_proposal(proposal, normalized_request, resolver_view):
+    return _assemble_proposal(proposal, normalized_request, resolver_view, _catalog())
 
 
 def normalized():
@@ -432,6 +447,32 @@ def test_assembly_is_byte_stable_and_server_assigns_ids() -> None:
     assert first.entity_hints[0].relation_id == ()
     assert first.entity_hints[0].expected_entity_type_ids == ("ETF",)
     assert first.entity_hints[0].selected_candidate_ids == ("entity-1",)
+    assert first.intent_frames[0].slot_assignments[1].slot_kind is SlotKind.ENTITY
+    assert first.intent_frames[0].slot_assignments[1].value_ids == ("entity-1",)
+
+
+def test_assembler_rejects_forged_model_authored_entity_slot() -> None:
+    """Catches model_construct-style bypasses of the strict proposal parser."""
+    first = proposal().frames[0]
+    forged = first.model_copy(
+        update={
+            "slot_assignments": (
+                *first.slot_assignments,
+                first.slot_assignments[0].model_copy(
+                    update={
+                        "slot_kind": SlotKind.ENTITY,
+                        "value_ids": ("entity-1",),
+                    }
+                ),
+            )
+        }
+    )
+    bypassed = proposal().model_copy(
+        update={"frames": (forged, *proposal().frames[1:])}
+    )
+
+    with pytest.raises(ResolverContractError, match=MODEL_PROPOSAL_SCHEMA_INVALID):
+        assemble_proposal(bypassed, normalized(), view())
 
 
 def test_assembler_bounds_expected_entity_types_to_the_registered_view() -> None:

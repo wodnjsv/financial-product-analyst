@@ -15,6 +15,7 @@ from .draft import (
     IntentFrameDraftV2,
     IntentResolutionDraft,
     IntentResolutionDraftV2,
+    validate_v2_entity_hint_ownership,
 )
 from .evidence import EvidenceSourceKind
 from .errors import MODEL_UNKNOWN_EVIDENCE_ID, ResolverContractError
@@ -29,7 +30,11 @@ from .types import (
     SemanticTag,
     SlotKind,
 )
-from .view import ResolverView, ResolverViewEntityCandidate
+from .view import (
+    ResolverView,
+    ResolverViewEntityCandidate,
+    validate_resolver_view_catalog,
+)
 
 
 VALIDATION_STAGES = (
@@ -116,6 +121,7 @@ def validate_semantics(
     """
 
     _validate_schema(draft)
+    validate_resolver_view_catalog(view, catalog)
     offered = _offered(view)
     _validate_offered_ids(draft, context, offered, catalog)
     _validate_evidence_spans(draft, context)
@@ -209,6 +215,12 @@ def _validate_offered_ids(
     span_segments = {span.span_id: span.segment_id for span in draft.evidence_spans}
     entity_hint_ids = {hint.entity_hint_id for hint in draft.entity_hints}
 
+    if isinstance(draft, IntentResolutionDraftV2):
+        try:
+            validate_v2_entity_hint_ownership(draft.intent_frames, draft.entity_hints)
+        except ValueError as error:
+            raise ResolverContractError("MODEL_SCHEMA_INVALID") from error
+
     for frame in draft.intent_frames:
         _require_subset(frame.segment_ids, segment_ids)
         _require_subset(frame.evidence_span_ids, span_ids)
@@ -240,6 +252,11 @@ def _validate_offered_ids(
 
     for hint in draft.entity_hints:
         _require_subset(hint.evidence_span_ids, span_ids)
+        if isinstance(draft, IntentResolutionDraftV2) and (
+            not isinstance(hint, EntityHintV2)
+            or not hint.expected_entity_type_ids
+        ):
+            raise ResolverContractError("MODEL_SCHEMA_INVALID")
         _require_subset(hint.expected_entity_type_ids, offered.entity_type_ids)
         if hint.mention_id:
             _require_subset(

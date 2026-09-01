@@ -192,7 +192,7 @@ class IntentResolverService:
             active_dataset_pin=self._active_dataset_pin,
             catalog=self._catalog,
         )
-        prompt = build_prompt(context, view)
+        prompt = build_prompt(context, view, self._catalog)
         candidate_ms = _duration_ms(candidates_started, self._timer())
         return PreparedResolutionRequest(
             context=context,
@@ -251,7 +251,9 @@ class IntentResolverService:
             proposal = IntentResolutionProposalV2.model_validate_json(content)
         except ValidationError:
             raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID) from None
-        draft = assemble_proposal(proposal, prepared.normalized, prepared.view)
+        draft = assemble_proposal(
+            proposal, prepared.normalized, prepared.view, self._catalog
+        )
 
         semantic_state = validate_semantics(
             draft,

@@ -53,7 +53,7 @@ PROMOTION_GATE_NAMES = (
     "ood_false_fast_rate",
 )
 FROZEN_V3_DATASET_SHA256 = (
-    "2142f4da110c7a83daba902c7b77df62168649c7f0a412867495fa6930acf211"
+    "bd40481c57975d66a84a98005b771761c023ae5461cbd3c232508522bbf4c7de"
 )
 APPROVED_CMD_TOKENS = (
     "python",
@@ -309,6 +309,7 @@ def _passing_promotion_evidence() -> PromotionEvidence:
         held_out_joint_frame_exact_match=CountMetric(
             numerator=140, denominator=155
         ),
+        held_out_joint_frame_role_coverage=CoverageMetric(numerator=1, denominator=1),
         held_out_context_link_exact_match=CountMetric(
             numerator=148, denominator=155
         ),
@@ -471,6 +472,18 @@ def test_promotion_requires_every_gate_to_be_measured_and_passing() -> None:
     assert decision.blocking_gate_names == ()
     assert tuple(gate.name for gate in decision.gates) == PROMOTION_GATE_NAMES
     assert {gate.status for gate in decision.gates} == {"passed"}
+
+
+def test_promotion_fails_closed_when_required_role_evidence_is_unmeasured() -> None:
+    decision = assess_promotion(
+        _passing_promotion_evidence().model_copy(
+            update={"held_out_joint_frame_role_coverage": None}
+        )
+    )
+    by_name = {gate.name: gate for gate in decision.gates}
+
+    assert decision.eligible is False
+    assert by_name["held_out_joint_frame_exact_match"].status == "unmeasured"
 
 
 def test_promotion_rejects_top_level_fields_injected_by_model_copy() -> None:

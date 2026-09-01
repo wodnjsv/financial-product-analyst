@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
+from pathlib import Path
 
 from financial_agent.contracts.canonical import build_request_key
 from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
-from financial_agent.intent.prompt import build_clova_response_schema, build_prompt
+from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.prompt import (
+    build_clova_response_schema as _build_clova_response_schema,
+    build_prompt as _build_prompt,
+)
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
 from financial_agent.intent.view import (
     ActiveDatasetPin,
@@ -22,6 +28,22 @@ from financial_agent.intent.view import (
 )
 
 from .view_fixtures import complete_axis_definitions, complete_entity_type_ids
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+@lru_cache(maxsize=1)
+def _catalog():
+    return load_catalog(PROJECT_ROOT)
+
+
+def build_prompt(context: RequestContext, view: ResolverView):
+    return _build_prompt(context, view, _catalog())
+
+
+def build_clova_response_schema(view: ResolverView):
+    return _build_clova_response_schema(view, _catalog())
 
 
 def make_context() -> RequestContext:
@@ -356,7 +378,7 @@ def test_response_schema_uses_stable_reason_codes() -> None:
     assert schema['properties']['semantic_flag_hints']['items']['properties']['reason_code'] == expected
 
 
-def test_response_schema_restricts_value_ids_by_slot_kind() -> None:
+def test_response_schema_restricts_non_entity_value_ids_by_slot_kind() -> None:
     schema = build_clova_response_schema(make_view())
     slot_schema = schema['properties']['frames']['items']['properties'][
         'slot_assignments'
@@ -366,7 +388,7 @@ def test_response_schema_restricts_value_ids_by_slot_kind() -> None:
         for item in slot_schema['anyOf']
     }
 
-    assert variants['entity']['items']['enum'] == ['entity-kodex']
+    assert 'entity' not in variants
     assert variants['metric']['items']['enum'] == ['aum']
     assert variants['filter_value']['items']['enum'] == ['literal-1']
     assert variants['result_limit'] == {

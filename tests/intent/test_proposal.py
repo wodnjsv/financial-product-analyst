@@ -3,7 +3,11 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from financial_agent.intent.proposal import IntentResolutionProposalV2, ProposedEntityHint
+from financial_agent.intent.proposal import (
+    IntentResolutionProposalV2,
+    ProposedEntityHint,
+    ProposedSlotAssignment,
+)
 
 
 def valid_proposal_payload() -> dict[str, object]:
@@ -87,6 +91,29 @@ def test_proposal_preserves_explicit_entity_types_and_selected_candidates() -> N
 
     assert proposal.frames[0].entity_type_ids == ("ETF",)
     assert proposal.frames[0].entity_hints[0].selected_candidate_ids == ("entity-etf",)
+
+
+def test_proposal_rejects_model_authored_entity_slot_assignments() -> None:
+    """Catches a ProposalV2 entity selection bypassing its role-aware hint."""
+    payload = valid_proposal_payload()
+    payload["frames"][0]["slot_assignments"] = [
+        {
+            "slot_kind": "entity",
+            "value_ids": ["entity-etf"],
+            "evidence_ids": ["e1"],
+            "reason_code": "explicit",
+        }
+    ]
+
+    with pytest.raises(ValidationError):
+        IntentResolutionProposalV2.model_validate_json(json.dumps(payload))
+
+
+def test_proposal_slot_schema_excludes_entity_kind() -> None:
+    schema = ProposedSlotAssignment.model_json_schema()
+    slot_kind = schema["properties"]["slot_kind"]
+
+    assert "entity" not in json.dumps(slot_kind, sort_keys=True)
 
 
 def test_relation_object_requires_one_relation_and_expected_type() -> None:

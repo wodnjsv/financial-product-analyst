@@ -474,7 +474,9 @@ def test_managed_by_accepts_asset_manager_as_relation_object(
         selected_entity_id="entity-manager",
     )
 
-    draft = assemble_proposal(proposal, validation_inputs.normalized, view)
+    draft = assemble_proposal(
+        proposal, validation_inputs.normalized, view, validation_inputs.catalog
+    )
     state = validate_semantics(
         draft,
         validation_inputs.context,
@@ -521,7 +523,9 @@ def test_managed_by_rejects_endpoint_reversal(
         expected_types=expected_types,
         selected_entity_id=entity_id,
     )
-    draft = assemble_proposal(proposal, validation_inputs.normalized, view)
+    draft = assemble_proposal(
+        proposal, validation_inputs.normalized, view, validation_inputs.catalog
+    )
 
     with pytest.raises(ResolverContractError, match=code):
         validate_semantics(
@@ -648,7 +652,7 @@ def test_relation_slot_from_proposal_preserves_frame_entity_type(
         )
     )
     draft = assemble_proposal(
-        proposal, validation_inputs.normalized, view
+        proposal, validation_inputs.normalized, view, validation_inputs.catalog
     )
 
     state = validate_semantics(

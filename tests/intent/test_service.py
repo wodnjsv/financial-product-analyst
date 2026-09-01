@@ -460,6 +460,7 @@ async def test_resolution_metadata_and_ids_are_deterministic(
         IntentResolutionProposalV2.model_validate_json(_valid_proposal_json()),
         prepared.normalized,
         prepared.view,
+        load_catalog(PROJECT_ROOT),
     )
     assert first.draft_hash == canonical_sha256(assembled)
     assert first.resolution_id.startswith("resolution-")

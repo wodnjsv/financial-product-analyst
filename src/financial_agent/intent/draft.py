@@ -67,6 +67,14 @@ class EntityHint(ContractModel):
 class EntityHintV2(EntityHint):
     semantic_role: EntitySemanticRole
     relation_id: OptionalIdentifier
+    expected_entity_type_ids: Annotated[
+        tuple[Identifier, ...], Field(min_length=1)
+    ]
+
+    @model_validator(mode="after")
+    def validate_role_shape(self) -> "EntityHintV2":
+        validate_entity_hint_v2_shape(self)
+        return self
 
 
 class SlotAssignment(ContractModel):
@@ -206,3 +214,68 @@ class IntentResolutionDraftV2(IntentResolutionDraft):
         tuple[IntentFrameDraftV2, ...], Field(min_length=1, max_length=16)
     ]
     entity_hints: tuple[EntityHintV2, ...]
+
+    @model_validator(mode="after")
+    def validate_entity_hint_ownership(self) -> "IntentResolutionDraftV2":
+        validate_v2_entity_hint_ownership(self.intent_frames, self.entity_hints)
+        return self
+
+
+def validate_v2_entity_hint_ownership(
+    frames: tuple[object, ...], hints: tuple[EntityHintV2, ...]
+) -> None:
+    """Require each canonical v2 entity selection to have one owning frame hint."""
+    for hint in hints:
+        validate_entity_hint_v2_shape(hint)
+    hints_by_id = {hint.entity_hint_id: hint for hint in hints}
+    if len(hints_by_id) != len(hints):
+        raise ValueError("entity hints must be unique")
+    owners: dict[str, int] = {hint_id: 0 for hint_id in hints_by_id}
+    for frame in frames:
+        hint_ids = tuple(getattr(frame, "entity_hint_ids"))
+        if len(set(hint_ids)) != len(hint_ids):
+            raise ValueError("frame entity hints must be unique")
+        if not set(hint_ids) <= set(hints_by_id):
+            raise ValueError("frame entity hint references must exist")
+        for hint_id in hint_ids:
+            owners[hint_id] += 1
+        selected_entity_ids = tuple(
+            entity_id
+            for hint_id in hint_ids
+            for entity_id in hints_by_id[hint_id].selected_candidate_ids
+        )
+        try:
+            entity_assignments = tuple(
+                assignment
+                for assignment in getattr(frame, "slot_assignments")
+                if SlotKind(assignment.slot_kind) is SlotKind.ENTITY
+            )
+        except ValueError as error:
+            raise ValueError("v2 slot kind is invalid") from error
+        projected_entity_ids = tuple(
+            entity_id
+            for assignment in entity_assignments
+            for entity_id in assignment.value_ids
+        )
+        if (
+            any(len(assignment.value_ids) != 1 for assignment in entity_assignments)
+            or tuple(sorted(projected_entity_ids)) != tuple(sorted(selected_entity_ids))
+            or len(entity_assignments) != len(selected_entity_ids)
+        ):
+            raise ValueError("v2 entity slots must project same-frame selected hints")
+    if any(owner_count != 1 for owner_count in owners.values()):
+        raise ValueError("each v2 entity hint must have exactly one owning frame")
+
+
+def validate_entity_hint_v2_shape(hint: EntityHintV2) -> None:
+    """Validate role-bearing hint fields even after a deserialized model is copied."""
+    if not hint.expected_entity_type_ids:
+        raise ValueError("entity hint expected types must be nonempty")
+    if hint.semantic_role == EntitySemanticRole.FRAME_SUBJECT:
+        if hint.relation_id:
+            raise ValueError("frame subject cannot carry a relation ID")
+    elif hint.semantic_role == EntitySemanticRole.RELATION_OBJECT:
+        if len(hint.relation_id) != 1:
+            raise ValueError("relation object requires exactly one relation ID")
+    else:
+        raise ValueError("entity hint semantic role is invalid")

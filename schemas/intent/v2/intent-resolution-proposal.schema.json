@@ -66,6 +66,26 @@
       "title": "FrameSemanticCoverage",
       "type": "object"
     },
+    "ProposalSlotKind": {
+      "description": "The model-facing subset of canonical slot kinds.",
+      "enum": [
+        "metric",
+        "filter_value",
+        "filter_operator",
+        "period",
+        "currency",
+        "sort_key",
+        "sort_direction",
+        "result_limit",
+        "date_scope",
+        "relation",
+        "comparison_basis",
+        "similarity_anchor",
+        "document_topic"
+      ],
+      "title": "ProposalSlotKind",
+      "type": "string"
+    },
     "ProposedAxisChoice": {
       "additionalProperties": false,
       "properties": {
@@ -438,7 +458,7 @@
           "type": "string"
         },
         "slot_kind": {
-          "$ref": "#/$defs/SlotKind"
+          "$ref": "#/$defs/ProposalSlotKind"
         },
         "value_ids": {
           "items": {

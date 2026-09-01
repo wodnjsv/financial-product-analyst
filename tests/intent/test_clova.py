@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -10,6 +11,7 @@ from pydantic import SecretStr
 from financial_agent.contracts.canonical import build_request_key
 from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.clova import ClovaStructuredOutputAdapter
+from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.config import ClovaResolverConfig
 from financial_agent.intent.errors import ModelInvocationError
 from financial_agent.intent.prompt import build_prompt
@@ -115,7 +117,7 @@ def make_prompt():
         evidence_candidates=(),
         reference_candidates=(),
     )
-    return build_prompt(context, view)
+    return build_prompt(context, view, load_catalog(Path(__file__).resolve().parents[2]))
 
 
 def make_config() -> ClovaResolverConfig:

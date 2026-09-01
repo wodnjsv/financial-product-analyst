@@ -34,6 +34,7 @@ from .proposal import (
     ProposedIntentFrame,
     require_valid_action_cardinality,
 )
+from .catalog import SemanticCatalogSnapshot
 from .types import (
     ChoiceState,
     EntitySemanticRole,
@@ -42,7 +43,11 @@ from .types import (
     SlotKind,
 )
 from .normalization import NormalizedRequest
-from .view import ResolverView, offered_entity_type_ids
+from .view import (
+    ResolverView,
+    offered_entity_type_ids,
+    validate_resolver_view_catalog,
+)
 
 
 _CONCEPT_SLOTS = frozenset(
@@ -70,11 +75,13 @@ def assemble_proposal(
     proposal: IntentResolutionProposalV2,
     normalized: NormalizedRequest,
     view: ResolverView,
+    catalog: SemanticCatalogSnapshot,
 ) -> IntentResolutionDraft:
     """Translate only server-offered proposal choices into canonical draft IDs."""
     if not isinstance(proposal, IntentResolutionProposalV2):
         raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID)
 
+    validate_resolver_view_catalog(view, catalog)
     _validate_offered_ids(proposal, view)
     _validate_ordinals(proposal)
     _validate_semantic_coverage(proposal)
@@ -163,10 +170,12 @@ def _validate_offered_ids(proposal: IntentResolutionProposalV2, view: ResolverVi
         _require_evidence(frame.semantic_coverage.evidence_ids, evidence_ids)
         for assignment in frame.slot_assignments:
             _require_evidence(assignment.evidence_ids, evidence_ids)
+            slot_kind = SlotKind(assignment.slot_kind)
+            if slot_kind is SlotKind.ENTITY:
+                _schema_invalid()
             _validate_slot_values(
-                assignment.slot_kind,
+                slot_kind,
                 assignment.value_ids,
-                entity_ids,
                 literal_by_id,
                 concept_ids,
                 relation_ids,
@@ -188,7 +197,7 @@ def _validate_offered_ids(proposal: IntentResolutionProposalV2, view: ResolverVi
                 selected_relation_ids = {
                     relation_id
                     for assignment in frame.slot_assignments
-                    if assignment.slot_kind is SlotKind.RELATION
+                    if SlotKind(assignment.slot_kind) is SlotKind.RELATION
                     for relation_id in assignment.value_ids
                 }
                 if hint.relation_id[0] not in selected_relation_ids:
@@ -250,15 +259,12 @@ def _validate_choice(
 def _validate_slot_values(
     kind: SlotKind,
     values: tuple[str, ...],
-    entity_ids: set[str],
     literal_by_id: dict[str, object],
     concept_ids: set[str],
     relation_ids: set[str],
     operator_ids: set[str],
 ) -> None:
-    if kind is SlotKind.ENTITY:
-        _require_subset(values, entity_ids)
-    elif kind is SlotKind.RELATION:
+    if kind is SlotKind.RELATION:
         _require_subset(values, relation_ids)
     elif kind in _CONCEPT_SLOTS:
         _require_subset(values, concept_ids)
@@ -361,12 +367,25 @@ def _assemble_frame(
         slot_assignments=tuple(
             SlotAssignment(
                 slot_assignment_id=f"slot-{index:04d}-{slot_index:04d}",
-                slot_kind=assignment.slot_kind,
+                slot_kind=SlotKind(assignment.slot_kind),
                 value_ids=assignment.value_ids,
                 evidence_span_ids=assignment.evidence_ids,
                 reason_code=assignment.reason_code,
             )
             for slot_index, assignment in enumerate(item.slot_assignments)
+        )
+        + tuple(
+            SlotAssignment(
+                slot_assignment_id=(
+                    f"slot-{index:04d}-{len(item.slot_assignments) + hint_index:04d}"
+                ),
+                slot_kind=SlotKind.ENTITY,
+                value_ids=hint.selected_candidate_ids,
+                evidence_span_ids=(),
+                reason_code="implicit",
+            )
+            for hint_index, hint in enumerate(item.entity_hints)
+            if hint.selected_candidate_ids
         ),
         produced_result_hints=item.produced_result_hints,
         semantic_coverage=(item.semantic_coverage,),

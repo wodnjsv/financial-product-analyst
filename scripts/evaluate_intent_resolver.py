@@ -29,6 +29,7 @@ from financial_agent.intent.catalog import SemanticCatalogSnapshot, load_catalog
 from financial_agent.intent.evaluation import (
     CandidateGroup,
     EntityTypeReachabilityEvidence,
+    EvaluationEntityHint,
     EvaluationDataset,
     EvaluationFrame,
     EvaluationPrediction,
@@ -68,10 +69,14 @@ from financial_agent.intent.errors import (
 )
 from financial_agent.intent.literals import extract_literals
 from financial_agent.intent.normalization import RequestNormalizationError, normalize_request
-from financial_agent.intent.resolution import ResolverBuildManifest
+from financial_agent.intent.resolution import (
+    ResolverBuildManifest,
+    ValidatedIntentResolutionV2,
+)
 from financial_agent.intent.service import IntentResolverService
 from financial_agent.intent.validation import validate_semantics
 from financial_agent.intent.proposal import IntentResolutionProposalV2
+from financial_agent.intent.draft import EntityHintV2
 from financial_agent.intent.prompt import build_prompt
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
@@ -440,7 +445,9 @@ async def _live_prediction(
         )
     try:
         proposal = IntentResolutionProposalV2.model_validate_json(model_result.content)
-        draft = assemble_proposal(proposal, prepared.normalized, prepared.view)
+        draft = assemble_proposal(
+            proposal, prepared.normalized, prepared.view, catalog
+        )
         resolution = service.validate_response(prepared, model_result.content)
         probes = replay_validation_probes(
             case,
@@ -970,7 +977,10 @@ def _project_stored_predictions(
             status = resolution.resolution_status.value
             blocking = tuple(sorted({issue.code for issue in resolution.issues}))
         else:
-            frames = _frames_from_drafts(context_state.semantic_state.canonical_frames)
+            frames = _frames_from_drafts(
+                context_state.semantic_state.canonical_frames,
+                draft.entity_hints,
+            )
             links = _links_from_context_state(context_state.context_links)
             mutations = _mutations_from_draft(draft)
             tags = tuple(sorted(tag.value for tag in semantic.final_tags))
@@ -1063,6 +1073,8 @@ def _validate_resolution_projection(
         "issues",
         "validation_events",
     )
+    if isinstance(expected, ValidatedIntentResolutionV2):
+        fields = (*fields, "entity_hints")
     if any(getattr(expected, field) != getattr(resolution, field) for field in fields):
         raise EvaluationCliError("EVALUATION_ARTIFACT_MISMATCH")
 
@@ -1170,7 +1182,15 @@ def _candidate_groups_from_view(view: ResolverView) -> tuple[CandidateGroup, ...
     )
 
 
-def _frames_from_drafts(frames: Any) -> tuple[EvaluationFrame, ...]:
+def _frames_from_drafts(
+    frames: Any, entity_hints: Any | None = None
+) -> tuple[EvaluationFrame, ...]:
+    role_aware = entity_hints is not None and all(
+        isinstance(hint, EntityHintV2) for hint in entity_hints
+    )
+    hints_by_id = (
+        {hint.entity_hint_id: hint for hint in entity_hints} if role_aware else {}
+    )
     return tuple(
         EvaluationFrame(
             frame_id=frame.frame_id,
@@ -1195,13 +1215,30 @@ def _frames_from_drafts(frames: Any) -> tuple[EvaluationFrame, ...]:
             }
             if getattr(frame, "semantic_coverage", ())
             else {"state": "covered", "reason": "none"},
+            entity_hints=(
+                tuple(
+                    EvaluationEntityHint(
+                        semantic_role=hints_by_id[hint_id].semantic_role.value,
+                        relation_id=hints_by_id[hint_id].relation_id,
+                        expected_entity_type_ids=(
+                            hints_by_id[hint_id].expected_entity_type_ids
+                        ),
+                    )
+                    for hint_id in frame.entity_hint_ids
+                )
+                if role_aware
+                else None
+            ),
         )
         for frame in frames
     )
 
 
 def _frames_from_resolution(resolution: Any) -> tuple[EvaluationFrame, ...]:
-    return _frames_from_drafts(resolution.canonical_frames)
+    return _frames_from_drafts(
+        resolution.canonical_frames,
+        getattr(resolution, "entity_hints", None),
+    )
 
 
 def _references_from_draft(draft: Any) -> tuple[ExpectedReference, ...]:
@@ -1378,7 +1415,7 @@ def _entity_type_reachability(
         context = _case_context(case, SYNTHETIC_DATASET_VERSION, None)
         normalized = normalize_request(context)
         view = _deterministic_view(context, normalized, catalog)
-        schema = build_prompt(context, view).response_schema
+        schema = build_prompt(context, view, catalog).response_schema
         offered = set(
             schema["properties"]["frames"]["items"]["properties"]
             ["entity_type_ids"]["items"]["enum"]

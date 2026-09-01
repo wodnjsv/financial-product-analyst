@@ -1,5 +1,6 @@
 """Strict model-facing intent-resolution proposal contract, version 2."""
 
+from enum import Enum
 from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
@@ -73,8 +74,26 @@ def require_valid_action_cardinality(
         raise ValueError("an actionless frame requires uncovered or ambiguous semantics")
 
 
+class ProposalSlotKind(str, Enum):
+    """The model-facing subset of canonical slot kinds."""
+
+    METRIC = SlotKind.METRIC.value
+    FILTER_VALUE = SlotKind.FILTER_VALUE.value
+    FILTER_OPERATOR = SlotKind.FILTER_OPERATOR.value
+    PERIOD = SlotKind.PERIOD.value
+    CURRENCY = SlotKind.CURRENCY.value
+    SORT_KEY = SlotKind.SORT_KEY.value
+    SORT_DIRECTION = SlotKind.SORT_DIRECTION.value
+    RESULT_LIMIT = SlotKind.RESULT_LIMIT.value
+    DATE_SCOPE = SlotKind.DATE_SCOPE.value
+    RELATION = SlotKind.RELATION.value
+    COMPARISON_BASIS = SlotKind.COMPARISON_BASIS.value
+    SIMILARITY_ANCHOR = SlotKind.SIMILARITY_ANCHOR.value
+    DOCUMENT_TOPIC = SlotKind.DOCUMENT_TOPIC.value
+
+
 class ProposedSlotAssignment(ContractModel):
-    slot_kind: SlotKind
+    slot_kind: ProposalSlotKind
     value_ids: tuple[Identifier, ...]
     evidence_ids: tuple[Identifier, ...]
     reason_code: Identifier
