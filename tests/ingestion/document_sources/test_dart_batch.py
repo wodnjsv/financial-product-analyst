@@ -168,6 +168,45 @@ def test_one_publisher_page_serves_multiple_organizer_targets() -> None:
     } == {target.representative_entity_id for target in inventory.targets}
 
 
+def test_multi_class_fund_binds_to_one_exact_publisher_filing() -> None:
+    rows = tuple(
+        OrganizerDartProductRow(
+            entity_id=f"class-{index}",
+            canonical_name=name,
+            product_family="public_fund",
+            identifier_scheme="PRFD_ITM_NO",
+            identifier_value=f"PF-{index}",
+            representative_entity_id="representative-fund",
+            representative_name="2000102M4800",
+            manager_entity_id="manager-one",
+            manager_name="한빛자산운용",
+        )
+        for index, name in enumerate(
+            ("한빛 성장 펀드 A 클래스", "한빛 성장 펀드 C1 클래스"),
+            start=1,
+        )
+    )
+    inventory = build_organizer_dart_inventory("organizer-v1", CUTOFF, rows)
+    opener = _PublisherOpener(
+        [_filing("한빛 성장 펀드", "20260820000001")]
+    )
+
+    result = discover_dart_candidates_by_publisher(
+        inventory=inventory,
+        reconciliation=_reconciliation(),
+        adapter=DartDocumentSourceAdapter(opener),
+        context=_context(),
+    )
+
+    assert result.indexed_ids == ("public_fund:representative-fund",)
+    assert result.failed_ids == ()
+    assert result.dispositions[0].member_entity_ids == (
+        "class-1",
+        "class-2",
+    )
+    assert result.dispositions[0].resolved_product_name == "한빛 성장 펀드"
+
+
 def test_publisher_search_continues_past_unparseable_other_product() -> None:
     exact = _filing(
         "한빛 성장 펀드",

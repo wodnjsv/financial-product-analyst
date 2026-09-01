@@ -26,8 +26,9 @@ pdfplumber, standard-library urllib/XML/ZIP/hashlib/tempfile, pytest 8.
 - DART-only products, fuzzy matches, substring matches, and Vector-similarity
   matches cannot create a target or Entity.
 - Only tier-1 DART filings available no later than `2026-08-24` are eligible.
-- Keep the approved Claim selector, 300–800-token quality range, 20-chunk soft
-  maximum, and 8,000-selected-token soft maximum. Do not truncate.
+- Keep the approved Claim selector and 300–800-token preferred construction
+  range. Per ADR-0030, chunk count and selected-token totals are measurements,
+  not DART ingestion failure gates. Do not truncate.
 - Use one logical document and chunk set for duplicate receipts or PDF hashes.
 - Do not retain PDF bytes locally or in Object Storage after success.
 - PostgreSQL 15 is authoritative. Write only to an inactive `building` dataset.
@@ -501,6 +502,11 @@ public-fund targets have zero organizer-authoritative DART publisher bindings,
 so the approved no-inference policy forbids selecting a multi-class fund from
 DART at this gate.
 
+Resumed on 2026-09-01 after ADR-0028 established reviewed public-offering
+manager bindings. ADR-0029 corrects the frozen inventory to 15,571 targets and
+requires `WTREWRWE` targets to receive a pre-discovery bounded failure. The
+public-fund canary remains the next execution gate.
+
 - [ ] **Step 3: Run the 100-unique-document capacity gate**
 
 Report only aggregate inventory, publisher, receipt, request, byte, extraction,
@@ -510,12 +516,12 @@ transaction, unexpected remaining PDF, or disk blocker.
 
 Partial gate on 2026-08-31 reached 23 persisted DART documents and 220 chunks;
 the chunk rows occupied approximately 471 KiB and successful temporary PDFs
-were deleted. The gate remains open because the five-PDF quarantine limit
-stopped the run before 100 documents. Among the five unique reviewed failures,
-three exceeded the approved 20-chunk soft limit at 23, 32, and 39 chunks while
-remaining between 2,019 and 2,370 provisional whitespace tokens, and two failed
-closed with `PDF_TEXT_LAYER_MISSING`. Do not raise the chunk limit, add OCR, or
-discard these failed PDFs without a separately approved policy decision.
+were deleted. On 2026-09-01 ADR-0030 retired the former 20-chunk and
+8,000-selected-token failure gates after a 29-chunk sample confirmed that the
+stored corpus remained small. Volume observations remain in the report, but
+only missing required chunks are a content failure. Failed temporary PDFs are
+identified by receipt, byte count, SHA-256, and reason before exact-file
+cleanup. OCR remains outside this task.
 
 - [ ] **Step 4: Run the remaining organizer universe**
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import json
@@ -88,6 +89,7 @@ class DartRejectedFiling:
 @dataclass(frozen=True, slots=True)
 class DartPublisherDiscoveryResult:
     target_results: tuple[tuple[str, SourceAdapterResult], ...]
+    resolved_product_names: tuple[tuple[str, str], ...]
     rejected_filings: tuple[DartRejectedFiling, ...]
 
 
@@ -175,12 +177,21 @@ class DartDocumentSourceAdapter:
         corp_code: str,
         publisher_name: str,
         targets: tuple[tuple[str, str, str], ...],
+        target_member_names: Mapping[str, tuple[str, ...]] | None = None,
         context: DocumentDiscoveryContext,
     ) -> DartPublisherDiscoveryResult:
         """Fetch each publisher filing page once and select exact targets."""
 
         if not targets or len({item[0] for item in targets}) != len(targets):
             raise ValueError("publisher targets must be nonempty and unique")
+        member_names = dict(target_member_names or {})
+        target_keys = {item[0] for item in targets}
+        if not set(member_names) <= target_keys or any(
+            len(names) < 2
+            or any(not name.strip() for name in names)
+            for names in member_names.values()
+        ):
+            raise ValueError("publisher target member names are invalid")
         _validate_corp_code(corp_code)
         binding = _Binding("publisher", corp_code, publisher_name)
         if context.dart_api_key is None or not context.dart_api_key.strip():
@@ -192,11 +203,13 @@ class DartDocumentSourceAdapter:
                 target_results=tuple(
                     (target_key, unavailable) for target_key, _, _ in targets
                 ),
+                resolved_product_names=(),
                 rejected_filings=(),
             )
 
         unresolved = {target_key for target_key, _, _ in targets}
         results: dict[str, SourceAdapterResult] = {}
+        resolved_product_names: dict[str, str] = {}
         filings: list[_Filing] = []
         window_end = context.cutoff_date
         try:
@@ -218,6 +231,7 @@ class DartDocumentSourceAdapter:
                             tuple(filings),
                             binding=binding,
                             target_name=target_name,
+                            member_names=member_names.get(target_key, ()),
                             cutoff_date=context.cutoff_date,
                         )
                     except _DartResponseError as error:
@@ -242,6 +256,16 @@ class DartDocumentSourceAdapter:
                             )
                             for filing in selected
                         ),
+                    )
+                    selected_names = {
+                        filing.product_name
+                        for filing in selected
+                        if filing.product_name is not None
+                    }
+                    if len(selected_names) != 1:
+                        raise _DartMalformedResponse
+                    resolved_product_names[target_key] = next(
+                        iter(selected_names)
                     )
                     unresolved.remove(target_key)
                 if not unresolved:
@@ -271,6 +295,7 @@ class DartDocumentSourceAdapter:
                     tuple(filings),
                     binding=binding,
                     target_name=target_name,
+                    member_names=member_names.get(target_key, ()),
                     cutoff_date=context.cutoff_date,
                 )
             except _DartResponseError as error:
@@ -309,6 +334,7 @@ class DartDocumentSourceAdapter:
         )
         return DartPublisherDiscoveryResult(
             target_results=target_results,
+            resolved_product_names=tuple(sorted(resolved_product_names.items())),
             rejected_filings=rejected_filings,
         )
 
@@ -711,6 +737,7 @@ def _select_current_filings(
     *,
     binding: _Binding,
     target_name: str,
+    member_names: tuple[str, ...] = (),
     cutoff_date: date,
 ) -> tuple[_Filing, ...]:
     prospectuses = tuple(filing for filing in filings if filing.document_type)
@@ -724,6 +751,26 @@ def _select_current_filings(
         )
         == _normalize_product_identity(target_name)
     )
+    if not exact and binding.mode == "publisher" and member_names:
+        matched_names = {
+            _normalize_product_identity(filing.product_name or "")
+            for filing in prospectuses
+            if filing.product_name is not None
+            and _matches_all_share_classes(filing.product_name, member_names)
+        }
+        if len(matched_names) > 1:
+            raise _DartResponseError(
+                SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
+                "dart_product_metadata_ambiguous",
+            )
+        if matched_names:
+            selected_name = next(iter(matched_names))
+            exact = tuple(
+                filing
+                for filing in prospectuses
+                if _normalize_product_identity(filing.product_name or "")
+                == selected_name
+            )
     if not exact:
         if binding.mode == "publisher" and any(
             filing.product_name is None for filing in prospectuses
@@ -776,6 +823,37 @@ def _select_current_filings(
             key=lambda filing: (filing.document_type, filing.receipt_no),
         )
     )
+
+
+def _matches_all_share_classes(
+    official_fund_name: str,
+    member_names: tuple[str, ...],
+) -> bool:
+    official = _normalize_product_identity(official_fund_name)
+    if not official:
+        return False
+    suffixes: list[str] = []
+    for member_name in member_names:
+        member = _normalize_product_identity(member_name)
+        if not member.startswith(official):
+            return False
+        suffixes.append(member[len(official) :])
+    return any(suffixes) and all(_is_explicit_share_class_suffix(value) for value in suffixes)
+
+
+def _is_explicit_share_class_suffix(value: str) -> bool:
+    if not value or len(value) > 32:
+        return False
+    normalized = value.upper()
+    if any(
+        token in normalized
+        for token in ("투자신탁", "증권", "주식", "채권", "펀드", "호")
+    ):
+        return False
+    if any(token in normalized for token in ("클래스", "CLASS", "종류")):
+        return True
+    stripped = normalized.strip("_-()")
+    return re.fullmatch(r"[A-Z][A-Z0-9-]*(?:\([^()]+\))?", stripped) is not None
 
 
 def _candidate(

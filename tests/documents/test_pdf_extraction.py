@@ -100,6 +100,32 @@ def test_assembly_is_deterministic_for_identical_layout() -> None:
     assert first == second
 
 
+def test_assembly_removes_nul_bytes_before_building_spans() -> None:
+    pages = (
+        PdfPageLayout(
+            page_number=1,
+            lines=(
+                line("투자\x00목적", top=10.0, emphasized=True),
+                line("원자재\x00에 투자합니다.", top=20.0),
+            ),
+            table_rows=(),
+        ),
+    )
+
+    result = assemble_pdf_sections(
+        pages,
+        source_checksum="d" * 64,
+        extraction_version="pdfplumber-layout-v1",
+    )
+
+    assert "\x00" not in result.canonical_text
+    assert result.sections[0].exact_text == "원자재에 투자합니다."
+    assert result.canonical_text[
+        result.sections[0].character_start :
+        result.sections[0].character_end
+    ] == result.sections[0].exact_text
+
+
 @pytest.mark.parametrize("source_checksum", ("", "not-a-sha256", "A" * 64))
 def test_assembly_rejects_invalid_source_checksum(source_checksum: str) -> None:
     pages = (

@@ -19,6 +19,7 @@ class DartTargetDiscoveryDisposition:
     status: SourceAuditStatus
     reason_code: str | None
     candidates: tuple[DocumentSourceCandidate, ...]
+    resolved_product_name: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,9 +112,15 @@ def discover_dart_candidates_by_publisher(
             corp_code=corp_code,
             publisher_name=binding.corp_name,
             targets=requests,
+            target_member_names={
+                target.target_key: target.member_names
+                for target in targets
+                if len(target.member_names) > 1
+            },
             context=context,
         )
         discovered = dict(publisher_result.target_results)
+        resolved_names = dict(publisher_result.resolved_product_names)
         rejected_filings.update(publisher_result.rejected_filings)
         if set(discovered) != {target.target_key for target in targets}:
             raise ValueError("publisher discovery did not account for every target")
@@ -125,6 +132,7 @@ def discover_dart_candidates_by_publisher(
                 status=result.status,
                 reason_code=result.reason_code,
                 candidates=result.candidates,
+                resolved_product_name=resolved_names.get(target.target_key),
             )
 
     expected = {target.target_key for target in inventory.targets}
@@ -156,4 +164,5 @@ def _failure_disposition(
         status=SourceAuditStatus.AMBIGUOUS_ENTITY_BINDING,
         reason_code=reason_code,
         candidates=(),
+        resolved_product_name=None,
     )

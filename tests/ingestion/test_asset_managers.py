@@ -1,5 +1,7 @@
 from financial_agent.ingestion.mapping.asset_managers import (
+    public_fund_manager_binding,
     resolve_etf_asset_manager,
+    resolve_public_fund_asset_manager,
 )
 
 
@@ -104,3 +106,37 @@ def test_dot_or_blank_values_do_not_create_a_manager() -> None:
 
         assert result.status == "unresolved"
         assert result.identity is None
+
+
+def test_reviewed_public_fund_code_resolves_without_representative_inference() -> None:
+    identity = resolve_public_fund_asset_manager(None, "00040001")
+
+    assert identity is not None
+    assert identity.key == "kyobo_axa_asset_management"
+    assert identity.canonical_name == "교보악사자산운용"
+    assert identity.dart_corp_code == "00241412"
+
+
+def test_public_fund_binding_preserves_official_kofia_identity_evidence() -> None:
+    binding = public_fund_manager_binding("00080033")
+
+    assert binding is not None
+    assert binding.kofia_company_code == "A01075"
+    assert binding.kofia_company_name == "비엔케이자산운용"
+    assert binding.identity.canonical_name == "BNK자산운용"
+    assert binding.identity.dart_corp_code == "00686776"
+    assert binding.evidence_url == (
+        "https://dis.kofia.or.kr/proframeWeb/XMLSERVICES/"
+    )
+
+
+def test_kofia_only_closed_manager_does_not_gain_a_dart_code() -> None:
+    identity = resolve_public_fund_asset_manager("anything", "00040022")
+
+    assert identity is not None
+    assert identity.canonical_name == "프랭클린템플턴투자신탁운용"
+    assert identity.dart_corp_code is None
+
+
+def test_unresolved_public_offering_code_remains_unmapped() -> None:
+    assert resolve_public_fund_asset_manager(None, "00040013") is None

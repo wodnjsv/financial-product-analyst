@@ -5,6 +5,8 @@ from dataclasses import replace
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from financial_agent.contracts import SourceRecord
 from financial_agent.db.repositories import documents as document_repository
 from financial_agent.db.repositories.documents import (
@@ -15,6 +17,7 @@ from financial_agent.documents import DocumentRole, PublisherRole, SectionType
 from financial_agent.documents.chunking import WhitespaceTokenCounter
 from financial_agent.ingestion.document_sources.dart_pipeline import (
     DartProspectusContext,
+    DartProspectusProcessingError,
     assemble_captured_corpus,
     process_dart_prospectus,
 )
@@ -96,6 +99,46 @@ def test_pipeline_builds_traceable_corpus_without_premature_evidence(
     assert result.report.observed_selected_token_count > 0
     assert result.report.counter_identity == "WhitespaceTokenCounter"
     assert result.report.passed
+
+
+def test_pipeline_accepts_claim_chunks_over_the_retired_count_limit(
+    tmp_path: Path,
+) -> None:
+    pdf_path = prospectus(tmp_path / "kodex200.pdf")
+    checksum = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+
+    result = process_dart_prospectus(
+        pdf_path,
+        context=pipeline_context(checksum),
+        requested_section_types=frozenset(
+            {SectionType.INVESTMENT_STRATEGY, SectionType.RISK_FACTOR}
+        ),
+        token_counter=WhitespaceTokenCounter(),
+        target_min=0,
+        soft_limit=1,
+    )
+
+    assert len(result.corpus.chunks) > 1
+    assert result.report.chunk_budget_accepted
+    assert result.report.passed
+
+
+def test_pipeline_reports_missing_requested_chunks_with_specific_reason(
+    tmp_path: Path,
+) -> None:
+    pdf_path = prospectus(tmp_path / "kodex200.pdf")
+    checksum = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+
+    with pytest.raises(DartProspectusProcessingError) as raised:
+        process_dart_prospectus(
+            pdf_path,
+            context=pipeline_context(checksum),
+            requested_section_types=frozenset({SectionType.INDEX_METHODOLOGY}),
+            token_counter=WhitespaceTokenCounter(),
+            target_min=0,
+        )
+
+    assert raised.value.code == "approved_section_not_found"
 
 
 def test_pipeline_is_deterministic_and_rejects_wrong_source_checksum(

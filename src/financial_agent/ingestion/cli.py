@@ -27,7 +27,10 @@ from financial_agent.db.config import DatabaseConfig, DatabaseConfigurationError
 from financial_agent.db.engine import create_database_engine
 from financial_agent.db.preflight import normalize_psycopg_url
 from financial_agent.db.repositories.document_targets import DocumentTargetRepository
-from financial_agent.db.repositories.documents import DocumentCorpusRepository
+from financial_agent.db.repositories.documents import (
+    DocumentCorpusRepository,
+    DocumentCorpusValidationError,
+)
 from financial_agent.db.schema.catalog import entity
 from financial_agent.db.schema.operations import (
     dataset_version as dataset_version_table,
@@ -110,6 +113,7 @@ from financial_agent.ingestion.document_sources.sec import SecDocumentSourceAdap
 from financial_agent.ingestion.sources import (
     SourceVerificationError,
     download_verified_object,
+    sha256_path,
     verify_local_source,
 )
 from financial_agent.ingestion.writer import (
@@ -235,6 +239,7 @@ class _DartCorpusRunReport:
     deleted_bytes: int
     quarantined_pdf_count: int
     quarantined_bytes: int
+    discarded_failed_artifacts: tuple[tuple[str, str, int, str], ...] = ()
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -1205,7 +1210,10 @@ async def _load_dart_corpus_inventory(
     configuration: _DartCorpusConfiguration,
 ):
     engine = create_database_engine(
-        DatabaseConfig(url=configuration.database_url)
+        DatabaseConfig(
+            url=configuration.database_url,
+            statement_timeout_ms=180_000,
+        )
     )
     try:
         async with engine.connect() as connection:
@@ -1290,6 +1298,39 @@ def _limited_dart_inventory(
     return replace(inventory, targets=inventory.targets[:limit])
 
 
+def _partition_dart_inventory(
+    inventory: OrganizerDartInventory,
+) -> tuple[OrganizerDartInventory, dict[str, str]]:
+    failures = {
+        target.target_key: target.document_collection_block_reason
+        for target in inventory.targets
+        if target.document_collection_block_reason is not None
+    }
+    actionable = tuple(
+        target
+        for target in inventory.targets
+        if target.document_collection_block_reason is None
+    )
+    return replace(inventory, targets=actionable), failures
+
+
+def _with_resolved_dart_product_name(
+    target: OrganizerDartTarget,
+    resolved_product_name: str | None,
+) -> OrganizerDartTarget:
+    if resolved_product_name is None:
+        return target
+    canonical_name = target.canonical_name
+    if target.representative_entity_id not in target.member_entity_ids:
+        member_names = dict(target.member_entity_names)
+        canonical_name = member_names[min(target.member_entity_ids)]
+    return replace(
+        target,
+        canonical_name=canonical_name,
+        source_product_name=resolved_product_name,
+    )
+
+
 def _merge_dart_targets(
     grouped: tuple[tuple[OrganizerDartTarget, object], ...],
 ) -> OrganizerDartTarget:
@@ -1303,17 +1344,20 @@ def _merge_dart_targets(
             }
         )
     )
+    member_entity_names = tuple(
+        sorted(
+            {
+                member
+                for target, _ in grouped
+                for member in target.member_entity_names
+            }
+        )
+    )
+    member_entity_ids = tuple(entity_id for entity_id, _ in member_entity_names)
     return replace(
         primary,
-        member_entity_ids=tuple(
-            sorted(
-                {
-                    entity_id
-                    for target, _ in grouped
-                    for entity_id in target.member_entity_ids
-                }
-            )
-        ),
+        canonical_name=member_entity_names[0][1],
+        member_entity_ids=member_entity_ids,
         identifiers=tuple(
             sorted(
                 {
@@ -1324,6 +1368,7 @@ def _merge_dart_targets(
             )
         ),
         manager_bindings=managers,
+        member_entity_names=member_entity_names,
     )
 
 
@@ -1345,12 +1390,13 @@ def _dart_prospectus_context(
     ):
         raise DartCorpusIngestionError("dart_ingestion_context_incomplete")
     manager_id, _ = target.manager_bindings[0]
+    document_product_name = target.source_product_name or target.canonical_name
     return DartProspectusContext(
         dataset_version=configuration.dataset_version,
         entity_id=target.representative_entity_id,
         canonical_entity_name=target.canonical_name,
         document_id=f"dart:{receipt}:full-prospectus",
-        document_title=f"{target.canonical_name} 투자설명서",
+        document_title=f"{document_product_name} 투자설명서",
         document_type="full_prospectus",
         document_version=candidate.document_version,
         source_id=f"source:dart:{receipt}",
@@ -1382,6 +1428,31 @@ def _quarantine_totals(root: Path) -> tuple[int, int]:
     return count, byte_count
 
 
+def _discard_failed_dart_pdf(
+    root: Path,
+    receipt: str,
+    reason_code: str,
+) -> tuple[str, str, int, str] | None:
+    pdf_path = root / f"dart-{receipt}" / "source.pdf"
+    if not pdf_path.exists():
+        return None
+    expected = root.resolve() / f"dart-{receipt}" / "source.pdf"
+    if (
+        pdf_path.is_symlink()
+        or not pdf_path.is_file()
+        or pdf_path.resolve() != expected
+    ):
+        raise DartCorpusIngestionError("dart_quarantine_path_invalid")
+    byte_count = pdf_path.stat().st_size
+    checksum = sha256_path(pdf_path)
+    try:
+        pdf_path.unlink()
+        pdf_path.parent.rmdir()
+    except OSError:
+        raise DartCorpusIngestionError("dart_pdf_cleanup_failed") from None
+    return receipt, reason_code, byte_count, checksum
+
+
 async def _run_dart_corpus(
     configuration: _DartCorpusConfiguration,
 ) -> _DartCorpusRunReport:
@@ -1395,26 +1466,60 @@ async def _run_dart_corpus(
         configuration.limit,
         configuration.target_key,
     )
+    actionable_inventory, pre_discovery_failures = _partition_dart_inventory(
+        inventory
+    )
     opener = _NoRedirectHttpOpener()
     repository = DocumentCorpusRepository(engine)
     indexed_target_ids: set[str] = set()
-    failed_targets: dict[str, str] = {}
+    failed_targets = dict(pre_discovery_failures)
     indexed_document_ids: set[str] = set()
     captured_bytes = 0
     chunk_count = 0
     selected_tokens = 0
     deleted_bytes = 0
+    discarded_failed_artifacts: list[tuple[str, str, int, str]] = []
     try:
+        if not actionable_inventory.targets:
+            quarantined_count, quarantined_bytes = _quarantine_totals(
+                configuration.temp_root
+            )
+            return _DartCorpusRunReport(
+                schema_version="1.0",
+                generated_at=datetime.now(UTC),
+                cutoff_date=_DOCUMENT_SOURCE_CUTOFF,
+                dataset_version=configuration.dataset_version,
+                inventory_hash=full_inventory.inventory_hash,
+                organizer_product_count=full_inventory.product_count,
+                organizer_target_count=len(full_inventory.targets),
+                selected_target_count=len(inventory.targets),
+                publisher_binding_count=0,
+                publisher_failure_count=0,
+                requested_publisher_count=0,
+                discovered_document_count=0,
+                indexed_document_ids=(),
+                indexed_target_ids=(),
+                failed_targets=tuple(sorted(failed_targets.items())),
+                rejected_dart_filing_count=0,
+                captured_bytes=0,
+                chunk_count=0,
+                provisional_selected_token_count=0,
+                token_counter_identity="WhitespaceTokenCounter",
+                deleted_pdf_count=0,
+                deleted_bytes=0,
+                quarantined_pdf_count=quarantined_count,
+                quarantined_bytes=quarantined_bytes,
+            )
         selected_manager_ids = {
             manager_id
-            for target in inventory.targets
+            for target in actionable_inventory.targets
             for manager_id, _ in target.manager_bindings
         }
         corp_code_zip = fetch_dart_corporation_codes(
             opener, configuration.dart_api_key
         )
         reconciliation = reconcile_dart_publishers(
-            inventory=inventory,
+            inventory=actionable_inventory,
             corp_code_zip=corp_code_zip,
             institution_identifiers=institution_identifiers,
             reviewed_aliases={
@@ -1425,7 +1530,7 @@ async def _run_dart_corpus(
             },
         )
         discovery = discover_dart_candidates_by_publisher(
-            inventory=inventory,
+            inventory=actionable_inventory,
             reconciliation=reconciliation,
             adapter=DartDocumentSourceAdapter(opener),
             context=DocumentDiscoveryContext(
@@ -1435,7 +1540,10 @@ async def _run_dart_corpus(
                 locator_registry_path=None,
             ),
         )
-        targets = {target.target_key: target for target in inventory.targets}
+        targets = {
+            target.target_key: target
+            for target in actionable_inventory.targets
+        }
         receipts: dict[str, list[tuple[OrganizerDartTarget, object]]] = {}
         for disposition in discovery.dispositions:
             if len(disposition.candidates) != 1:
@@ -1451,7 +1559,13 @@ async def _run_dart_corpus(
                 )
                 continue
             receipts.setdefault(receipt, []).append(
-                (targets[disposition.target_key], candidate)
+                (
+                    _with_resolved_dart_product_name(
+                        targets[disposition.target_key],
+                        disposition.resolved_product_name,
+                    ),
+                    candidate,
+                )
             )
 
         fatal_codes = {
@@ -1512,9 +1626,23 @@ async def _run_dart_corpus(
                     raise
                 for target_key in target_keys:
                     failed_targets[target_key] = error.code
-            except SourceVerificationError as error:
+                discarded = _discard_failed_dart_pdf(
+                    configuration.temp_root,
+                    receipt,
+                    error.code,
+                )
+                if discarded is not None:
+                    discarded_failed_artifacts.append(discarded)
+            except (SourceVerificationError, DocumentCorpusValidationError) as error:
                 for target_key in target_keys:
                     failed_targets[target_key] = error.code
+                discarded = _discard_failed_dart_pdf(
+                    configuration.temp_root,
+                    receipt,
+                    error.code,
+                )
+                if discarded is not None:
+                    discarded_failed_artifacts.append(discarded)
 
         selected_target_ids = {target.target_key for target in inventory.targets}
         if indexed_target_ids.intersection(failed_targets) or (
@@ -1551,6 +1679,9 @@ async def _run_dart_corpus(
             deleted_bytes=deleted_bytes,
             quarantined_pdf_count=quarantined_count,
             quarantined_bytes=quarantined_bytes,
+            discarded_failed_artifacts=tuple(
+                sorted(discarded_failed_artifacts)
+            ),
         )
     finally:
         await engine.dispose()

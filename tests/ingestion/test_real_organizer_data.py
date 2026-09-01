@@ -13,6 +13,9 @@ from financial_agent.ingestion.capacity_probe import (
     measure_database_acceptance,
     require_current_rebaseline_acceptance,
 )
+from financial_agent.ingestion.mapping.asset_managers import (
+    resolve_public_fund_asset_manager,
+)
 from financial_agent.ingestion.pipeline import SOURCE_SPECS, build_organizer_dataset
 from financial_agent.ingestion.sources import (
     iter_workbook_rows,
@@ -54,7 +57,8 @@ def test_real_organizer_workbooks_match_the_approved_safe_aggregates() -> None:
     public_items: set[str] = set()
     representatives: set[str] = set()
     representative_values: Counter[str] = Counter()
-    representative_sentinels = {"", "NULL", "KR0000000000"}
+    public_offering_manager_codes: set[str] = set()
+    representative_sentinels = {"", "NULL", "KR0000000000", "WTREWRWE"}
 
     for source_code in sorted(SOURCE_SPECS):
         spec = SOURCE_SPECS[source_code]
@@ -79,6 +83,12 @@ def test_real_organizer_workbooks_match_the_approved_safe_aggregates() -> None:
                     representative and set(representative) == {"0"}
                 ):
                     representatives.add(representative)
+                if str(row.get("prvo_pbff_desc") or "").strip() == "공모":
+                    manager_code = str(
+                        row.get("or_co_xtn_itt_cd") or ""
+                    ).strip()
+                    if manager_code:
+                        public_offering_manager_codes.add(manager_code)
         rows_by_source[source_code] = count
         product_types[source_code] = types
 
@@ -91,20 +101,34 @@ def test_real_organizer_workbooks_match_the_approved_safe_aggregates() -> None:
     assert product_types["PREF01N001"] == Counter({"ETF": 1_235, "ETN": 545})
     assert product_types["PREF02N001"] == Counter({"ETF": 5_972, "ETN": 65})
     assert len(public_items) == 23_676
-    assert len(representatives) == 6_878
+    assert len(representatives) == 6_877
     assert representative_values[""] == 120
     assert representative_values["KR0000000000"] == 5_309
     assert representative_values["000000000000"] == 1_645
+    assert representative_values["WTREWRWE"] == 6
     assert sum(
         count
         for value, count in representative_values.items()
         if value and set(value) == {"0"}
     ) == 1_653
+    reviewed_public_manager_codes = {
+        code
+        for code in public_offering_manager_codes
+        if resolve_public_fund_asset_manager(None, code) is not None
+    }
+    dart_bound_public_manager_codes = {
+        code
+        for code in reviewed_public_manager_codes
+        if resolve_public_fund_asset_manager(None, code).dart_corp_code is not None
+    }
+    assert len(public_offering_manager_codes) == 90
+    assert len(reviewed_public_manager_codes) == 59
+    assert len(dart_bound_public_manager_codes) == 57
 
     print("PRBD01N001 rows=21882 fields=58")
     print("PREF01N001 rows=1780 fields=98 etf=1235 etn=545")
     print("PREF02N001 rows=6037 fields=49 etf=5972 etn=65")
-    print("PRFD01N001 rows=23676 fields=75 items=23676 representatives=6878")
+    print("PRFD01N001 rows=23676 fields=75 items=23676 representatives=6877")
     print("TOTAL rows=53375")
 
 

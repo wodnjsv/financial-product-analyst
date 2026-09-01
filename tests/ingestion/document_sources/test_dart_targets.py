@@ -23,6 +23,7 @@ def _row(
     representative_name: str | None = None,
     manager_entity_id: str | None = "manager-one",
     manager_name: str | None = "Manager One",
+    document_collection_block_reason: str | None = None,
 ) -> OrganizerDartProductRow:
     return OrganizerDartProductRow(
         entity_id=entity_id,
@@ -34,6 +35,7 @@ def _row(
         representative_name=representative_name,
         manager_entity_id=manager_entity_id,
         manager_name=manager_name,
+        document_collection_block_reason=document_collection_block_reason,
     )
 
 
@@ -85,6 +87,10 @@ def test_inventory_groups_only_exact_public_fund_relations_and_is_deterministic(
         if target.representative_entity_id == "fund-representative"
     )
     assert grouped.member_entity_ids == ("fund-class-a", "fund-class-b")
+    assert grouped.member_names == (
+        "Canonical fund-class-a",
+        "Canonical fund-class-b",
+    )
     assert grouped.canonical_name == "Representative Fund"
     unrelated = next(
         target
@@ -128,6 +134,28 @@ def test_inventory_keeps_missing_and_ambiguous_managers_for_bounded_disposition(
     assert inventory.targets[0].manager_bindings == (
         ("manager-a", "Manager A"),
         ("manager-b", "Manager B"),
+    )
+
+
+def test_inventory_preserves_an_evidence_derived_collection_block() -> None:
+    row = _row(
+        "fund-with-placeholder",
+        family="public_fund",
+        identifier_scheme="PRFD_ITM_NO",
+        identifier_value="PF-W",
+        document_collection_block_reason=(
+            "representative_identifier_unavailable"
+        ),
+    )
+
+    inventory = build_organizer_dart_inventory(
+        "organizer-v1",
+        CUTOFF,
+        (row,),
+    )
+
+    assert inventory.targets[0].document_collection_block_reason == (
+        "representative_identifier_unavailable"
     )
 
 

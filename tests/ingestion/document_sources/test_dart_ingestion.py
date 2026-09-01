@@ -28,6 +28,7 @@ from financial_agent.ingestion.document_sources.dart_capture import (
 from financial_agent.ingestion.document_sources.dart_ingestion import (
     DartCorpusIngestionError,
     DartCorpusIngestionRequest,
+    _validate_request,
     ingest_one_dart_document,
     safe_discard_verified_pdf,
 )
@@ -167,6 +168,84 @@ def _request(tmp_path: Path) -> DartCorpusIngestionRequest:
         maximum_bytes=1024 * 1024,
         target_min=0,
     )
+
+
+def test_multi_class_representative_may_bind_only_its_member_entities(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path)
+    target = replace(
+        request.target,
+        target_key="public_fund:representative-fund",
+        product_family="public_fund",
+        representative_entity_id="representative-fund",
+        canonical_name="2000102M4800",
+        member_entity_ids=("class-a", "class-b"),
+    )
+    request = replace(
+        request,
+        target=target,
+        candidate=replace(
+            request.candidate,
+            target_entity_id="representative-fund",
+        ),
+        context=replace(
+            request.context,
+            entity_id="representative-fund",
+            canonical_entity_name="2000102M4800",
+            budget_scope_id="public_fund:representative-fund",
+        ),
+    )
+
+    _validate_request(request)
+
+
+@pytest.mark.asyncio
+async def test_multi_class_representative_persists_member_coverages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_capture(monkeypatch)
+    request = _request(tmp_path)
+    member_ids = ("class-a", "class-b")
+    request = replace(
+        request,
+        target=replace(
+            request.target,
+            target_key="public_fund:representative-fund",
+            product_family="public_fund",
+            representative_entity_id="representative-fund",
+            canonical_name="한빛 성장 펀드",
+            member_entity_ids=member_ids,
+        ),
+        candidate=replace(
+            request.candidate,
+            target_entity_id="representative-fund",
+        ),
+        context=replace(
+            request.context,
+            entity_id="representative-fund",
+            canonical_entity_name="한빛 성장 펀드",
+            budget_scope_id="public_fund:representative-fund",
+        ),
+    )
+    repository = _MemoryRepository()
+
+    await ingest_one_dart_document(
+        repository,
+        object(),
+        request=request,
+        now=lambda: datetime(2026, 8, 31, tzinfo=UTC),
+    )
+
+    assert repository.captured is not None
+    assert {
+        repository.captured.corpus.coverage.entity_id,
+        *(
+            coverage.entity_id
+            for coverage in repository.captured.additional_coverages
+        ),
+    } == set(member_ids)
 
 
 def _install_capture(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -418,7 +497,7 @@ async def test_ingestion_removes_empty_directory_after_capture_failure(
 
 
 @pytest.mark.asyncio
-async def test_ingestion_does_not_persist_a_document_over_the_token_review_gate(
+async def test_ingestion_persists_a_document_over_the_retired_token_review_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -426,17 +505,16 @@ async def test_ingestion_does_not_persist_a_document_over_the_token_review_gate(
     request = replace(_request(tmp_path), selected_token_soft_limit=1)
     repository = _MemoryRepository()
 
-    with pytest.raises(DartCorpusIngestionError) as raised:
-        await ingest_one_dart_document(
-            repository,
-            object(),
-            request=request,
-            now=lambda: datetime(2026, 8, 31, tzinfo=UTC),
-        )
+    result = await ingest_one_dart_document(
+        repository,
+        object(),
+        request=request,
+        now=lambda: datetime(2026, 8, 31, tzinfo=UTC),
+    )
 
-    assert raised.value.code == "dart_corpus_quality_review_required"
-    assert repository.captured is None
-    assert len(tuple(request.run_root.rglob("*.pdf"))) == 1
+    assert repository.captured is not None
+    assert result.retention_disposition == "metadata_only_deleted"
+    assert not tuple(request.run_root.rglob("*.pdf"))
 
 
 @pytest.mark.asyncio

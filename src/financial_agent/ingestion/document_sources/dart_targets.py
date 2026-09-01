@@ -24,6 +24,7 @@ class OrganizerDartProductRow:
     representative_name: str | None
     manager_entity_id: str | None
     manager_name: str | None
+    document_collection_block_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,13 @@ class OrganizerDartTarget:
     member_entity_ids: tuple[str, ...]
     identifiers: tuple[tuple[str, str, str], ...]
     manager_bindings: tuple[tuple[str, str], ...]
+    member_entity_names: tuple[tuple[str, str], ...] = ()
+    source_product_name: str | None = None
+    document_collection_block_reason: str | None = None
+
+    @property
+    def member_names(self) -> tuple[str, ...]:
+        return tuple(name for _, name in self.member_entity_names)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +61,7 @@ class _ProductAccumulator:
     identifiers: set[tuple[str, str]] = field(default_factory=set)
     representatives: set[tuple[str, str]] = field(default_factory=set)
     managers: set[tuple[str, str]] = field(default_factory=set)
+    document_collection_block_reasons: set[str] = field(default_factory=set)
 
 
 def build_organizer_dart_inventory(
@@ -98,6 +107,10 @@ def build_organizer_dart_inventory(
             if prior_name != row.manager_name:
                 raise ValueError("inconsistent organizer manager identity")
             current.managers.add((row.manager_entity_id, row.manager_name))
+        if row.document_collection_block_reason is not None:
+            current.document_collection_block_reasons.add(
+                row.document_collection_block_reason
+            )
 
     groups: dict[tuple[str, str], list[tuple[str, _ProductAccumulator, str]]] = {}
     for entity_id, product_values in products.items():
@@ -134,6 +147,13 @@ def build_organizer_dart_inventory(
                 for scheme, value in values.identifiers
             )
         )
+        block_reasons = {
+            reason
+            for _, values, _ in members
+            for reason in values.document_collection_block_reasons
+        }
+        if len(block_reasons) > 1:
+            raise ValueError("target has multiple collection block reasons")
         manager_bindings = tuple(
             sorted(
                 {
@@ -152,6 +172,15 @@ def build_organizer_dart_inventory(
                 member_entity_ids=member_ids,
                 identifiers=identifiers,
                 manager_bindings=manager_bindings,
+                member_entity_names=tuple(
+                    sorted(
+                        (entity_id, values.canonical_name)
+                        for entity_id, values, _ in members
+                    )
+                ),
+                document_collection_block_reason=(
+                    next(iter(block_reasons)) if block_reasons else None
+                ),
             )
         )
     if accounted_entities != set(products):
@@ -210,3 +239,8 @@ def _validate_row(row: OrganizerDartProductRow) -> None:
     ):
         if value is not None and not value.strip():
             raise ValueError(f"{field_name} must not be blank")
+    if row.document_collection_block_reason not in {
+        None,
+        "representative_identifier_unavailable",
+    }:
+        raise ValueError("unsupported document collection block reason")

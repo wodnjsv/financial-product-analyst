@@ -36,6 +36,7 @@ from .base import NoRedirectHttpOpener
 from .dart_capture import capture_dart_full_prospectus
 from .dart_pipeline import (
     DartProspectusContext,
+    DartProspectusProcessingError,
     DartProspectusProcessingResult,
     assemble_captured_corpus,
     process_dart_prospectus,
@@ -155,7 +156,10 @@ async def ingest_one_dart_document(
             captured_file = capture_dart_full_prospectus(
                 opener,
                 candidate=request.candidate,
-                canonical_name=request.target.canonical_name,
+                canonical_name=(
+                    request.target.source_product_name
+                    or request.target.canonical_name
+                ),
                 destination=pdf_path,
                 maximum_bytes=request.maximum_bytes,
             )
@@ -189,7 +193,7 @@ async def ingest_one_dart_document(
             selected_token_soft_limit=request.selected_token_soft_limit,
             extraction_version=request.extraction_version,
         )
-    except PdfExtractionError as error:
+    except (PdfExtractionError, DartProspectusProcessingError) as error:
         raise DartCorpusIngestionError(error.code) from error
     if not processing.report.passed:
         raise DartCorpusIngestionError(
@@ -309,7 +313,7 @@ def _validate_request(request: DartCorpusIngestionRequest) -> None:
         candidate.target_entity_id != target.representative_entity_id
         or context.entity_id != target.representative_entity_id
         or context.canonical_entity_name != target.canonical_name
-        or context.entity_id not in target.member_entity_ids
+        or not target.member_entity_ids
     ):
         raise DartCorpusIngestionError("dart_target_not_in_organizer_inventory")
     if (
@@ -421,11 +425,16 @@ def _bind_target_members(
         )
         for entity_id in member_ids
     )
-    primary_coverage = _coverage(corpus, processing.report.entity_id)
+    primary_entity_id = (
+        processing.report.entity_id
+        if processing.report.entity_id in member_ids
+        else member_ids[0]
+    )
+    primary_coverage = _coverage(corpus, primary_entity_id)
     additional_coverages = tuple(
         _coverage(corpus, entity_id)
         for entity_id in member_ids
-        if entity_id != processing.report.entity_id
+        if entity_id != primary_entity_id
     )
     updated_corpus = replace(
         corpus,

@@ -18,6 +18,7 @@ from tests.fixtures.db.synthetic_dataset import (
     insert_institution,
     insert_product,
     insert_relation,
+    insert_source,
 )
 
 
@@ -55,6 +56,8 @@ def test_organizer_dart_query_is_product_gated_and_relation_exact() -> None:
     assert "managedBy" in compiled_sql
     assert "DART_CORP_CODE" in compiled_sql
     assert "hasShareClass" in compiled_sql
+    assert "rptt_ksd_itm_no" in compiled_sql
+    assert "WTREWRWE" in compiled_sql
     assert "domestic_bond" not in compiled_sql
     assert "overseas_etf" not in compiled_sql
 
@@ -316,6 +319,12 @@ async def test_organizer_dart_rows_exclude_nonorganizer_and_out_of_scope_product
             dataset_version=dataset_version,
             entity_id="manager-one",
         )
+        insert_source(
+            connection,
+            dataset_version=dataset_version,
+            source_id="organizer-public-fund-source",
+            publisher="manager-one",
+        )
         insert_identifier(
             connection,
             dataset_version=dataset_version,
@@ -407,6 +416,57 @@ async def test_organizer_dart_rows_exclude_nonorganizer_and_out_of_scope_product
             scheme="FSS_FUND",
             identifier_value="fss-fund-one",
         )
+        tagged_value = {"type": "string", "value": "WTREWRWE"}
+        connection.execute(
+            """
+            INSERT INTO evidence.evidence_record (
+                dataset_version, evidence_id, evidence_kind, source_id,
+                subject_id, predicate_id, value_or_object_id,
+                normalized_value, locator_type, locator_uri_or_object_key,
+                locator_sheet, locator_row, locator_column, raw_value_repr,
+                parser_version, mapping_version, cutoff_status, record_hash,
+                scope_completeness, created_at
+            ) VALUES (
+                %s, 'representative-placeholder', 'query_scope',
+                'organizer-public-fund-source', 'fund-one',
+                'rptt_ksd_itm_no', %s, %s, 'tabular',
+                'prfd01n001_data.xlsx', 'data', 2, 'rptt_ksd_itm_no',
+                'WTREWRWE', '1', '4', 'eligible', %s,
+                'bounded_unknown', TIMESTAMPTZ '2026-08-24 00:00:00+00'
+            )
+            """,
+            (
+                dataset_version,
+                psycopg.types.json.Jsonb(tagged_value),
+                psycopg.types.json.Jsonb(tagged_value),
+                "b" * 64,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO evidence.evidence_record (
+                dataset_version, evidence_id, evidence_kind, source_id,
+                subject_id, predicate_id, value_or_object_id,
+                normalized_value, locator_type, locator_uri_or_object_key,
+                locator_sheet, locator_row, locator_column, raw_value_repr,
+                parser_version, mapping_version, cutoff_status, record_hash,
+                scope_completeness, created_at
+            ) VALUES (
+                %s, 'overlap-representative-placeholder', 'query_scope',
+                'organizer-public-fund-source', 'etf-one',
+                'rptt_ksd_itm_no', %s, %s, 'tabular',
+                'prfd01n001_data.xlsx', 'data', 3, 'rptt_ksd_itm_no',
+                'WTREWRWE', '1', '4', 'eligible', %s,
+                'bounded_unknown', TIMESTAMPTZ '2026-08-24 00:00:00+00'
+            )
+            """,
+            (
+                dataset_version,
+                psycopg.types.json.Jsonb(tagged_value),
+                psycopg.types.json.Jsonb(tagged_value),
+                "b" * 64,
+            ),
+        )
 
     async with repository_engine.connect() as connection:
         rows = await DocumentTargetRepository(connection).list_organizer_dart_rows(
@@ -421,9 +481,17 @@ async def test_organizer_dart_rows_exclude_nonorganizer_and_out_of_scope_product
     fund = next(row for row in rows if row.entity_id == "fund-one")
     assert fund.representative_entity_id == "fund-representative"
     assert fund.manager_entity_id == "manager-one"
+    assert fund.document_collection_block_reason == (
+        "representative_identifier_unavailable"
+    )
     assert {
         row.manager_entity_id for row in rows if row.entity_id == "etf-one"
     } == {"manager-one"}
+    assert all(
+        row.document_collection_block_reason is None
+        for row in rows
+        if row.entity_id == "etf-one"
+    )
     assert all(row.identifier_scheme != "FSS_FUND" for row in rows)
     representative = next(
         row for row in rows if row.entity_id == "fund-representative"

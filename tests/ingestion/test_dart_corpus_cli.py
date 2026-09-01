@@ -7,11 +7,15 @@ from pathlib import Path
 import pytest
 
 from financial_agent.ingestion.cli import (
+    _DartCorpusConfiguration,
     IngestionArgumentError,
     _DartCorpusRunReport,
+    _discard_failed_dart_pdf,
     _load_dart_corpus_configuration,
     _limited_dart_inventory,
+    _partition_dart_inventory,
     _parser,
+    _run_dart_corpus,
     _write_dart_corpus_report,
 )
 from financial_agent.ingestion.document_sources.dart_targets import (
@@ -164,6 +168,107 @@ def test_exact_target_selection_fails_closed_when_target_is_absent() -> None:
         )
 
 
+def test_partition_blocks_unusable_representative_before_discovery() -> None:
+    blocked = OrganizerDartTarget(
+        target_key="public_fund:blocked",
+        product_family="public_fund",
+        representative_entity_id="blocked",
+        canonical_name="Blocked Fund",
+        member_entity_ids=("blocked",),
+        identifiers=(("blocked", "PRFD_ITM_NO", "PF-BLOCKED"),),
+        manager_bindings=(("manager-one", "Manager One"),),
+        document_collection_block_reason=(
+            "representative_identifier_unavailable"
+        ),
+    )
+    eligible = OrganizerDartTarget(
+        target_key="public_fund:eligible",
+        product_family="public_fund",
+        representative_entity_id="eligible",
+        canonical_name="Eligible Fund",
+        member_entity_ids=("eligible",),
+        identifiers=(("eligible", "PRFD_ITM_NO", "PF-ELIGIBLE"),),
+        manager_bindings=(("manager-one", "Manager One"),),
+    )
+    inventory = OrganizerDartInventory(
+        dataset_version="documents-building-v1",
+        cutoff_date=date(2026, 8, 24),
+        product_count=2,
+        targets=(blocked, eligible),
+        inventory_hash="a" * 64,
+    )
+
+    actionable, failures = _partition_dart_inventory(inventory)
+
+    assert actionable.targets == (eligible,)
+    assert failures == {
+        "public_fund:blocked": "representative_identifier_unavailable"
+    }
+
+
+@pytest.mark.asyncio
+async def test_blocked_only_run_makes_no_dart_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blocked = OrganizerDartTarget(
+        target_key="public_fund:blocked",
+        product_family="public_fund",
+        representative_entity_id="blocked",
+        canonical_name="Blocked Fund",
+        member_entity_ids=("blocked",),
+        identifiers=(("blocked", "PRFD_ITM_NO", "PF-BLOCKED"),),
+        manager_bindings=(("manager-one", "Manager One"),),
+        document_collection_block_reason=(
+            "representative_identifier_unavailable"
+        ),
+    )
+    inventory = OrganizerDartInventory(
+        dataset_version="documents-building-v1",
+        cutoff_date=date(2026, 8, 24),
+        product_count=1,
+        targets=(blocked,),
+        inventory_hash="a" * 64,
+    )
+
+    class Engine:
+        async def dispose(self) -> None:
+            return None
+
+    async def load(_configuration: object):
+        return Engine(), inventory, {}
+
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli._load_dart_corpus_inventory",
+        load,
+    )
+
+    def unexpected_request(*_args: object, **_kwargs: object) -> bytes:
+        raise AssertionError("blocked targets must not issue a DART request")
+
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli.fetch_dart_corporation_codes",
+        unexpected_request,
+    )
+    configuration = _DartCorpusConfiguration(
+        database_url="postgresql+psycopg://unused",
+        dataset_version="documents-building-v1",
+        dart_api_key="secret",
+        temp_root=tmp_path / "run",
+        publisher_aliases={},
+        report_path=tmp_path / "report.json",
+        limit=None,
+        target_key=None,
+    )
+
+    report = await _run_dart_corpus(configuration)
+
+    assert report.requested_publisher_count == 0
+    assert report.failed_targets == (
+        ("public_fund:blocked", "representative_identifier_unavailable"),
+    )
+
+
 @pytest.mark.parametrize("limit", ("0", "-1", "not-a-number"))
 def test_configuration_rejects_invalid_limits(
     tmp_path: Path,
@@ -259,3 +364,26 @@ def test_report_contains_only_sanitized_counts_ids_hashes_and_reason_codes(
     assert "SYNTHETIC-SECRET" not in payload
     assert "추종지수의 변동" not in payload
     assert json.loads(payload)["inventory_hash"] == "a" * 64
+
+
+def test_failed_pdf_records_identity_then_is_deleted(tmp_path: Path) -> None:
+    receipt = "20260716000161"
+    pdf = tmp_path / f"dart-{receipt}" / "source.pdf"
+    pdf.parent.mkdir()
+    content = b"%PDF-1.4\nfailed\n%%EOF\n"
+    pdf.write_bytes(content)
+
+    record = _discard_failed_dart_pdf(
+        tmp_path,
+        receipt,
+        "approved_section_not_found",
+    )
+
+    assert record is not None
+    assert record[:3] == (
+        receipt,
+        "approved_section_not_found",
+        len(content),
+    )
+    assert len(record[3]) == 64
+    assert not pdf.exists()

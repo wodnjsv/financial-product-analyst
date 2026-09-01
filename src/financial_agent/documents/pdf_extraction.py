@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 from io import BytesIO
 import re
@@ -127,6 +127,7 @@ def assemble_pdf_sections(
 ) -> ExtractedPdfDocument:
     """Assemble validated page layouts into reproducible section spans."""
 
+    pages = _sanitize_pages(pages)
     _validate_assembly_input(
         pages,
         source_checksum=source_checksum,
@@ -150,6 +151,34 @@ def assemble_pdf_sections(
         extraction_version=extraction_version,
         issues=(),
     )
+
+
+def _sanitize_pages(
+    pages: tuple[PdfPageLayout, ...],
+) -> tuple[PdfPageLayout, ...]:
+    sanitized: list[PdfPageLayout] = []
+    for page in pages:
+        lines = tuple(
+            replace(line, text=_sanitize_text(line.text))
+            for line in page.lines
+            if _sanitize_text(line.text)
+        )
+        table_rows = tuple(
+            replace(
+                row,
+                cells=tuple(
+                    _sanitize_text(cell) if cell is not None else None
+                    for cell in row.cells
+                ),
+            )
+            for row in page.table_rows
+        )
+        sanitized.append(replace(page, lines=lines, table_rows=table_rows))
+    return tuple(sanitized)
+
+
+def _sanitize_text(value: str) -> str:
+    return value.replace("\x00", "")
 
 
 def read_pdf_layout(pdf_path: Path) -> tuple[PdfPageLayout, ...]:

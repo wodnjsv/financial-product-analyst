@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from enum import Enum
 import hashlib
@@ -101,6 +101,12 @@ class DartProspectusProcessingResult:
     report: DartProspectusQualityReport
 
 
+class DartProspectusProcessingError(ValueError):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
 def assemble_captured_corpus(
     result: DartProspectusProcessingResult,
     *,
@@ -164,6 +170,20 @@ def process_dart_prospectus(
         soft_limit=soft_limit,
         selected_token_soft_limit=selected_token_soft_limit,
     )
+    if chunking.reason_code in {
+        "indivisible_unit_over_target_max",
+        "soft_chunk_limit_exceeded",
+        "soft_selected_token_limit_exceeded",
+    }:
+        chunking = replace(
+            chunking,
+            coverage_status=CoverageStatus.INDEXED,
+            reason_code=None,
+        )
+    if not chunking.chunks:
+        raise DartProspectusProcessingError(
+            chunking.reason_code or "approved_section_not_found"
+        )
     corpus = _corpus(context, chunking.chunks, extraction_version)
     DocumentCorpusRepository.validate_corpus(corpus)
     report = _report(
@@ -307,10 +327,7 @@ def _report(
         and len(chunk.content_hash) == 64
         for chunk in chunks
     )
-    chunk_budget_accepted = (
-        chunking.coverage_status is CoverageStatus.INDEXED
-        and chunking.observed_chunk_count <= 20
-    )
+    chunk_budget_accepted = chunking.coverage_status is CoverageStatus.INDEXED
     extraction_complete = extracted.page_count == extracted.text_page_count
     chunking_reasons = (chunking.reason_code,) if chunking.reason_code else ()
     reasons = tuple((*selection.reason_codes, *chunking_reasons))

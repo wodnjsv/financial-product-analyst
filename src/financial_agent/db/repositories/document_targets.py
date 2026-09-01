@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from financial_agent.db.schema.catalog import entity, identifier, product
 from financial_agent.db.schema.relation import relation_record
+from financial_agent.db.schema.evidence import evidence_record
 from financial_agent.documents import DocumentRole, DocumentSourceTarget
 from financial_agent.ingestion.document_sources.dart_targets import (
     OrganizerDartProductRow,
@@ -97,6 +98,10 @@ class DocumentTargetRepository:
                 ),
                 manager_entity_id=_optional_row_text(row, "manager_entity_id"),
                 manager_name=_optional_row_text(row, "manager_name"),
+                document_collection_block_reason=_optional_row_text(
+                    row,
+                    "document_collection_block_reason",
+                ),
             )
             for row in result.mappings().all()
         )
@@ -320,6 +325,17 @@ def _organizer_dart_statement(dataset_version: str) -> sa.Select[object]:
             manager_identifier.c.scheme == "DART_CORP_CODE",
         )
     )
+    unusable_representative_exists = sa.exists(
+        sa.select(sa.literal(1)).where(
+            evidence_record.c.dataset_version == product.c.dataset_version,
+            evidence_record.c.subject_id == product.c.entity_id,
+            evidence_record.c.locator_uri_or_object_key
+            == "prfd01n001_data.xlsx",
+            evidence_record.c.locator_column == "rptt_ksd_itm_no",
+            sa.func.upper(sa.func.trim(evidence_record.c.raw_value_repr))
+            == "WTREWRWE",
+        )
+    )
     return (
         sa.select(
             entity.c.entity_id,
@@ -331,6 +347,16 @@ def _organizer_dart_statement(dataset_version: str) -> sa.Select[object]:
             representative_name.label("representative_name"),
             manager_entity.c.entity_id.label("manager_entity_id"),
             manager_entity.c.canonical_name.label("manager_name"),
+            sa.case(
+                (
+                    sa.and_(
+                        product.c.product_family == "public_fund",
+                        unusable_representative_exists,
+                    ),
+                    "representative_identifier_unavailable",
+                ),
+                else_=None,
+            ).label("document_collection_block_reason"),
         )
         .select_from(
             product.join(
