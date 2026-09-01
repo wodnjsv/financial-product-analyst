@@ -88,3 +88,10 @@ existing streaming corpus pipeline.
   text is now sanitized before canonical offsets, spans, and checksums are
   built. The exact one-target rerun then passed with one 66-page document, 21
   chunks, seven member-Entity bindings, zero failures, and zero retained PDFs.
+- The first complete report exposed 68 remaining
+  `dart_corpus_quality_review_required` dispositions where at least one useful
+  Claim chunk existed but not every requested Claim type was present. This
+  still contradicted ADR-0030's no-chunk-only content failure rule. Partial
+  Claim coverage is now retained as a quality diagnostic rather than a
+  persistence failure; only zero selected chunks produce
+  `approved_section_not_found`.

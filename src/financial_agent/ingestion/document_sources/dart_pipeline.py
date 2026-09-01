@@ -335,7 +335,6 @@ def _report(
         (
             extraction_complete,
             locator_round_trip,
-            required_coverage,
             not excluded_leakage,
             chunk_budget_accepted,
             metadata_complete,

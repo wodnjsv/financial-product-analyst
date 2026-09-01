@@ -141,6 +141,27 @@ def test_pipeline_reports_missing_requested_chunks_with_specific_reason(
     assert raised.value.code == "approved_section_not_found"
 
 
+def test_pipeline_accepts_partial_claim_coverage_when_chunks_exist(
+    tmp_path: Path,
+) -> None:
+    pdf_path = prospectus(tmp_path / "kodex200.pdf")
+    checksum = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+
+    result = process_dart_prospectus(
+        pdf_path,
+        context=pipeline_context(checksum),
+        requested_section_types=frozenset(
+            {SectionType.INVESTMENT_STRATEGY, SectionType.INDEX_METHODOLOGY}
+        ),
+        token_counter=WhitespaceTokenCounter(),
+        target_min=0,
+    )
+
+    assert result.corpus.chunks
+    assert not result.report.required_claim_coverage
+    assert result.report.passed
+
+
 def test_pipeline_is_deterministic_and_rejects_wrong_source_checksum(
     tmp_path: Path,
 ) -> None:
