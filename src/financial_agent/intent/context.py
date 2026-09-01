@@ -7,14 +7,23 @@ from dataclasses import dataclass
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex, UtcDateTime
 from financial_agent.contracts.enums import Cardinality, IntentType
 
-from .draft import ContextLinkHint, IntentFrameDraft, ReferenceHint, SlotMutation
+from .draft import (
+    ContextLinkHint,
+    IntentFrameDraft,
+    IntentFrameDraftV2,
+    IntentResolutionDraftV2,
+    ReferenceHint,
+    SlotMutation,
+)
 from .errors import ResolverContractError
 from .resolution import (
     ResolverBuildManifest,
     ResolutionIssue,
     ValidatedContextLink,
     ValidatedIntentFrame,
+    ValidatedIntentFrameV2,
     ValidatedIntentResolution,
+    ValidatedIntentResolutionV2,
     ValidatedSlotMutation,
     ValidationEvent,
 )
@@ -127,7 +136,7 @@ def validate_context_graph(state: SemanticValidationState) -> ContextValidationS
 def finalize_resolution(
     context_state: ContextValidationState,
     metadata: ResolutionFinalizationMetadata,
-) -> ValidatedIntentResolution:
+) -> ValidatedIntentResolution | ValidatedIntentResolutionV2:
     """Freeze context validation into the richer, immutable internal artifact."""
 
     mutations_by_frame: dict[str, list[ValidatedSlotMutation]] = {}
@@ -149,7 +158,11 @@ def finalize_resolution(
         )
         for frame in context_state.semantic_state.canonical_frames
     )
-    return ValidatedIntentResolution(
+    is_v2 = isinstance(context_state.semantic_state.draft, IntentResolutionDraftV2)
+    if is_v2 and metadata.build_manifest.resolver_schema_version != "2.0":
+        raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+    resolution_type = ValidatedIntentResolutionV2 if is_v2 else ValidatedIntentResolution
+    return resolution_type(
         request_key=metadata.request_key,
         run_id=metadata.run_id,
         dataset_version=metadata.dataset_version,
@@ -507,7 +520,12 @@ def _has_similarity_anchor(frame: IntentFrameDraft) -> bool:
 def _resolution_status(issues: tuple[ResolutionIssue, ...]) -> ResolutionStatus:
     codes = {issue.code for issue in issues}
     active = {ResolutionStatus.RESOLVED}
-    if "SEMANTIC_CONCEPT_UNMAPPED" in codes:
+    if {
+        "SEMANTIC_CONCEPT_UNMAPPED",
+        "SEMANTIC_DOMAIN_UNMAPPED",
+        "SEMANTIC_OPERATION_UNSUPPORTED",
+        "SEMANTIC_CRITICAL_SLOT_MISSING",
+    } & codes:
         active.add(ResolutionStatus.UNMAPPED)
     if "REFERENCE_UNRESOLVED" in codes:
         active.add(ResolutionStatus.CONTEXT_UNRESOLVED)
@@ -520,20 +538,28 @@ def _validated_frame(
     frame: IntentFrameDraft,
     mutations: list[ValidatedSlotMutation] | tuple[ValidatedSlotMutation, ...],
     frame_status: ResolutionStatus,
-) -> ValidatedIntentFrame:
+) -> ValidatedIntentFrame | ValidatedIntentFrameV2:
+    values = {
+        "frame_id": frame.frame_id,
+        "ordinal": frame.ordinal,
+        "frame_status": frame_status,
+        "segment_ids": frame.segment_ids,
+        "evidence_span_ids": frame.evidence_span_ids,
+        "action_choice": frame.action_choice,
+        "product_family_choice": frame.product_family_choice,
+        "entity_type_ids": frame.entity_type_ids,
+        "entity_hint_ids": frame.entity_hint_ids,
+        "slot_assignments": frame.slot_assignments,
+        "produced_result_roles": frame.produced_result_hints,
+        "slot_mutations": tuple(sorted(mutations, key=lambda mutation: mutation.slot_mutation_id)),
+    }
+    if isinstance(frame, IntentFrameDraftV2):
+        return ValidatedIntentFrameV2(
+            **values,
+            semantic_coverage=frame.semantic_coverage,
+        )
     return ValidatedIntentFrame(
-        frame_id=frame.frame_id,
-        ordinal=frame.ordinal,
-        frame_status=frame_status,
-        segment_ids=frame.segment_ids,
-        evidence_span_ids=frame.evidence_span_ids,
-        action_choice=frame.action_choice,
-        product_family_choice=frame.product_family_choice,
-        entity_type_ids=frame.entity_type_ids,
-        entity_hint_ids=frame.entity_hint_ids,
-        slot_assignments=frame.slot_assignments,
-        produced_result_roles=frame.produced_result_hints,
-        slot_mutations=tuple(sorted(mutations, key=lambda mutation: mutation.slot_mutation_id)),
+        **values,
     )
 
 

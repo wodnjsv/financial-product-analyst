@@ -7,11 +7,19 @@ from dataclasses import dataclass
 from financial_agent.contracts.request import RequestContext
 
 from .catalog import SemanticCatalogSnapshot
-from .draft import AxisChoice, EntityHint, IntentFrameDraft, IntentResolutionDraft
+from .draft import (
+    AxisChoice,
+    EntityHint,
+    IntentFrameDraft,
+    IntentFrameDraftV2,
+    IntentResolutionDraft,
+    IntentResolutionDraftV2,
+)
 from .errors import ResolverContractError
 from .normalization import NormalizedRequest
 from .resolution import ResolutionIssue, ValidationEvent
 from .types import ChoiceState, ResolutionStatus, SemanticTag, SlotKind
+from .types import SemanticCoverageReason, SemanticCoverageState
 from .view import ResolverView, ResolverViewEntityCandidate
 
 
@@ -62,6 +70,13 @@ _CONCEPT_SLOTS = frozenset(
         SlotKind.SIMILARITY_ANCHOR,
     }
 )
+_COVERAGE_ISSUE = {
+    SemanticCoverageReason.LEXICAL_OOD: "SEMANTIC_CONCEPT_UNMAPPED",
+    SemanticCoverageReason.DOMAIN_OOD: "SEMANTIC_DOMAIN_UNMAPPED",
+    SemanticCoverageReason.UNSUPPORTED_OPERATION: "SEMANTIC_OPERATION_UNSUPPORTED",
+    SemanticCoverageReason.MISSING_CRITICAL_SEMANTIC: "SEMANTIC_CRITICAL_SLOT_MISSING",
+}
+_COVERAGE_ISSUE_CODES = frozenset(_COVERAGE_ISSUE.values())
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,10 +113,11 @@ def validate_semantics(
     _validate_applicability(draft, catalog, offered.concept_ids, offered.relation_ids)
     _validate_ontology_relations(draft, catalog, offered.relation_ids)
     _validate_literal_types(draft, normalized, view, offered)
+    _validate_v2_semantic_coverage(draft, view)
 
     canonical_frames = tuple(_canonical_frame(frame) for frame in draft.intent_frames)
     issues = _issues(draft)
-    final_tags = derive_semantic_tags(draft, catalog)
+    final_tags = derive_semantic_tags(draft, catalog, normalized=normalized, view=view)
     return SemanticValidationState(
         draft=draft,
         canonical_frames=canonical_frames,
@@ -442,6 +458,49 @@ def _validate_literal_types(
                     raise ResolverContractError("MODEL_INVALID_LITERAL_TYPE")
 
 
+def _validate_v2_semantic_coverage(
+    draft: IntentResolutionDraft, view: ResolverView
+) -> None:
+    if not isinstance(draft, IntentResolutionDraftV2):
+        return
+    if view.build_manifest.resolver_schema_version != "2.0":
+        raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+    evidence_by_id = {item.evidence_id: item for item in view.evidence_candidates}
+    draft_evidence_ids = {span.span_id for span in draft.evidence_spans}
+    for frame in draft.intent_frames:
+        coverage = frame.semantic_coverage[0]
+        if coverage.state is SemanticCoverageState.COVERED:
+            _validate_covered_semantic_slots(frame, evidence_by_id)
+            continue
+        if (
+            coverage.reason is SemanticCoverageReason.NONE
+            or not coverage.evidence_ids
+            or not set(coverage.evidence_ids) <= draft_evidence_ids
+            or not set(coverage.evidence_ids) <= set(evidence_by_id)
+        ):
+            raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+
+
+def _validate_covered_semantic_slots(
+    frame: IntentFrameDraft, evidence_by_id: dict[str, object]
+) -> None:
+    for assignment in frame.slot_assignments:
+        if assignment.slot_kind not in _CONCEPT_SLOTS | {
+            SlotKind.DOCUMENT_TOPIC,
+            SlotKind.RELATION,
+        }:
+            continue
+        offered_ids = {
+            semantic_id
+            for evidence_id in assignment.evidence_span_ids
+            for semantic_id in getattr(
+                evidence_by_id.get(evidence_id), "offered_semantic_ids", ()
+            )
+        }
+        if not set(assignment.value_ids) <= offered_ids:
+            raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+
+
 def _canonical_frame(frame: IntentFrameDraft) -> IntentFrameDraft:
     return frame.model_copy(
         update={
@@ -479,7 +538,11 @@ def _sorted_unique(values: tuple[object, ...]) -> tuple[object, ...]:
 
 
 def derive_semantic_tags(
-    draft: IntentResolutionDraft, catalog: SemanticCatalogSnapshot
+    draft: IntentResolutionDraft,
+    catalog: SemanticCatalogSnapshot,
+    *,
+    normalized: NormalizedRequest | None = None,
+    view: ResolverView | None = None,
 ) -> tuple[SemanticTag, ...]:
     """Return the runtime's deterministic tags for a validated draft shape."""
     tags: set[SemanticTag] = set()
@@ -522,12 +585,63 @@ def derive_semantic_tags(
             and hint.reason_code in _POLICY_REASON_CODES
         ):
             tags.add(hint.semantic_tag)
+    if normalized is not None and view is not None:
+        tags.update(_exact_policy_cue_tags(normalized, view, catalog))
     return tuple(sorted(tags, key=lambda item: item.value))
+
+
+def _exact_policy_cue_tags(
+    normalized: NormalizedRequest,
+    view: ResolverView,
+    catalog: SemanticCatalogSnapshot,
+) -> set[SemanticTag]:
+    evidence = {
+        (
+            item.segment_id,
+            item.start_char,
+            item.end_char,
+            item.text,
+        ): frozenset(item.offered_semantic_ids)
+        for item in view.evidence_candidates
+    }
+    tags: set[SemanticTag] = set()
+    for segment in normalized.segments:
+        for cue in catalog.policy_cues:
+            start = segment.normalized_text.find(cue.surface)
+            while start >= 0:
+                end = start + len(cue.surface)
+                original_start, original_end = segment.to_original_span(start, end)
+                original_text = segment.original_text[original_start:original_end]
+                if (
+                    cue.semantic_tag
+                    in evidence.get(
+                        (
+                            segment.segment_id,
+                            original_start,
+                            original_end,
+                            original_text,
+                        ),
+                        frozenset(),
+                    )
+                ):
+                    tags.add(SemanticTag(cue.semantic_tag))
+                start = segment.normalized_text.find(cue.surface, start + 1)
+    return tags
 
 
 def _issues(draft: IntentResolutionDraft) -> tuple[ResolutionIssue, ...]:
     records: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
     for frame in draft.intent_frames:
+        if isinstance(frame, IntentFrameDraftV2):
+            coverage = frame.semantic_coverage[0]
+            if coverage.state is not SemanticCoverageState.COVERED:
+                records.append(
+                    (
+                        _COVERAGE_ISSUE[coverage.reason],
+                        (frame.frame_id,),
+                        coverage.evidence_ids,
+                    )
+                )
         for choice in (frame.action_choice, frame.product_family_choice):
             if choice.state is ChoiceState.UNMAPPED:
                 records.append(
@@ -558,7 +672,7 @@ def _issues(draft: IntentResolutionDraft) -> tuple[ResolutionIssue, ...]:
 def _resolution_status(issues: tuple[ResolutionIssue, ...]) -> ResolutionStatus:
     codes = {issue.code for issue in issues}
     active_statuses = {ResolutionStatus.RESOLVED}
-    if "SEMANTIC_CONCEPT_UNMAPPED" in codes:
+    if "SEMANTIC_CONCEPT_UNMAPPED" in codes or _COVERAGE_ISSUE_CODES & codes:
         active_statuses.add(ResolutionStatus.UNMAPPED)
     if "REFERENCE_UNRESOLVED" in codes:
         active_statuses.add(ResolutionStatus.CONTEXT_UNRESOLVED)

@@ -12,6 +12,7 @@ from financial_agent.contracts.enums import Cardinality
 from financial_agent.contracts.validation import require_unique_ids
 
 from .draft import ActionChoice, ProductFamilyChoice, SlotAssignment
+from .proposal import FrameSemanticCoverage
 from .types import (
     ContextLinkType,
     ReferenceTargetKind,
@@ -95,6 +96,12 @@ class ValidatedIntentFrame(ContractModel):
         return self
 
 
+class ValidatedIntentFrameV2(ValidatedIntentFrame):
+    semantic_coverage: Annotated[
+        tuple[FrameSemanticCoverage, ...], Field(min_length=1, max_length=1)
+    ]
+
+
 class ValidatedContextLink(ContractModel):
     context_link_id: Identifier
     reference_id: Identifier
@@ -161,4 +168,16 @@ class ValidatedIntentResolution(RuntimeArtifact):
             (event.event_id for event in self.validation_events),
             label="validation events",
         )
+        return self
+
+
+class ValidatedIntentResolutionV2(ValidatedIntentResolution):
+    canonical_frames: Annotated[
+        tuple[ValidatedIntentFrameV2, ...], Field(max_length=16)
+    ]
+
+    @model_validator(mode="after")
+    def validate_v2_provenance(self) -> "ValidatedIntentResolutionV2":
+        if self.build_manifest.resolver_schema_version != "2.0":
+            raise ValueError("v2 validated resolutions require resolver schema version 2.0")
         return self

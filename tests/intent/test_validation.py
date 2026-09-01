@@ -17,17 +17,23 @@ from financial_agent.intent.draft import (
     EntityHint,
     EvidenceSpan,
     IntentFrameDraft,
+    IntentFrameDraftV2,
     IntentResolutionDraft,
+    IntentResolutionDraftV2,
     ProductFamilyChoice,
     SlotAssignment,
 )
+from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
 from financial_agent.intent.errors import ResolverContractError
+from financial_agent.intent.proposal import FrameSemanticCoverage
 from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
 from financial_agent.intent.types import (
     ChoiceState,
     ContextLinkType,
     ResolutionStatus,
+    SemanticCoverageReason,
+    SemanticCoverageState,
     SemanticTag,
     SlotKind,
     SourceRole,
@@ -328,6 +334,300 @@ def _draft_with_entity_hint(
     return draft.model_copy(
         update={"intent_frames": (first, *draft.intent_frames[1:]), "entity_hints": (hint,)}
     )
+
+
+def _v2_draft(
+    draft: IntentResolutionDraft,
+    coverages: tuple[FrameSemanticCoverage, ...],
+) -> IntentResolutionDraftV2:
+    assert len(draft.intent_frames) == len(coverages)
+    return IntentResolutionDraftV2(
+        evidence_spans=draft.evidence_spans,
+        intent_frames=tuple(
+            IntentFrameDraftV2(
+                **frame.model_dump(), semantic_coverage=(coverage,)
+            )
+            for frame, coverage in zip(draft.intent_frames, coverages, strict=True)
+        ),
+        entity_hints=draft.entity_hints,
+        reference_hints=draft.reference_hints,
+        context_link_hints=draft.context_link_hints,
+        slot_mutations=draft.slot_mutations,
+        semantic_flag_hints=draft.semantic_flag_hints,
+        frame_limit_exceeded=draft.frame_limit_exceeded,
+    )
+
+
+def _v2_view(
+    view: ResolverView, evidence: tuple[EvidenceCandidate, ...]
+) -> ResolverView:
+    return view.model_copy(
+        update={
+            "build_manifest": view.build_manifest.model_copy(
+                update={"resolver_schema_version": "2.0"}
+            ),
+            "evidence_candidates": evidence,
+        }
+    )
+
+
+def _coverage(
+    state: SemanticCoverageState,
+    reason: SemanticCoverageReason,
+    evidence_ids: tuple[str, ...] = (),
+) -> FrameSemanticCoverage:
+    return FrameSemanticCoverage(
+        state=state, reason=reason, evidence_ids=evidence_ids
+    )
+
+
+def test_esg_lexical_ood_cannot_finish_resolved(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches a v2 partial lexical OOD frame silently qualifying as resolved."""
+    draft = _v2_draft(
+        validation_inputs.draft,
+        (
+            _coverage(
+                SemanticCoverageState.PARTIAL,
+                SemanticCoverageReason.LEXICAL_OOD,
+                ("span-1",),
+            ),
+            _coverage(SemanticCoverageState.COVERED, SemanticCoverageReason.NONE),
+        ),
+    )
+    view = _v2_view(
+        validation_inputs.view,
+        (
+            EvidenceCandidate(
+                evidence_id="span-1",
+                segment_id="s1",
+                start_char=0,
+                end_char=2,
+                text="국내",
+                source_kinds=(EvidenceSourceKind.SURFACE,),
+                offered_semantic_ids=("aum", "managedBy"),
+            ),
+        ),
+    )
+
+    state = validate_semantics(
+        draft=draft,
+        context=validation_inputs.context,
+        normalized=validation_inputs.normalized,
+        view=view,
+        catalog=validation_inputs.catalog,
+    )
+
+    assert state.resolution_status is ResolutionStatus.UNMAPPED
+    assert [issue.code for issue in state.issues] == ["SEMANTIC_CONCEPT_UNMAPPED"]
+
+
+@pytest.mark.parametrize(
+    ("coverage_state", "reason", "issue_code"),
+    [
+        (
+            SemanticCoverageState.UNMAPPED,
+            SemanticCoverageReason.DOMAIN_OOD,
+            "SEMANTIC_DOMAIN_UNMAPPED",
+        ),
+        (
+            SemanticCoverageState.UNMAPPED,
+            SemanticCoverageReason.UNSUPPORTED_OPERATION,
+            "SEMANTIC_OPERATION_UNSUPPORTED",
+        ),
+        (
+            SemanticCoverageState.PARTIAL,
+            SemanticCoverageReason.MISSING_CRITICAL_SEMANTIC,
+            "SEMANTIC_CRITICAL_SLOT_MISSING",
+        ),
+    ],
+)
+def test_v2_coverage_reason_maps_to_its_blocking_issue(
+    validation_inputs: ValidationInputs,
+    coverage_state: SemanticCoverageState,
+    reason: SemanticCoverageReason,
+    issue_code: str,
+) -> None:
+    """Catches collapsing distinct OOD reasons into a generic issue."""
+    draft = _v2_draft(
+        validation_inputs.draft,
+        (
+            _coverage(coverage_state, reason, ("span-1",)),
+            _coverage(SemanticCoverageState.COVERED, SemanticCoverageReason.NONE),
+        ),
+    )
+    view = _v2_view(
+        validation_inputs.view,
+        (
+            EvidenceCandidate(
+                evidence_id="span-1",
+                segment_id="s1",
+                start_char=0,
+                end_char=2,
+                text="국내",
+                source_kinds=(EvidenceSourceKind.SURFACE,),
+                offered_semantic_ids=("aum", "managedBy"),
+            ),
+        ),
+    )
+
+    state = validate_semantics(draft=draft, **replace(validation_inputs, view=view).rest)
+
+    assert state.resolution_status is ResolutionStatus.UNMAPPED
+    assert [issue.code for issue in state.issues] == [issue_code]
+
+
+def test_covered_semantic_slot_requires_offered_evidence(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches a covered semantic value selected without server-offered evidence."""
+    draft = _v2_draft(
+        validation_inputs.draft,
+        (
+            _coverage(SemanticCoverageState.COVERED, SemanticCoverageReason.NONE),
+            _coverage(SemanticCoverageState.COVERED, SemanticCoverageReason.NONE),
+        ),
+    )
+    view = _v2_view(
+        validation_inputs.view,
+        (
+            EvidenceCandidate(
+                evidence_id="span-1",
+                segment_id="s1",
+                start_char=0,
+                end_char=2,
+                text="국내",
+                source_kinds=(EvidenceSourceKind.SEMANTIC,),
+                offered_semantic_ids=("managedBy",),
+            ),
+        ),
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_INVALID_SEMANTIC_COVERAGE"):
+        validate_semantics(draft=draft, **replace(validation_inputs, view=view).rest)
+
+
+def test_registered_new_combination_remains_covered(
+    validation_inputs: ValidationInputs,
+) -> None:
+    """Catches treating a registered cross-family aggregate as semantic OOD."""
+    draft = _v2_draft(
+        validation_inputs.draft,
+        (
+            _coverage(SemanticCoverageState.COVERED, SemanticCoverageReason.NONE),
+            _coverage(SemanticCoverageState.COVERED, SemanticCoverageReason.NONE),
+        ),
+    )
+    view = _v2_view(
+        validation_inputs.view,
+        (
+            EvidenceCandidate(
+                evidence_id="span-1",
+                segment_id="s1",
+                start_char=0,
+                end_char=2,
+                text="국내",
+                source_kinds=(EvidenceSourceKind.SEMANTIC,),
+                offered_semantic_ids=("aum", "managedBy"),
+            ),
+        ),
+    )
+
+    state = validate_semantics(
+        draft=draft,
+        context=validation_inputs.context,
+        normalized=validation_inputs.normalized,
+        view=view,
+        catalog=validation_inputs.catalog,
+    )
+
+    assert state.resolution_status is ResolutionStatus.RESOLVED
+
+
+@pytest.mark.parametrize(
+    ("question", "evidence_tag", "expected_tag"),
+    [
+        ("매수해줘", "ORDER_EXECUTION", SemanticTag.ORDER_EXECUTION),
+        ("추천해줘", None, None),
+    ],
+)
+def test_exact_policy_cue_enrichment_does_not_depend_on_model_hint(
+    validation_inputs: ValidationInputs,
+    question: str,
+    evidence_tag: str | None,
+    expected_tag: SemanticTag | None,
+) -> None:
+    """Catches a missing model flag removing a bounded policy cue tag."""
+    context = RequestContext(
+        request_key=build_request_key("q-policy", question, "dataset-v1", "1.0"),
+        run_id="run-policy",
+        dataset_version="dataset-v1",
+        producer="test",
+        created_at=datetime(2026, 8, 31, tzinfo=timezone.utc),
+        question_id="q-policy",
+        question=question,
+        segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+        deadline_at=datetime(2026, 8, 31, tzinfo=timezone.utc) + timedelta(seconds=10),
+    )
+    frame = _frame("f1", 0, "domestic_etf").model_copy(
+        update={"normalized_intent_argument": question}
+    )
+    draft = IntentResolutionDraftV2(
+        evidence_spans=(
+            EvidenceSpan(
+                span_id="span-1",
+                segment_id="s1",
+                start_char=0,
+                end_char=len(question),
+                text=question,
+            ),
+        ),
+        intent_frames=(
+            IntentFrameDraftV2(
+                **frame.model_dump(),
+                semantic_coverage=(
+                    _coverage(
+                        SemanticCoverageState.COVERED,
+                        SemanticCoverageReason.NONE,
+                    ),
+                ),
+            ),
+        ),
+        entity_hints=(),
+        reference_hints=(),
+        context_link_hints=(),
+        slot_mutations=(),
+        semantic_flag_hints=(),
+        frame_limit_exceeded=False,
+    )
+    source_kind = (
+        EvidenceSourceKind.POLICY if evidence_tag else EvidenceSourceKind.SURFACE
+    )
+    view = _v2_view(
+        validation_inputs.view,
+        (
+            EvidenceCandidate(
+                evidence_id="span-1",
+                segment_id="s1",
+                start_char=0,
+                end_char=len(question),
+                text=question,
+                source_kinds=(source_kind,),
+                offered_semantic_ids=(evidence_tag,) if evidence_tag else (),
+            ),
+        ),
+    ).model_copy(update={"literal_candidates": ()})
+
+    state = validate_semantics(
+        draft=draft,
+        context=context,
+        normalized=normalize_request(context),
+        view=view,
+        catalog=validation_inputs.catalog,
+    )
+
+    assert (expected_tag in state.final_tags) is (expected_tag is not None)
 
 
 def test_unknown_id_is_contract_failure(validation_inputs: ValidationInputs) -> None:

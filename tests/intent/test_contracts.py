@@ -8,6 +8,7 @@ from financial_agent.intent.resolution import (
     ContractFileHash,
     ResolverBuildManifest,
     ValidatedIntentResolution,
+    ValidatedIntentResolutionV2,
 )
 
 
@@ -159,6 +160,17 @@ def test_v1_draft_schema_and_serialization_exclude_v2_coverage() -> None:
     )
 
 
+def test_v1_validated_resolution_schema_and_serialization_exclude_v2_coverage() -> None:
+    resolution = ValidatedIntentResolution.model_validate_json(
+        json.dumps(valid_validated_resolution_payload())
+    )
+
+    assert "semantic_coverage" not in resolution.model_dump(mode="json")
+    assert "semantic_coverage" not in json.dumps(
+        ValidatedIntentResolution.model_json_schema(), sort_keys=True
+    )
+
+
 def test_v2_draft_requires_exactly_one_semantic_coverage() -> None:
     payload = valid_draft_payload()
     frames = payload["intent_frames"]
@@ -169,6 +181,23 @@ def test_v2_draft_requires_exactly_one_semantic_coverage() -> None:
 
     with pytest.raises(ValidationError):
         IntentResolutionDraftV2.model_validate_json(json.dumps(payload))
+
+
+def test_v2_validated_resolution_requires_v2_manifest_and_one_coverage_per_frame() -> None:
+    payload = valid_validated_resolution_payload()
+    payload["build_manifest"]["resolver_schema_version"] = "2.0"  # type: ignore[index]
+    payload["canonical_frames"] = [
+        {
+            **validated_frame("f1", 0),
+            "semantic_coverage": [
+                {"state": "covered", "reason": "none", "evidence_ids": []}
+            ],
+        }
+    ]
+
+    resolution = ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
+
+    assert resolution.canonical_frames[0].semantic_coverage[0].state.value == "covered"
 
 
 @pytest.mark.parametrize(

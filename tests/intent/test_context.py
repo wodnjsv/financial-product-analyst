@@ -22,12 +22,16 @@ from financial_agent.intent.draft import (
     ContextLinkHint,
     EvidenceSpan,
     IntentFrameDraft,
+    IntentFrameDraftV2,
     IntentResolutionDraft,
+    IntentResolutionDraftV2,
     ProductFamilyChoice,
     ReferenceHint,
     SlotAssignment,
     SlotMutation,
 )
+from financial_agent.intent.proposal import FrameSemanticCoverage
+from financial_agent.intent.resolution import ValidatedIntentResolutionV2
 from financial_agent.intent.errors import ResolverContractError
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
 from financial_agent.intent.types import (
@@ -36,6 +40,8 @@ from financial_agent.intent.types import (
     ReferenceForm,
     ReferenceTargetKind,
     ResolutionStatus,
+    SemanticCoverageReason,
+    SemanticCoverageState,
     Selector,
     SlotKind,
     SlotMutationKind,
@@ -350,6 +356,49 @@ def test_plural_followup_consumes_prior_top_k(context_inputs: ContextInputs) -> 
     assert link.consumer_frame_id == "f2"
     assert resolution.repair_used is False
     assert resolution.invalid_attempt_hashes == ()
+
+
+def test_v2_finalization_preserves_coverage_without_changing_context_validation(
+    context_inputs: ContextInputs,
+) -> None:
+    """Catches v2 coverage being dropped while typed context links remain intact."""
+    covered = FrameSemanticCoverage(
+        state=SemanticCoverageState.COVERED,
+        reason=SemanticCoverageReason.NONE,
+        evidence_ids=(),
+    )
+    first = IntentFrameDraftV2(
+        **_frame("f1", 0, roles=(SourceRole.TOP_K_PRODUCTS,)).model_dump(),
+        semantic_coverage=(covered,),
+    )
+    second = IntentFrameDraftV2(
+        **_frame("f2", 1).model_dump(), semantic_coverage=(covered,)
+    )
+    base = _state(frames=(first, second), references=(_reference(),), links=(_link(),))
+    draft = IntentResolutionDraftV2(
+        evidence_spans=base.draft.evidence_spans,
+        intent_frames=(first, second),
+        entity_hints=base.draft.entity_hints,
+        reference_hints=base.draft.reference_hints,
+        context_link_hints=base.draft.context_link_hints,
+        slot_mutations=base.draft.slot_mutations,
+        semantic_flag_hints=base.draft.semantic_flag_hints,
+        frame_limit_exceeded=base.draft.frame_limit_exceeded,
+    )
+    state = replace(base, draft=draft, canonical_frames=(first, second))
+    metadata = context_inputs.metadata.model_copy(
+        update={
+            "build_manifest": context_inputs.metadata.build_manifest.model_copy(
+                update={"resolver_schema_version": "2.0"}
+            )
+        }
+    )
+
+    resolution = finalize_resolution(validate_context_graph(state), metadata)
+
+    assert isinstance(resolution, ValidatedIntentResolutionV2)
+    assert resolution.canonical_frames[0].semantic_coverage == (covered,)
+    assert resolution.context_links[0].link_type is ContextLinkType.CONSUME_RESULT_SET
 
 
 @pytest.mark.parametrize(
