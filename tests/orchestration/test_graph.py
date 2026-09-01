@@ -1,13 +1,19 @@
 from pathlib import Path
 
+import pytest
+
 from financial_agent.contracts.canonical import canonical_json_bytes
 from financial_agent.contracts.enums import Capability, IntentType
 from financial_agent.contracts.values import decode_contract_value
 from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.types import SlotKind
+from financial_agent.orchestration.graph import (
+    ExecutionGraphCompiler,
+    GraphCompilationError,
+)
 from financial_agent.planning.compiler import QueryPlanCompiler
 from financial_agent.planning.contracts import QueryPlanCompilation
 from financial_agent.planning.registry import load_planning_registry
-from financial_agent.orchestration.graph import ExecutionGraphCompiler
 
 from tests.planning.fixtures import (
     cross_family_resolution,
@@ -16,7 +22,6 @@ from tests.planning.fixtures import (
     slot,
     view,
 )
-from financial_agent.intent.types import SlotKind
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -86,6 +91,32 @@ def test_graph_compilation_is_byte_deterministic() -> None:
     second = graph_compiler().compile(compilation)
 
     assert canonical_json_bytes(first) == canonical_json_bytes(second)
+
+
+def test_graph_rejects_compilation_primitive_or_capability_drift() -> None:
+    """Catches manifest work being omitted after the compiler boundary."""
+    compiled = planning_compiler().compile(resolution(), view())
+
+    primitive_drift = compiled.model_copy(
+        update={
+            "primitive_ids": (*compiled.primitive_ids, "compare-products"),
+        }
+    )
+    with pytest.raises(GraphCompilationError, match="PRIMITIVE_SET_MISMATCH"):
+        graph_compiler().compile(primitive_drift)
+
+    assert compiled.query_plan is not None
+    plan = compiled.query_plan.model_copy(
+        update={
+            "requested_capabilities": (
+                *compiled.query_plan.requested_capabilities,
+                Capability.COMPARISON,
+            )
+        }
+    )
+    capability_drift = compiled.model_copy(update={"query_plan": plan})
+    with pytest.raises(GraphCompilationError, match="CAPABILITY_SET_MISMATCH"):
+        graph_compiler().compile(capability_drift)
 
 
 def test_graph_compiler_does_not_require_subtasks_to_be_topologically_ordered() -> None:

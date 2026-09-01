@@ -9,7 +9,12 @@ from typing import Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from financial_agent.contracts.enums import Capability, IntentType, ResultShape
+from financial_agent.contracts.enums import (
+    Capability,
+    IntentType,
+    ResultShape,
+    ResultType,
+)
 
 
 REGISTRY_PATH = Path("config/planning/query-plan-registry.v1.json")
@@ -25,7 +30,7 @@ class PrimitiveDefinition(_StrictModel):
     capability: Capability
     required_slots: tuple[str, ...]
     parameter_ids: tuple[str, ...]
-    result_type: str = Field(min_length=1)
+    result_type: ResultType
     required_evidence_fields: tuple[str, ...]
     budget_ms: int = Field(gt=0, le=55_000)
 
@@ -74,6 +79,12 @@ def load_planning_registry(project_root: Path) -> PlanningRegistry:
             raise ValueError(f"unknown primitive: {sorted(unknown)}")
         if archetype.min_family_count > archetype.max_family_count:
             raise ValueError("invalid archetype family count")
+        for primitive_id in archetype.primitive_ids:
+            primitive = primitives[primitive_id]
+            if not set(primitive.action_ids) & set(archetype.action_ids):
+                raise ValueError("archetype primitive action is incompatible")
+            if not set(primitive.required_slots) <= set(archetype.required_slots):
+                raise ValueError("archetype omits primitive required slots")
     canonical = json.dumps(
         payload.model_dump(mode="json"),
         ensure_ascii=False,

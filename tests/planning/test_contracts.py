@@ -73,8 +73,14 @@ def compilation_payload(route: CompilationRoute) -> dict[str, object]:
         "resolution_id": "resolution-1",
         "route": route,
         "query_plan": None if route is CompilationRoute.ABSTAIN else query_plan(),
-        "matched_archetype_id": None,
-        "primitive_ids": (),
+        "matched_archetype_id": (
+            "lookup.single-family.v1"
+            if route is CompilationRoute.FAST
+            else None
+        ),
+        "primitive_ids": (
+            () if route is CompilationRoute.ABSTAIN else ("lookup-products",)
+        ),
         "applied_default_ids": (),
         "lowering_records": (),
         "blocking_issues": (
@@ -109,6 +115,13 @@ def test_abstain_forbids_query_plan_and_requires_blocking_issue() -> None:
     with pytest.raises(ValidationError, match="abstain requires blocking issue"):
         QueryPlanCompilation(**payload)
 
+    payload["blocking_issues"] = (
+        CompilationIssue(code="POLICY_BLOCKED", related_ids=("frame-1",)),
+    )
+    payload["primitive_ids"] = ("lookup-products",)
+    with pytest.raises(ValidationError, match="cannot select executable"):
+        QueryPlanCompilation(**payload)
+
 
 def test_lowering_source_is_unique_and_query_plan_pins_match() -> None:
     """Catches duplicated provenance and a plan replayed under another dataset."""
@@ -127,4 +140,18 @@ def test_lowering_source_is_unique_and_query_plan_pins_match() -> None:
         update={"dataset_version": "dataset-v2"}
     )
     with pytest.raises(ValidationError, match="query plan pins must match compilation"):
+        QueryPlanCompilation(**payload)
+
+
+def test_executable_route_requires_primitives_and_forbids_blocking_issues() -> None:
+    payload = compilation_payload(CompilationRoute.COMPOSE)
+    payload["primitive_ids"] = ()
+    with pytest.raises(ValidationError, match="requires primitives"):
+        QueryPlanCompilation(**payload)
+
+    payload["primitive_ids"] = ("lookup-products",)
+    payload["blocking_issues"] = (
+        CompilationIssue(code="SHOULD_NOT_COEXIST", related_ids=()),
+    )
+    with pytest.raises(ValidationError, match="cannot carry blocking"):
         QueryPlanCompilation(**payload)

@@ -145,7 +145,20 @@ class QueryPlanCompiler:
         selected: list[str] = []
         for frame in resolution.canonical_frames:
             action = frame.action_choice.selected_ids[0]
-            selected.extend(_ACTION_PRIMITIVES[action])
+            if (
+                action is IntentType.RANK
+                and len(frame.product_family_choice.selected_ids) > 1
+            ):
+                selected.extend(
+                    (
+                        "lookup-products",
+                        "check-comparability",
+                        "normalize-values",
+                        "rank-products",
+                    )
+                )
+            else:
+                selected.extend(_ACTION_PRIMITIVES[action])
             kinds = {item.slot_kind for item in frame.slot_assignments}
             if SlotKind.RELATION in kinds:
                 selected.append("traverse-relations")
@@ -294,6 +307,10 @@ class QueryPlanCompiler:
             if explore
             else InitialAnswerability.REQUIRES_NORMALIZATION
             if SemanticTag.NORMALIZATION_REQUIRED in resolution.final_tags
+            or any(
+                len(frame.product_family_choice.selected_ids) > 1
+                for frame in resolution.canonical_frames
+            )
             else InitialAnswerability.SUPPORTED
         )
         return QueryPlan(

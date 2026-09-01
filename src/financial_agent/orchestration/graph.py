@@ -91,6 +91,13 @@ class ExecutionGraphCompiler:
             payload["depends_on"] = _unique((*payload["depends_on"], upstream))
 
         tasks = tuple(ExecutionTask(**item) for item in task_payloads)
+        used_primitive_ids = {
+            self._primitive_id(item.operation_id, item.subtask_id) for item in tasks
+        }
+        if used_primitive_ids != set(compilation.primitive_ids):
+            raise GraphCompilationError("COMPILATION_PRIMITIVE_SET_MISMATCH")
+        if {item.capability for item in tasks} != set(plan.requested_capabilities):
+            raise GraphCompilationError("PLAN_CAPABILITY_SET_MISMATCH")
         critical_path = _critical_path(tasks)
         total_budget_ms = sum(
             next(item.budget_ms for item in tasks if item.task_id == task_id)

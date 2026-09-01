@@ -46,3 +46,26 @@ def test_registry_rejects_duplicate_ids(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="duplicate primitive"):
         load_planning_registry(tmp_path)
+
+
+def test_registry_rejects_invalid_result_type_and_incompatible_archetype(
+    tmp_path: Path,
+) -> None:
+    payload = json.loads(
+        (PROJECT_ROOT / "config/planning/query-plan-registry.v1.json").read_text()
+    )
+    payload["primitives"][0]["result_type"] = "invented-result"
+    config_dir = tmp_path / "config" / "planning"
+    config_dir.mkdir(parents=True)
+    path = config_dir / "query-plan-registry.v1.json"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="invalid planning registry"):
+        load_planning_registry(tmp_path)
+
+    payload = json.loads(
+        (PROJECT_ROOT / "config/planning/query-plan-registry.v1.json").read_text()
+    )
+    payload["archetypes"][0]["primitive_ids"] = ["compare-products"]
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="action is incompatible"):
+        load_planning_registry(tmp_path)

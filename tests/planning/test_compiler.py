@@ -153,6 +153,25 @@ def test_cross_family_rank_keeps_comparability_and_normalization_operations() ->
         assert "family:overseas_etf" in operation.parameter_ids
 
 
+def test_cross_family_rank_without_tag_composes_the_same_safe_primitives() -> None:
+    """Catches a missing derived tag bypassing cross-family normalization."""
+    source = cross_family_resolution().model_copy(update={"final_tags": ()})
+
+    result = compiler().compile(source, view())
+
+    assert result.route is CompilationRoute.COMPOSE
+    assert result.query_plan is not None
+    assert result.primitive_ids == (
+        "lookup-products",
+        "check-comparability",
+        "normalize-values",
+        "rank-products",
+    )
+    assert result.query_plan.initial_answerability is (
+        InitialAnswerability.REQUIRES_NORMALIZATION
+    )
+
+
 @pytest.mark.parametrize(
     ("action", "assignments", "tags", "expected"),
     (

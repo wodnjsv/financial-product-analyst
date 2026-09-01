@@ -58,8 +58,19 @@ class QueryPlanCompilation(RuntimeArtifact):
                 raise ValueError("abstain cannot carry query plan")
             if not self.blocking_issues:
                 raise ValueError("abstain requires blocking issue")
+            if self.primitive_ids or self.matched_archetype_id is not None:
+                raise ValueError("abstain cannot select executable registry entries")
+        elif self.blocking_issues:
+            raise ValueError("executable route cannot carry blocking issues")
         if self.route is CompilationRoute.FAST and self.matched_archetype_id is None:
             raise ValueError("fast route requires matched archetype")
+        if (
+            self.route is not CompilationRoute.FAST
+            and self.matched_archetype_id is not None
+        ):
+            raise ValueError("only fast route may select an archetype")
+        if self.route is not CompilationRoute.ABSTAIN and not self.primitive_ids:
+            raise ValueError("executable route requires primitives")
         require_unique_ids(self.primitive_ids, label="primitive IDs")
         require_unique_ids(self.applied_default_ids, label="default IDs")
         source_ids = tuple(item.source_id for item in self.lowering_records)
