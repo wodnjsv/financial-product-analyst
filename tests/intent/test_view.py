@@ -22,6 +22,7 @@ from financial_agent.intent.literals import extract_literals
 from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
+    AxisDefinition,
     CANDIDATE_POLICY_VERSION,
     NORMALIZER_VERSION,
     PROMPT_VERSION,
@@ -134,6 +135,20 @@ def test_view_projects_sorted_axes_evidence_and_normalizer_references(
     ]
 
 
+def test_view_rejects_incomplete_axis_projection(
+    resolver_inputs: dict[str, object],
+) -> None:
+    """Catches a model-facing view missing one registered runtime axis."""
+    view = build_resolver_view(**resolver_inputs)
+
+    with pytest.raises(ValidationError, match="axis definitions must exactly match"):
+        _rebuild_view(
+            view,
+            view.entity_candidates,
+            axis_definitions=view.axis_definitions[:-1],
+        )
+
+
 def test_view_rejects_dataset_manifest_mismatch(
     resolver_inputs: dict[str, object],
 ) -> None:
@@ -238,6 +253,8 @@ def test_view_retains_exact_entity_candidates_before_truncating_fuzzy_candidates
 def _rebuild_view(
     view: ResolverView,
     entity_candidates: tuple[ResolverViewEntityCandidateGroup, ...],
+    *,
+    axis_definitions: tuple[AxisDefinition, ...] | None = None,
 ) -> ResolverView:
     return ResolverView(
         build_manifest=view.build_manifest,
@@ -249,7 +266,9 @@ def _rebuild_view(
         relation_definitions=view.relation_definitions,
         literal_candidates=view.literal_candidates,
         entity_candidates=entity_candidates,
-        axis_definitions=view.axis_definitions,
+        axis_definitions=(
+            view.axis_definitions if axis_definitions is None else axis_definitions
+        ),
         evidence_candidates=view.evidence_candidates,
         reference_candidates=view.reference_candidates,
     )

@@ -187,8 +187,9 @@ def _add_named_entity_evidence(
         ):
             continue
         segment = segments[mention.segment_id]
-        start_char = segment.original_text.find(mention.text)
-        if start_char >= 0:
+        occurrences = _occurrences(segment.original_text, mention.text)
+        if len(occurrences) == 1:
+            start_char = occurrences[0]
             builder.add(
                 segment_id=mention.segment_id,
                 start_char=start_char,
@@ -196,6 +197,15 @@ def _add_named_entity_evidence(
                 text=mention.text,
                 source_kind=EvidenceSourceKind.ENTITY,
             )
+
+
+def _occurrences(text: str, needle: str) -> tuple[int, ...]:
+    occurrences: list[int] = []
+    start = text.find(needle)
+    while start >= 0:
+        occurrences.append(start)
+        start = text.find(needle, start + 1)
+    return tuple(occurrences)
 
 
 def _add_policy_evidence(

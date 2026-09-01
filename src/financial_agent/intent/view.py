@@ -176,9 +176,9 @@ class ResolverView(ContractModel):
     relation_definitions: tuple[ResolverViewRelationDefinition, ...]
     literal_candidates: tuple[ResolverViewLiteralCandidate, ...]
     entity_candidates: tuple[ResolverViewEntityCandidateGroup, ...]
-    axis_definitions: tuple[AxisDefinition, ...] = ()
-    evidence_candidates: tuple[EvidenceCandidate, ...] = ()
-    reference_candidates: tuple[ResolverViewReferenceCandidate, ...] = ()
+    axis_definitions: tuple[AxisDefinition, ...]
+    evidence_candidates: tuple[EvidenceCandidate, ...]
+    reference_candidates: tuple[ResolverViewReferenceCandidate, ...]
 
     @model_validator(mode="after")
     def validate_entity_candidate_bounds(self) -> "ResolverView":
@@ -188,6 +188,18 @@ class ResolverView(ContractModel):
             > MAX_ENTITY_CANDIDATES
         ):
             raise ValueError("RESOLVER_VIEW_LIMIT_EXCEEDED")
+        axis_pairs = tuple(
+            (definition.axis_kind, definition.axis_id)
+            for definition in self.axis_definitions
+        )
+        expected_axis_pairs = {
+            ("product_family", item.value) for item in ProductFamily
+        } | {("action", item.value) for item in IntentType}
+        if (
+            len(axis_pairs) != len(expected_axis_pairs)
+            or set(axis_pairs) != expected_axis_pairs
+        ):
+            raise ValueError("axis definitions must exactly match runtime axes")
         return self
 
 

@@ -4,8 +4,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from financial_agent.contracts.canonical import build_request_key
-from financial_agent.contracts.request import RequestContext, Segment
-from financial_agent.intent.candidates import generate_semantic_candidates
+from financial_agent.contracts.request import (
+    NamedEntityMention,
+    RequestContext,
+    Segment,
+)
+from financial_agent.intent.candidates import (
+    EntityCandidate,
+    generate_semantic_candidates,
+)
 from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.evidence import build_evidence_candidates
 from financial_agent.intent.literals import extract_literals
@@ -15,7 +22,11 @@ from financial_agent.intent.normalization import normalize_request
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def inputs_for(question: str) -> dict[str, object]:
+def inputs_for(
+    question: str,
+    *,
+    named_entities: tuple[NamedEntityMention, ...] = (),
+) -> dict[str, object]:
     created_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
     context = RequestContext(
         request_key=build_request_key("q-evidence", question, "dataset-v1", "1.0"),
@@ -26,6 +37,7 @@ def inputs_for(question: str) -> dict[str, object]:
         question_id="q-evidence",
         question=question,
         segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+        named_entities=named_entities,
         deadline_at=created_at + timedelta(seconds=10),
     )
     catalog = load_catalog(PROJECT_ROOT)
@@ -79,3 +91,37 @@ def test_policy_cue_is_exact_original_span_evidence() -> None:
     assert item.source_kinds == ("policy",)
     assert item.offered_semantic_ids == ("PERSONALIZED_ADVICE",)
     assert question[item.start_char : item.end_char] == item.text
+
+
+def test_duplicate_named_entity_text_is_not_assigned_an_ambiguous_coordinate() -> None:
+    """Catches assigning entity evidence to the first repeated source occurrence."""
+    inputs = inputs_for(
+        "KODEX, KODEX",
+        named_entities=(
+            NamedEntityMention(
+                mention_id="named-kodex",
+                segment_id="s1",
+                text="KODEX",
+                expected_entity_types=("ETF",),
+            ),
+        ),
+    )
+    inputs["entity_candidates"] = {
+        "named-kodex": (
+            EntityCandidate(
+                entity_id="entity-kodex",
+                canonical_name="KODEX 200",
+                ontology_type_ids=("DomesticETF", "ETF", "FinancialProduct"),
+                product_family="domestic_etf",
+                match_kind="exact_name",
+                score=1_000_000,
+                source_id="entity-kodex",
+            ),
+        )
+    }
+
+    evidence = build_evidence_candidates(**inputs)
+    kodex = [item for item in evidence if item.text == "KODEX"]
+
+    assert [(item.start_char, item.end_char) for item in kodex] == [(0, 5), (7, 12)]
+    assert all(item.source_kinds == ("surface",) for item in kodex)

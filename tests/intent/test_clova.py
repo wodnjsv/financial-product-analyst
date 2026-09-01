@@ -22,6 +22,8 @@ from financial_agent.intent.view import (
     ResolverViewSemanticCandidateGroup,
 )
 
+from .view_fixtures import complete_axis_definitions
+
 
 def valid_draft_json() -> str:
     return json.dumps(
@@ -84,6 +86,9 @@ def make_prompt():
             ),
         ),
         relation_definitions=(), literal_candidates=(), entity_candidates=(),
+        axis_definitions=complete_axis_definitions(),
+        evidence_candidates=(),
+        reference_candidates=(),
     )
     return build_prompt(context, view)
 

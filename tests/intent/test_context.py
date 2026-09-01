@@ -45,6 +45,8 @@ from financial_agent.intent.validation import SemanticValidationState
 from financial_agent.intent.validation import validate_semantics
 from financial_agent.intent.view import ActiveDatasetPin, ResolverView
 
+from .view_fixtures import complete_axis_definitions
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -318,6 +320,9 @@ def _semantic_korean_state(
         relation_definitions=(),
         literal_candidates=(),
         entity_candidates=(),
+        axis_definitions=complete_axis_definitions(),
+        evidence_candidates=(),
+        reference_candidates=(),
     )
     return (
         validate_semantics(

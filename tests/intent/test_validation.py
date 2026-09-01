@@ -47,6 +47,8 @@ from financial_agent.intent.view import (
     ResolverViewRelationDefinition,
 )
 
+from .view_fixtures import complete_axis_definitions
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -270,6 +272,9 @@ def validation_inputs() -> ValidationInputs:
                 ),
             ),
         ),
+        axis_definitions=complete_axis_definitions(),
+        evidence_candidates=(),
+        reference_candidates=(),
     )
     return ValidationInputs(
         draft=draft,
