@@ -148,6 +148,7 @@ def test_one_surface_segment_can_produce_two_frames() -> None:
 
     assert [item.frame_id for item in draft.intent_frames] == ["f1", "f2"]
     assert {item.segment_ids for item in draft.intent_frames} == {("s1",)}
+    assert all(item.semantic_coverage == () for item in draft.intent_frames)
 
 
 @pytest.mark.parametrize(

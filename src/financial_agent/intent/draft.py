@@ -19,6 +19,7 @@ from .types import (
     IntentType,
     ProductFamily,
 )
+from .proposal import FrameSemanticCoverage
 
 OptionalIdentifier = Annotated[tuple[Identifier, ...], Field(max_length=1)]
 OptionalSelector = Annotated[tuple[Selector, ...], Field(max_length=1)]
@@ -127,6 +128,9 @@ class IntentFrameDraft(ContractModel):
     entity_hint_ids: tuple[Identifier, ...]
     slot_assignments: tuple[SlotAssignment, ...]
     produced_result_hints: tuple[SourceRole, ...]
+    semantic_coverage: Annotated[
+        tuple[FrameSemanticCoverage, ...], Field(max_length=1)
+    ] = ()
 
     @model_validator(mode="after")
     def validate_slot_assignments(self) -> "IntentFrameDraft":
