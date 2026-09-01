@@ -154,7 +154,8 @@ async def test_clova_adapter_sends_one_structured_request() -> None:
     assert body['maxCompletionTokens'] == 4096
     assert body['temperature'] == 0.0
     assert body['repetitionPenalty'] == 1.0
-    assert 'thinking' not in body
+    assert body['thinking'] == {'effort': 'none'}
+    assert body['seed'] == 42
     assert 'tools' not in body
     assert result.content == valid_draft_json()
     assert result.usage == {'promptTokens': 10, 'completionTokens': 20, 'totalTokens': 30}

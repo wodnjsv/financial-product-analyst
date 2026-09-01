@@ -31,8 +31,8 @@ from .resolution import ContractFileHash, ResolverBuildManifest
 NORMALIZER_VERSION = "intent-normalizer-v1"
 CANDIDATE_POLICY_VERSION = "intent-candidate-v1"
 RESOLVER_SCHEMA_VERSION = "1.0"
-PROMPT_VERSION = "intent-resolver-ko-v1"
-ADAPTER_VERSION = "clova-chat-v3-structured-v1"
+PROMPT_VERSION = "intent-resolver-ko-v2"
+ADAPTER_VERSION = "clova-chat-v3-structured-v2"
 
 MAX_CANDIDATES_PER_MENTION = 5
 MAX_SEMANTIC_CANDIDATES = 80

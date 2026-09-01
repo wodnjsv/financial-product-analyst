@@ -67,6 +67,8 @@ class ClovaStructuredOutputAdapter:
                         "maxCompletionTokens": self._config.max_completion_tokens,
                         "temperature": self._config.temperature,
                         "repetitionPenalty": self._config.repetition_penalty,
+                        "thinking": {"effort": "none"},
+                        "seed": 42,
                         "responseFormat": {
                             "type": "json",
                             "schema": envelope.response_schema,

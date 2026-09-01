@@ -238,6 +238,7 @@ class IntentResolverService:
             draft = IntentResolutionDraft.model_validate_json(content)
         except ValidationError:
             raise ResolverContractError(MODEL_SCHEMA_INVALID) from None
+        draft = _normalize_unique_evidence_offsets(draft, prepared.context)
 
         semantic_state = validate_semantics(
             draft,
@@ -358,6 +359,40 @@ def _reject_non_strict_json(content: str) -> None:
             raise ValueError
     except (json.JSONDecodeError, TypeError, ValueError):
         raise ResolverContractError(MODEL_SCHEMA_INVALID) from None
+
+
+def _normalize_unique_evidence_offsets(
+    draft: IntentResolutionDraft, context: RequestContext
+) -> IntentResolutionDraft:
+    segments = {segment.segment_id: segment.text for segment in context.segments}
+    normalized_spans = []
+    for span in draft.evidence_spans:
+        source = segments.get(span.segment_id)
+        if (
+            source is None
+            or not span.text
+            or (
+                0 <= span.start_char < span.end_char <= len(source)
+                and source[span.start_char : span.end_char] == span.text
+            )
+        ):
+            normalized_spans.append(span)
+            continue
+        starts = tuple(
+            index
+            for index in range(len(source))
+            if source.startswith(span.text, index)
+        )
+        if len(starts) == 1:
+            start = starts[0]
+            normalized_spans.append(
+                span.model_copy(
+                    update={"start_char": start, "end_char": start + len(span.text)}
+                )
+            )
+        else:
+            normalized_spans.append(span)
+    return draft.model_copy(update={"evidence_spans": tuple(normalized_spans)})
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:

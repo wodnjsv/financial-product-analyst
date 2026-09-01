@@ -313,6 +313,40 @@ async def test_resolution_metadata_and_ids_are_deterministic(
 
 
 @pytest.mark.asyncio
+async def test_unique_evidence_text_repairs_only_model_offsets(
+    service_fixture: ServiceFixture,
+) -> None:
+    prepared = await service_fixture.service.prepare(service_fixture.context)
+    payload = json.loads(_valid_draft_json())
+    payload['evidence_spans'][0]['start_char'] = 1
+    payload['evidence_spans'][0]['end_char'] = 4
+
+    resolution = service_fixture.service.validate_response(
+        prepared, json.dumps(payload, ensure_ascii=False)
+    )
+
+    payload['evidence_spans'][0]['start_char'] = 0
+    payload['evidence_spans'][0]['end_char'] = 3
+    assert resolution.draft_hash == canonical_sha256(payload)
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_evidence_text_does_not_repair_model_offsets(
+    service_fixture: ServiceFixture,
+) -> None:
+    context = _context('AUM AUM 알려줘')
+    prepared = await service_fixture.service.prepare(context)
+    payload = json.loads(_valid_draft_json())
+    payload['evidence_spans'][0]['start_char'] = 1
+    payload['evidence_spans'][0]['end_char'] = 4
+
+    with pytest.raises(ResolverContractError, match='LITERAL_SPAN_MISMATCH'):
+        service_fixture.service.validate_response(
+            prepared, json.dumps(payload, ensure_ascii=False)
+        )
+
+
+@pytest.mark.asyncio
 async def test_telemetry_contains_only_safe_stage_metrics(
     service_fixture: ServiceFixture,
 ) -> None:

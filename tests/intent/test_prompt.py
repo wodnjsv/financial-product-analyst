@@ -174,3 +174,79 @@ def test_response_schema_uses_an_empty_array_when_no_dynamic_id_is_offered() -> 
 
     assert selector_literal_candidate_id['maxItems'] == 0
     assert selector_literal_candidate_id['items'] == {'type': 'string'}
+
+
+def test_response_schema_only_allows_offered_entity_mention_ids() -> None:
+    schema = build_clova_response_schema(make_view())
+    entity_hint = schema['properties']['entity_hints']['items']['properties']
+    reference_hint = schema['properties']['reference_hints']['items']['properties']
+
+    assert entity_hint['mention_id'] == {
+        'type': 'array',
+        'items': {'type': 'string', 'enum': ['mention-entity-1']},
+        'maxItems': 1,
+    }
+    assert reference_hint['candidate_target_mention_ids'] == {
+        'type': 'array',
+        'items': {
+            'type': 'string',
+            'enum': ['mention-1', 'mention-entity-1'],
+        },
+    }
+
+
+def test_response_schema_closes_entity_mention_ids_when_none_are_offered() -> None:
+    schema = build_clova_response_schema(
+        make_view().model_copy(update={'entity_candidates': (), 'semantic_candidates': ()})
+    )
+    entity_hint = schema['properties']['entity_hints']['items']['properties']
+    reference_hint = schema['properties']['reference_hints']['items']['properties']
+
+    assert entity_hint['mention_id'] == {
+        'type': 'array',
+        'items': {'type': 'string'},
+        'maxItems': 0,
+    }
+    assert reference_hint['candidate_target_mention_ids'] == {
+        'type': 'array',
+        'items': {'type': 'string'},
+        'maxItems': 0,
+    }
+
+
+def test_response_schema_uses_stable_reason_codes() -> None:
+    schema = build_clova_response_schema(make_view())
+    frame = schema['properties']['intent_frames']['items']['properties']
+    expected = {
+        'type': 'string',
+        'enum': ['ambiguous', 'explicit', 'implicit', 'policy_explicit', 'unmapped'],
+    }
+
+    assert frame['action_choice']['properties']['reason_code'] == expected
+    assert frame['product_family_choice']['properties']['reason_code'] == expected
+    assert schema['properties']['semantic_flag_hints']['items']['properties']['reason_code'] == expected
+
+
+def test_response_schema_restricts_value_ids_by_slot_kind() -> None:
+    schema = build_clova_response_schema(make_view())
+    slot_schema = schema['properties']['intent_frames']['items']['properties'][
+        'slot_assignments'
+    ]['items']
+    variants = {
+        item['properties']['slot_kind']['enum'][0]: item['properties']['value_ids']
+        for item in slot_schema['anyOf']
+    }
+
+    assert variants['entity']['items']['enum'] == ['entity-kodex']
+    assert variants['metric']['items']['enum'] == ['aum']
+    assert variants['filter_value']['items']['enum'] == ['literal-1']
+    assert variants['result_limit'] == {
+        'type': 'array',
+        'items': {'type': 'string'},
+        'maxItems': 0,
+    }
+    assert variants['unit'] == {
+        'type': 'array',
+        'items': {'type': 'string'},
+        'maxItems': 0,
+    }
