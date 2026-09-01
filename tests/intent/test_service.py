@@ -17,11 +17,17 @@ from financial_agent.contracts.request import (
 from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.clova import ModelInvocationResult
 from financial_agent.intent.errors import (
+    MODEL_INVALID_FRAME_REFERENCE,
+    MODEL_INVALID_SEMANTIC_COVERAGE,
+    MODEL_PROPOSAL_SCHEMA_INVALID,
     MODEL_RATE_LIMITED,
-    MODEL_SCHEMA_INVALID,
+    MODEL_UNKNOWN_EVIDENCE_ID,
     ModelInvocationError,
     ResolverContractError,
 )
+from financial_agent.intent.assembler import assemble_proposal
+from financial_agent.intent.proposal import IntentResolutionProposalV2
+from financial_agent.intent.resolution import ValidatedIntentResolutionV2
 from financial_agent.intent.service import (
     IntentResolverService,
     build_repair_envelope,
@@ -42,9 +48,6 @@ from financial_agent.intent.view import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 8, 31, 1, 2, 3, tzinfo=UTC)
 USAGE = {"promptTokens": 11, "completionTokens": 7, "totalTokens": 18}
-MODEL_UNKNOWN_ID = "MODEL_UNKNOWN_ID"
-
-
 def _context(
     question: str = "AUM 알려줘",
     *,
@@ -77,54 +80,50 @@ def _context(
     )
 
 
-def _valid_draft_json() -> str:
+def _valid_proposal_json() -> str:
     return json.dumps(
         {
-            "evidence_spans": [
+            "proposal_schema_version": "2.0",
+            "frames": [
                 {
-                    "span_id": "span-aum",
-                    "segment_id": "s1",
-                    "start_char": 0,
-                    "end_char": 3,
-                    "text": "AUM",
-                }
-            ],
-            "intent_frames": [
-                {
-                    "frame_id": "frame-1",
-                    "ordinal": 0,
                     "segment_ids": ["s1"],
-                    "evidence_span_ids": ["span-aum"],
-                    "normalized_intent_argument": "AUM lookup",
                     "action_choice": {
                         "state": "selected",
                         "selected_ids": ["lookup"],
-                        "evidence_span_ids": ["span-aum"],
+                        "evidence_ids": [
+                            "evidence-a4208ee0fa533668a8a940c689a1679fe884c1eb625111b2f460a419083120b6"
+                        ],
                         "reason_code": "explicit",
                     },
                     "product_family_choice": {
                         "state": "selected",
                         "selected_ids": ["domestic_etf"],
-                        "evidence_span_ids": ["span-aum"],
+                        "evidence_ids": [
+                            "evidence-b06c0195af8f0cabcfc40852f3f891cb3fca54b4498f59473de4db364e1fc75c"
+                        ],
                         "reason_code": "explicit",
                     },
-                    "entity_type_ids": ["FinancialProduct"],
-                    "entity_hint_ids": [],
+                    "semantic_coverage": {
+                        "state": "covered",
+                        "reason": "none",
+                        "evidence_ids": [],
+                    },
                     "slot_assignments": [
                         {
-                            "slot_assignment_id": "slot-aum",
                             "slot_kind": "metric",
                             "value_ids": ["aum"],
-                            "evidence_span_ids": ["span-aum"],
+                            "evidence_ids": [
+                                "evidence-b06c0195af8f0cabcfc40852f3f891cb3fca54b4498f59473de4db364e1fc75c"
+                            ],
                             "reason_code": "explicit",
                         }
                     ],
+                    "entity_hints": [],
                     "produced_result_hints": ["candidates"],
                 }
             ],
-            "entity_hints": [],
-            "reference_hints": [],
-            "context_link_hints": [],
+            "references": [],
+            "context_links": [],
             "slot_mutations": [],
             "semantic_flag_hints": [],
             "frame_limit_exceeded": False,
@@ -137,7 +136,7 @@ def _valid_draft_json() -> str:
 
 class FakeAdapter:
     def __init__(self, content: str = "") -> None:
-        self.content = content or _valid_draft_json()
+        self.content = content or _valid_proposal_json()
         self.call_count = 0
         self.timeouts: list[float] = []
         self.failure: ModelInvocationError | None = None
@@ -198,12 +197,14 @@ def service_fixture() -> ServiceFixture:
 
 
 @pytest.mark.asyncio
-async def test_resolve_once_calls_model_exactly_once(
+async def test_resolve_once_parses_proposal_then_assembles_once(
     service_fixture: ServiceFixture,
 ) -> None:
     result = await service_fixture.service.resolve_once(service_fixture.context)
 
     assert service_fixture.adapter.call_count == 1
+    assert isinstance(result.resolution, ValidatedIntentResolutionV2)
+    assert result.resolution.canonical_frames[0].frame_id == "frame-0000"
     assert result.resolution.resolution_status is ResolutionStatus.RESOLVED
 
 
@@ -213,7 +214,7 @@ async def test_schema_failure_does_not_retry_inside_service(
 ) -> None:
     service_fixture.adapter.content = "{}"
 
-    with pytest.raises(ResolverContractError, match=MODEL_SCHEMA_INVALID):
+    with pytest.raises(ResolverContractError, match=MODEL_PROPOSAL_SCHEMA_INVALID):
         await service_fixture.service.resolve_once(service_fixture.context)
 
     assert service_fixture.adapter.call_count == 1
@@ -223,9 +224,9 @@ async def test_schema_failure_does_not_retry_inside_service(
 async def test_duplicate_model_keys_are_rejected_without_retry(
     service_fixture: ServiceFixture,
 ) -> None:
-    service_fixture.adapter.content = '{"evidence_spans":[],"evidence_spans":[]}'
+    service_fixture.adapter.content = '{"frames":[],"frames":[]}'
 
-    with pytest.raises(ResolverContractError, match=MODEL_SCHEMA_INVALID):
+    with pytest.raises(ResolverContractError, match=MODEL_PROPOSAL_SCHEMA_INVALID):
         await service_fixture.service.resolve_once(service_fixture.context)
 
     assert service_fixture.adapter.call_count == 1
@@ -296,61 +297,44 @@ async def test_resolution_metadata_and_ids_are_deterministic(
 ) -> None:
     prepared = await service_fixture.service.prepare(service_fixture.context)
 
-    first = service_fixture.service.validate_response(prepared, _valid_draft_json())
-    second = service_fixture.service.validate_response(prepared, _valid_draft_json())
+    first = service_fixture.service.validate_response(prepared, _valid_proposal_json())
+    second = service_fixture.service.validate_response(prepared, _valid_proposal_json())
 
     assert first == second
     assert first.request_key == service_fixture.context.request_key
     assert first.run_id == service_fixture.context.run_id
     assert first.dataset_version == service_fixture.context.dataset_version
     assert first.created_at == service_fixture.context.created_at
-    assert first.draft_hash == canonical_sha256(
-        json.loads(_valid_draft_json())
+    assembled = assemble_proposal(
+        IntentResolutionProposalV2.model_validate_json(_valid_proposal_json()),
+        prepared.normalized,
+        prepared.view,
     )
+    assert first.draft_hash == canonical_sha256(assembled)
     assert first.resolution_id.startswith("resolution-")
     assert first.build_manifest == prepared.view.build_manifest
     assert first.active_dataset_manifest_hash == "a" * 64
 
 
 @pytest.mark.asyncio
-async def test_unique_evidence_text_repairs_only_model_offsets(
+async def test_unknown_evidence_does_not_retry(
     service_fixture: ServiceFixture,
 ) -> None:
-    prepared = await service_fixture.service.prepare(service_fixture.context)
-    payload = json.loads(_valid_draft_json())
-    payload['evidence_spans'][0]['start_char'] = 1
-    payload['evidence_spans'][0]['end_char'] = 4
+    payload = json.loads(_valid_proposal_json())
+    payload["frames"][0]["action_choice"]["evidence_ids"] = ["unknown-evidence"]
+    service_fixture.adapter.content = json.dumps(payload, ensure_ascii=False)
 
-    resolution = service_fixture.service.validate_response(
-        prepared, json.dumps(payload, ensure_ascii=False)
-    )
+    with pytest.raises(ResolverContractError, match=MODEL_UNKNOWN_EVIDENCE_ID):
+        await service_fixture.service.resolve_once(service_fixture.context)
 
-    payload['evidence_spans'][0]['start_char'] = 0
-    payload['evidence_spans'][0]['end_char'] = 3
-    assert resolution.draft_hash == canonical_sha256(payload)
-
-
-@pytest.mark.asyncio
-async def test_ambiguous_evidence_text_does_not_repair_model_offsets(
-    service_fixture: ServiceFixture,
-) -> None:
-    context = _context('AUM AUM 알려줘')
-    prepared = await service_fixture.service.prepare(context)
-    payload = json.loads(_valid_draft_json())
-    payload['evidence_spans'][0]['start_char'] = 1
-    payload['evidence_spans'][0]['end_char'] = 4
-
-    with pytest.raises(ResolverContractError, match='LITERAL_SPAN_MISMATCH'):
-        service_fixture.service.validate_response(
-            prepared, json.dumps(payload, ensure_ascii=False)
-        )
+    assert service_fixture.adapter.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_telemetry_contains_only_safe_stage_metrics(
     service_fixture: ServiceFixture,
 ) -> None:
-    raw_content = _valid_draft_json()
+    raw_content = _valid_proposal_json()
     service_fixture.adapter.content = raw_content
 
     result = await service_fixture.service.resolve_once(service_fixture.context)
@@ -386,15 +370,25 @@ async def test_telemetry_contains_only_safe_stage_metrics(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_code",
+    (
+        MODEL_PROPOSAL_SCHEMA_INVALID,
+        MODEL_UNKNOWN_EVIDENCE_ID,
+        MODEL_INVALID_FRAME_REFERENCE,
+        MODEL_INVALID_SEMANTIC_COVERAGE,
+    ),
+)
 async def test_repair_builder_reuses_view_and_schema_without_calling_model(
     service_fixture: ServiceFixture,
+    failure_code: str,
 ) -> None:
     prepared = await service_fixture.service.prepare(service_fixture.context)
     invalid_raw_content = "PRIVATE INVALID MODEL CONTENT"
 
     repair = build_repair_envelope(
         prepared,
-        ResolverContractError(MODEL_UNKNOWN_ID),
+        ResolverContractError(failure_code),
     )
     payload = json.loads(repair.user_message)
 
@@ -408,9 +402,9 @@ async def test_repair_builder_reuses_view_and_schema_without_calling_model(
     }
     assert payload["context"] == prepared.context.model_dump(mode="json")
     assert payload["view"] == prepared.view.model_dump(mode="json")
-    assert payload["failure_code"] == MODEL_UNKNOWN_ID
+    assert payload["failure_code"] == failure_code
     assert len(payload["original_prompt_hash"]) == 64
-    assert payload["correction_instruction"]
+    assert "offered" in payload["correction_instruction"]
     assert invalid_raw_content not in repair.system_message
     assert invalid_raw_content not in repair.user_message
     assert service_fixture.adapter.call_count == 0

@@ -25,14 +25,13 @@ from financial_agent.intent.view import (
 from .view_fixtures import complete_axis_definitions
 
 
-def valid_draft_json() -> str:
+def valid_proposal_json() -> str:
     return json.dumps(
         {
-            'evidence_spans': [],
-            'intent_frames': [],
-            'entity_hints': [],
-            'reference_hints': [],
-            'context_link_hints': [],
+            'proposal_schema_version': '2.0',
+            'frames': [],
+            'references': [],
+            'context_links': [],
             'slot_mutations': [],
             'semantic_flag_hints': [],
             'frame_limit_exceeded': False,
@@ -117,7 +116,7 @@ def test_clova_config_requires_https_and_redacts_api_key(monkeypatch: pytest.Mon
     assert 'test-api-key-not-a-secret' not in repr(config)
 
 
-def provider_payload(content: str = valid_draft_json()) -> dict[str, object]:
+def provider_payload(content: str = valid_proposal_json()) -> dict[str, object]:
     return {
         'status': {'code': '20000', 'message': 'OK'},
         'result': {
@@ -130,7 +129,7 @@ def provider_payload(content: str = valid_draft_json()) -> dict[str, object]:
     }
 
 
-def successful_transport(content: str = valid_draft_json()):
+def successful_transport(content: str = valid_proposal_json()):
     calls: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -162,7 +161,7 @@ async def test_clova_adapter_sends_one_structured_request() -> None:
     assert body['thinking'] == {'effort': 'none'}
     assert body['seed'] == 42
     assert 'tools' not in body
-    assert result.content == valid_draft_json()
+    assert result.content == valid_proposal_json()
     assert result.usage == {'promptTokens': 10, 'completionTokens': 20, 'totalTokens': 30}
 
 
@@ -279,7 +278,7 @@ async def test_clova_adapter_rejects_duplicate_provider_response_keys() -> None:
 @pytest.mark.asyncio
 async def test_clova_adapter_rejects_duplicate_model_content_keys() -> None:
     calls: list[httpx.Request] = []
-    duplicate_content = '{"evidence_spans":[],"evidence_spans":[]}'
+    duplicate_content = '{"frames":[],"frames":[]}'
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request)

@@ -22,6 +22,7 @@ from .candidates import (
     SemanticCandidateSet,
     generate_semantic_candidates,
 )
+from .assembler import assemble_proposal
 from .catalog import SemanticCatalogSnapshot
 from .clova import ModelInvocationResult
 from .context import (
@@ -29,10 +30,13 @@ from .context import (
     finalize_resolution,
     validate_context_graph,
 )
-from .draft import IntentResolutionDraft
 from .errors import (
+    MODEL_INVALID_FRAME_REFERENCE,
+    MODEL_INVALID_SEMANTIC_COVERAGE,
+    MODEL_PROPOSAL_SCHEMA_INVALID,
     MODEL_SCHEMA_INVALID,
     MODEL_TIMEOUT,
+    MODEL_UNKNOWN_EVIDENCE_ID,
     ModelInvocationError,
     ResolverContractError,
 )
@@ -44,7 +48,11 @@ from .normalization import (
     normalize_segment,
 )
 from .prompt import ResolverPromptEnvelope, build_prompt
-from .resolution import ResolverBuildManifest, ValidatedIntentResolution
+from .proposal import IntentResolutionProposalV2
+from .resolution import (
+    ResolverBuildManifest,
+    ValidatedIntentResolutionV2,
+)
 from .validation import validate_semantics
 from .view import (
     ActiveDatasetPin,
@@ -57,13 +65,18 @@ from .view import (
 MAX_MODEL_TIMEOUT_SECONDS = 20.0
 _SUCCESS_CODE = "RESOLUTION_VALIDATED"
 _REPAIR_INSTRUCTIONS = {
-    "MODEL_SCHEMA_INVALID": "Return every required field with the exact schema shape.",
-    "MODEL_UNKNOWN_ID": "Select only identifiers offered in the resolver view.",
-    "LITERAL_SPAN_MISMATCH": (
-        "Copy evidence spans exactly from the original segment text."
+    MODEL_PROPOSAL_SCHEMA_INVALID: (
+        "Return a ProposalV2 with the exact schema shape. Select only offered "
+        "identifiers and valid frame ordinals."
     ),
-    "INVALID_CONTEXT_GRAPH": (
-        "Use only backward acyclic links with compatible cardinality."
+    MODEL_UNKNOWN_EVIDENCE_ID: (
+        "Select only offered evidence identifiers and valid frame ordinals."
+    ),
+    MODEL_INVALID_FRAME_REFERENCE: (
+        "Select only offered reference identifiers and valid backward frame ordinals."
+    ),
+    MODEL_INVALID_SEMANTIC_COVERAGE: (
+        "Select only offered identifiers and valid frame ordinals for semantic coverage."
     ),
 }
 
@@ -121,7 +134,7 @@ class PreparedResolutionRequest:
 
 @dataclass(frozen=True, slots=True)
 class ResolutionAttempt:
-    resolution: ValidatedIntentResolution
+    resolution: ValidatedIntentResolutionV2
     telemetry: ResolutionTelemetry
 
 
@@ -232,13 +245,13 @@ class IntentResolverService:
         self,
         prepared: PreparedResolutionRequest,
         content: str,
-    ) -> ValidatedIntentResolution:
+    ) -> ValidatedIntentResolutionV2:
         _reject_non_strict_json(content)
         try:
-            draft = IntentResolutionDraft.model_validate_json(content)
+            proposal = IntentResolutionProposalV2.model_validate_json(content)
         except ValidationError:
-            raise ResolverContractError(MODEL_SCHEMA_INVALID) from None
-        draft = _normalize_unique_evidence_offsets(draft, prepared.context)
+            raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID) from None
+        draft = assemble_proposal(proposal, prepared.normalized, prepared.view)
 
         semantic_state = validate_semantics(
             draft,
@@ -260,7 +273,7 @@ class IntentResolverService:
                 "run_id": prepared.context.run_id,
             }
         )
-        return finalize_resolution(
+        resolution = finalize_resolution(
             context_state,
             ResolutionFinalizationMetadata(
                 request_key=prepared.context.request_key,
@@ -276,6 +289,9 @@ class IntentResolverService:
                 ),
             ),
         )
+        if not isinstance(resolution, ValidatedIntentResolutionV2):
+            raise RuntimeError("assembled proposal did not finalize as v2")
+        return resolution
 
     def _remaining_model_seconds(self, context: RequestContext) -> float:
         remaining = (context.deadline_at - self._utcnow()).total_seconds()
@@ -358,41 +374,7 @@ def _reject_non_strict_json(content: str) -> None:
         if not isinstance(parsed, dict):
             raise ValueError
     except (json.JSONDecodeError, TypeError, ValueError):
-        raise ResolverContractError(MODEL_SCHEMA_INVALID) from None
-
-
-def _normalize_unique_evidence_offsets(
-    draft: IntentResolutionDraft, context: RequestContext
-) -> IntentResolutionDraft:
-    segments = {segment.segment_id: segment.text for segment in context.segments}
-    normalized_spans = []
-    for span in draft.evidence_spans:
-        source = segments.get(span.segment_id)
-        if (
-            source is None
-            or not span.text
-            or (
-                0 <= span.start_char < span.end_char <= len(source)
-                and source[span.start_char : span.end_char] == span.text
-            )
-        ):
-            normalized_spans.append(span)
-            continue
-        starts = tuple(
-            index
-            for index in range(len(source))
-            if source.startswith(span.text, index)
-        )
-        if len(starts) == 1:
-            start = starts[0]
-            normalized_spans.append(
-                span.model_copy(
-                    update={"start_char": start, "end_char": start + len(span.text)}
-                )
-            )
-        else:
-            normalized_spans.append(span)
-    return draft.model_copy(update={"evidence_spans": tuple(normalized_spans)})
+        raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID) from None
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
