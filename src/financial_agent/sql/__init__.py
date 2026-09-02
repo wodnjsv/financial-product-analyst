@@ -18,10 +18,14 @@ from .compiler import (
     SqlCompilationOutcome,
     SqlCompileRejectionRecord,
 )
+from .executor import ReadOnlySqlRunner, SqlExecutionError
+from .result_mapping import MappedSqlResult, SqlResultMappingError, map_sql_rows
 
 __all__ = [
     "CompiledSqlRequest",
+    "MappedSqlResult",
     "PhysicalSqlRenderManifest",
+    "ReadOnlySqlRunner",
     "PhysicalLoweringKind",
     "PhysicalLoweringRecord",
     "SqlRenderTemplateId",
@@ -30,8 +34,11 @@ __all__ = [
     "SemanticSqlCompiler",
     "SqlCompilationOutcome",
     "SqlCompileRejectionRecord",
+    "SqlExecutionError",
+    "SqlResultMappingError",
     "compiled_sql_request_id",
     "physical_lowering_record_id",
     "physical_sql_render_manifest_id",
+    "map_sql_rows",
     "validate_compiled_request_ownership",
 ]

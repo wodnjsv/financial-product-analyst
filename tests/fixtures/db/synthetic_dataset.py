@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -14,6 +15,8 @@ CREATED_AT = datetime(2026, 8, 18, tzinfo=UTC)
 def insert_building_dataset(
     connection: psycopg.Connection,
     dataset_version: str,
+    *,
+    manifest_hash: str = VALID_MANIFEST_HASH,
 ) -> None:
     connection.execute(
         """
@@ -21,7 +24,7 @@ def insert_building_dataset(
             dataset_version, cutoff_date, status, manifest_hash, created_at
         ) VALUES (%s, DATE '2026-08-24', 'building', %s, %s)
         """,
-        (dataset_version, VALID_MANIFEST_HASH, CREATED_AT),
+        (dataset_version, manifest_hash, CREATED_AT),
     )
 
 
@@ -31,6 +34,7 @@ def insert_entity(
     dataset_version: str,
     entity_id: str,
     entity_type: str = "product",
+    canonical_name: str | None = None,
 ) -> None:
     connection.execute(
         """
@@ -43,11 +47,141 @@ def insert_entity(
             dataset_version,
             entity_id,
             entity_type,
-            f"Canonical {entity_id}",
-            f"canonical {entity_id}",
+            canonical_name or f"Canonical {entity_id}",
+            (canonical_name or f"Canonical {entity_id}").casefold(),
             VALID_RECORD_HASH,
             CREATED_AT,
         ),
+    )
+
+
+def insert_product(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    entity_id: str,
+    product_family: str,
+    canonical_name: str | None = None,
+    primary_currency: str | None = None,
+) -> None:
+    insert_entity(
+        connection,
+        dataset_version=dataset_version,
+        entity_id=entity_id,
+        canonical_name=canonical_name,
+    )
+    connection.execute(
+        """
+        INSERT INTO catalog.product (
+            dataset_version, entity_id, product_family, primary_currency
+        ) VALUES (%s, %s, %s, %s)
+        """,
+        (dataset_version, entity_id, product_family, primary_currency),
+    )
+
+
+def insert_numeric_metric_definition(
+    connection: psycopg.Connection,
+    *,
+    metric_id: str,
+    default_unit: str,
+    definition_version: str = "metric.v1",
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO observation.metric_definition (
+            metric_id, definition_version, semantic_family, value_kind,
+            default_unit, description, definition_hash, approved_at
+        ) VALUES (%s, %s, 'financial_product', 'numeric', %s,
+                  'Synthetic semantic SQL metric', %s, %s)
+        ON CONFLICT (metric_id, definition_version) DO NOTHING
+        """,
+        (metric_id, definition_version, default_unit, "e" * 64, CREATED_AT),
+    )
+
+
+def insert_numeric_observation_with_evidence(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    entity_id: str,
+    observation_id: str,
+    metric_id: str,
+    value: Decimal | None,
+    unit: str,
+    currency: str | None,
+    applicable_date: date,
+    source_id: str = "source-one",
+    definition_version: str = "metric.v1",
+    reason_code: str = "synthetic_missing",
+) -> None:
+    status = "missing" if value is None else ("zero" if value == 0 else "present")
+    connection.execute(
+        """
+        INSERT INTO observation.observation_record (
+            dataset_version, observation_id, entity_id, relation_id,
+            metric_id, metric_definition_version, value_status,
+            numeric_value, unit, currency, applicable_date, reason_code,
+            record_hash, created_at
+        ) VALUES (%s, %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            dataset_version,
+            observation_id,
+            entity_id,
+            metric_id,
+            definition_version,
+            status,
+            value,
+            unit,
+            currency,
+            applicable_date,
+            reason_code if value is None else None,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+    evidence_id = f"evidence-{observation_id}"
+    tagged = (
+        {"type": "null", "value": None}
+        if value is None
+        else {"type": "decimal", "value": str(value)}
+    )
+    connection.execute(
+        """
+        INSERT INTO evidence.evidence_record (
+            dataset_version, evidence_id, evidence_kind, source_id,
+            subject_id, predicate_id, value_or_object_id, normalized_value,
+            unit, currency, applicable_date, locator_type,
+            locator_uri_or_object_key, parser_version, mapping_version,
+            cutoff_status, record_hash, created_at
+        ) VALUES (%s, %s, 'observation', %s, %s, %s, %s, %s, %s, %s, %s,
+                  'tabular', %s, 'synthetic-parser.v1', 'synthetic-mapping.v1',
+                  'eligible', %s, %s)
+        """,
+        (
+            dataset_version,
+            evidence_id,
+            source_id,
+            entity_id,
+            metric_id,
+            Jsonb(tagged),
+            Jsonb(tagged),
+            unit,
+            currency,
+            applicable_date,
+            f"synthetic://semantic-sql/{observation_id}",
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO evidence.evidence_observation_origin (
+            dataset_version, evidence_id, observation_id
+        ) VALUES (%s, %s, %s)
+        """,
+        (dataset_version, evidence_id, observation_id),
     )
 
 
