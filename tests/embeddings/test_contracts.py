@@ -101,3 +101,17 @@ def test_result_returns_the_same_immutable_valid_value() -> None:
         request_id="request-001",
     )
     assert validate_result(result) is result
+
+
+@pytest.mark.parametrize("retry_count", (-1, True, 1.5))
+def test_result_requires_a_nonnegative_integer_retry_count(
+    retry_count: object,
+) -> None:
+    result = EmbeddingResult(
+        vector=(0.0,) * 1024,
+        input_tokens=17,
+        request_id=None,
+        retry_count=retry_count,  # type: ignore[arg-type]
+    )
+    with pytest.raises(EmbeddingContractError, match="retry_count_invalid"):
+        validate_result(result)

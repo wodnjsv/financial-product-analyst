@@ -81,6 +81,7 @@ class EmbeddingResult:
     vector: tuple[float, ...]
     input_tokens: int
     request_id: str | None
+    retry_count: int = 0
 
 
 class EmbeddingProvider(Protocol):
@@ -131,4 +132,10 @@ def validate_result(result: EmbeddingResult) -> EmbeddingResult:
         or result.input_tokens <= 0
     ):
         raise EmbeddingContractError("input_tokens_invalid")
+    if (
+        isinstance(result.retry_count, bool)
+        or not isinstance(result.retry_count, int)
+        or result.retry_count < 0
+    ):
+        raise EmbeddingContractError("retry_count_invalid")
     return result
