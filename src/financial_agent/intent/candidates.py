@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+import re
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -207,22 +208,23 @@ def _exact_mentions(
     spans: set[tuple[int, int]] = set()
     text = segment.normalized_text
     for surface in surfaces:
-        start = text.lower().find(surface.lower())
-        while surface and start >= 0:
-            spans.add((start, start + len(surface)))
-            start = text.lower().find(surface.lower(), start + 1)
+        if not surface:
+            continue
+        spacing_pattern = r"\s*".join(re.escape(character) for character in surface)
+        for match in re.finditer(spacing_pattern, text, flags=re.IGNORECASE):
+            spans.add((match.start(), match.end()))
     return tuple(_mention_from_span(segment, start, end) for start, end in sorted(spans))
 
 
 def _exact_matches(
     mention: Mention, catalog: SemanticCatalogSnapshot
 ) -> Iterable[tuple[str, SemanticMatchKind, str]]:
-    normalized_text = mention.normalized_text.lower()
+    normalized_text = "".join(mention.normalized_text.lower().split())
     for semantic_id in sorted(_semantic_ids(catalog)):
-        if normalized_text == semantic_id.lower():
+        if normalized_text == "".join(semantic_id.lower().split()):
             yield semantic_id, "canonical_id", f"canonical:{semantic_id}"
     for alias_text in sorted(catalog.alias_candidates):
-        if normalized_text != alias_text.lower():
+        if normalized_text != "".join(alias_text.lower().split()):
             continue
         match_kind = {
             "direct": "direct_alias",

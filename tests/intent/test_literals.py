@@ -123,3 +123,14 @@ def test_does_not_treat_a_product_family_count_as_a_result_limit() -> None:
     literals = extract_literals(normalized_request("두 상품군을 비교해줘"))
 
     assert literals == ()
+
+
+def test_literal_candidates_expose_semantic_value_kinds() -> None:
+    """Catches operator compatibility relying on untyped text or SQL fragments."""
+    literals = extract_literals(normalized_request("1%, 2026-08-24, 5개"))
+
+    assert [(literal.kind, literal.value_kind) for literal in literals] == [
+        ("percentage", "decimal"),
+        ("date", "date"),
+        ("result_limit", "integer"),
+    ]

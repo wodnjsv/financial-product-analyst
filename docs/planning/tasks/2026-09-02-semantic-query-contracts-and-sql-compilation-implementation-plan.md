@@ -325,11 +325,11 @@ The five-case live check is a connectivity and regression gate, not sufficient p
 - Modify: `tests/intent/test_literals.py`
 - Modify: `tests/intent/test_catalog.py`
 
-- [ ] **Step 1: Write exact-lock and conflict tests**
+- [x] **Step 1: Write exact-lock and conflict tests**
 
   Cover `공모펀드 -> public_fund`, spacing and Unicode variants, `총보수 -> fee_rate`, `순자산/AUM -> aum`, `이하 -> lte`, `미만 -> lt`, `이상 -> gte`, `초과 -> gt`, `제외 -> not_in/neq` by cardinality, range cues, and negated clauses. Assert that a unique exact lock cannot be removed by an HCX omission and that contradictory exact spans return `EXACT_LOCK_CONFLICT`.
 
-- [ ] **Step 2: Implement span-preserving lock records**
+- [x] **Step 2: Implement span-preserving lock records**
 
   Add:
 
@@ -344,15 +344,15 @@ The five-case live check is a connectivity and regression gate, not sufficient p
 
   Only canonical IDs and unique `direct_alias` entries are lockable. Group aliases, ambiguous aliases, fuzzy matches, and trigram candidates remain unlocked choices.
 
-- [ ] **Step 3: Extend the literal layer with typed operators, not SQL symbols**
+- [x] **Step 3: Extend the literal layer with typed operators, not SQL symbols**
 
   `OperatorCandidate` stores `operator_id`, semantic arity, evidence span, and compatible value candidate IDs. It never stores `<`, `<=`, or SQL text. Group field/operator/value candidates only when their spans form one clause; do not attach one percentage literal to every field in a multi-predicate sentence.
 
-- [ ] **Step 4: Add only reviewed high-trust Korean anchors**
+- [x] **Step 4: Add only reviewed high-trust Korean anchors**
 
   Version `korean-nlu-overlay.v3.json` from V2 and add the minimum exact anchors needed by the supported questions. Keep broad words such as `보수`, `규모`, `좋은`, and `낮은` as lexical candidates unless the full phrase is uniquely grounded. Assert overlay size and direct-alias uniqueness so growth is reviewable.
 
-- [ ] **Step 5: Run precision and regression gates**
+- [x] **Step 5: Run precision and regression gates**
 
   ```bash
   python3 -m pytest tests/intent/test_axis_locks.py tests/intent/test_operators.py tests/intent/test_literals.py tests/intent/test_catalog.py tests/intent/test_candidates.py -q
@@ -360,7 +360,7 @@ The five-case live check is a connectivity and regression gate, not sufficient p
 
   Expected: exact lock precision 100% on adjudicated exact expressions; existing candidate bounds and normalization tests remain green.
 
-- [ ] **Step 6: Commit the deterministic language layer**
+- [x] **Step 6: Commit the deterministic language layer**
 
   Commit as:
 

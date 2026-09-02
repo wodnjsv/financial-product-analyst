@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 import re
+from typing import Literal
 
 from .normalization import NormalizedRequest, NormalizedSegment
 
@@ -61,6 +62,20 @@ class LiteralCandidate:
     end_char: int
     canonical_value: str
     currency: str | None = None
+
+    @property
+    def value_kind(self) -> Literal["string", "integer", "decimal", "date"]:
+        return {
+            "currency": "string",
+            "date": "date",
+            "money": "decimal",
+            "number": "decimal",
+            "percentage": "decimal",
+            "period": "string",
+            "rank_position": "integer",
+            "result_limit": "integer",
+            "sort_direction": "string",
+        }[self.kind]  # type: ignore[return-value]
 
 
 @dataclass(frozen=True, slots=True)

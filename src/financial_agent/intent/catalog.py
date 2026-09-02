@@ -23,7 +23,7 @@ from financial_agent.graph.contract import (
 
 
 _CATALOG_PATH = Path("config/intent/semantic-query-catalog.v1.json")
-_OVERLAY_PATH = Path("config/intent/korean-nlu-overlay.v2.json")
+_OVERLAY_PATH = Path("config/intent/korean-nlu-overlay.v3.json")
 _CONCEPT_KINDS = Literal["attribute", "metric", "relation", "document_topic"]
 _ALIAS_KINDS = Literal["direct", "ambiguous", "group"]
 _SH = Namespace("http://www.w3.org/ns/shacl#")
