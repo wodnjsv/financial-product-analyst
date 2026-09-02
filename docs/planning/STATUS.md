@@ -15,7 +15,7 @@
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute·문서 provenance 경계 승인; TTL·SHACL·Evidence-bound ABox·읽기 전용 Fuseki를 포함한 Graph Phase 1 core 로컬 완료, Stage 04는 미완료 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
-| Intent Resolver·QueryPlan·Orchestrator | Phase 1 Resolver, Phase 2 결정론적 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator 경계를 로컬 구현·검증 완료. 단, Phase 1 `candidate_recall_at_5` 실패와 live gate 미측정으로 운영 승격은 계속 차단되며, 실제 SQL·Graph·검색·계산 executor는 Stage 05 범위 | [Phase 1 Report](reports/2026-08-31-intent-resolver-phase1-verification.md), [Phase 2·3 Report](reports/2026-09-02-query-plan-orchestrator-verification.md), [ADR-0025](decisions/ADR-0025-use-deterministic-query-plan-compilation-and-four-path-routing.md), [ADR-0026](decisions/ADR-0026-use-a-deterministic-bounded-orchestrator.md) |
+| Intent Resolver·QueryPlan·Orchestrator | Phase 1 Resolver, Phase 2 결정론적 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator 경계를 로컬 구현·검증 완료. SQL 실행 의미를 완전하게 표현하기 위한 action별 `ResolvedQueryContractV2`·`LogicalQueryPlanV2`·결정론적 SQL compiler 설계는 승인됐고 작성 명세 검토를 기다린다. Phase 1 `candidate_recall_at_5` 실패와 live gate 미측정으로 운영 승격은 계속 차단된다. | [Phase 1 Report](reports/2026-08-31-intent-resolver-phase1-verification.md), [Phase 2·3 Report](reports/2026-09-02-query-plan-orchestrator-verification.md), [ADR-0025](decisions/ADR-0025-use-deterministic-query-plan-compilation-and-four-path-routing.md), [ADR-0026](decisions/ADR-0026-use-a-deterministic-bounded-orchestrator.md), [ADR-0029](decisions/ADR-0029-use-semantic-query-contracts-and-deterministic-sql-compilation.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 | Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
 
@@ -143,7 +143,7 @@
 
 ### Stage 06 Intent Resolver·QueryPlan·Orchestrator
 
-**상태: Phase 1-3 로컬 경계 구현 완료; live promotion은 `candidate_recall_at_5`와 미측정 required gate로 보류**
+**상태: Phase 1-3 로컬 경계 구현 완료; SQL 의미 계약 V2 설계 승인·작성 명세 검토 대기; live promotion은 `candidate_recall_at_5`와 미측정 required gate로 보류**
 
 - 온톨로지 기반 semantic catalog, 한국어 정규화·literal·candidate·bounded view,
   strict HCX adapter, semantic/context validator, one-call service, 불변
@@ -184,6 +184,10 @@
   Vector·금융 계산 executor와 답변 생성은 각각 Stage 05·07 범위다. Phase 1
   live 승격 차단도 유지된다. 다음 live HCX benchmark는 별도 승인 없이는 실행하지
   않는다.
+- 현재 평면 TaskInputContract가 209개 평가 frame 중 94개만 완전하게 표현한
+  설계 결함을 보완하기 위해 action별 `ResolvedQueryContractV2`, exact family·
+  operator lock, bounded contract candidate solver, `LogicalQueryPlanV2`, 결정론적
+  semantic-to-SQL compiler 방향을 [ADR-0029](decisions/ADR-0029-use-semantic-query-contracts-and-deterministic-sql-compilation.md)로 승인했다. 작성된 상세 명세 검토와 별도 구현 계획 승인이 끝나기 전에는 런타임 코드를 변경하지 않는다.
 
 기준 보고서: [Intent Resolver Phase 1 Verification](reports/2026-08-31-intent-resolver-phase1-verification.md), [QueryPlan and Orchestrator Verification](reports/2026-09-02-query-plan-orchestrator-verification.md)
 
@@ -201,8 +205,8 @@
 | --- | --- | --- |
 | 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | current organizer 로컬 결정성 검증 완료; current KRX holdings 로컬 통합과 나머지 공식 source 동결 대기; NCP acceptance는 Stage 08로 이연 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | Graph Phase 1 core 로컬 완료; Vector·실제 관계/문서·manifest 동일성·readiness/activation·NCP·23질문 커버리지 대기, Stage 04 미완료 |
-| 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | 대기 |
-| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Phase 1 Resolver와 Phase 2 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator 로컬 경계 완료; Phase 1 승격 차단 유지, production executor는 Stage 05 대기 |
+| 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | SQL 의미 계약 V2·결정론적 compiler 설계 승인, 작성 명세 검토·구현 계획 대기; production executor 미구현 |
+| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Phase 1 Resolver와 Phase 2 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator 로컬 경계 완료; SQL 의미 계약 V2 통합 설계 승인·구현 대기; Phase 1 승격 차단 유지 |
 | 07 | Verifier, Claim Gate Registry, Answer Composer, Renderer와 검증된 응답 캐시 | 대기 |
 | 08 | 공식 `GET /answer`, NCP 이중화·Load Balancer·모니터링·복구 | 대기 |
 | 09 | 52개 종합 평가, 제출 동결, 공식 평가 운영과 종료 기록 | 대기 |
@@ -256,5 +260,6 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 41. ~~Stage 06 Phase 1 Intent Resolver 상세 구현·로컬 비라이브·PostgreSQL 검증~~ — 2026-09-01 완료; Linux/amd64 container 미실행, candidate recall 실패와 live 미측정 gate로 승격 차단
 42. ~~Stage 06 Phase 2 QueryPlan compiler·4경로 router와 Phase 3 bounded Orchestrator 로컬 구현·통합 검증~~ — 2026-09-02 완료; production executor와 답변 생성은 포함하지 않음
 43. Stage 06 Phase 1 live HCX benchmark — `candidate_recall_at_5` 보강과 비용·호출·runtime credential·Structured Outputs preflight에 대한 별도 사용자 승인 대기
+44. SQL 의미 계약 V2·결정론적 SQL compiler 설계 — 2026-09-02 아키텍처 승인·작성 명세 완료; 사용자 명세 검토 후 상세 구현 계획 작성·승인 대기
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.
