@@ -175,7 +175,7 @@ def verified_public_fund_facts() -> PhysicalReadinessFacts:
             RepresentativeShareEdge(dataset_pin=DATASET_PIN, representative_id="representative-a", share_class_id="share-b", predicate_id="hasShareClass", relation_id="relation-b", evidence_id="evidence-b", source_id="source-b"),
         ),
         population_metric_ownerships=(
-            PopulationMetricOwnership(dataset_pin=DATASET_PIN, representative_id="representative-a", metric_id="organizer.prfd01n001.net_assets", owner_entity_id="representative-a", observation_id="observation-a", evidence_id="evidence-observation-a", source_id="source-observation-a"),
+            PopulationMetricOwnership(dataset_pin=DATASET_PIN, representative_id="representative-a", metric_id="organizer.prfd01n001.net_assets", metric_definition_version="2", owner_entity_id="representative-a", observation_id="observation-a", evidence_id="evidence-observation-a", source_id="source-observation-a"),
         ),
     )
     return PhysicalReadinessFacts(

@@ -44,6 +44,7 @@ def _valid_binding(**updates: object) -> dict[str, object]:
         "source_kind": "observation",
         "availability": "verified",
         "approved_metric_ids": ["organizer.pref01n001.aum"],
+        "approved_metric_definition_refs": ["organizer.pref01n001.aum:2"],
         "value_column": "decimal_value",
         "semantic_value_kind": "decimal",
         "storage_unit_id": "source_defined_amount",
@@ -139,7 +140,11 @@ def test_loader_rejects_binding_policy_kind_mismatch(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "update",
     [
-        {"approved_metric_ids": ["organizer.pref02n001.aum"]},
+        {
+            "approved_metric_ids": ["organizer.pref02n001.aum"],
+            "approved_metric_definition_refs": ["organizer.pref02n001.aum:2"],
+        },
+        {"approved_metric_definition_refs": ["organizer.pref01n001.aum:fake"]},
         {"storage_unit_id": "invented_amount"},
     ],
 )
@@ -193,6 +198,10 @@ def test_unavailable_binding_cannot_smuggle_metric_or_derived_definition(
                 approved_metric_ids=[
                     "organizer.prfd01n001.manager_fee_rate",
                     "organizer.prfd01n001.sales_fee_rate",
+                ],
+                approved_metric_definition_refs=[
+                    "organizer.prfd01n001.manager_fee_rate:2",
+                    "organizer.prfd01n001.sales_fee_rate:2",
                 ],
                 unavailable_reason_code="PHYSICAL_DEFINITION_UNVERIFIED",
             )

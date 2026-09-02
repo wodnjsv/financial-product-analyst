@@ -163,7 +163,7 @@ class PhysicalSqlRenderManifest(_StrictModel):
     identifier_occurrences: tuple[Identifier, ...]
     lowering_record_ids: tuple[Identifier, ...]
     evidence_projection_ids: tuple[EvidenceLocator, ...] = Field(strict=False)
-    count_lineage_metric_ids: tuple[Identifier, ...] = ()
+    count_lineage_metric_definition_refs: tuple[Identifier, ...] = ()
 
     @model_validator(mode="after")
     def validate_manifest(self):
@@ -194,7 +194,8 @@ class PhysicalSqlRenderManifest(_StrictModel):
             self.evidence_projection_ids, label="manifest evidence projections"
         )
         require_unique_ids(
-            self.count_lineage_metric_ids, label="COUNT lineage metrics"
+            self.count_lineage_metric_definition_refs,
+            label="COUNT lineage metric definitions",
         )
         if self.manifest_id != physical_sql_render_manifest_id(self):
             raise ValueError("SQL_RENDER_MANIFEST_ID_MISMATCH")

@@ -126,7 +126,7 @@ def _seed_semantic_dataset(url: str) -> None:
                 connection,
                 metric_id=metric_id,
                 default_unit=unit,
-                definition_version="semantic-sql.v1",
+                definition_version="2",
             )
         domestic = (
             ("etf-a", "ETF A", Decimal("100"), Decimal("0.5")),
@@ -155,7 +155,7 @@ def _seed_semantic_dataset(url: str) -> None:
                 unit="source_defined_amount",
                 currency="KRW",
                 applicable_date=date(2026, 8, 24),
-                definition_version="semantic-sql.v1",
+                definition_version="2",
             )
             insert_numeric_observation_with_evidence(
                 connection,
@@ -167,7 +167,7 @@ def _seed_semantic_dataset(url: str) -> None:
                 unit="percentage_point",
                 currency=None,
                 applicable_date=date(2026, 8, 24),
-                definition_version="semantic-sql.v1",
+                definition_version="2",
             )
         insert_product(
             connection,
@@ -187,7 +187,7 @@ def _seed_semantic_dataset(url: str) -> None:
             unit="amount",
             currency="USD",
             applicable_date=date(2026, 8, 24),
-            definition_version="semantic-sql.v1",
+            definition_version="2",
         )
         insert_product(
             connection,
@@ -208,7 +208,7 @@ def _seed_semantic_dataset(url: str) -> None:
             currency="KRW",
             applicable_date=date(2026, 8, 24),
             source_id="source-observation-a",
-            definition_version="semantic-sql.v1",
+            definition_version="2",
         )
         for share_id, relation_id, evidence_id, source_id in (
             ("share-a", "relation-a", "evidence-a", "source-a"),
@@ -242,7 +242,7 @@ def _seed_semantic_dataset(url: str) -> None:
                 unit="source_defined_amount",
                 currency="KRW",
                 applicable_date=date(2026, 8, 24),
-                definition_version="semantic-sql.v1",
+                definition_version="2",
             )
 
 
@@ -360,8 +360,8 @@ async def test_aggregates_grouping_date_unit_and_split_families(semantic_sql_run
         "etf-injection",
     }
     expected_count_refs = {
-        "metric-definition:organizer.pref01n001.aum:semantic-sql.v1",
-        "metric-definition:organizer.pref01n001.total_fee_rate:semantic-sql.v1",
+        "metric-definition:organizer.pref01n001.aum:2",
+        "metric-definition:organizer.pref01n001.total_fee_rate:2",
         "source:source-one",
     }
     for entity_id in domestic_ids:

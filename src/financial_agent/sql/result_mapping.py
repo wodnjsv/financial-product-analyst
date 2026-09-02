@@ -107,6 +107,7 @@ def map_sql_rows(
                 )
             if row.get("aggregate_value") != len(entity_ids):
                 raise SqlResultMappingError("RETURNED_COUNT_CARDINALITY_MISMATCH")
+            _validate_count_lineage(request, row, entity_ids)
 
         for index, (concept_id, value_kind, prefix) in enumerate(descriptors):
             value_column = (
@@ -267,6 +268,8 @@ def _expected_columns(
             columns.add("metric_definition_refs")
         if EvidenceLocator.OBSERVATION_RECORD in requested:
             columns.add("observation_ids")
+        if EvidenceLocator.RELATION_RECORD in requested:
+            columns.add("relation_ids")
         if EvidenceLocator.EVIDENCE_RECORD in requested:
             columns.add("evidence_ids")
         if EvidenceLocator.SOURCE_RECORD in requested:
@@ -438,6 +441,8 @@ def _collect_aggregate_lineage(
     columns = []
     if EvidenceLocator.OBSERVATION_RECORD in requested:
         columns.append(("observation_ids", "observation:"))
+    if EvidenceLocator.RELATION_RECORD in requested:
+        columns.append(("relation_ids", "relation:"))
     if EvidenceLocator.EVIDENCE_RECORD in requested:
         columns.append(("evidence_ids", "evidence:"))
     if EvidenceLocator.SOURCE_RECORD in requested:
@@ -469,16 +474,14 @@ def _collect_aggregate_lineage(
                     raise SqlResultMappingError(
                         "RETURNED_METRIC_DEFINITION_REFS_MALFORMED"
                     )
-            allowed = set(request.render_manifest.count_lineage_metric_ids)
-            for binding in request.render_manifest.binding_definitions:
-                allowed.update(binding.approved_metric_ids)
+            allowed = set(
+                request.render_manifest.count_lineage_metric_definition_refs
+            )
             for ref in refs:
-                metric, separator, version = ref.rpartition(":")
-                if not separator or metric not in allowed:
+                if ref not in allowed:
                     raise SqlResultMappingError(
                         "RETURNED_METRIC_DEFINITION_OWNERSHIP_MISMATCH"
                     )
-                _identifier(version)
                 target.add("metric-definition:" + ref)
         elif "metric_ids" in row:
             metrics = _identifier_array(
@@ -499,6 +502,12 @@ def _collect_aggregate_lineage(
 def _collect_manifest_relation_lineage(request, target: set[str]) -> None:
     requested = set(request.evidence_projection_ids)
     facts = request.render_manifest.readiness_facts
+    operation = request.render_manifest.logical_task.operation
+    if (
+        isinstance(operation, LogicalAggregateOperationV2)
+        and operation.aggregation.function_id is AggregationFunction.COUNT
+    ):
+        return
     if facts is None or facts.public_fund_manifest is None:
         return
     for edge in facts.public_fund_manifest.representative_share_edges:
@@ -508,6 +517,86 @@ def _collect_manifest_relation_lineage(request, target: set[str]) -> None:
             target.add("evidence:" + edge.evidence_id)
         if EvidenceLocator.SOURCE_RECORD in requested:
             target.add("source:" + edge.source_id)
+
+
+def _validate_count_lineage(
+    request: CompiledSqlRequest,
+    row: Mapping[str, object],
+    entity_ids: tuple[str, ...],
+) -> None:
+    operation = request.render_manifest.logical_task.operation
+    if not (
+        isinstance(operation, LogicalAggregateOperationV2)
+        and operation.aggregation.function_id is AggregationFunction.COUNT
+    ):
+        return
+    requested = set(request.evidence_projection_ids)
+    columns = {
+        EvidenceLocator.METRIC_DEFINITION: "metric_definition_refs",
+        EvidenceLocator.OBSERVATION_RECORD: "observation_ids",
+        EvidenceLocator.RELATION_RECORD: "relation_ids",
+        EvidenceLocator.EVIDENCE_RECORD: "evidence_ids",
+        EvidenceLocator.SOURCE_RECORD: "source_ids",
+    }
+    if row.get("aggregate_value") == 0:
+        for locator, column in columns.items():
+            if locator not in requested:
+                continue
+            value = row[column]
+            if value not in (None, (), []):
+                raise SqlResultMappingError("RETURNED_ZERO_COUNT_LINEAGE_NOT_EMPTY")
+        return
+
+    facts = request.render_manifest.readiness_facts
+    if facts is None or facts.public_fund_manifest is None:
+        return
+    manifest = facts.public_fund_manifest
+    population = set(entity_ids)
+    ownerships = tuple(
+        item
+        for item in manifest.population_metric_ownerships
+        if item.representative_id in population
+    )
+    edges = tuple(
+        item
+        for item in manifest.representative_share_edges
+        if item.representative_id in population
+    )
+    if population != {item.representative_id for item in ownerships}:
+        raise SqlResultMappingError("RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH")
+    expected = {
+        EvidenceLocator.METRIC_DEFINITION: {
+            f"{item.metric_id}:{item.metric_definition_version}"
+            for item in ownerships
+        },
+        EvidenceLocator.OBSERVATION_RECORD: {
+            item.observation_id for item in ownerships
+        },
+        EvidenceLocator.RELATION_RECORD: {item.relation_id for item in edges},
+        EvidenceLocator.EVIDENCE_RECORD: {
+            *(item.evidence_id for item in ownerships),
+            *(item.evidence_id for item in edges),
+        },
+        EvidenceLocator.SOURCE_RECORD: {
+            *(item.source_id for item in ownerships),
+            *(item.source_id for item in edges),
+        },
+    }
+    for locator, column in columns.items():
+        if locator not in requested:
+            continue
+        actual = set(
+            _identifier_array(
+                row[column], f"RETURNED_{column.upper()}_MALFORMED"
+            )
+        )
+        if actual != expected[locator]:
+            code = (
+                "RETURNED_METRIC_DEFINITION_OWNERSHIP_MISMATCH"
+                if locator is EvidenceLocator.METRIC_DEFINITION
+                else "RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH"
+            )
+            raise SqlResultMappingError(code)
 
 
 def _validate_evidence_categories(request, rows, lineage: set[str]) -> None:

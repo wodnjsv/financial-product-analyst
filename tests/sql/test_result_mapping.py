@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 
 from financial_agent.contracts.canonical import canonical_json_bytes
+from financial_agent.contracts.enums import ProductFamily
 from financial_agent.intent.query_contracts import (
     AggregationFunction,
     AggregationSpecV2,
@@ -26,10 +27,51 @@ from financial_agent.planning.logical_query import (
 from financial_agent.sql.compiler import SemanticSqlCompiler
 from financial_agent.sql.result_mapping import SqlResultMappingError, map_sql_rows
 
-from .helpers import ACTIVE_DATASET, BINDINGS, PLANNING, POLICIES, make_plan
+from .helpers import (
+    ACTIVE_DATASET,
+    BINDINGS,
+    PLANNING,
+    POLICIES,
+    make_plan,
+    verified_public_fund_facts,
+)
 
 
 COMPILER = SemanticSqlCompiler(BINDINGS, POLICIES, PLANNING, ACTIVE_DATASET)
+
+
+def _representative_count_request():
+    plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="representative-product.v1",
+                population_grain_id="representative-product.v1",
+                dedup_policy_id="public-fund-representative-share.v1",
+            )
+        ),
+        family=ProductFamily.PUBLIC_FUND,
+        binding_ids=(),
+        policy_ids=(
+            "representative-product.v1",
+            "public-fund-representative-share.v1",
+        ),
+        qualifiers=QueryQualifiersV2(),
+        evidence=(
+            "metric_definition",
+            "observation_record",
+            "relation_record",
+            "evidence_record",
+            "source_record",
+        ),
+    )
+    outcome = COMPILER.compile_task(
+        plan,
+        plan.tasks[0].task_id,
+        readiness_facts=verified_public_fund_facts(),
+    )
+    assert outcome.request is not None, outcome.rejection
+    return outcome.request
 
 
 def _lookup_request():
@@ -250,7 +292,7 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
                 "aggregate_value": 2,
                 "product_ids": ["product-a", "product-b"],
                 "metric_definition_refs": [
-                    "organizer.pref01n001.aum:metric.v1",
+                    "organizer.pref01n001.aum:2",
                 ],
                 "observation_ids": ["observation-a", "observation-b"],
                 "evidence_ids": ["evidence-a", "evidence-b"],
@@ -262,11 +304,30 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
         "evidence:evidence-b",
-        "metric-definition:organizer.pref01n001.aum:metric.v1",
+        "metric-definition:organizer.pref01n001.aum:2",
         "observation:observation-a",
         "observation:observation-b",
         "source:source-a",
     )
+    with pytest.raises(
+        SqlResultMappingError,
+        match="RETURNED_METRIC_DEFINITION_OWNERSHIP_MISMATCH",
+    ):
+        map_sql_rows(
+            outcome.request,
+            [
+                {
+                    "aggregate_value": 2,
+                    "product_ids": ["product-a", "product-b"],
+                    "metric_definition_refs": [
+                        "organizer.pref01n001.aum:fake-version"
+                    ],
+                    "observation_ids": ["observation-a", "observation-b"],
+                    "evidence_ids": ["evidence-a", "evidence-b"],
+                    "source_ids": ["source-a"],
+                }
+            ],
+        )
     with pytest.raises(SqlResultMappingError, match="RETURNED_COUNT_CARDINALITY_MISMATCH"):
         map_sql_rows(
             outcome.request,
@@ -275,7 +336,7 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
                     "aggregate_value": 1,
                     "product_ids": ["product-a", "product-b"],
                     "metric_definition_refs": [
-                        "organizer.pref01n001.aum:metric.v1",
+                        "organizer.pref01n001.aum:2",
                     ],
                     "observation_ids": ["observation-a", "observation-b"],
                     "evidence_ids": ["evidence-a", "evidence-b"],
@@ -307,7 +368,7 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
                     "aggregate_value": 1,
                     "product_ids": None,
                     "metric_definition_refs": [
-                        "organizer.pref01n001.aum:metric.v1",
+                        "organizer.pref01n001.aum:2",
                     ],
                     "observation_ids": ["observation-a"],
                     "evidence_ids": ["evidence-a"],
@@ -323,7 +384,7 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
                     "aggregate_value": 1,
                     "product_ids": ["product-a"],
                     "metric_definition_refs": [
-                        "organizer.pref01n001.aum:metric.v1",
+                        "organizer.pref01n001.aum:2",
                     ],
                     "observation_ids": ["observation-a"],
                     "evidence_ids": ["evidence-a"],
@@ -366,7 +427,7 @@ def test_filtered_count_maps_one_canonical_exact_lineage_shape() -> None:
     row = {
         "aggregate_value": 1,
         "product_ids": ["product-a"],
-        "metric_definition_refs": ["organizer.pref01n001.aum:metric.v1"],
+        "metric_definition_refs": ["organizer.pref01n001.aum:2"],
         "observation_ids": ["observation-a"],
         "evidence_ids": ["evidence-a"],
         "source_ids": ["source-a"],
@@ -377,7 +438,7 @@ def test_filtered_count_maps_one_canonical_exact_lineage_shape() -> None:
     assert mapped.result_rows[0].fields[0].value.value == 1
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
-        "metric-definition:organizer.pref01n001.aum:metric.v1",
+        "metric-definition:organizer.pref01n001.aum:2",
         "observation:observation-a",
         "source:source-a",
     )
@@ -415,6 +476,122 @@ def test_count_lineage_categories_are_exactly_the_declared_projection_set() -> N
     )
     with pytest.raises(SqlResultMappingError, match="RETURNED_COLUMN_SET_MISMATCH"):
         map_sql_rows(outcome.request, [{**row, "evidence_ids": ["evidence-a"]}])
+
+
+def test_representative_count_accepts_only_the_exact_manifest_population_lineage() -> None:
+    request = _representative_count_request()
+    row = {
+        "aggregate_value": 1,
+        "product_ids": ["representative-a"],
+        "metric_definition_refs": [
+            "organizer.prfd01n001.net_assets:2",
+        ],
+        "observation_ids": ["observation-a"],
+        "relation_ids": ["relation-a", "relation-b"],
+        "evidence_ids": [
+            "evidence-a",
+            "evidence-b",
+            "evidence-observation-a",
+        ],
+        "source_ids": ["source-a", "source-b", "source-observation-a"],
+    }
+
+    mapped = map_sql_rows(request, [row])
+
+    assert set(mapped.evidence_refs) == {
+        "metric-definition:organizer.prfd01n001.net_assets:2",
+        "observation:observation-a",
+        "relation:relation-a",
+        "relation:relation-b",
+        "evidence:evidence-a",
+        "evidence:evidence-b",
+        "evidence:evidence-observation-a",
+        "source:source-a",
+        "source:source-b",
+        "source:source-observation-a",
+    }
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "reason"),
+    [
+        (
+            "observation_ids",
+            ["observation-unrelated"],
+            "RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH",
+        ),
+        (
+            "evidence_ids",
+            ["evidence-a", "evidence-b", "evidence-unrelated"],
+            "RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH",
+        ),
+        (
+            "source_ids",
+            ["source-a", "source-b", "source-unrelated"],
+            "RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH",
+        ),
+        (
+            "relation_ids",
+            ["relation-a", "relation-unrelated"],
+            "RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH",
+        ),
+        (
+            "metric_definition_refs",
+            ["organizer.prfd01n001.net_assets:fake-version"],
+            "RETURNED_METRIC_DEFINITION_OWNERSHIP_MISMATCH",
+        ),
+    ],
+)
+def test_representative_count_rejects_unowned_or_fake_lineage(
+    column: str,
+    value: list[str],
+    reason: str,
+) -> None:
+    row = {
+        "aggregate_value": 1,
+        "product_ids": ["representative-a"],
+        "metric_definition_refs": [
+            "organizer.prfd01n001.net_assets:2",
+        ],
+        "observation_ids": ["observation-a"],
+        "relation_ids": ["relation-a", "relation-b"],
+        "evidence_ids": [
+            "evidence-a",
+            "evidence-b",
+            "evidence-observation-a",
+        ],
+        "source_ids": ["source-a", "source-b", "source-observation-a"],
+    }
+
+    with pytest.raises(SqlResultMappingError, match=reason):
+        map_sql_rows(_representative_count_request(), [{**row, column: value}])
+
+
+def test_zero_count_rejects_every_nonempty_lineage_category() -> None:
+    request = _representative_count_request()
+    empty = {
+        "aggregate_value": 0,
+        "product_ids": None,
+        "metric_definition_refs": None,
+        "observation_ids": None,
+        "relation_ids": None,
+        "evidence_ids": None,
+        "source_ids": None,
+    }
+
+    assert map_sql_rows(request, [empty]).result_rows[0].entity_ids == ()
+    for column in (
+        "metric_definition_refs",
+        "observation_ids",
+        "relation_ids",
+        "evidence_ids",
+        "source_ids",
+    ):
+        with pytest.raises(
+            SqlResultMappingError,
+            match="RETURNED_ZERO_COUNT_LINEAGE_NOT_EMPTY",
+        ):
+            map_sql_rows(request, [{**empty, column: ["invented-lineage"]}])
 
 
 def test_rank_preserves_compiler_order_and_enforces_limit_with_ties() -> None:
@@ -538,7 +715,7 @@ def test_grouped_count_requires_flat_observation_evidence_and_source_lineage() -
         "group_0": Decimal("100"),
         "aggregate_value": 1,
         "product_ids": ["product-a"],
-        "metric_definition_refs": ["organizer.pref01n001.aum:metric.v1"],
+        "metric_definition_refs": ["organizer.pref01n001.aum:2"],
         "observation_ids": ["observation-a"],
         "evidence_ids": ["evidence-a"],
         "source_ids": ["source-a"],
@@ -546,7 +723,7 @@ def test_grouped_count_requires_flat_observation_evidence_and_source_lineage() -
     mapped = map_sql_rows(outcome.request, [row])
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
-        "metric-definition:organizer.pref01n001.aum:metric.v1",
+        "metric-definition:organizer.pref01n001.aum:2",
         "observation:observation-a",
         "source:source-a",
     )

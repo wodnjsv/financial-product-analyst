@@ -254,3 +254,59 @@ Round 3 verification:
 
 PostgreSQL remains explicitly **unmeasured** because the approved URL is not
 configured. No SQLite substitute was used.
+
+## Review fix round 4
+
+Base: `be31661b8b559954c64668c4d1e97ed38f3a87b8`.
+
+The focused RED run reproduced six failures with 13 existing passes. The
+representative COUNT result contract did not contain `relation_ids`, and the
+mapper could not distinguish exact manifest lineage from unrelated
+observation/evidence/source identifiers or a fabricated metric-definition
+version. This confirmed that category and identifier syntax checks had been
+mistaken for lineage ownership checks.
+
+Changes:
+
+- Physical observation bindings now register exact active
+  `metric_id:definition_version` references. Those references are included in
+  binding hashes and are pinned in `PhysicalSqlRenderManifest`, so canonical
+  rerender uses the same full identities rather than an ID-prefix allowlist.
+- Representative population ownership records also carry the exact metric
+  definition version. COUNT lowering filters on both metric ID and definition
+  version.
+- Representative COUNT SQL returns relation IDs plus the observation and
+  relation evidence/source paths already required by the verified population
+  manifest. The returned relation, observation, evidence, and source sets are
+  checked against the exact manifest tuples applicable to the returned
+  representative-product IDs.
+- Non-representative COUNT keeps query-population lineage dynamic, but returned
+  metric-definition references must match one exact binding-owned full
+  reference. Observation/evidence/source columns remain produced only by the
+  compiler-owned observation-origin bridge.
+- A zero COUNT accepts only null or empty arrays for every declared lineage
+  category. Any nonempty metric-definition, observation, relation, evidence,
+  or source lineage fails closed.
+- Direct malicious-row tests cover unrelated observation/evidence/source and
+  relation IDs, a fake definition version, and nonempty zero-count lineage.
+  A positive representative case requires the complete exact set.
+
+Verification:
+
+```text
+.venv/bin/python -m pytest tests/sql/test_result_mapping.py tests/sql/test_compiler.py -q
+45 passed
+
+.venv/bin/python -m pytest tests/sql tests/planning/test_physical_bindings.py tests/planning/test_plan_readiness.py tests/planning/test_logical_query.py tests/planning/test_semantic_router.py tests/planning/test_semantic_compiler.py -q
+325 passed
+
+.venv/bin/python -m pytest -m postgres tests/integration/test_semantic_sql_postgres.py -q
+3 skipped
+
+.venv/bin/python -m pytest -m "not postgres and not ncp_integration and not performance and not organizer_data and not object_storage and not official_data and not jena_integration and not clova_integration" -q
+2152 passed, 1 skipped, 451 deselected
+```
+
+The three PostgreSQL cases remain explicitly **unmeasured** because
+`FINANCIAL_AGENT_TEST_DATABASE_URL` is not configured. No SQLite substitute
+was used. Python compilation and `git diff --check` passed.

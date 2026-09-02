@@ -77,12 +77,12 @@ EXPECTED_CATALOG_PROJECTION_HASH = (
 )
 EXPECTED_BINDING_DEFINITION_HASHES = MappingProxyType(
     {
-        "domestic-etf-aum.v1": "fc0f0ff113f131cf1bd7cd6f89cdfd347b0800ef27388201650dfa4fa6515dd2",
-        "domestic-etf-fee-rate.v1": "61660f5ea46b56520d2c0c1b92c05bc54111b103cd89d919ae90d84287fecf59",
-        "overseas-etf-aum.v1": "4708f1c313bb4cfbbd981f12cec9003b1c497b24e2877f45ba7b56a0b6c309bc",
-        "overseas-etf-fee-rate.v1": "ef0619e24bf6f998e138abaa38d4523a120dc8764f759b40993da4b91a182f3a",
-        "public-fund-aum.v1": "731531d48d009b06e0d160fa7dcee0460eda2233061223abd17c1ee5b0d60304",
-        "public-fund-fee-rate.v1": "71d2d86915ce6380d05a809fe66204562981a049c1384ef1047bc8a510f15b15",
+        "domestic-etf-aum.v1": "5ca7edfbf435b6aa493b046511dbf30f1156ac281278e82dba435daa0cf5a99a",
+        "domestic-etf-fee-rate.v1": "5e30bdd1542023891255028254929dd8f13ede4fd922d2b2d73feaa752070a7c",
+        "overseas-etf-aum.v1": "eab62e8bc8c99f757adb18d193b4710c382c03f75ae49ab1298ffbec91854adb",
+        "overseas-etf-fee-rate.v1": "fd723bf049d800c724eca7c91ab182f685c415aa94698bbf0b9442d56513b90c",
+        "public-fund-aum.v1": "0e0c593d46c74819efb7684ec64fe48774ec6632ec5214420a869d46e5678511",
+        "public-fund-fee-rate.v1": "fbb846956c6a4b37c50c9842905bce28c229b75ca037a5fef7756e92986d34b0",
     }
 )
 EXPECTED_MAPPER_BINDINGS = MappingProxyType(
@@ -118,7 +118,7 @@ TRUSTED_PUBLIC_FUND_MANIFEST_PINS = MappingProxyType(
     {
         "synthetic-public-fund-complete.v1": (
             "43138033043db74566a74023c18b83e01b9637c1041ae737758aef55aaa9b36f",
-            "6e9ad494b382ba2e82acbdb6cd00c011683c91f6b096effe7c89fb36b3f4fd2e",
+            "859d22464fe035c1cf0be0dd7fa048146b06167994c4133e2edf649c8963a001",
         )
     }
 )
@@ -199,6 +199,7 @@ class PhysicalBindingDefinition(_StrictModel):
     source_kind: PhysicalSourceKind
     availability: PhysicalBindingAvailability
     approved_metric_ids: tuple[Identifier, ...]
+    approved_metric_definition_refs: tuple[Identifier, ...]
     value_column: ObservationValueColumn | None
     semantic_value_kind: SemanticValueKind
     storage_unit_id: Identifier | None
@@ -219,7 +220,11 @@ class PhysicalBindingDefinition(_StrictModel):
     @model_validator(mode="after")
     def validate_availability_shape(self):
         if self.availability is PhysicalBindingAvailability.VERIFIED:
-            if not self.approved_metric_ids or self.value_column is None:
+            if (
+                not self.approved_metric_ids
+                or not self.approved_metric_definition_refs
+                or self.value_column is None
+            ):
                 raise ValueError("verified binding requires physical fields")
             if not self.storage_unit_id or not self.unit_conversion_policy_id:
                 raise ValueError("verified binding requires unit policy")
@@ -230,6 +235,7 @@ class PhysicalBindingDefinition(_StrictModel):
         elif any(
             (
                 self.approved_metric_ids,
+                self.approved_metric_definition_refs,
                 self.value_column is not None,
                 self.storage_unit_id is not None,
                 self.unit_conversion_policy_id is not None,
@@ -250,6 +256,15 @@ class PhysicalBindingDefinition(_StrictModel):
         if self.availability is PhysicalBindingAvailability.VERIFIED and not self.required_evidence_locators:
             raise ValueError("missing evidence requirements")
         _require_unique(self.approved_metric_ids)
+        _require_unique(self.approved_metric_definition_refs)
+        definition_metrics = []
+        for reference in self.approved_metric_definition_refs:
+            metric_id, separator, version = reference.rpartition(":")
+            if not separator or not metric_id or not version:
+                raise ValueError("invalid approved metric definition reference")
+            definition_metrics.append(metric_id)
+        if set(definition_metrics) != set(self.approved_metric_ids):
+            raise ValueError("approved metric definition ownership mismatch")
         _require_unique(self.supported_operator_ids)
         _require_unique(self.supported_aggregate_ids)
         _require_unique(self.supported_qualifier_ids)
@@ -435,6 +450,7 @@ class PopulationMetricOwnership(_StrictModel):
     dataset_pin: Sha256Hex
     representative_id: Identifier
     metric_id: Identifier
+    metric_definition_version: Identifier
     owner_entity_id: Identifier
     observation_id: Identifier
     evidence_id: Identifier
@@ -682,6 +698,7 @@ def _validate_mapper_binding(binding: PhysicalBindingDefinition) -> None:
     metric_suffix, mapper_value_kind, mapper_unit_id = mapper_specs[source_column]
     if (
         binding.approved_metric_ids != (expected_metric_id,)
+        or binding.approved_metric_definition_refs != (f"{expected_metric_id}:2",)
         or expected_metric_id.rsplit(".", 1)[-1] != metric_suffix
         or mapper_value_kind != "numeric"
         or binding.semantic_value_kind is not SemanticValueKind.DECIMAL

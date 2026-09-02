@@ -532,6 +532,10 @@ def test_public_fund_representative_count_lineage_is_manifest_owned() -> None:
     )
 
     assert outcome.request is not None, outcome.rejection
+    assert outcome.request.render_manifest.count_lineage_metric_definition_refs == (
+        "organizer.prfd01n001.net_assets:2",
+    )
+    assert "relation_ids" in outcome.request.statement
     values = {decode_contract_value(item.value) for item in outcome.request.parameters}
     assert {
         "observation-a",
