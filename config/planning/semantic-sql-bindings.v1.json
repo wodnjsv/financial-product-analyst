@@ -1,5 +1,15 @@
 {
   "registry_version": "semantic-sql-bindings.v1",
+  "semantic_registry_pins": {
+    "contract_registry_version": "query-contract-registry.v2",
+    "contract_registry_hash": "06c2f97da35f07ccaa237e0a63a7d2d9a8a2c14040dd2e09e97d0bcb86d88baf",
+    "operator_registry_version": "query-operator-registry.v1",
+    "operator_registry_hash": "d9f1775b563cea24b0b8eaa1e79d9bd864df9defa483ad17aec0738af88f53ba",
+    "policy_registry_version": "query-policy-registry.v1",
+    "policy_registry_hash": "1dbb8eedf8340aae5b359692cd04c869d07d66681e3609a25623f7208513ce3a"
+  },
+  "physical_policy_registry_version": "semantic-sql-policies.v1",
+  "physical_policy_registry_hash": "cf4f5065eb4fdae76902a1c0bd817700129ad077fe56795c05ab95d76937abf4",
   "bindings": [
     {
       "id": "domestic-etf-aum.v1",
@@ -19,6 +29,8 @@
       "supported_aggregate_ids": ["sum", "avg", "min", "max"],
       "supported_qualifier_ids": ["as_of", "currency", "unit"],
       "required_qualifier_ids": ["as_of"],
+      "accepted_semantic_unit_ids": [],
+      "currency_normalization_required": false,
       "verified_population_grain_ids": ["source-product.v1"],
       "required_evidence_locators": ["metric_definition", "observation_record", "evidence_record", "source_record"],
       "unavailable_reason_code": null
@@ -41,6 +53,8 @@
       "supported_aggregate_ids": ["avg", "min", "max"],
       "supported_qualifier_ids": ["unit"],
       "required_qualifier_ids": [],
+      "accepted_semantic_unit_ids": ["percent"],
+      "currency_normalization_required": false,
       "verified_population_grain_ids": ["source-product.v1"],
       "required_evidence_locators": ["metric_definition", "observation_record", "evidence_record", "source_record"],
       "unavailable_reason_code": null
@@ -63,6 +77,8 @@
       "supported_aggregate_ids": ["sum", "avg", "min", "max"],
       "supported_qualifier_ids": ["as_of", "currency", "unit"],
       "required_qualifier_ids": ["as_of"],
+      "accepted_semantic_unit_ids": [],
+      "currency_normalization_required": true,
       "verified_population_grain_ids": ["source-product.v1"],
       "required_evidence_locators": ["metric_definition", "observation_record", "evidence_record", "source_record"],
       "unavailable_reason_code": null
@@ -85,6 +101,8 @@
       "supported_aggregate_ids": ["avg", "min", "max"],
       "supported_qualifier_ids": ["unit"],
       "required_qualifier_ids": [],
+      "accepted_semantic_unit_ids": ["percent"],
+      "currency_normalization_required": false,
       "verified_population_grain_ids": ["source-product.v1"],
       "required_evidence_locators": ["metric_definition", "observation_record", "evidence_record", "source_record"],
       "unavailable_reason_code": null
@@ -107,7 +125,9 @@
       "supported_aggregate_ids": ["sum", "avg", "min", "max"],
       "supported_qualifier_ids": ["as_of", "currency", "unit"],
       "required_qualifier_ids": ["as_of"],
-      "verified_population_grain_ids": ["source-product.v1"],
+      "accepted_semantic_unit_ids": [],
+      "currency_normalization_required": false,
+      "verified_population_grain_ids": [],
       "required_evidence_locators": ["metric_definition", "observation_record", "evidence_record", "source_record"],
       "unavailable_reason_code": null
     },
@@ -129,6 +149,8 @@
       "supported_aggregate_ids": [],
       "supported_qualifier_ids": [],
       "required_qualifier_ids": [],
+      "accepted_semantic_unit_ids": [],
+      "currency_normalization_required": false,
       "verified_population_grain_ids": [],
       "required_evidence_locators": [],
       "unavailable_reason_code": "PHYSICAL_DEFINITION_UNVERIFIED"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,8 @@ def _valid_binding(**updates: object) -> dict[str, object]:
         "supported_aggregate_ids": ["sum", "avg", "min", "max"],
         "supported_qualifier_ids": ["as_of", "currency", "unit"],
         "required_qualifier_ids": ["as_of"],
+        "accepted_semantic_unit_ids": [],
+        "currency_normalization_required": False,
         "verified_population_grain_ids": ["source-product.v1"],
         "required_evidence_locators": ["metric_definition", "observation_record", "evidence_record", "source_record"],
         "unavailable_reason_code": None,
@@ -62,7 +65,11 @@ def _valid_binding(**updates: object) -> dict[str, object]:
 
 
 def _payload(*bindings: dict[str, object]) -> dict[str, object]:
-    return {"registry_version": "semantic-sql-bindings.v1", "bindings": list(bindings)}
+    payload = json.loads(
+        (PROJECT_ROOT / "config/planning/semantic-sql-bindings.v1.json").read_text()
+    )
+    payload["bindings"] = list(bindings)
+    return payload
 
 
 def test_loader_returns_closed_immutable_verified_repository_bindings() -> None:
@@ -128,6 +135,49 @@ def test_loader_rejects_binding_policy_kind_mismatch(tmp_path: Path) -> None:
         load_physical_binding_registry(PROJECT_ROOT, registry_path=path)
 
 
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"approved_metric_ids": ["organizer.pref02n001.aum"]},
+        {"storage_unit_id": "invented_amount"},
+    ],
+)
+def test_loader_rejects_binding_definition_not_in_code_allowlist(
+    tmp_path: Path, update: dict[str, object]
+) -> None:
+    payload = json.loads(
+        (PROJECT_ROOT / "config/planning/semantic-sql-bindings.v1.json").read_text()
+    )
+    payload["bindings"][0].update(update)
+    path = _write_registry(tmp_path, payload)
+
+    with pytest.raises(ValueError, match="physical binding definition mismatch"):
+        load_physical_binding_registry(PROJECT_ROOT, registry_path=path)
+
+
+@pytest.mark.parametrize(
+    ("pin_path", "reason"),
+    [
+        (("semantic_registry_pins", "operator_registry_hash"), "semantic registry pin mismatch"),
+        (("physical_policy_registry_hash",), "physical policy registry pin mismatch"),
+    ],
+)
+def test_binding_loader_rejects_registry_pin_mismatch(
+    tmp_path: Path, pin_path: tuple[str, ...], reason: str
+) -> None:
+    payload = json.loads(
+        (PROJECT_ROOT / "config/planning/semantic-sql-bindings.v1.json").read_text()
+    )
+    target = payload
+    for part in pin_path[:-1]:
+        target = target[part]
+    target[pin_path[-1]] = "f" * 64
+    path = _write_registry(tmp_path, payload)
+
+    with pytest.raises(ValueError, match=reason):
+        load_physical_binding_registry(PROJECT_ROOT, registry_path=path)
+
+
 def test_unavailable_binding_cannot_smuggle_metric_or_derived_definition(
     tmp_path: Path,
 ) -> None:
@@ -159,10 +209,20 @@ def test_policy_registry_validates_representative_relation_and_is_immutable() ->
     assert policy.relation_predicate_id == "hasShareClass"
     assert policy.relation_direction == "subject_to_object"
     assert policy.population_grain_id == "representative-product.v1"
-    assert policy.verified is False
-    assert policy.unavailable_reason_code == "PUBLIC_FUND_GRAIN_UNVERIFIED"
+    assert policy.verified is True
+    assert policy.unavailable_reason_code is None
     with pytest.raises(TypeError):
         registry.policies_by_id["new"] = policy  # type: ignore[index]
+
+
+def test_registry_direct_construction_cannot_bypass_validated_loader() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+
+    with pytest.raises(ValueError, match="validated loader"):
+        replace(bindings, _construction_token=object())
+    with pytest.raises(ValueError, match="validated loader"):
+        replace(policies, _construction_token=object())
 
 
 def test_policy_loader_rejects_duplicate_and_unknown_relation(tmp_path: Path) -> None:
@@ -189,3 +249,25 @@ def test_policy_loader_rejects_duplicate_and_unknown_relation(tmp_path: Path) ->
     duplicate_path = _write_policy_registry(tmp_path, [duplicate, duplicate])
     with pytest.raises(ValueError, match="duplicate semantic SQL policy"):
         load_semantic_sql_policy_registry(PROJECT_ROOT, registry_path=duplicate_path)
+
+
+def test_policy_loader_rejects_invented_verified_policy(tmp_path: Path) -> None:
+    payload = json.loads(
+        (PROJECT_ROOT / "config/planning/semantic-sql-policies.v1.json").read_text()
+    )
+    payload["policies"].append(
+        {
+            "id": "invented-policy.v1",
+            "kind": "normalization",
+            "applicable_product_family_ids": [],
+            "verified": True,
+            "relation_predicate_id": None,
+            "relation_direction": None,
+            "population_grain_id": None,
+            "unavailable_reason_code": None,
+        }
+    )
+    path = _write_policy_registry(tmp_path, payload["policies"])
+
+    with pytest.raises(ValueError, match="semantic SQL policy definition mismatch"):
+        load_semantic_sql_policy_registry(PROJECT_ROOT, registry_path=path)

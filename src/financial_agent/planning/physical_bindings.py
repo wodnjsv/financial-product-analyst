@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
@@ -10,15 +10,26 @@ from typing import Mapping
 
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 
-from financial_agent.contracts.base import ContractModel, Identifier
+from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
 from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.enums import ProductFamily
 from financial_agent.intent.catalog import SemanticCatalogSnapshot, load_catalog
 from financial_agent.intent.query_contract_registry import EXPECTED_OPERATOR_DEFINITIONS
+from financial_agent.intent.query_contract_registry import load_query_contract_registry
 from financial_agent.intent.query_contracts import (
     AggregationFunction,
     QueryOperatorId,
     SemanticValueKind,
+    QueryRegistryPinsV2,
+)
+from financial_agent.ingestion.mapping.domestic_etp import (
+    _METRIC_SPECS as DOMESTIC_ETP_METRIC_SPECS,
+)
+from financial_agent.ingestion.mapping.overseas_etp import (
+    _METRIC_SPECS as OVERSEAS_ETP_METRIC_SPECS,
+)
+from financial_agent.ingestion.mapping.public_fund import (
+    _METRIC_SPECS as PUBLIC_FUND_METRIC_SPECS,
 )
 
 
@@ -26,6 +37,49 @@ BINDING_REGISTRY_PATH = Path("config/planning/semantic-sql-bindings.v1.json")
 POLICY_REGISTRY_PATH = Path("config/planning/semantic-sql-policies.v1.json")
 BINDING_REGISTRY_VERSION = "semantic-sql-bindings.v1"
 POLICY_REGISTRY_VERSION = "semantic-sql-policies.v1"
+EXPECTED_POLICY_REGISTRY_HASH = (
+    "cf4f5065eb4fdae76902a1c0bd817700129ad077fe56795c05ab95d76937abf4"
+)
+EXPECTED_BINDING_DEFINITION_HASHES = MappingProxyType(
+    {
+        "domestic-etf-aum.v1": "fc0f0ff113f131cf1bd7cd6f89cdfd347b0800ef27388201650dfa4fa6515dd2",
+        "domestic-etf-fee-rate.v1": "cefc7708cc734e80477f7bb74de782c9433f30b09f096a90c467a19441a71a20",
+        "overseas-etf-aum.v1": "4708f1c313bb4cfbbd981f12cec9003b1c497b24e2877f45ba7b56a0b6c309bc",
+        "overseas-etf-fee-rate.v1": "aac9da7ebd301ee4561c9153a17f087bb6d568217696f1c483b7b8c7747ea727",
+        "public-fund-aum.v1": "731531d48d009b06e0d160fa7dcee0460eda2233061223abd17c1ee5b0d60304",
+        "public-fund-fee-rate.v1": "71d2d86915ce6380d05a809fe66204562981a049c1384ef1047bc8a510f15b15",
+    }
+)
+EXPECTED_MAPPER_BINDINGS = MappingProxyType(
+    {
+        "domestic-etf-aum.v1": (
+            DOMESTIC_ETP_METRIC_SPECS,
+            "du_last_aum",
+            "organizer.pref01n001.aum",
+        ),
+        "domestic-etf-fee-rate.v1": (
+            DOMESTIC_ETP_METRIC_SPECS,
+            "cu_charge_rt",
+            "organizer.pref01n001.total_fee_rate",
+        ),
+        "overseas-etf-aum.v1": (
+            OVERSEAS_ETP_METRIC_SPECS,
+            "du_last_aum",
+            "organizer.pref02n001.aum",
+        ),
+        "overseas-etf-fee-rate.v1": (
+            OVERSEAS_ETP_METRIC_SPECS,
+            "cu_charge_rt",
+            "organizer.pref02n001.total_fee_rate",
+        ),
+        "public-fund-aum.v1": (
+            PUBLIC_FUND_METRIC_SPECS,
+            "fd_nast_suma",
+            "organizer.prfd01n001.net_assets",
+        ),
+    }
+)
+_REGISTRY_CONSTRUCTION_TOKEN = object()
 
 
 class ObservationValueColumn(str, Enum):
@@ -114,6 +168,8 @@ class PhysicalBindingDefinition(_StrictModel):
     supported_aggregate_ids: tuple[AggregationFunction, ...]
     supported_qualifier_ids: tuple[SemanticQualifierId, ...]
     required_qualifier_ids: tuple[SemanticQualifierId, ...]
+    accepted_semantic_unit_ids: tuple[Identifier, ...]
+    currency_normalization_required: bool
     verified_population_grain_ids: tuple[Identifier, ...]
     required_evidence_locators: tuple[EvidenceLocator, ...]
     unavailable_reason_code: Identifier | None
@@ -140,6 +196,8 @@ class PhysicalBindingDefinition(_StrictModel):
                 self.supported_aggregate_ids,
                 self.supported_qualifier_ids,
                 self.required_qualifier_ids,
+                self.accepted_semantic_unit_ids,
+                self.currency_normalization_required,
                 self.verified_population_grain_ids,
                 self.required_evidence_locators,
             )
@@ -154,6 +212,7 @@ class PhysicalBindingDefinition(_StrictModel):
         _require_unique(self.supported_aggregate_ids)
         _require_unique(self.supported_qualifier_ids)
         _require_unique(self.required_qualifier_ids)
+        _require_unique(self.accepted_semantic_unit_ids)
         _require_unique(self.verified_population_grain_ids)
         _require_unique(self.required_evidence_locators)
         return self
@@ -191,6 +250,9 @@ class SemanticSqlPolicyDefinition(_StrictModel):
 
 class _BindingRegistryPayload(_StrictModel):
     registry_version: Identifier
+    semantic_registry_pins: QueryRegistryPinsV2
+    physical_policy_registry_version: Identifier
+    physical_policy_registry_hash: Sha256Hex
     bindings: tuple[PhysicalBindingDefinition, ...] = Field(min_length=1)
 
 
@@ -209,6 +271,29 @@ class PhysicalBindingRegistry:
     bindings_by_family_concept: Mapping[tuple[str, str], PhysicalBindingDefinition]
     catalog_concept_ids: frozenset[str]
     catalog_families_by_concept: Mapping[str, frozenset[str]]
+    semantic_registry_pins: QueryRegistryPinsV2
+    physical_policy_registry_version: str
+    physical_policy_registry_hash: str
+    _construction_token: object = dataclass_field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._construction_token is not _REGISTRY_CONSTRUCTION_TOKEN:
+            raise ValueError("registry must be created by the validated loader")
+        object.__setattr__(
+            self,
+            "bindings_by_id",
+            MappingProxyType(dict(self.bindings_by_id)),
+        )
+        object.__setattr__(
+            self,
+            "bindings_by_family_concept",
+            MappingProxyType(dict(self.bindings_by_family_concept)),
+        )
+        object.__setattr__(
+            self,
+            "catalog_families_by_concept",
+            MappingProxyType(dict(self.catalog_families_by_concept)),
+        )
 
     def binding_for(
         self, family_id: str | ProductFamily, concept_id: str
@@ -222,6 +307,49 @@ class SemanticSqlPolicyRegistry:
     registry_version: str
     registry_hash: str
     policies_by_id: Mapping[str, SemanticSqlPolicyDefinition]
+    _construction_token: object = dataclass_field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._construction_token is not _REGISTRY_CONSTRUCTION_TOKEN:
+            raise ValueError("registry must be created by the validated loader")
+        object.__setattr__(
+            self,
+            "policies_by_id",
+            MappingProxyType(dict(self.policies_by_id)),
+        )
+
+
+class RepresentativeShareEdge(_StrictModel):
+    representative_id: Identifier
+    share_class_id: Identifier
+    predicate_id: Identifier
+    relation_id: Identifier
+    evidence_id: Identifier
+    source_id: Identifier
+
+
+class PopulationMetricOwnership(_StrictModel):
+    representative_id: Identifier
+    metric_id: Identifier
+    owner_entity_id: Identifier
+    observation_id: Identifier
+    evidence_id: Identifier
+    source_id: Identifier
+
+
+class PhysicalReadinessFacts(_StrictModel):
+    known_entity_ids: frozenset[Identifier] = frozenset()
+    known_group_basis_ids: frozenset[Identifier] = frozenset()
+    known_prior_result_binding_ids: frozenset[Identifier] = frozenset()
+    known_value_ref_ids: frozenset[Identifier] = frozenset()
+    verified_relation_ids: frozenset[Identifier] = frozenset()
+    verified_observation_ids: frozenset[Identifier] = frozenset()
+    verified_evidence_ids: frozenset[Identifier] = frozenset()
+    verified_source_ids: frozenset[Identifier] = frozenset()
+    public_fund_share_class_ids: frozenset[Identifier] = frozenset()
+    representative_share_edges: tuple[RepresentativeShareEdge, ...] = ()
+    ambiguous_share_class_ids: frozenset[Identifier] = frozenset()
+    population_metric_ownerships: tuple[PopulationMetricOwnership, ...] = ()
 
 
 def load_physical_binding_registry(
@@ -239,6 +367,22 @@ def load_physical_binding_registry(
         raise ValueError("unsupported physical binding registry version")
     catalog = load_catalog(root)
     policies = load_semantic_sql_policy_registry(root)
+    semantic = load_query_contract_registry(root)
+    expected_semantic_pins = QueryRegistryPinsV2(
+        contract_registry_version=semantic.contract_registry_version,
+        contract_registry_hash=semantic.contract_registry_hash,
+        operator_registry_version=semantic.operator_registry_version,
+        operator_registry_hash=semantic.operator_registry_hash,
+        policy_registry_version=semantic.policy_registry_version,
+        policy_registry_hash=semantic.policy_registry_hash,
+    )
+    if payload.semantic_registry_pins != expected_semantic_pins:
+        raise ValueError("semantic registry pin mismatch")
+    if (
+        payload.physical_policy_registry_version != policies.registry_version
+        or payload.physical_policy_registry_hash != policies.registry_hash
+    ):
+        raise ValueError("physical policy registry pin mismatch")
     by_id: dict[str, PhysicalBindingDefinition] = {}
     by_pair: dict[tuple[str, str], PhysicalBindingDefinition] = {}
     for binding in payload.bindings:
@@ -248,8 +392,14 @@ def load_physical_binding_registry(
         if pair in by_pair:
             raise ValueError("duplicate family/concept binding")
         _validate_binding(binding, catalog, policies)
+        _validate_mapper_binding(binding)
+        expected_hash = EXPECTED_BINDING_DEFINITION_HASHES.get(binding.id)
+        if expected_hash is None or canonical_sha256(binding) != expected_hash:
+            raise ValueError("physical binding definition mismatch")
         by_id[binding.id] = binding
         by_pair[pair] = binding
+    if set(by_id) != set(EXPECTED_BINDING_DEFINITION_HASHES):
+        raise ValueError("physical binding definition mismatch")
     return PhysicalBindingRegistry(
         registry_version=payload.registry_version,
         registry_hash=canonical_sha256(payload),
@@ -264,6 +414,10 @@ def load_physical_binding_registry(
                 for concept_id, concept in sorted(catalog.concepts_by_id.items())
             }
         ),
+        semantic_registry_pins=payload.semantic_registry_pins,
+        physical_policy_registry_version=payload.physical_policy_registry_version,
+        physical_policy_registry_hash=payload.physical_policy_registry_hash,
+        _construction_token=_REGISTRY_CONSTRUCTION_TOKEN,
     )
 
 
@@ -294,10 +448,13 @@ def load_semantic_sql_policy_registry(
             ):
                 raise ValueError("policy relation family mismatch")
         indexed[policy.id] = policy
+    if canonical_sha256(payload) != EXPECTED_POLICY_REGISTRY_HASH:
+        raise ValueError("semantic SQL policy definition mismatch")
     return SemanticSqlPolicyRegistry(
         registry_version=payload.registry_version,
         registry_hash=canonical_sha256(payload),
         policies_by_id=MappingProxyType(dict(sorted(indexed.items()))),
+        _construction_token=_REGISTRY_CONSTRUCTION_TOKEN,
     )
 
 
@@ -362,6 +519,24 @@ def _validate_binding(
         policy = policies.policies_by_id.get(grain_id)
         if policy is None or policy.kind is not SemanticSqlPolicyKind.POPULATION_GRAIN:
             raise ValueError("binding population grain policy mismatch")
+
+
+def _validate_mapper_binding(binding: PhysicalBindingDefinition) -> None:
+    if binding.availability is PhysicalBindingAvailability.UNAVAILABLE:
+        return
+    expected = EXPECTED_MAPPER_BINDINGS.get(binding.id)
+    if expected is None:
+        raise ValueError("physical binding definition mismatch")
+    mapper_specs, source_column, expected_metric_id = expected
+    metric_suffix, mapper_value_kind, mapper_unit_id = mapper_specs[source_column]
+    if (
+        binding.approved_metric_ids != (expected_metric_id,)
+        or expected_metric_id.rsplit(".", 1)[-1] != metric_suffix
+        or mapper_value_kind != "numeric"
+        or binding.semantic_value_kind is not SemanticValueKind.DECIMAL
+        or binding.storage_unit_id != mapper_unit_id
+    ):
+        raise ValueError("physical binding definition mismatch")
 
 
 def _catalog_value_kind(value_kind: str) -> SemanticValueKind:

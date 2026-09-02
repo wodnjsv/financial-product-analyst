@@ -9,6 +9,7 @@ from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
 from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.enums import IntentType, ProductFamily
 from financial_agent.intent.query_contracts import (
+    AggregationFunction,
     PlanReadiness,
     PredicateAllOfV2,
     PredicateAnyOfV2,
@@ -16,12 +17,15 @@ from financial_agent.intent.query_contracts import (
     PredicateNodeV2,
     PredicateNotV2,
     SolvedQueryContractCandidateV2,
+    SemanticValueKind,
 )
 
 from .physical_bindings import (
     PhysicalBindingAvailability,
     PhysicalBindingDefinition,
     PhysicalBindingRegistry,
+    PhysicalReadinessFacts,
+    PopulationMetricOwnership,
     SemanticQualifierId,
     SemanticSqlPolicyKind,
     SemanticSqlPolicyRegistry,
@@ -63,13 +67,31 @@ def assess_plan_readiness(
     contract: SolvedQueryContractCandidateV2,
     bindings: PhysicalBindingRegistry,
     policies: SemanticSqlPolicyRegistry,
+    *,
+    facts: PhysicalReadinessFacts | None = None,
 ) -> PlanReadinessResult:
     """Assess all semantic roles without changing the solved contract."""
 
     state = _Assessment()
+    if contract.registry_pins != bindings.semantic_registry_pins:
+        state.add("SEMANTIC_REGISTRY_PIN_MISMATCH", PlanReadiness.BLOCKED)
+    if (
+        bindings.physical_policy_registry_version != policies.registry_version
+        or bindings.physical_policy_registry_hash != policies.registry_hash
+    ):
+        state.add("PHYSICAL_POLICY_REGISTRY_PIN_MISMATCH", PlanReadiness.BLOCKED)
     families = tuple(contract.scope.product_family_ids)
     if not families:
         state.add("PHYSICAL_SCOPE_FAMILY_REQUIRED", PlanReadiness.BLOCKED)
+    known_entity_ids = facts.known_entity_ids if facts is not None else frozenset()
+    if set(contract.scope.entity_refs) - known_entity_ids:
+        state.add("ENTITY_IDENTITY_UNVERIFIED", PlanReadiness.LIMITED)
+    if contract.scope.prior_result_binding and (
+        facts is None
+        or contract.scope.prior_result_binding
+        not in facts.known_prior_result_binding_ids
+    ):
+        state.add("PRIOR_RESULT_BINDING_UNVERIFIED", PlanReadiness.LIMITED)
 
     field_roles: list[tuple[str, str, object | None]] = []
     policy_roles: list[tuple[str, SemanticSqlPolicyKind, str]] = []
@@ -92,6 +114,17 @@ def assess_plan_readiness(
         if contract.predicate is not None:
             _collect_predicate(contract.predicate, field_roles, policy_roles)
     elif contract.action_id is IntentType.COMPARE:
+        if contract.comparison.subject_refs:
+            unknown_subjects = set(contract.comparison.subject_refs) - (
+                facts.known_entity_ids if facts is not None else frozenset()
+            )
+            if unknown_subjects:
+                state.add("ENTITY_IDENTITY_UNVERIFIED", PlanReadiness.LIMITED)
+        if contract.comparison.group_basis_id and (
+            facts is None
+            or contract.comparison.group_basis_id not in facts.known_group_basis_ids
+        ):
+            state.add("COMPARISON_GROUP_BASIS_UNVERIFIED", PlanReadiness.LIMITED)
         field_roles.extend(
             (item, "comparison", None) for item in contract.comparison.metric_concept_ids
         )
@@ -113,6 +146,14 @@ def assess_plan_readiness(
             (aggregation.population_grain_id, SemanticSqlPolicyKind.POPULATION_GRAIN, "SQL_POLICY_NOT_REGISTERED"),
             (aggregation.dedup_policy_id, SemanticSqlPolicyKind.DEDUPLICATION, "SQL_POLICY_NOT_REGISTERED"),
         ))
+        if aggregation.function_id is AggregationFunction.COUNT:
+            if aggregation.count_population_id != aggregation.population_grain_id:
+                state.add("COUNT_POPULATION_MISMATCH", PlanReadiness.BLOCKED)
+            policy_roles.append((
+                aggregation.count_population_id,
+                SemanticSqlPolicyKind.POPULATION_GRAIN,
+                "COUNT_POPULATION_NOT_REGISTERED",
+            ))
         if aggregation.bucket_policy_id:
             policy_roles.append((aggregation.bucket_policy_id.value, SemanticSqlPolicyKind.BUCKETING, "SQL_POLICY_NOT_REGISTERED"))
         if contract.predicate is not None:
@@ -124,8 +165,19 @@ def assess_plan_readiness(
             for item in contract.calculation.operands
             if item.field_concept_id is not None
         )
+        if any(
+            item.value_ref is not None
+            and (
+                facts is None or item.value_ref not in facts.known_value_ref_ids
+            )
+            for item in contract.calculation.operands
+        ):
+            state.add("CALCULATION_VALUE_REF_UNVERIFIED", PlanReadiness.LIMITED)
     elif contract.action_id is IntentType.SIMILAR:
         policy_roles.append((contract.similarity.policy_id, SemanticSqlPolicyKind.SIMILARITY, "SQL_POLICY_NOT_REGISTERED"))
+        policy_roles.append(("minimum-dimension-coverage.v1", SemanticSqlPolicyKind.COVERAGE, "SQL_POLICY_NOT_REGISTERED"))
+        if facts is None or contract.similarity.anchor_ref not in facts.known_entity_ids:
+            state.add("ENTITY_IDENTITY_UNVERIFIED", PlanReadiness.LIMITED)
         field_roles.extend(
             (item, "similarity_dimension", None)
             for item in contract.similarity.dimension_concept_ids
@@ -136,6 +188,7 @@ def assess_plan_readiness(
     elif contract.action_id is IntentType.EXPLAIN:
         if contract.explanation.profile_id:
             policy_roles.append((contract.explanation.profile_id, SemanticSqlPolicyKind.DEFAULT, "SQL_POLICY_NOT_REGISTERED"))
+            state.add("EXPLANATION_PROFILE_NOT_EXPANDED", PlanReadiness.BLOCKED)
         if contract.explanation.topic_concept_id:
             field_roles.append((contract.explanation.topic_concept_id, "explanation_topic", None))
 
@@ -160,7 +213,16 @@ def assess_plan_readiness(
         _assess_policy(policy_id, expected_kind, missing_reason, families, policies, state)
     _assess_qualifiers(contract.qualifiers, resolved_bindings, state)
     if contract.action_id is IntentType.AGGREGATE:
-        _assess_aggregate_grain(contract.aggregation, resolved_bindings, policies, state)
+        _assess_aggregate_grain(
+            contract.aggregation, resolved_bindings, policies, facts, state
+        )
+    _assess_currency_normalization(contract, resolved_bindings, state)
+    if contract.action_id is IntentType.RANK and any(
+        item.product_family_id is ProductFamily.PUBLIC_FUND
+        and item.semantic_concept_id == "aum"
+        for item in resolved_bindings
+    ):
+        state.add("PUBLIC_FUND_GRAIN_UNVERIFIED", PlanReadiness.LIMITED)
 
     if not state.reasons:
         readiness = PlanReadiness.EXECUTABLE
@@ -231,6 +293,19 @@ def _assess_field(
         if role == "predicate" and role_value is not None:
             if role_value.operator_id not in binding.supported_operator_ids:
                 state.add("PHYSICAL_OPERATOR_UNSUPPORTED", PlanReadiness.LIMITED)
+            literal_values = (
+                (role_value.value,)
+                if role_value.value is not None
+                else role_value.values
+            )
+            for literal in literal_values:
+                if literal.kind is not binding.semantic_value_kind:
+                    state.add("PHYSICAL_VALUE_KIND_MISMATCH", PlanReadiness.BLOCKED)
+                if (
+                    literal.unit_id is not None
+                    and literal.unit_id not in binding.accepted_semantic_unit_ids
+                ):
+                    state.add("SEMANTIC_UNIT_NOT_SUPPORTED", PlanReadiness.BLOCKED)
         if role == "aggregation" and role_value is not None:
             if role_value.function_id not in binding.supported_aggregate_ids:
                 state.add("PHYSICAL_AGGREGATE_UNSUPPORTED", PlanReadiness.LIMITED)
@@ -277,10 +352,27 @@ def _assess_qualifiers(qualifiers, bindings, state: _Assessment) -> None:
             state.add("PHYSICAL_QUALIFIER_UNSUPPORTED", PlanReadiness.LIMITED)
 
 
-def _assess_aggregate_grain(aggregation, bindings, policies, state: _Assessment) -> None:
+def _assess_aggregate_grain(
+    aggregation, bindings, policies, facts: PhysicalReadinessFacts | None,
+    state: _Assessment
+) -> None:
     grain_id = aggregation.population_grain_id
     dedup_id = aggregation.dedup_policy_id
     for binding in bindings:
+        if binding.product_family_id is ProductFamily.PUBLIC_FUND:
+            if (
+                grain_id != "representative-product.v1"
+                or dedup_id != "public-fund-representative-share.v1"
+            ):
+                state.add(
+                    "PUBLIC_FUND_REPRESENTATIVE_POLICY_REQUIRED",
+                    PlanReadiness.LIMITED,
+                )
+                continue
+            proof_reasons = _public_fund_population_proof(binding, facts)
+            for reason in proof_reasons:
+                state.add(reason, PlanReadiness.LIMITED)
+            continue
         if grain_id not in binding.verified_population_grain_ids:
             state.add(
                 "PUBLIC_FUND_GRAIN_UNVERIFIED"
@@ -293,6 +385,99 @@ def _assess_aggregate_grain(aggregation, bindings, policies, state: _Assessment)
     if grain is not None and dedup is not None:
         if dedup.population_grain_id and dedup.population_grain_id != grain.id:
             state.add("DEDUP_GRAIN_POLICY_MISMATCH", PlanReadiness.BLOCKED)
+
+
+def _public_fund_population_proof(
+    binding: PhysicalBindingDefinition,
+    facts: PhysicalReadinessFacts | None,
+) -> set[str]:
+    if facts is None:
+        return {"PUBLIC_FUND_GRAIN_UNVERIFIED"}
+    reasons: set[str] = set()
+    shares = set(facts.public_fund_share_class_ids)
+    edges = facts.representative_share_edges
+    if not shares:
+        reasons.add("PUBLIC_FUND_REPRESENTATIVE_FACTS_MISSING")
+    incoming: dict[str, set[str]] = {share_id: set() for share_id in shares}
+    graph: dict[str, set[str]] = {}
+    for edge in edges:
+        if edge.predicate_id != "hasShareClass":
+            reasons.add("PUBLIC_FUND_REPRESENTATIVE_RELATION_UNVERIFIED")
+        if (
+            edge.relation_id not in facts.verified_relation_ids
+            or edge.evidence_id not in facts.verified_evidence_ids
+            or edge.source_id not in facts.verified_source_ids
+        ):
+            reasons.add("PUBLIC_FUND_EVIDENCE_PATH_UNVERIFIED")
+        incoming.setdefault(edge.share_class_id, set()).add(edge.representative_id)
+        graph.setdefault(edge.representative_id, set()).add(edge.share_class_id)
+    if set(incoming) != shares or any(len(items) != 1 for items in incoming.values()):
+        reasons.add("PUBLIC_FUND_REPRESENTATIVE_COVERAGE_INCOMPLETE")
+    if facts.ambiguous_share_class_ids or any(len(items) > 1 for items in incoming.values()):
+        reasons.add("PUBLIC_FUND_REPRESENTATIVE_AMBIGUOUS")
+    if _has_cycle(graph):
+        reasons.add("PUBLIC_FUND_REPRESENTATIVE_CYCLE")
+    representatives = {edge.representative_id for edge in edges}
+    if not (shares | representatives) <= set(facts.known_entity_ids):
+        reasons.add("PUBLIC_FUND_REPRESENTATIVE_FACTS_MISSING")
+    ownerships = [
+        item for item in facts.population_metric_ownerships
+        if item.metric_id in binding.approved_metric_ids
+    ]
+    by_representative: dict[str, list[PopulationMetricOwnership]] = {
+        item: [] for item in representatives
+    }
+    for ownership in ownerships:
+        by_representative.setdefault(ownership.representative_id, []).append(ownership)
+        if (
+            ownership.observation_id not in facts.verified_observation_ids
+            or ownership.evidence_id not in facts.verified_evidence_ids
+            or ownership.source_id not in facts.verified_source_ids
+        ):
+            reasons.add("PUBLIC_FUND_EVIDENCE_PATH_UNVERIFIED")
+    if set(by_representative) != representatives:
+        reasons.add("PUBLIC_FUND_AUM_OWNERSHIP_UNVERIFIED")
+    if len({item.observation_id for item in ownerships}) != len(ownerships):
+        reasons.add("PUBLIC_FUND_AUM_OWNERSHIP_UNVERIFIED")
+    for representative_id in representatives:
+        owned = by_representative.get(representative_id, [])
+        if len(owned) != 1 or owned[0].owner_entity_id != representative_id:
+            reasons.add("PUBLIC_FUND_AUM_OWNERSHIP_UNVERIFIED")
+    if not representatives:
+        reasons.add("PUBLIC_FUND_AUM_OWNERSHIP_UNVERIFIED")
+    return reasons
+
+
+def _has_cycle(graph: dict[str, set[str]]) -> bool:
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node: str) -> bool:
+        if node in visiting:
+            return True
+        if node in visited:
+            return False
+        visiting.add(node)
+        for child in graph.get(node, set()):
+            if visit(child):
+                return True
+        visiting.remove(node)
+        visited.add(node)
+        return False
+
+    return any(visit(node) for node in graph)
+
+
+def _assess_currency_normalization(contract, bindings, state: _Assessment) -> None:
+    if contract.action_id not in {IntentType.RANK, IntentType.AGGREGATE}:
+        return
+    aum_bindings = [
+        binding for binding in bindings if binding.semantic_concept_id == "aum"
+    ]
+    if any(binding.currency_normalization_required for binding in aum_bindings) or len(
+        {binding.product_family_id for binding in aum_bindings}
+    ) > 1:
+        state.add("CURRENCY_NORMALIZATION_POLICY_REQUIRED", PlanReadiness.LIMITED)
 
 
 def _severity(readiness: PlanReadiness) -> int:
