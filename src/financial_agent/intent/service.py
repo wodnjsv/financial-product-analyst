@@ -50,7 +50,7 @@ from .normalization import (
     normalize_request,
     normalize_segment,
 )
-from .prompt import ResolverPromptEnvelope, build_prompt
+from .prompt import ResolverPromptEnvelope, build_prompt, model_safe_view_payload
 from .proposal import IntentResolutionProposalV2
 from .query_contract_judge import QueryContractJudge, QueryContractJudgeResult
 from .query_contract_registry import QueryContractRegistry
@@ -618,9 +618,7 @@ def build_repair_envelope(
         user_message=json.dumps(
             {
                 "context": prepared.context.model_dump(mode="json"),
-                "view": prepared.view.model_dump(
-                    mode="json", exclude={"exact_semantic_locks"}
-                ),
+                "view": model_safe_view_payload(prepared.view),
                 "original_prompt_hash": original_prompt_hash,
                 "failure_code": failure.code,
                 "correction_instruction": instruction,

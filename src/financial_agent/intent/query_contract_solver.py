@@ -322,7 +322,7 @@ def _solve_frame(
         )
     if not qualifier_options:
         return _frame_result(frame.frame_id, (), tuple(rejections))
-    fields, field_bound = _field_offers(
+    fields, field_bound, field_evidence_present = _field_offers(
         frame, view, exact_locks, scopes[0], rejections, variants[0].id
     )
     if field_bound:
@@ -337,6 +337,8 @@ def _solve_frame(
     fields = _fields_with_complete_qualifiers(
         frame, variants[0].id, fields, qualifier_states, rejections
     )
+    if action is IntentType.LOOKUP and field_evidence_present and not fields:
+        return _frame_result(frame.frame_id, (), tuple(rejections))
     overflow_role = _overflow_role(action, frame, resolution, view, exact_locks)
     if overflow_role is not None:
         return _frame_result(
@@ -538,7 +540,7 @@ def _field_offers(
     scope: QueryScopeV2,
     rejections: list[CandidateRejection],
     variant_id: str,
-) -> tuple[tuple[_FieldOffer, ...], bool]:
+) -> tuple[tuple[_FieldOffer, ...], bool, bool]:
     concepts = _offered_concepts(view)
     relations = {item.relation_id: item for item in view.relation_definitions}
     locked = tuple(lock for lock in locks if lock.role == "field")
@@ -615,7 +617,11 @@ def _field_offers(
         else:
             applicable.append(offer)
     applicable.sort(key=lambda item: item.concept.concept_id)
-    return tuple(applicable[:MAX_CANDIDATES_PER_ROLE]), len(applicable) > MAX_CANDIDATES_PER_ROLE
+    return (
+        tuple(applicable[:MAX_CANDIDATES_PER_ROLE]),
+        len(applicable) > MAX_CANDIDATES_PER_ROLE,
+        bool(offers),
+    )
 
 
 def _lookup(frame, variant_id, scope, qualifiers, fields, pins):

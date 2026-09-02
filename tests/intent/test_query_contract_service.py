@@ -32,6 +32,7 @@ import financial_agent.intent.service as service_module
 from financial_agent.intent.resolution import ResolutionIssue
 from financial_agent.intent.service import (
     IntentResolverService,
+    PreparedResolutionRequest,
     QueryContractResolutionTelemetry,
     reconcile_exact_axis_locks,
 )
@@ -157,6 +158,17 @@ def _proposal(*, action: str = "lookup", family: str = "domestic_etf") -> str:
     )
 
 
+def _generic_lookup_proposal(prepared: PreparedResolutionRequest) -> str:
+    payload = json.loads(_proposal())
+    evidence_by_text = {
+        item.text: item.evidence_id for item in prepared.view.evidence_candidates
+    }
+    frame = payload["frames"][0]
+    frame["action_choice"]["evidence_ids"] = [evidence_by_text["알려줘"]]
+    frame["product_family_choice"]["evidence_ids"] = [evidence_by_text["상품"]]
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
 def _service(adapter: _Adapter, *, timer=None) -> IntentResolverService:
     catalog = load_catalog(PROJECT_ROOT)
     manifest = build_manifest(
@@ -207,8 +219,11 @@ async def test_unique_complete_contract_uses_one_axis_call_and_no_v1_slot_binder
             AssertionError("V1 slot binder must not run")
         ),
     )
-    adapter = _Adapter([_proposal()])
-    attempt = await _service(adapter).resolve_query_contract_candidates(_context())
+    context = _context("상품 알려줘")
+    adapter = _Adapter([])
+    service = _service(adapter)
+    adapter.responses.append(_generic_lookup_proposal(await service.prepare(context)))
+    attempt = await service.resolve_query_contract_candidates(context)
 
     assert attempt.telemetry.model_call_count == 1
     assert attempt.telemetry.repair_used is False
@@ -644,12 +659,13 @@ async def test_repair_provider_wait_is_not_double_counted_as_validation_time() -
 async def test_equal_quality_candidates_use_one_offered_id_judge_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = _context()
+    context = _context("상품 알려줘")
     registry = load_query_contract_registry(PROJECT_ROOT)
     adapter = _Adapter([])
     service = _service(adapter)
     prepared = await service.prepare(context)
-    axis_resolution = service.validate_axis_response(prepared, _proposal())
+    proposal = _generic_lookup_proposal(prepared)
+    axis_resolution = service.validate_axis_response(prepared, proposal)
     solved = solve_query_contracts(
         resolution=axis_resolution,
         view=prepared.view,
@@ -681,7 +697,7 @@ async def test_equal_quality_candidates_use_one_offered_id_judge_call(
         service_module, "solve_query_contracts", lambda **_kwargs: ambiguous
     )
     adapter.responses.extend(
-        [_proposal(), json.dumps({"candidate_id": alternate.candidate_id})]
+        [proposal, json.dumps({"candidate_id": alternate.candidate_id})]
     )
 
     attempt = await service.resolve_query_contract_candidates(context)
@@ -699,12 +715,13 @@ async def test_equal_quality_candidates_use_one_offered_id_judge_call(
 async def test_candidate_bound_never_uses_tie_break_or_judge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = _context()
+    context = _context("상품 알려줘")
     registry = load_query_contract_registry(PROJECT_ROOT)
     adapter = _Adapter([])
     service = _service(adapter)
     prepared = await service.prepare(context)
-    axis_resolution = service.validate_axis_response(prepared, _proposal())
+    proposal = _generic_lookup_proposal(prepared)
+    axis_resolution = service.validate_axis_response(prepared, proposal)
     solved = solve_query_contracts(
         resolution=axis_resolution,
         view=prepared.view,
@@ -738,7 +755,7 @@ async def test_candidate_bound_never_uses_tie_break_or_judge(
     monkeypatch.setattr(
         service_module, "solve_query_contracts", lambda **_kwargs: bounded
     )
-    adapter.responses.append(_proposal())
+    adapter.responses.append(proposal)
 
     attempt = await service.resolve_query_contract_candidates(context)
 

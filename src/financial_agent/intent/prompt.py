@@ -45,6 +45,12 @@ _FRAME_ORDINAL = {"type": "integer", "minimum": 0, "maximum": 15}
 _MODEL_SLOT_KINDS = tuple(
     item for item in SlotKind if item not in {SlotKind.UNIT, SlotKind.ENTITY}
 )
+_MODEL_SAFE_VIEW_EXCLUDE: dict[str, Any] = {
+    "exact_semantic_locks": True,
+    "relation_definitions": {
+        "__all__": {"compatible_subject_ontology_types": True}
+    },
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +58,11 @@ class ResolverPromptEnvelope:
     system_message: str
     user_message: str
     response_schema: dict[str, object]
+
+
+def model_safe_view_payload(view: ResolverView) -> dict[str, Any]:
+    """Serialize only the ResolverView fields that HCX is allowed to inspect."""
+    return view.model_dump(mode="json", exclude=_MODEL_SAFE_VIEW_EXCLUDE)
 
 
 def build_prompt(
@@ -66,15 +77,7 @@ def build_prompt(
         user_message=json.dumps(
             {
                 "context": context.model_dump(mode="json"),
-                "view": view.model_dump(
-                    mode="json",
-                    exclude={
-                        "exact_semantic_locks": True,
-                        "relation_definitions": {
-                            "__all__": {"compatible_subject_ontology_types": True}
-                        },
-                    },
-                ),
+                "view": model_safe_view_payload(view),
             },
             ensure_ascii=False,
             separators=(",", ":"),

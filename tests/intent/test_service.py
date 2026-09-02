@@ -642,7 +642,7 @@ async def test_repair_builder_reuses_view_and_schema_without_calling_model(
     service_fixture: ServiceFixture,
     failure_code: str,
 ) -> None:
-    prepared = await service_fixture.service.prepare(service_fixture.context)
+    prepared = await service_fixture.service.prepare(_context("운용사 알려줘"))
     invalid_raw_content = "PRIVATE INVALID MODEL CONTENT"
 
     repair = build_repair_envelope(
@@ -660,13 +660,32 @@ async def test_repair_builder_reuses_view_and_schema_without_calling_model(
         "correction_instruction",
     }
     assert payload["context"] == prepared.context.model_dump(mode="json")
-    assert payload["view"] == prepared.view.model_dump(
-        mode="json", exclude={"exact_semantic_locks"}
-    )
-    assert "exact_semantic_locks" not in payload["view"]
+    normal_payload = json.loads(prepared.prompt.user_message)
+    assert prepared.view.relation_definitions
+    assert payload["view"] == normal_payload["view"]
+    assert {
+        "exact_semantic_locks",
+        "compatible_subject_ontology_types",
+    }.isdisjoint(_recursive_mapping_keys(payload["view"]))
     assert payload["failure_code"] == failure_code
     assert len(payload["original_prompt_hash"]) == 64
     assert "offered" in payload["correction_instruction"]
     assert invalid_raw_content not in repair.system_message
     assert invalid_raw_content not in repair.user_message
     assert service_fixture.adapter.call_count == 0
+
+
+def _recursive_mapping_keys(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return set(value) | {
+            nested_key
+            for nested_value in value.values()
+            for nested_key in _recursive_mapping_keys(nested_value)
+        }
+    if isinstance(value, list):
+        return {
+            nested_key
+            for nested_value in value
+            for nested_key in _recursive_mapping_keys(nested_value)
+        }
+    return set()

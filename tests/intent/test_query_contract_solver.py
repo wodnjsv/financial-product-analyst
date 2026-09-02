@@ -301,6 +301,72 @@ def test_lookup_with_unresolved_semantic_requirement_never_uses_default_projecti
     }
 
 
+def test_lookup_with_no_semantic_field_evidence_uses_default_projection() -> None:
+    result = solve_query_contracts(
+        resolution=_axis(IntentType.LOOKUP),
+        view=_semantic_view(),
+        exact_locks=(),
+        registry=REGISTRY,
+    )
+
+    assert len(result.frames[0].complete_candidates) == 1
+    projection = result.frames[0].complete_candidates[0].contract.projections
+    assert projection.field_concept_ids == ()
+    assert projection.default_profile_id == "default-product-projection.v1"
+
+
+def test_lookup_with_non_exact_inapplicable_relation_never_uses_default_projection() -> None:
+    resolver_view = _semantic_view().model_copy(
+        update={
+            "semantic_candidates": (
+                ResolverViewSemanticCandidateGroup(
+                    mention_id="mention-s1-0-1",
+                    items=(
+                        ResolverViewSemanticCandidate(
+                            semantic_id="tracksIndex",
+                            match_kind="trigram",
+                            score=900_000,
+                        ),
+                    ),
+                ),
+            ),
+            "relation_definitions": (
+                ResolverViewRelationDefinition(
+                    relation_id="tracksIndex",
+                    definition_ko="상품이 추종하는 지수",
+                    allowed_product_families=(
+                        "domestic_etf",
+                        "overseas_etf",
+                        "public_fund",
+                    ),
+                    subject_ontology_types=("ETF", "PublicFund"),
+                    compatible_subject_ontology_types=(
+                        "ETF",
+                        "FundShareClass",
+                        "PublicFund",
+                        "RepresentativeFund",
+                    ),
+                    object_ontology_types=("Index",),
+                    required_qualifiers=(),
+                ),
+            ),
+        }
+    )
+    axis = _axis(IntentType.LOOKUP, family=ProductFamily.DOMESTIC_BOND)
+
+    result = solve_query_contracts(
+        resolution=axis,
+        view=resolver_view,
+        exact_locks=(),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert {item.reason_code for item in result.frames[0].rejections} == {
+        "FIELD_NOT_APPLICABLE_TO_FAMILY",
+    }
+
+
 @pytest.mark.parametrize(
     ("relation_id", "family", "subject_type", "reason"),
     (
