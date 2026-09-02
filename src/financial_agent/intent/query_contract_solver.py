@@ -145,7 +145,7 @@ class _CandidateAccumulator:
         enriched = contract.model_copy(
             update={
                 "provenance": _resolved_input_provenance(
-                    contract, self.exact_locks, self.view
+                    contract, self.exact_locks, self.view, self.frame
                 )
             }
         )
@@ -701,18 +701,21 @@ def _rank(
             rejections,
         )
     ) or (None,)
-    limit_values = tuple(
-        int(item)
-        for item in _literal_role_values(
-            frame,
-            view,
-            locks,
-            "result_limit",
-            "limit",
-            variant_id,
-            rejections,
-        )
-    ) or (None,)
+    raw_limits = _literal_role_values(
+        frame,
+        view,
+        locks,
+        "result_limit",
+        "limit",
+        variant_id,
+        rejections,
+    )
+    parsed_limits = _validated_limit_values(
+        frame, variant_id, raw_limits, rejections
+    )
+    if parsed_limits is None:
+        return ()
+    limit_values = parsed_limits or (None,)
     if any(item.reason_code == "EXACT_LITERAL_CONFLICT" for item in rejections):
         return ()
     predicates = _predicate_candidates(
@@ -899,7 +902,12 @@ def _similar(
         rejections,
     ):
         return ()
-    limits = tuple(int(item) for item in offered_limits) or (5,)
+    parsed_limits = _validated_limit_values(
+        frame, variant_id, offered_limits, rejections
+    )
+    if parsed_limits is None:
+        return ()
+    limits = parsed_limits or (5,)
     specs = (
         SimilaritySpecV2(
             anchor_ref=anchors[0],
@@ -1093,18 +1101,7 @@ def _literal_role_values(
     variant_id: str,
     rejections: list[CandidateRejection],
 ) -> tuple[str, ...]:
-    offered = tuple(
-        item
-        for item in view.literal_candidates
-        if item.segment_id in frame.segment_ids and item.kind == kind
-    )
-    offered_by_id = {item.literal_id: item for item in offered}
-    exact = tuple(
-        offered_by_id[lock.canonical_id]
-        for lock in locks
-        if lock.role == "literal" and lock.canonical_id in offered_by_id
-    )
-    selected = exact or offered
+    selected, exact = _selected_literal_candidates(frame, view, locks, kind)
     values = tuple(dict.fromkeys(item.canonical_value for item in selected))
     if exact and len(values) > 1:
         rejections.append(
@@ -1112,7 +1109,7 @@ def _literal_role_values(
                 frame,
                 variant_id,
                 role_id,
-                tuple(item.literal_id for item in exact),
+                tuple(item.literal_id for item in selected),
                 "EXACT_LITERAL_CONFLICT",
             )
         )
@@ -1120,6 +1117,58 @@ def _literal_role_values(
     if len(values) > MAX_CANDIDATES_PER_ROLE:
         raise _CandidateBoundReached(role_id)
     return values
+
+
+def _selected_literal_candidates(
+    frame: ValidatedIntentFrameV2,
+    view: ResolverView,
+    locks: tuple[ExactSemanticLock, ...],
+    kind: str,
+) -> tuple[tuple[ResolverViewLiteralCandidate, ...], bool]:
+    offered = tuple(
+        item
+        for item in view.literal_candidates
+        if item.segment_id in frame.segment_ids and item.kind == kind
+    )
+    exact_ids = {
+        lock.canonical_id
+        for lock in locks
+        if lock.role == "literal"
+    }
+    exact = tuple(item for item in offered if item.literal_id in exact_ids)
+    return exact or offered, bool(exact)
+
+
+def _validated_limit_values(
+    frame: ValidatedIntentFrameV2,
+    variant_id: str,
+    values: tuple[str, ...],
+    rejections: list[CandidateRejection],
+) -> tuple[int, ...] | None:
+    parsed: list[int] = []
+    invalid: list[str] = []
+    for value in values:
+        try:
+            limit = int(value)
+        except ValueError:
+            invalid.append(f"literal-{canonical_sha256(value)[:16]}")
+            continue
+        if not 1 <= limit <= 100:
+            invalid.append(value)
+        else:
+            parsed.append(limit)
+    if invalid:
+        rejections.append(
+            _rejection(
+                frame,
+                variant_id,
+                "limit",
+                tuple(invalid),
+                "LIMIT_OUT_OF_RANGE",
+            )
+        )
+        return None
+    return tuple(parsed)
 
 
 def _typed_value(literal: ResolverViewLiteralCandidate) -> TypedSemanticValue:
@@ -1345,6 +1394,7 @@ def _resolved_input_provenance(
     contract: SolvedQueryContractCandidateV2,
     exact_locks: tuple[ExactSemanticLock, ...],
     view: ResolverView,
+    frame: ValidatedIntentFrameV2,
 ) -> tuple[ResolvedInputProvenanceV2, ...]:
     literals_by_id = {item.literal_id: item for item in view.literal_candidates}
     payload = contract.model_dump(
@@ -1378,6 +1428,10 @@ def _resolved_input_provenance(
             (ProvenanceSourceKind.AXIS_RESOLUTION, group.mention_id)
             for group in view.semantic_candidates
             if any(item.semantic_id == rendered for item in group.items)
+            and (
+                _source_segment(group.mention_id, view) in frame.segment_ids
+                or group.mention_id in frame.evidence_span_ids
+            )
         )
         if not sources:
             if path == "scope.prior_result_binding":
@@ -1538,15 +1592,13 @@ def _overflow_role(
         if len(values) > MAX_CANDIDATES_PER_ROLE:
             return "predicate.value"
     if action in {IntentType.RANK, IntentType.SIMILAR}:
-        for kind, role in (
-            ("result_limit", "limit"),
-            ("sort_direction", "ordering.direction"),
-        ):
-            count = sum(
-                item.segment_id in frame.segment_ids and item.kind == kind
-                for item in view.literal_candidates
-            )
-            if count > MAX_CANDIDATES_PER_ROLE:
+        role_kinds = [("result_limit", "limit")]
+        if action is IntentType.RANK:
+            role_kinds.append(("sort_direction", "ordering.direction"))
+        for kind, role in role_kinds:
+            selected, _ = _selected_literal_candidates(frame, view, locks, kind)
+            canonical_values = {item.canonical_value for item in selected}
+            if len(canonical_values) > MAX_CANDIDATES_PER_ROLE:
                 return role
     if action in {IntentType.COMPARE, IntentType.SIMILAR, IntentType.EXPLAIN}:
         hints = {item.entity_hint_id: item for item in resolution.entity_hints}

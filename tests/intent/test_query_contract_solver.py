@@ -440,6 +440,120 @@ def test_equivalent_raw_combinations_dedupe_before_complete_bound() -> None:
     assert result.frames[0].contract_readiness.reason_codes == ()
 
 
+@pytest.mark.parametrize("action", [IntentType.RANK, IntentType.SIMILAR])
+def test_duplicate_rank_and_similarity_role_values_do_not_trigger_bound(
+    action: IntentType,
+) -> None:
+    source = (
+        _axis(action)
+        if action is IntentType.RANK
+        else _entity_axis(action=action, candidate_groups=(("entity-anchor",),))
+    )
+    limits = tuple(
+        _literal(f"limit-{index}", kind="result_limit", value="5", start=20 + index)
+        for index in range(9)
+    )
+    directions = (
+        tuple(
+            _literal(
+                f"direction-{index}",
+                kind="sort_direction",
+                value="desc",
+                start=40 + index,
+            )
+            for index in range(9)
+        )
+        if action is IntentType.RANK
+        else ()
+    )
+    resolver_view = _semantic_view("fee_rate").model_copy(
+        update={"literal_candidates": (*limits, *directions)}
+    )
+
+    result = solve_query_contracts(
+        resolution=source,
+        view=resolver_view,
+        exact_locks=(_lock("field", "fee_rate"),),
+        registry=REGISTRY,
+    )
+
+    assert len(result.frames[0].complete_candidates) == 1
+    assert result.frames[0].contract_readiness.reason_codes == ()
+
+
+@pytest.mark.parametrize("action", [IntentType.RANK, IntentType.SIMILAR])
+def test_distinct_rank_and_similarity_role_values_still_trigger_bound(
+    action: IntentType,
+) -> None:
+    source = (
+        _axis(action)
+        if action is IntentType.RANK
+        else _entity_axis(action=action, candidate_groups=(("entity-anchor",),))
+    )
+    resolver_view = _semantic_view("fee_rate").model_copy(
+        update={
+            "literal_candidates": tuple(
+                _literal(
+                    f"limit-{index}",
+                    kind="result_limit",
+                    value=str(index),
+                    start=20 + index,
+                )
+                for index in range(1, 10)
+            )
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=source,
+        view=resolver_view,
+        exact_locks=(_lock("field", "fee_rate"),),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.reason_codes == (
+        "CANDIDATE_BOUND_REACHED",
+    )
+
+
+@pytest.mark.parametrize("action", [IntentType.RANK, IntentType.SIMILAR])
+def test_exact_limit_is_applied_before_unresolved_role_bound(
+    action: IntentType,
+) -> None:
+    source = (
+        _axis(action)
+        if action is IntentType.RANK
+        else _entity_axis(action=action, candidate_groups=(("entity-anchor",),))
+    )
+    resolver_view = _semantic_view("fee_rate").model_copy(
+        update={
+            "literal_candidates": tuple(
+                _literal(
+                    f"limit-{index}",
+                    kind="result_limit",
+                    value=str(index),
+                    start=20 + index,
+                )
+                for index in range(1, 10)
+            )
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=source,
+        view=resolver_view,
+        exact_locks=(
+            _lock("field", "fee_rate"),
+            _lock("literal", "limit-9", span="limit-9"),
+        ),
+        registry=REGISTRY,
+    )
+
+    assert len(result.frames[0].complete_candidates) == 1
+    assert result.frames[0].contract_readiness.reason_codes == ()
+
+
 def test_role_bound_is_visible_and_never_truncated_to_unique() -> None:
     source = _semantic_view("aum")
     aum = next(item for item in source.concept_definitions if item.concept_id == "aum")
@@ -596,6 +710,40 @@ def test_similarity_exact_limit_never_falls_back_to_default() -> None:
     )
 
     assert {item.contract.similarity.limit for item in result.complete_candidates} == {7}
+
+
+@pytest.mark.parametrize("action", [IntentType.RANK, IntentType.SIMILAR])
+@pytest.mark.parametrize("limit", ["0", "101"])
+def test_rank_and_similarity_invalid_limits_fail_closed(
+    action: IntentType, limit: str
+) -> None:
+    source = (
+        _axis(action)
+        if action is IntentType.RANK
+        else _entity_axis(action=action, candidate_groups=(("entity-anchor",),))
+    )
+    resolver_view = _semantic_view("fee_rate").model_copy(
+        update={
+            "literal_candidates": (
+                _literal("invalid-limit", kind="result_limit", value=limit, start=2),
+            )
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=source,
+        view=resolver_view,
+        exact_locks=(
+            _lock("field", "fee_rate"),
+            _lock("literal", "invalid-limit", span="invalid-limit"),
+        ),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.reason_codes == (
+        "LIMIT_OUT_OF_RANGE",
+    )
 
 
 def test_conflicting_exact_single_value_literals_fail_closed() -> None:
@@ -764,6 +912,44 @@ def test_canonical_dedupe_preserves_all_exact_lock_provenance() -> None:
         for item in result.complete_candidates[0].contract.provenance
         if item.source_kind is ProvenanceSourceKind.EXACT_LOCK
     } >= {"lock-field-fee-a", "lock-field-fee-b"}
+
+
+def test_same_field_provenance_is_scoped_to_each_frame() -> None:
+    source = _axis()
+    first_frame = source.canonical_frames[0]
+    second_frame = first_frame.model_copy(
+        update={"frame_id": "frame-2", "ordinal": 1, "segment_ids": ("s2",)}
+    )
+    source = source.model_copy(
+        update={"canonical_frames": (first_frame, second_frame)}
+    )
+    resolver_view = _semantic_view("fee_rate")
+    first_group = resolver_view.semantic_candidates[0]
+    second_group = first_group.model_copy(update={"mention_id": "mention-s2-0-1"})
+    resolver_view = resolver_view.model_copy(
+        update={"semantic_candidates": (first_group, second_group)}
+    )
+
+    result = solve_query_contracts(
+        resolution=source,
+        view=resolver_view,
+        exact_locks=(),
+        registry=REGISTRY,
+    )
+
+    assert len(result.frames) == 2
+    for solved_frame, expected, excluded in (
+        (result.frames[0], "mention-s1-0-1", "mention-s2-0-1"),
+        (result.frames[1], "mention-s2-0-1", "mention-s1-0-1"),
+    ):
+        provenance = {
+            item.source_ref
+            for candidate in solved_frame.complete_candidates
+            for item in candidate.contract.provenance
+            if item.semantic_input_id.startswith("ordering.0.field_concept_id")
+        }
+        assert expected in provenance
+        assert excluded not in provenance
 
 
 def test_calculation_without_an_offered_recipe_fails_closed() -> None:
