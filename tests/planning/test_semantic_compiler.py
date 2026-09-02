@@ -1,0 +1,483 @@
+from __future__ import annotations
+
+from datetime import UTC, date, datetime
+import json
+from pathlib import Path
+
+import pytest
+from pydantic import TypeAdapter
+
+from financial_agent.contracts.canonical import canonical_json_bytes, canonical_sha256
+from financial_agent.contracts.enums import Capability, IntentType
+from financial_agent.intent.query_contract_registry import load_query_contract_registry
+from financial_agent.intent.query_contract_solver import QueryContractCandidate
+from financial_agent.intent.query_contracts import (
+    AxisReadiness,
+    AxisReadinessRecordV2,
+    ContractReadiness,
+    ContractReadinessRecordV2,
+    PlanReadiness,
+    SolvedQueryContractCandidateV2,
+)
+from financial_agent.planning.contracts import CompilationRoute
+from financial_agent.planning.logical_query import LogicalQueryTaskV2
+from financial_agent.planning.physical_bindings import (
+    load_physical_binding_registry,
+    load_semantic_sql_policy_registry,
+)
+from financial_agent.planning.readiness import PlanReadinessResult, assess_plan_readiness
+from financial_agent.planning.registry import load_planning_registry
+from financial_agent.planning.semantic_compiler import (
+    PriorResultOwnershipV2,
+    SemanticPlanningCompiler,
+    SemanticReadinessAssessmentV2,
+    lower_semantic_operation,
+    reverse_semantic_loss_report,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATASET_PIN = "d" * 64
+REQUEST_KEY = "e" * 64
+ADAPTER = TypeAdapter(SolvedQueryContractCandidateV2)
+SEMANTIC = load_query_contract_registry(PROJECT_ROOT)
+BINDINGS = load_physical_binding_registry(PROJECT_ROOT)
+POLICIES = load_semantic_sql_policy_registry(PROJECT_ROOT)
+PLANNING = load_planning_registry(PROJECT_ROOT)
+
+
+def _base(action: str, frame_id: str = "frame-1", family: str = "domestic_etf"):
+    return {
+        "contract_schema_version": "2.0",
+        "contract_variant_id": {
+            "lookup": "lookup.projection.v2",
+            "screen": "screen.predicate.v2",
+            "rank": "rank.ordering.v2",
+            "compare": "compare.subjects.v2",
+            "aggregate": "aggregate.scalar.v2",
+            "calculate": "calculate.recipe.v2",
+            "similar": "similar.policy.v2",
+            "explain": "explain.topic.v2",
+        }[action],
+        "frame_id": frame_id,
+        "action_id": action,
+        "scope": {"product_family_ids": [family], "entity_refs": [], "prior_result_binding": None},
+        "qualifiers": {"period_id": None, "currency_id": None, "unit_id": None, "as_of_date": None},
+        "result_shape": {
+            "lookup": "product_list", "screen": "product_list", "rank": "top_k",
+            "compare": "comparison_table", "aggregate": "single_value",
+            "calculate": "single_value", "similar": "product_list", "explain": "explanation",
+        }[action],
+        "provenance": [
+            {
+                "semantic_input_id": "scope",
+                "source_kind": "exact_lock",
+                "source_ref": "span-1",
+            }
+        ],
+        "registry_pins": {
+            "contract_registry_version": SEMANTIC.contract_registry_version,
+            "contract_registry_hash": SEMANTIC.contract_registry_hash,
+            "operator_registry_version": SEMANTIC.operator_registry_version,
+            "operator_registry_hash": SEMANTIC.operator_registry_hash,
+            "policy_registry_version": SEMANTIC.policy_registry_version,
+            "policy_registry_hash": SEMANTIC.policy_registry_hash,
+        },
+    }
+
+
+def _rank(frame_id: str = "frame-1", prior: str | None = None) -> QueryContractCandidate:
+    payload = _base("rank", frame_id)
+    payload["scope"] = (
+        {"product_family_ids": [], "entity_refs": [], "prior_result_binding": prior}
+        if prior else payload["scope"]
+    )
+    payload.update(
+        ordering=[{
+            "field_concept_id": "aum", "direction": "desc", "direction_policy_id": None,
+            "nulls_policy_id": "exclude_missing.v1", "tie_break_policy_id": "stable-product-id.v1",
+        }],
+        limit=5 if not prior else 1,
+        limit_policy_id=None,
+        predicate=None,
+    )
+    contract = ADAPTER.validate_json(json.dumps(payload))
+    return QueryContractCandidate(
+        candidate_id=f"candidate-{frame_id}", contract=contract
+    )
+
+
+def _semantic_contract(action: str):
+    payload = _base(action, frame_id=f"frame-{action}")
+    if action == "lookup":
+        payload["projections"] = {
+            "field_concept_ids": ["aum", "managedBy"],
+            "default_profile_id": None,
+        }
+    elif action == "screen":
+        payload["qualifiers"]["unit_id"] = "percent"
+        payload["predicate"] = {
+            "node_type": "not",
+            "child": {
+                "node_type": "atom",
+                "field_concept_id": "fee_rate",
+                "operator_id": "between",
+                "value": None,
+                "values": [
+                    {"kind": "decimal", "decimal": "1", "unit_id": "percent"},
+                    {"kind": "decimal", "decimal": "2", "unit_id": "percent"},
+                ],
+                "null_policy_id": "exclude_missing.v1",
+            },
+        }
+    elif action == "rank":
+        payload["qualifiers"] = {
+            "period_id": "P1Y",
+            "currency_id": "KRW",
+            "unit_id": "KRW",
+            "as_of_date": "2026-08-24",
+        }
+        payload.update(
+            ordering=[{
+                "field_concept_id": "aum", "direction": None,
+                "direction_policy_id": "default-direction-descending.v1",
+                "nulls_policy_id": "exclude_missing.v1",
+                "tie_break_policy_id": "stable-product-id.v1",
+            }],
+            limit=None,
+            limit_policy_id="default-limit-5.v1",
+            predicate=None,
+        )
+    elif action == "compare":
+        payload["comparison"] = {
+            "subject_refs": ["product-a", "product-b"],
+            "group_basis_id": None,
+            "metric_concept_ids": ["aum", "fee_rate"],
+            "projection_profile_id": None,
+            "basis_policy_id": "same-definition-period-unit.v1",
+            "normalization_policy_id": "approved-cross-family.v1",
+        }
+    elif action == "aggregate":
+        payload["contract_variant_id"] = "aggregate.grouped.v2"
+        payload["result_shape"] = "grouped_table"
+        payload["aggregation"] = {
+            "function_id": "sum",
+            "target_field_concept_id": "aum",
+            "count_population_id": None,
+            "group_by_field_concept_ids": ["risk_grade"],
+            "bucket_policy_id": None,
+            "population_grain_id": "source-product.v1",
+            "dedup_policy_id": "no-dedup.v1",
+        }
+        payload["predicate"] = None
+    elif action == "calculate":
+        payload["calculation"] = {
+            "recipe_id": "simple-interest.v1",
+            "operands": [
+                {"role_id": "principal", "value_ref": None, "field_concept_id": "aum"},
+                {"role_id": "rate", "value_ref": "literal-rate", "field_concept_id": None},
+            ],
+        }
+    elif action == "similar":
+        payload["similarity"] = {
+            "anchor_ref": "product-a",
+            "policy_id": "cosine-complete-dimensions.v1",
+            "dimension_concept_ids": ["aum", "fee_rate"],
+            "default_profile_id": None,
+            "coverage_threshold": "0.8",
+            "limit": 7,
+        }
+    elif action == "explain":
+        payload["explanation"] = {
+            "topic_concept_id": None,
+            "profile_id": "default-explanation-profile.v1",
+        }
+    return ADAPTER.validate_json(json.dumps(payload))
+
+
+def _assessment(candidate: QueryContractCandidate, *, readiness=PlanReadiness.EXECUTABLE):
+    assessed = assess_plan_readiness(candidate.contract, BINDINGS, POLICIES)
+    plan = assessed.model_copy(
+        update={
+            "readiness": readiness,
+            "reason_codes": (
+                ()
+                if readiness is PlanReadiness.EXECUTABLE
+                else ("TEST_LIMITATION",)
+            ),
+        }
+    )
+    return SemanticReadinessAssessmentV2(
+        frame_id=candidate.contract.frame_id,
+        candidate_id=candidate.candidate_id,
+        contract_hash=canonical_sha256(candidate.contract),
+        semantic_registry_pins=candidate.contract.registry_pins,
+        binding_registry_version=BINDINGS.registry_version,
+        binding_registry_hash=BINDINGS.registry_hash,
+        physical_policy_registry_version=POLICIES.registry_version,
+        physical_policy_registry_hash=POLICIES.registry_hash,
+        dataset_version="dataset-v1",
+        dataset_pin=DATASET_PIN,
+        axis=AxisReadinessRecordV2(readiness=AxisReadiness.COMPLETE, reason_codes=()),
+        contract=ContractReadinessRecordV2(readiness=ContractReadiness.COMPLETE, reason_codes=()),
+        plan=plan,
+    )
+
+
+def _compile(candidates, assessments, **kwargs):
+    primitive_ids = kwargs.pop("primitive_ids", ("rank-products",))
+    return SemanticPlanningCompiler(BINDINGS, POLICIES, PLANNING).compile(
+        request_key=REQUEST_KEY,
+        run_id="run-1",
+        dataset_version="dataset-v1",
+        dataset_pin=DATASET_PIN,
+        cutoff_date=date(2026, 8, 24),
+        producer="semantic-query-compiler.v2",
+        created_at=datetime(2026, 8, 24, tzinfo=UTC),
+        resolution_id="resolution-1",
+        selected_candidates=tuple(candidates),
+        readiness_assessments=tuple(assessments),
+        primitive_ids=primitive_ids,
+        **kwargs,
+    )
+
+
+def test_compile_is_deterministic_lossless_and_independent_of_global_promotion() -> None:
+    candidate = _rank()
+    assessment = _assessment(candidate)
+
+    first = _compile((candidate,), (assessment,))
+    second = _compile((candidate,), (assessment,))
+
+    assert first.route is CompilationRoute.COMPOSE
+    assert first.logical_query_plan is not None
+    assert canonical_json_bytes(first) == canonical_json_bytes(second)
+    assert type(first).model_validate_json(first.model_dump_json()) == first
+    assert reverse_semantic_loss_report(
+        candidate.contract, first.logical_query_plan.tasks[0]
+    ) == ()
+    assert first.logical_query_plan.tasks[0].operation.ordering[0].field_concept_id == "aum"
+    assert first.logical_query_plan.tasks[0].operation.limit == 5
+
+    payload = first.model_dump()
+    assessment_payload = payload["readiness_assessments"][0]
+    assessment_payload["plan"]["readiness"] = PlanReadiness.LIMITED
+    assessment_payload["plan"]["reason_codes"] = ("FORGED_LIMITATION",)
+    resolved_payload = payload["resolved_query_contracts"]["contracts"][0]
+    resolved_payload["plan_readiness"]["readiness"] = PlanReadiness.LIMITED
+    resolved_payload["plan_readiness"]["reason_codes"] = ("FORGED_LIMITATION",)
+    with pytest.raises(ValueError, match="EXECUTABLE_READINESS_MISMATCH"):
+        type(first).model_validate(payload)
+
+    lossy_payload = first.model_dump()
+    lossy_payload["logical_query_plan"]["tasks"][0]["operation"]["limit"] = 6
+    with pytest.raises(ValueError, match="LOSSY_COMPILATION_ARTIFACT"):
+        type(first).model_validate(lossy_payload)
+
+
+def test_compose_requires_registered_action_compatible_primitives() -> None:
+    candidate = _rank()
+    assessment = _assessment(candidate)
+
+    with pytest.raises(ValueError, match="EXECUTION_PRIMITIVE_NOT_REGISTERED"):
+        _compile((candidate,), (assessment,), primitive_ids=("invented-sql.v1",))
+    with pytest.raises(ValueError, match="EXECUTION_PRIMITIVE_ACTION_MISMATCH"):
+        _compile((candidate,), (assessment,), primitive_ids=("screen-products",))
+
+
+def test_fast_requires_an_exact_registered_archetype_and_its_primitive_set() -> None:
+    candidate = _rank()
+    assessment = _assessment(candidate)
+    compilation = _compile(
+        (candidate,),
+        (assessment,),
+        primitive_ids=("lookup-products", "rank-products"),
+        matched_archetype_id="rank.single-family.v1",
+    )
+
+    assert compilation.route is CompilationRoute.FAST
+    assert compilation.logical_query_plan is not None
+    assert compilation.logical_query_plan.planning_registry_hash == PLANNING.registry_hash
+
+    with pytest.raises(ValueError, match="ARCHETYPE_PRIMITIVE_MISMATCH"):
+        _compile(
+            (candidate,),
+            (assessment,),
+            primitive_ids=("rank-products",),
+            matched_archetype_id="rank.single-family.v1",
+        )
+
+
+@pytest.mark.parametrize("action", [item.value for item in IntentType])
+def test_every_action_specific_semantic_body_has_an_exact_logical_representation(action) -> None:
+    contract = _semantic_contract(action)
+    task = LogicalQueryTaskV2(
+        task_id=f"task-{action}",
+        frame_id=contract.frame_id,
+        candidate_id=f"candidate-{action}",
+        contract_hash=canonical_sha256(contract),
+        contract_variant_id=contract.contract_variant_id,
+        action_id=contract.action_id,
+        capability=(
+            Capability.FINANCIAL_CALCULATION
+            if contract.action_id is IntentType.CALCULATE
+            else Capability.SIMILARITY
+            if contract.action_id is IntentType.SIMILAR
+            else Capability.RDB_LOOKUP
+        ),
+        scope=contract.scope,
+        qualifiers=contract.qualifiers,
+        result_shape=contract.result_shape,
+        operation=lower_semantic_operation(contract),
+        binding_ids=(),
+        policy_ids=(),
+        evidence_requirements=(),
+        prior_result_inputs=(),
+        produced_result_bindings=(),
+    )
+
+    assert reverse_semantic_loss_report(contract, task) == ()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"frame_id": "frame-other"},
+        {"candidate_id": "candidate-other"},
+        {"contract_hash": "f" * 64},
+        {"dataset_version": "dataset-other"},
+        {"dataset_pin": "f" * 64},
+        {"binding_registry_hash": "f" * 64},
+        {"physical_policy_registry_hash": "f" * 64},
+    ],
+)
+def test_finalization_rejects_foreign_readiness_evidence(mutation) -> None:
+    candidate = _rank()
+    assessment = _assessment(candidate).model_copy(update=mutation)
+
+    with pytest.raises(ValueError, match="READINESS_OWNERSHIP_MISMATCH"):
+        _compile((candidate,), (assessment,))
+
+
+def test_prior_result_scope_becomes_typed_dependency() -> None:
+    first = _rank("frame-1")
+    second = _rank("frame-2", "result-set-1")
+    compilation = _compile(
+        (first, second),
+        (_assessment(first), _assessment(second)),
+        prior_result_ownership=(
+            PriorResultOwnershipV2(
+                binding_id="result-set-1",
+                producer_frame_id="frame-1",
+                cardinality="many",
+            ),
+        ),
+    )
+
+    plan = compilation.logical_query_plan
+    assert plan is not None
+    assert plan.dependencies[0].upstream_task_id == plan.tasks[0].task_id
+    assert plan.tasks[1].prior_result_inputs[0].binding_id == "result-set-1"
+
+
+def test_limited_contract_has_no_executable_plan() -> None:
+    candidate = _rank()
+    compilation = _compile(
+        (candidate,), (_assessment(candidate, readiness=PlanReadiness.LIMITED),)
+    )
+
+    assert compilation.route is CompilationRoute.EXPLORE
+    assert compilation.logical_query_plan is None
+    assert (
+        compilation.resolved_query_contracts.contracts[0].plan_readiness.readiness
+        is PlanReadiness.LIMITED
+    )
+
+
+@pytest.mark.parametrize("action", ["calculate", "similar"])
+def test_stage05_only_actions_never_receive_a_production_plan(action) -> None:
+    contract = _semantic_contract(action)
+    candidate = QueryContractCandidate(
+        candidate_id=f"candidate-{action}", contract=contract
+    )
+    compilation = _compile(
+        (candidate,),
+        (_assessment(candidate),),
+        primitive_ids=(("calculate-products",) if action == "calculate" else ("similar-products",)),
+    )
+
+    assert compilation.route is CompilationRoute.EXPLORE
+    assert compilation.logical_query_plan is None
+    assert compilation.blocking_issues[0].code == "STAGE05_EXECUTOR_NOT_IMPLEMENTED"
+
+
+def test_unverified_public_fund_population_stays_limited() -> None:
+    payload = _base("aggregate", family="public_fund")
+    payload["qualifiers"]["as_of_date"] = "2026-08-24"
+    payload["aggregation"] = {
+        "function_id": "sum",
+        "target_field_concept_id": "aum",
+        "count_population_id": None,
+        "group_by_field_concept_ids": [],
+        "bucket_policy_id": None,
+        "population_grain_id": "representative-product.v1",
+        "dedup_policy_id": "public-fund-representative-share.v1",
+    }
+    payload["predicate"] = None
+    contract = ADAPTER.validate_json(json.dumps(payload))
+    candidate = QueryContractCandidate(candidate_id="candidate-public-fund", contract=contract)
+    assessment = _assessment(candidate, readiness=PlanReadiness.LIMITED)
+
+    compilation = _compile(
+        (candidate,), (assessment,), primitive_ids=("aggregate-products",)
+    )
+
+    assert compilation.route is CompilationRoute.EXPLORE
+    assert compilation.logical_query_plan is None
+
+
+def test_plan_readiness_result_itself_must_match_contract_and_registry() -> None:
+    candidate = _rank()
+    assessment = _assessment(candidate)
+    foreign_plan = PlanReadinessResult(
+        **{
+            **assessment.plan.model_dump(),
+            "contract_hash": "f" * 64,
+        }
+    )
+
+    with pytest.raises(ValueError, match="READINESS_OWNERSHIP_MISMATCH"):
+        _compile((candidate,), (assessment.model_copy(update={"plan": foreign_plan}),))
+
+
+def test_readiness_success_cannot_carry_failure_reasons() -> None:
+    candidate = _rank()
+    assessment = _assessment(candidate).model_copy(
+        update={
+            "axis": AxisReadinessRecordV2(
+                readiness=AxisReadiness.COMPLETE,
+                reason_codes=("AXIS_CONFLICT",),
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="READINESS_STATE_MISMATCH"):
+        _compile((candidate,), (assessment,))
+
+
+def test_prior_result_must_reference_an_earlier_frame() -> None:
+    consumer = _rank("frame-1", "result-set-2")
+    producer = _rank("frame-2")
+
+    with pytest.raises(ValueError, match="PRIOR_RESULT_OWNERSHIP_MISMATCH"):
+        _compile(
+            (consumer, producer),
+            (_assessment(consumer), _assessment(producer)),
+            prior_result_ownership=(
+                PriorResultOwnershipV2(
+                    binding_id="result-set-2",
+                    producer_frame_id="frame-2",
+                    cardinality="many",
+                ),
+            ),
+        )
