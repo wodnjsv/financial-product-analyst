@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import date
 from itertools import combinations, product
 import re
-from typing import Iterable
 
 from pydantic import Field
 
@@ -15,7 +14,12 @@ from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.enums import Cardinality, IntentType, ProductFamily
 
 from .axis_locks import ExactSemanticLock, validate_exact_semantic_locks
-from .query_contract_registry import OperatorArity, QueryContractRegistry
+from .query_contract_registry import (
+    EXPECTED_POLICY_KINDS,
+    OperatorArity,
+    PolicyKind,
+    QueryContractRegistry,
+)
 from .query_contracts import (
     AggregationBucketPolicyId,
     AggregationFunction,
@@ -114,6 +118,56 @@ class _LiteralOffer:
     literal: ResolverViewLiteralCandidate
 
 
+class _CandidateBoundReached(RuntimeError):
+    def __init__(self, role_id: str) -> None:
+        self.role_id = role_id
+        super().__init__(role_id)
+
+
+@dataclass(slots=True)
+class _CandidateAccumulator:
+    exact_locks: tuple[ExactSemanticLock, ...]
+    view: ResolverView
+    registry: QueryContractRegistry
+    frame: ValidatedIntentFrameV2
+    rejections: list[CandidateRejection]
+    candidates: dict[str, QueryContractCandidate]
+
+    def add(self, contract: SolvedQueryContractCandidateV2) -> None:
+        if not _contract_policies_valid(
+            contract, self.registry, self.frame, self.rejections
+        ):
+            return
+        semantic_content = contract.model_dump(
+            mode="json", exclude={"frame_id", "provenance", "registry_pins"}
+        )
+        digest = canonical_sha256(semantic_content)
+        enriched = contract.model_copy(
+            update={
+                "provenance": _resolved_input_provenance(
+                    contract, self.exact_locks, self.view
+                )
+            }
+        )
+        existing = self.candidates.get(digest)
+        if existing is not None:
+            merged = _merge_provenance(
+                existing.contract.provenance, enriched.provenance
+            )
+            self.candidates[digest] = existing.model_copy(
+                update={"contract": existing.contract.model_copy(update={"provenance": merged})}
+            )
+            return
+        if len(self.candidates) >= MAX_COMPLETE_CANDIDATES_PER_FRAME:
+            raise _CandidateBoundReached("complete_contract")
+        self.candidates[digest] = QueryContractCandidate(
+            candidate_id=f"query-contract-{digest}", contract=enriched
+        )
+
+    def ordered(self) -> tuple[QueryContractCandidate, ...]:
+        return tuple(sorted(self.candidates.values(), key=lambda item: item.candidate_id))
+
+
 def solve_query_contracts(
     *,
     resolution: ValidatedIntentResolutionV2,
@@ -194,10 +248,50 @@ def _solve_frame(
             ),
         )
 
-    scopes = _scopes(frame, resolution, view, exact_locks, rejections, variants[0].id)
+    try:
+        scopes = _scopes(
+            frame, resolution, view, exact_locks, rejections, variants[0].id
+        )
+    except _CandidateBoundReached as error:
+        return _frame_result(
+            frame.frame_id,
+            (),
+            (
+                *rejections,
+                _rejection(
+                    frame,
+                    variants[0].id,
+                    error.role_id,
+                    (),
+                    "CANDIDATE_BOUND_REACHED",
+                ),
+            ),
+            bound=True,
+        )
     if not scopes:
         return _frame_result(frame.frame_id, (), tuple(rejections))
-    qualifiers = _qualifiers(frame, view)
+    try:
+        qualifier_options, qualifier_states = _qualifier_options(
+            frame, view, exact_locks, rejections, variants[0].id
+        )
+    except _CandidateBoundReached as error:
+        return _frame_result(
+            frame.frame_id,
+            (),
+            (
+                *rejections,
+                _rejection(
+                    frame,
+                    variants[0].id,
+                    error.role_id,
+                    (),
+                    "CANDIDATE_BOUND_REACHED",
+                ),
+            ),
+            bound=True,
+        )
+    if not qualifier_options:
+        return _frame_result(frame.frame_id, (), tuple(rejections))
     fields, field_bound = _field_offers(
         frame, view, exact_locks, scopes[0], rejections, variants[0].id
     )
@@ -208,6 +302,9 @@ def _solve_frame(
             (*rejections, _rejection(frame, variants[0].id, "field", (), "CANDIDATE_BOUND_REACHED")),
             bound=True,
         )
+    fields = _fields_with_complete_qualifiers(
+        frame, variants[0].id, fields, qualifier_states, rejections
+    )
     overflow_role = _overflow_role(action, frame, resolution, view, exact_locks)
     if overflow_role is not None:
         return _frame_result(
@@ -227,57 +324,82 @@ def _solve_frame(
         )
     pins = _pins(registry)
 
-    contracts: list[SolvedQueryContractCandidateV2] = []
+    accumulator = _CandidateAccumulator(
+        exact_locks=exact_locks,
+        view=view,
+        registry=registry,
+        frame=frame,
+        rejections=rejections,
+        candidates={},
+    )
     for variant in variants:
         for scope in scopes:
-            if action is IntentType.LOOKUP:
-                contracts.extend(_lookup(frame, variant.id, scope, qualifiers, fields, pins))
-            elif action is IntentType.SCREEN:
-                contracts.extend(
-                    _screen(
+            for qualifiers in qualifier_options:
+                if action is IntentType.LOOKUP:
+                    generated = _lookup(
+                        frame, variant.id, scope, qualifiers, fields, pins
+                    )
+                elif action is IntentType.SCREEN:
+                    generated = _screen(
                         frame, variant.id, scope, qualifiers, fields, view,
                         exact_locks, registry, pins, rejections,
                     )
-                )
-            elif action is IntentType.RANK:
-                contracts.extend(
-                    _rank(
+                elif action is IntentType.RANK:
+                    generated = _rank(
                         frame, variant.id, scope, qualifiers, fields, view,
                         exact_locks, registry, pins, rejections,
                     )
-                )
-            elif action is IntentType.COMPARE:
-                contracts.extend(
-                    _compare(frame, variant.id, scope, qualifiers, fields, pins)
-                )
-            elif action is IntentType.AGGREGATE:
-                contracts.extend(
-                    _aggregate(
+                elif action is IntentType.COMPARE:
+                    generated = _compare(
+                        frame, variant.id, scope, qualifiers, fields, pins
+                    )
+                elif action is IntentType.AGGREGATE:
+                    generated = _aggregate(
                         frame, variant.id, scope, qualifiers, fields, view,
                         exact_locks, pins, registry, rejections,
                     )
-                )
-            elif action is IntentType.SIMILAR:
-                contracts.extend(_similar(frame, variant.id, scope, qualifiers, fields, view, pins))
-            elif action is IntentType.EXPLAIN:
-                contracts.extend(_explain(frame, variant.id, scope, qualifiers, fields, pins))
-            elif action is IntentType.CALCULATE:
-                rejections.append(
-                    _rejection(frame, variant.id, "calculation.recipe", (), "RECIPE_NOT_OFFERED")
-                )
+                elif action is IntentType.SIMILAR:
+                    generated = _similar(
+                        frame, variant.id, scope, qualifiers, fields, view,
+                        exact_locks, registry, pins, rejections,
+                    )
+                elif action is IntentType.EXPLAIN:
+                    generated = _explain(
+                        frame, variant.id, scope, qualifiers, fields, pins
+                    )
+                else:
+                    generated = ()
+                    if action is IntentType.CALCULATE:
+                        rejections.append(
+                            _rejection(
+                                frame,
+                                variant.id,
+                                "calculation.recipe",
+                                (),
+                                "RECIPE_NOT_OFFERED",
+                            )
+                        )
+                try:
+                    for contract in generated:
+                        accumulator.add(contract)
+                except _CandidateBoundReached as error:
+                    rejections.append(
+                        _rejection(
+                            frame,
+                            variant.id,
+                            error.role_id,
+                            (),
+                            "CANDIDATE_BOUND_REACHED",
+                        )
+                    )
+                    return _frame_result(
+                        frame.frame_id,
+                        accumulator.ordered(),
+                        tuple(rejections),
+                        bound=True,
+                    )
 
-        if len(contracts) > MAX_COMPLETE_CANDIDATES_PER_FRAME:
-            candidates = _canonical_candidates(contracts, exact_locks)[
-                :MAX_COMPLETE_CANDIDATES_PER_FRAME
-            ]
-            rejections.append(
-                _rejection(frame, variant.id, "complete_contract", (), "CANDIDATE_BOUND_REACHED")
-            )
-            return _frame_result(
-                frame.frame_id, candidates, tuple(rejections), bound=True
-            )
-
-    candidates = _canonical_candidates(contracts, exact_locks)
+    candidates = accumulator.ordered()
     if not candidates and not rejections:
         rejections.append(
             _rejection(frame, variants[0].id, "contract", (), "REQUIRED_SEMANTIC_INPUT_MISSING")
@@ -320,13 +442,17 @@ def _scopes(
         if assignment.slot_kind is SlotKind.ENTITY
         for value_id in assignment.value_ids
     }
-    entity_choice_groups = []
+    entity_choice_groups: list[tuple[str, ...]] = []
     for hint_id in frame.entity_hint_ids:
         hint = hints.get(hint_id)
         if hint is None or hint.semantic_role is not EntitySemanticRole.FRAME_SUBJECT:
             continue
-        choices = hint.selected_candidate_ids or hint.candidate_entity_ids
+        choices = tuple(dict.fromkeys(
+            hint.selected_candidate_ids or hint.candidate_entity_ids
+        ))
         if choices:
+            if len(choices) > MAX_CANDIDATES_PER_ROLE:
+                raise _CandidateBoundReached("entity")
             entity_choice_groups.append(tuple(choices))
     prior_links = tuple(
         link
@@ -348,12 +474,18 @@ def _scopes(
             _rejection(frame, variant_id, "scope.prior_result", prior_ids, "CONTEXT_CARDINALITY_MISMATCH")
         )
         return ()
-    entity_options = (
-        tuple(product(*entity_choice_groups)) if entity_choice_groups else ((),)
-    )
-    entity_ref_options = tuple(
-        tuple(sorted(fixed_entity_refs | set(option))) for option in entity_options
-    )
+    entity_ref_options: dict[tuple[str, ...], None] = {
+        tuple(sorted(fixed_entity_refs)): None
+    }
+    for choices in entity_choice_groups:
+        expanded: dict[tuple[str, ...], None] = {}
+        for existing in entity_ref_options:
+            for choice in choices:
+                entity_refs = tuple(sorted({*existing, choice}))
+                expanded.setdefault(entity_refs, None)
+                if len(expanded) > MAX_COMPLETE_CANDIDATES_PER_FRAME:
+                    raise _CandidateBoundReached("complete_contract")
+        entity_ref_options = expanded
     if not (families or any(entity_ref_options) or prior_ids):
         rejections.append(_rejection(frame, variant_id, "scope", (), "QUERY_SCOPE_REQUIRED"))
         return ()
@@ -439,7 +571,7 @@ def _lookup(frame, variant_id, scope, qualifiers, fields, pins):
         )
     else:
         projections = (ProjectionSpecV2(default_profile_id="default-product-projection.v1"),)
-    return tuple(
+    return (
         _LookupQueryContractCandidateV2(
             **_base(frame, variant_id, scope, qualifiers, QueryResultShape.PRODUCT_LIST, pins),
             projections=item,
@@ -454,7 +586,7 @@ def _screen(
     predicates = _predicate_candidates(
         frame, variant_id, fields, view, locks, registry, rejections, required=True
     )
-    return tuple(
+    return (
         _ScreenQueryContractCandidateV2(
             **_base(frame, variant_id, scope, qualifiers, QueryResultShape.PRODUCT_LIST, pins),
             predicate=predicate,
@@ -467,8 +599,15 @@ def _predicate_candidates(
     frame, variant_id, fields, view, locks, registry, rejections, *, required
 ):
     operators = tuple(lock for lock in locks if lock.role == "operator")
-    literal_locks = tuple(lock for lock in locks if lock.role == "literal")
     literals_by_id = {item.literal_id: item for item in view.literal_candidates}
+    literal_locks = tuple(
+        lock
+        for lock in locks
+        if lock.role == "literal"
+        and literals_by_id.get(lock.canonical_id) is not None
+        and literals_by_id[lock.canonical_id].kind
+        not in {"result_limit", "sort_direction", "period", "currency"}
+    )
     if not operators:
         if required:
             rejections.append(_rejection(frame, variant_id, "predicate.operator", (), "PREDICATE_OPERATOR_REQUIRED"))
@@ -540,50 +679,80 @@ def _predicate_candidates(
             return ()
         atom_groups.append(tuple(atoms))
 
-    predicates = []
-    for atoms in product(*atom_groups):
-        predicate = atoms[0] if len(atoms) == 1 else PredicateAllOfV2(children=atoms)
-        predicates.append(predicate)
-    return tuple(predicates)
+    return (
+        atoms[0] if len(atoms) == 1 else PredicateAllOfV2(children=atoms)
+        for atoms in product(*atom_groups)
+    )
 
 
 def _rank(
     frame, variant_id, scope, qualifiers, fields, view, locks, registry, pins, rejections
 ):
     usable = tuple(item for item in fields if item.concept.kind in {"metric", "attribute"})
-    directions = tuple(
-        item for item in view.literal_candidates
-        if item.segment_id in frame.segment_ids and item.kind == "sort_direction"
-    )
-    limits = tuple(
-        item for item in view.literal_candidates
-        if item.segment_id in frame.segment_ids and item.kind == "result_limit"
-    )
-    direction_values = tuple(OrderingDirection(item.canonical_value) for item in directions) or (None,)
-    limit_values = tuple(int(item.canonical_value) for item in limits) or (None,)
+    direction_values = tuple(
+        OrderingDirection(item)
+        for item in _literal_role_values(
+            frame,
+            view,
+            locks,
+            "sort_direction",
+            "ordering.direction",
+            variant_id,
+            rejections,
+        )
+    ) or (None,)
+    limit_values = tuple(
+        int(item)
+        for item in _literal_role_values(
+            frame,
+            view,
+            locks,
+            "result_limit",
+            "limit",
+            variant_id,
+            rejections,
+        )
+    ) or (None,)
+    if any(item.reason_code == "EXACT_LITERAL_CONFLICT" for item in rejections):
+        return ()
     predicates = _predicate_candidates(
         frame, variant_id, fields, view, locks, registry, rejections, required=False
     )
-    return tuple(
-        _RankQueryContractCandidateV2(
-            **_base(frame, variant_id, scope, qualifiers, QueryResultShape.TOP_K, pins),
-            ordering=(
-                OrderingSpecV2(
-                    field_concept_id=field.concept.concept_id,
-                    direction=direction,
-                    direction_policy_id=(None if direction else "default-direction-descending.v1"),
-                    nulls_policy_id="exclude_missing.v1",
-                    tie_break_policy_id="stable-product-id.v1",
-                ),
-            ),
-            limit=limit,
-            limit_policy_id=None if limit else "default-limit-5.v1",
-            predicate=predicate,
-        )
-        for field, direction, limit, predicate in product(
-            usable, direction_values, limit_values, predicates
-        )
-    )
+    def generated():
+        for predicate in predicates:
+            for field in usable:
+                for direction in direction_values:
+                    for limit in limit_values:
+                        yield _RankQueryContractCandidateV2(
+                            **_base(
+                                frame,
+                                variant_id,
+                                scope,
+                                qualifiers,
+                                QueryResultShape.TOP_K,
+                                pins,
+                            ),
+                            ordering=(
+                                OrderingSpecV2(
+                                    field_concept_id=field.concept.concept_id,
+                                    direction=direction,
+                                    direction_policy_id=(
+                                        None
+                                        if direction
+                                        else "default-direction-descending.v1"
+                                    ),
+                                    nulls_policy_id="exclude_missing.v1",
+                                    tie_break_policy_id="stable-product-id.v1",
+                                ),
+                            ),
+                            limit=limit,
+                            limit_policy_id=(
+                                None if limit else "default-limit-5.v1"
+                            ),
+                            predicate=predicate,
+                        )
+
+    return generated()
 
 
 def _compare(frame, variant_id, scope, qualifiers, fields, pins):
@@ -592,7 +761,7 @@ def _compare(frame, variant_id, scope, qualifiers, fields, pins):
     if len(subjects) < 2 and group_basis is None:
         return ()
     cross_family = len(scope.product_family_ids) > 1
-    return tuple(
+    return (
         _CompareQueryContractCandidateV2(
             **_base(frame, variant_id, scope, qualifiers, QueryResultShape.COMPARISON_TABLE, pins),
             comparison=ComparisonSpecV2(
@@ -614,38 +783,39 @@ def _aggregate(
     public_fund = ProductFamily.PUBLIC_FUND in scope.product_family_ids
     grain = "representative-product.v1" if public_fund else "source-product.v1"
     dedup = "public-fund-representative-share.v1" if public_fund else "no-dedup.v1"
-    contracts = []
     usable = tuple(item for item in fields if item.concept.kind in {"metric", "attribute"})
     predicates = _predicate_candidates(
         frame, variant_id, fields, view, locks, registry, rejections, required=False
     )
-    if not predicates:
-        return ()
-    if variant_id == "aggregate.scalar.v2":
-        for field in usable:
-            for function, predicate in product((
-                AggregationFunction.SUM,
-                AggregationFunction.AVG,
-                AggregationFunction.MIN,
-                AggregationFunction.MAX,
-                AggregationFunction.COUNT_DISTINCT,
-            ), predicates):
-                contracts.append(
-                    _AggregateQueryContractCandidateV2(
-                        **_base(frame, variant_id, scope, qualifiers, QueryResultShape.SINGLE_VALUE, pins),
-                        aggregation=AggregationSpecV2(
-                            function_id=function,
-                            target_field_concept_id=field.concept.concept_id,
-                            population_grain_id=grain,
-                            dedup_policy_id=dedup,
-                        ),
-                        predicate=predicate,
-                    )
-                )
+    def generated():
         for predicate in predicates:
-            contracts.append(
-                _AggregateQueryContractCandidateV2(
-                    **_base(frame, variant_id, scope, qualifiers, QueryResultShape.SINGLE_VALUE, pins),
+            if variant_id == "aggregate.scalar.v2":
+                for field in usable:
+                    for function in (
+                        AggregationFunction.SUM,
+                        AggregationFunction.AVG,
+                        AggregationFunction.MIN,
+                        AggregationFunction.MAX,
+                        AggregationFunction.COUNT_DISTINCT,
+                    ):
+                        yield _AggregateQueryContractCandidateV2(
+                            **_base(
+                                frame, variant_id, scope, qualifiers,
+                                QueryResultShape.SINGLE_VALUE, pins,
+                            ),
+                            aggregation=AggregationSpecV2(
+                                function_id=function,
+                                target_field_concept_id=field.concept.concept_id,
+                                population_grain_id=grain,
+                                dedup_policy_id=dedup,
+                            ),
+                            predicate=predicate,
+                        )
+                yield _AggregateQueryContractCandidateV2(
+                    **_base(
+                        frame, variant_id, scope, qualifiers,
+                        QueryResultShape.SINGLE_VALUE, pins,
+                    ),
                     aggregation=AggregationSpecV2(
                         function_id=AggregationFunction.COUNT,
                         count_population_id=grain,
@@ -654,43 +824,51 @@ def _aggregate(
                     ),
                     predicate=predicate,
                 )
-            )
-    elif variant_id == "aggregate.grouped.v2":
-        for target, grouping, predicate in product(usable, usable, predicates):
-            if target.concept.concept_id == grouping.concept.concept_id:
-                continue
-            contracts.append(
-                _AggregateQueryContractCandidateV2(
-                    **_base(frame, variant_id, scope, qualifiers, QueryResultShape.GROUPED_TABLE, pins),
-                    aggregation=AggregationSpecV2(
-                        function_id=AggregationFunction.SUM,
-                        target_field_concept_id=target.concept.concept_id,
-                        group_by_field_concept_ids=(grouping.concept.concept_id,),
-                        population_grain_id=grain,
-                        dedup_policy_id=dedup,
-                    ),
-                    predicate=predicate,
-                )
-            )
-    elif variant_id == "aggregate.distribution.v2":
-        for field, predicate in product(usable, predicates):
-            contracts.append(
-                _AggregateQueryContractCandidateV2(
-                    **_base(frame, variant_id, scope, qualifiers, QueryResultShape.DISTRIBUTION, pins),
-                    aggregation=AggregationSpecV2(
-                        function_id=AggregationFunction.DISTRIBUTION,
-                        target_field_concept_id=field.concept.concept_id,
-                        bucket_policy_id=AggregationBucketPolicyId.EQUAL_WIDTH_10,
-                        population_grain_id=grain,
-                        dedup_policy_id=dedup,
-                    ),
-                    predicate=predicate,
-                )
-            )
-    return tuple(contracts)
+            elif variant_id == "aggregate.grouped.v2":
+                for target in usable:
+                    for grouping in usable:
+                        if target.concept.concept_id == grouping.concept.concept_id:
+                            continue
+                        yield _AggregateQueryContractCandidateV2(
+                            **_base(
+                                frame, variant_id, scope, qualifiers,
+                                QueryResultShape.GROUPED_TABLE, pins,
+                            ),
+                            aggregation=AggregationSpecV2(
+                                function_id=AggregationFunction.SUM,
+                                target_field_concept_id=target.concept.concept_id,
+                                group_by_field_concept_ids=(
+                                    grouping.concept.concept_id,
+                                ),
+                                population_grain_id=grain,
+                                dedup_policy_id=dedup,
+                            ),
+                            predicate=predicate,
+                        )
+            elif variant_id == "aggregate.distribution.v2":
+                for field in usable:
+                    yield _AggregateQueryContractCandidateV2(
+                        **_base(
+                            frame, variant_id, scope, qualifiers,
+                            QueryResultShape.DISTRIBUTION, pins,
+                        ),
+                        aggregation=AggregationSpecV2(
+                            function_id=AggregationFunction.DISTRIBUTION,
+                            target_field_concept_id=field.concept.concept_id,
+                            bucket_policy_id=AggregationBucketPolicyId.EQUAL_WIDTH_10,
+                            population_grain_id=grain,
+                            dedup_policy_id=dedup,
+                        ),
+                        predicate=predicate,
+                    )
+
+    return generated()
 
 
-def _similar(frame, variant_id, scope, qualifiers, fields, view, pins):
+def _similar(
+    frame, variant_id, scope, qualifiers, fields, view, locks, registry, pins,
+    rejections,
+):
     anchors = scope.entity_refs
     if not anchors and scope.prior_result_binding:
         anchors = (scope.prior_result_binding,)
@@ -701,11 +879,27 @@ def _similar(frame, variant_id, scope, qualifiers, fields, view, pins):
     )
     if not dimensions:
         return ()
-    limit_literals = tuple(
-        item for item in view.literal_candidates
-        if item.segment_id in frame.segment_ids and item.kind == "result_limit"
+    offered_limits = _literal_role_values(
+        frame,
+        view,
+        locks,
+        "result_limit",
+        "limit",
+        variant_id,
+        rejections,
     )
-    limit = int(limit_literals[0].canonical_value) if len(limit_literals) == 1 else 5
+    if any(item.reason_code == "EXACT_LITERAL_CONFLICT" for item in rejections):
+        return ()
+    if not offered_limits and not _registered_policy_valid(
+        registry,
+        variant_id,
+        "default-limit-5.v1",
+        PolicyKind.DEFAULT,
+        frame,
+        rejections,
+    ):
+        return ()
+    limits = tuple(int(item) for item in offered_limits) or (5,)
     specs = (
         SimilaritySpecV2(
             anchor_ref=anchors[0],
@@ -713,9 +907,10 @@ def _similar(frame, variant_id, scope, qualifiers, fields, view, pins):
             dimension_concept_ids=dimensions,
             coverage_threshold="1",
             limit=limit,
-        ),
+        )
+        for limit in limits
     )
-    return tuple(
+    return (
         _SimilarQueryContractCandidateV2(
             **_base(frame, variant_id, scope, qualifiers, QueryResultShape.PRODUCT_LIST, pins),
             similarity=spec,
@@ -729,7 +924,7 @@ def _explain(frame, variant_id, scope, qualifiers, fields, pins):
     specs = tuple(
         ExplanationSpecV2(topic_concept_id=item.concept.concept_id) for item in topics
     ) or (ExplanationSpecV2(profile_id="default-explanation-profile.v1"),)
-    return tuple(
+    return (
         _ExplainQueryContractCandidateV2(
             **_base(frame, variant_id, scope, qualifiers, QueryResultShape.EXPLANATION, pins),
             explanation=spec,
@@ -773,12 +968,158 @@ def _pins(registry: QueryContractRegistry) -> QueryRegistryPinsV2:
     )
 
 
-def _qualifiers(frame: ValidatedIntentFrameV2, view: ResolverView) -> QueryQualifiersV2:
-    literals = tuple(item for item in view.literal_candidates if item.segment_id in frame.segment_ids)
-    period = next((item.canonical_value for item in literals if item.kind == "period"), None)
-    currency = next((item.canonical_value for item in literals if item.kind == "currency"), None)
-    as_of = next((date.fromisoformat(item.canonical_value) for item in literals if item.kind == "date"), None)
-    return QueryQualifiersV2(period_id=period, currency_id=currency, as_of_date=as_of)
+def _qualifier_options(
+    frame: ValidatedIntentFrameV2,
+    view: ResolverView,
+    locks: tuple[ExactSemanticLock, ...],
+    rejections: list[CandidateRejection],
+    variant_id: str,
+) -> tuple[tuple[QueryQualifiersV2, ...], dict[str, str]]:
+    role_specs = (
+        ("qualifier.period", {"period"}, lambda item: item.canonical_value),
+        (
+            "qualifier.currency",
+            {"currency"},
+            lambda item: item.currency or item.canonical_value,
+        ),
+        ("qualifier.as_of", {"date"}, lambda item: item.canonical_value),
+        (
+            "qualifier.unit",
+            {"percentage", "money"},
+            lambda item: "percent" if item.kind == "percentage" else item.currency,
+        ),
+    )
+    role_values: dict[str, tuple[str | None, ...]] = {}
+    states: dict[str, str] = {}
+    for role_id, kinds, value_of in role_specs:
+        offered = tuple(
+            item
+            for item in view.literal_candidates
+            if item.segment_id in frame.segment_ids and item.kind in kinds
+        )
+        offered_by_id = {item.literal_id: item for item in offered}
+        exact = tuple(
+            offered_by_id[lock.canonical_id]
+            for lock in locks
+            if lock.role == "literal" and lock.canonical_id in offered_by_id
+        )
+        selected = exact or offered
+        values = tuple(
+            dict.fromkeys(
+                value
+                for item in selected
+                if (value := value_of(item)) is not None
+            )
+        )
+        if exact and len(values) > 1:
+            rejections.append(
+                _rejection(
+                    frame,
+                    variant_id,
+                    role_id,
+                    tuple(item.literal_id for item in exact),
+                    "EXACT_LITERAL_CONFLICT",
+                )
+            )
+            return (), states
+        if len(values) > MAX_CANDIDATES_PER_ROLE:
+            raise _CandidateBoundReached(role_id)
+        states[role_id.removeprefix("qualifier.")] = (
+            "missing" if not values else "resolved" if len(values) == 1 else "ambiguous"
+        )
+        role_values[role_id] = values or (None,)
+
+    options: dict[str, QueryQualifiersV2] = {}
+    for period, currency, as_of, unit in product(
+        role_values["qualifier.period"],
+        role_values["qualifier.currency"],
+        role_values["qualifier.as_of"],
+        role_values["qualifier.unit"],
+    ):
+        qualifier = QueryQualifiersV2(
+            period_id=period,
+            currency_id=currency,
+            unit_id=unit,
+            as_of_date=date.fromisoformat(as_of) if as_of else None,
+        )
+        key = canonical_sha256(qualifier)
+        options.setdefault(key, qualifier)
+        if len(options) > MAX_COMPLETE_CANDIDATES_PER_FRAME:
+            raise _CandidateBoundReached("qualifier")
+    return tuple(options.values()), states
+
+
+def _fields_with_complete_qualifiers(
+    frame: ValidatedIntentFrameV2,
+    variant_id: str,
+    fields: tuple[_FieldOffer, ...],
+    qualifier_states: dict[str, str],
+    rejections: list[CandidateRejection],
+) -> tuple[_FieldOffer, ...]:
+    aliases = {"as_of_date": "as_of"}
+    complete: list[_FieldOffer] = []
+    for field in fields:
+        rejected = False
+        for raw_qualifier in field.concept.required_qualifiers:
+            qualifier = aliases.get(raw_qualifier, raw_qualifier)
+            state = qualifier_states.get(qualifier, "missing")
+            if state == "resolved":
+                continue
+            rejections.append(
+                _rejection(
+                    frame,
+                    variant_id,
+                    f"field.{field.concept.concept_id}.qualifier.{qualifier}",
+                    (field.concept.concept_id,),
+                    (
+                        "REQUIRED_QUALIFIER_AMBIGUOUS"
+                        if state == "ambiguous"
+                        else "REQUIRED_QUALIFIER_MISSING"
+                    ),
+                )
+            )
+            rejected = True
+        if not rejected:
+            complete.append(field)
+    return tuple(complete)
+
+
+def _literal_role_values(
+    frame: ValidatedIntentFrameV2,
+    view: ResolverView,
+    locks: tuple[ExactSemanticLock, ...],
+    kind: str,
+    role_id: str,
+    variant_id: str,
+    rejections: list[CandidateRejection],
+) -> tuple[str, ...]:
+    offered = tuple(
+        item
+        for item in view.literal_candidates
+        if item.segment_id in frame.segment_ids and item.kind == kind
+    )
+    offered_by_id = {item.literal_id: item for item in offered}
+    exact = tuple(
+        offered_by_id[lock.canonical_id]
+        for lock in locks
+        if lock.role == "literal" and lock.canonical_id in offered_by_id
+    )
+    selected = exact or offered
+    values = tuple(dict.fromkeys(item.canonical_value for item in selected))
+    if exact and len(values) > 1:
+        rejections.append(
+            _rejection(
+                frame,
+                variant_id,
+                role_id,
+                tuple(item.literal_id for item in exact),
+                "EXACT_LITERAL_CONFLICT",
+            )
+        )
+        return ()
+    if len(values) > MAX_CANDIDATES_PER_ROLE:
+        raise _CandidateBoundReached(role_id)
+    return values
 
 
 def _typed_value(literal: ResolverViewLiteralCandidate) -> TypedSemanticValue:
@@ -907,32 +1248,105 @@ def _nearest_literals(literals, lock, view, arity):
     return tuple(sorted(preceding, key=lambda item: item.literal.start_char)[-count:]) or literals
 
 
-def _canonical_candidates(
-    contracts: Iterable[SolvedQueryContractCandidateV2],
-    exact_locks: tuple[ExactSemanticLock, ...],
-):
-    candidates: dict[str, QueryContractCandidate] = {}
-    for contract in contracts:
-        semantic_content = contract.model_dump(
-            mode="json",
-            exclude={"frame_id", "provenance", "registry_pins"},
+_POLICY_KEYS = frozenset(
+    {
+        "basis_policy_id",
+        "bucket_policy_id",
+        "dedup_policy_id",
+        "default_profile_id",
+        "direction_policy_id",
+        "limit_policy_id",
+        "normalization_policy_id",
+        "null_policy_id",
+        "population_grain_id",
+        "profile_id",
+        "policy_id",
+        "tie_break_policy_id",
+    }
+)
+
+
+def _contract_policies_valid(
+    contract: SolvedQueryContractCandidateV2,
+    registry: QueryContractRegistry,
+    frame: ValidatedIntentFrameV2,
+    rejections: list[CandidateRejection],
+) -> bool:
+    variant = registry.variants_by_id.get(contract.contract_variant_id)
+    refs = {
+        str(value)
+        for path, value in _semantic_leaves(contract.model_dump(mode="json"))
+        if path.rsplit(".", 1)[-1] in _POLICY_KEYS and value is not None
+    }
+    if contract.contract_variant_id == "similar.policy.v2":
+        refs.add("minimum-dimension-coverage.v1")
+    valid = True
+    for policy_id in sorted(refs):
+        expected_kind = EXPECTED_POLICY_KINDS.get(policy_id)
+        if expected_kind is None or variant is None:
+            rejections.append(
+                _rejection(
+                    frame,
+                    contract.contract_variant_id,
+                    f"policy.{policy_id}",
+                    (policy_id,),
+                    "POLICY_NOT_REGISTERED",
+                )
+            )
+            valid = False
+        elif not _registered_policy_valid(
+            registry,
+            contract.contract_variant_id,
+            policy_id,
+            expected_kind,
+            frame,
+            rejections,
+        ):
+            valid = False
+    return valid
+
+
+def _registered_policy_valid(
+    registry: QueryContractRegistry,
+    variant_id: str,
+    policy_id: str,
+    expected_kind: PolicyKind,
+    frame: ValidatedIntentFrameV2,
+    rejections: list[CandidateRejection],
+) -> bool:
+    variant = registry.variants_by_id.get(variant_id)
+    definition = registry.policies_by_id.get(policy_id)
+    if definition is None or variant is None or policy_id not in variant.policy_ids:
+        rejections.append(
+            _rejection(
+                frame,
+                variant_id,
+                f"policy.{policy_id}",
+                (policy_id,),
+                "POLICY_NOT_REGISTERED",
+            )
         )
-        digest = canonical_sha256(semantic_content)
-        contract = contract.model_copy(
-            update={"provenance": _resolved_input_provenance(contract, exact_locks)}
+        return False
+    if definition.kind is not expected_kind:
+        rejections.append(
+            _rejection(
+                frame,
+                variant_id,
+                f"policy.{policy_id}",
+                (policy_id,),
+                "POLICY_KIND_MISMATCH",
+            )
         )
-        candidates.setdefault(
-            digest,
-            QueryContractCandidate(candidate_id=f"query-contract-{digest}", contract=contract),
-        )
-    return tuple(sorted(candidates.values(), key=lambda item: item.candidate_id))
+        return False
+    return True
 
 
 def _resolved_input_provenance(
     contract: SolvedQueryContractCandidateV2,
     exact_locks: tuple[ExactSemanticLock, ...],
+    view: ResolverView,
 ) -> tuple[ResolvedInputProvenanceV2, ...]:
-    exact_by_value = {lock.canonical_id: lock for lock in exact_locks}
+    literals_by_id = {item.literal_id: item for item in view.literal_candidates}
     payload = contract.model_dump(
         mode="json",
         exclude={
@@ -947,34 +1361,90 @@ def _resolved_input_provenance(
         if value is None or value == "":
             continue
         rendered = str(value).lower() if isinstance(value, bool) else str(value)
-        lock = exact_by_value.get(rendered)
-        if lock is not None:
-            source_kind = ProvenanceSourceKind.EXACT_LOCK
-            source_ref = lock.lock_id
-        elif path == "scope.prior_result_binding":
-            source_kind = ProvenanceSourceKind.PRIOR_RESULT
-            source_ref = rendered
-        elif (
-            rendered.endswith(".v1")
-            or path == "contract_variant_id"
-            or "policy" in path
-            or "profile" in path
-        ):
-            source_kind = ProvenanceSourceKind.REGISTRY_DEFAULT
-            source_ref = rendered
-        else:
-            source_kind = ProvenanceSourceKind.AXIS_RESOLUTION
-            source_ref = rendered
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", source_ref):
-            source_ref = f"semantic-{canonical_sha256(source_ref)[:16]}"
-        records.append(
-            ResolvedInputProvenanceV2(
-                semantic_input_id=path,
-                source_kind=source_kind,
-                source_ref=source_ref,
+        matching_locks = tuple(
+            lock
+            for lock in exact_locks
+            if lock.canonical_id == rendered
+            or (
+                (literal := literals_by_id.get(lock.canonical_id)) is not None
+                and literal.canonical_value == rendered
             )
         )
+        sources: list[tuple[ProvenanceSourceKind, str]] = [
+            (ProvenanceSourceKind.EXACT_LOCK, lock.lock_id)
+            for lock in matching_locks
+        ]
+        sources.extend(
+            (ProvenanceSourceKind.AXIS_RESOLUTION, group.mention_id)
+            for group in view.semantic_candidates
+            if any(item.semantic_id == rendered for item in group.items)
+        )
+        if not sources:
+            if path == "scope.prior_result_binding":
+                sources.append((ProvenanceSourceKind.PRIOR_RESULT, rendered))
+            elif (
+                rendered.endswith(".v1")
+                or path == "contract_variant_id"
+                or "policy" in path
+                or "profile" in path
+            ):
+                sources.append((ProvenanceSourceKind.REGISTRY_DEFAULT, rendered))
+            else:
+                sources.append((ProvenanceSourceKind.AXIS_RESOLUTION, rendered))
+        unique_sources = sorted(
+            set(sources), key=lambda item: (_provenance_priority(item[0]), item[1])
+        )
+        for index, (source_kind, source_ref) in enumerate(unique_sources):
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", source_ref):
+                source_ref = f"semantic-{canonical_sha256(source_ref)[:16]}"
+            records.append(
+                ResolvedInputProvenanceV2(
+                    semantic_input_id=(
+                        path if index == 0 else f"{path}.source.{index}"
+                    ),
+                    source_kind=source_kind,
+                    source_ref=source_ref,
+                )
+            )
     return tuple(records)
+
+
+def _merge_provenance(
+    first: tuple[ResolvedInputProvenanceV2, ...],
+    second: tuple[ResolvedInputProvenanceV2, ...],
+) -> tuple[ResolvedInputProvenanceV2, ...]:
+    by_source = {
+        (item.semantic_input_id.split(".source.", 1)[0], item.source_kind, item.source_ref)
+        for item in (*first, *second)
+    }
+    grouped: dict[str, list[tuple[ProvenanceSourceKind, str]]] = {}
+    for path, source_kind, source_ref in by_source:
+        grouped.setdefault(path, []).append((source_kind, source_ref))
+    merged: list[ResolvedInputProvenanceV2] = []
+    for path in sorted(grouped):
+        sources = sorted(
+            grouped[path], key=lambda item: (_provenance_priority(item[0]), item[1])
+        )
+        for index, (source_kind, source_ref) in enumerate(sources):
+            merged.append(
+                ResolvedInputProvenanceV2(
+                    semantic_input_id=(
+                        path if index == 0 else f"{path}.source.{index}"
+                    ),
+                    source_kind=source_kind,
+                    source_ref=source_ref,
+                )
+            )
+    return tuple(merged)
+
+
+def _provenance_priority(source_kind: ProvenanceSourceKind) -> int:
+    return {
+        ProvenanceSourceKind.EXACT_LOCK: 0,
+        ProvenanceSourceKind.PRIOR_RESULT: 1,
+        ProvenanceSourceKind.AXIS_RESOLUTION: 2,
+        ProvenanceSourceKind.REGISTRY_DEFAULT: 3,
+    }[source_kind]
 
 
 def _semantic_leaves(value: object, path: str = ""):

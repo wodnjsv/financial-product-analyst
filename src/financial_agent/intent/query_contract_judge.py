@@ -13,6 +13,7 @@ from .errors import MODEL_SCHEMA_INVALID, MODEL_TIMEOUT, ModelInvocationError
 from .query_contract_solver import QueryContractCandidate
 from .query_contracts import ContractReadiness, ContractReadinessRecordV2
 from .resolution import ValidatedIntentFrameV2
+from .view import ResolverView
 
 
 JUDGE_PROMPT_VERSION = "query-contract-judge-ko-v1"
@@ -46,6 +47,7 @@ def build_query_contract_judge_envelope(
     *,
     question: str,
     frame: ValidatedIntentFrameV2,
+    view: ResolverView,
     candidates: tuple[QueryContractCandidate, ...],
 ) -> QueryContractJudgePromptEnvelope:
     """Expose only evidence-bearing semantic summaries and offered IDs."""
@@ -67,6 +69,27 @@ def build_query_contract_judge_envelope(
                     "evidence_span_ids": list(frame.evidence_span_ids),
                     "action_label": frame.action_choice.selected_ids[0].value,
                     "family_labels": [item.value for item in frame.product_family_choice.selected_ids],
+                    "evidence": [
+                        {
+                            "segment_id": item.segment_id,
+                            "start_char": item.start_char,
+                            "end_char": item.end_char,
+                            "text": item.text,
+                        }
+                        for item in sorted(
+                            (
+                                evidence
+                                for evidence in view.evidence_candidates
+                                if evidence.segment_id in frame.segment_ids
+                            ),
+                            key=lambda evidence: (
+                                frame.segment_ids.index(evidence.segment_id),
+                                evidence.start_char,
+                                evidence.end_char,
+                                evidence.evidence_id,
+                            ),
+                        )
+                    ],
                 },
                 "candidates": [
                     {
@@ -103,6 +126,7 @@ class QueryContractJudge:
         *,
         question: str,
         frame: ValidatedIntentFrameV2,
+        view: ResolverView,
         candidates: tuple[QueryContractCandidate, ...],
         timeout_seconds: float,
         repair_used: bool = False,
@@ -123,6 +147,7 @@ class QueryContractJudge:
         envelope = build_query_contract_judge_envelope(
             question=question,
             frame=frame,
+            view=view,
             candidates=candidates,
         )
         try:

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
+
+import pytest
 
 from financial_agent.contracts.enums import IntentType, ProductFamily
-from financial_agent.intent.draft import EntityHintV2
 from financial_agent.intent.axis_locks import ExactSemanticLock
-from financial_agent.intent.query_contract_registry import load_query_contract_registry
+from financial_agent.intent.draft import EntityHintV2
+from financial_agent.intent.query_contract_registry import (
+    PolicyKind,
+    load_query_contract_registry,
+)
 from financial_agent.intent.query_contract_solver import (
     MAX_COMPLETE_CANDIDATES_PER_FRAME,
     MAX_CANDIDATES_PER_ROLE,
@@ -13,12 +20,14 @@ from financial_agent.intent.query_contract_solver import (
 )
 from financial_agent.intent.query_contracts import (
     ContractReadiness,
+    OrderingDirection,
     ProvenanceSourceKind,
     QueryOperatorId,
 )
 from financial_agent.intent.types import EntitySemanticRole
 from financial_agent.intent.view import (
     ResolverViewConcept,
+    ResolverViewLiteralCandidate,
     ResolverViewSemanticCandidate,
     ResolverViewSemanticCandidateGroup,
 )
@@ -94,6 +103,54 @@ def _lock(role: str, canonical_id: str, *, span: str = "mention-s1-0-1"):
         canonical_id=canonical_id,
         evidence_span_ids=(span,),
         source="literal" if role == "literal" else "direct_alias" if role == "field" else "canonical",
+    )
+
+
+def _literal(
+    literal_id: str,
+    *,
+    kind: str,
+    value: str,
+    start: int,
+    text: str | None = None,
+    currency: str | None = None,
+) -> ResolverViewLiteralCandidate:
+    return ResolverViewLiteralCandidate(
+        literal_id=literal_id,
+        segment_id="s1",
+        kind=kind,
+        original_text=text or value,
+        start_char=start,
+        end_char=start + len(text or value),
+        canonical_value=value,
+        currency=currency,
+    )
+
+
+def _entity_axis(
+    *, action: IntentType, candidate_groups: tuple[tuple[str, ...], ...]
+):
+    source = _axis(action)
+    hint_ids = tuple(f"hint-{index}" for index in range(len(candidate_groups)))
+    source_frame = source.canonical_frames[0].model_copy(
+        update={"entity_hint_ids": hint_ids}
+    )
+    hints = tuple(
+        EntityHintV2(
+            entity_hint_id=hint_id,
+            mention_id=(f"mention-{index}",),
+            evidence_span_ids=(f"evidence-{index}",),
+            expected_entity_type_ids=("ETF",),
+            candidate_entity_ids=candidates,
+            selected_candidate_ids=(),
+            reason_code="ambiguous",
+            semantic_role=EntitySemanticRole.FRAME_SUBJECT,
+            relation_id=(),
+        )
+        for index, (hint_id, candidates) in enumerate(zip(hint_ids, candidate_groups))
+    )
+    return source.model_copy(
+        update={"canonical_frames": (source_frame,), "entity_hints": hints}
     )
 
 
@@ -315,6 +372,74 @@ def test_unresolved_entity_role_enumerates_only_offered_candidate_ids() -> None:
     } == {"entity-a", "entity-b"}
 
 
+def test_lookup_entity_role_bound_is_checked_before_cartesian_expansion() -> None:
+    source = _entity_axis(
+        action=IntentType.LOOKUP,
+        candidate_groups=(tuple(f"entity-{index}" for index in range(9)),),
+    )
+
+    result = solve_query_contracts(
+        resolution=source,
+        view=_semantic_view("aum"),
+        exact_locks=(_lock("field", "aum"),),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.readiness is ContractReadiness.AMBIGUOUS
+    assert result.frames[0].contract_readiness.reason_codes == (
+        "CANDIDATE_BOUND_REACHED",
+    )
+
+
+def test_entity_cartesian_product_stops_at_complete_candidate_cap() -> None:
+    groups = tuple(
+        tuple(f"entity-{group}-{index}" for index in range(5))
+        for group in range(3)
+    )
+    source = _entity_axis(action=IntentType.LOOKUP, candidate_groups=groups)
+
+    result = solve_query_contracts(
+        resolution=source,
+        view=_semantic_view("aum"),
+        exact_locks=(_lock("field", "aum"),),
+        registry=REGISTRY,
+    )
+
+    assert len(result.frames[0].complete_candidates) <= 64
+    assert result.frames[0].contract_readiness.reason_codes == (
+        "CANDIDATE_BOUND_REACHED",
+    )
+
+
+def test_equivalent_raw_combinations_dedupe_before_complete_bound() -> None:
+    source = _entity_axis(
+        action=IntentType.RANK,
+        candidate_groups=(("entity-a", "entity-b"), ("entity-a", "entity-b")),
+    )
+    directions = tuple(
+        _literal(f"direction-{index}", kind="sort_direction", value="desc", start=20 + index)
+        for index in range(8)
+    )
+    limits = tuple(
+        _literal(f"limit-{index}", kind="result_limit", value="5", start=40 + index)
+        for index in range(8)
+    )
+    resolver_view = _semantic_view("fee_rate").model_copy(
+        update={"literal_candidates": (*directions, *limits)}
+    )
+
+    result = solve_query_contracts(
+        resolution=source,
+        view=resolver_view,
+        exact_locks=(_lock("field", "fee_rate"),),
+        registry=REGISTRY,
+    )
+
+    assert len(result.frames[0].complete_candidates) == 3
+    assert result.frames[0].contract_readiness.reason_codes == ()
+
+
 def test_role_bound_is_visible_and_never_truncated_to_unique() -> None:
     source = _semantic_view("aum")
     aum = next(item for item in source.concept_definitions if item.concept_id == "aum")
@@ -394,6 +519,251 @@ def test_public_fund_aggregate_candidates_use_registered_population_policy() -> 
         item.contract.aggregation.dedup_policy_id
         for item in result.frames[0].complete_candidates
     } == {"public-fund-representative-share.v1"}
+
+
+def test_exact_second_period_filters_offered_qualifiers() -> None:
+    periods = (
+        _literal("period-1y", kind="period", value="P1Y", start=2),
+        _literal("period-3y", kind="period", value="P3Y", start=8),
+    )
+    resolver_view = _semantic_view("fee_rate").model_copy(
+        update={"literal_candidates": periods}
+    )
+
+    result = solve_query_contracts(
+        resolution=_axis(),
+        view=resolver_view,
+        exact_locks=(
+            _lock("field", "fee_rate"),
+            _lock("literal", "period-3y", span="period-3y"),
+        ),
+        registry=REGISTRY,
+    )
+
+    assert {item.contract.qualifiers.period_id for item in result.complete_candidates} == {
+        "P3Y"
+    }
+
+
+def test_exact_direction_and_rank_limit_filter_offered_literals() -> None:
+    literals = (
+        _literal("direction-asc", kind="sort_direction", value="asc", start=2),
+        _literal("direction-desc", kind="sort_direction", value="desc", start=8),
+        _literal("limit-3", kind="result_limit", value="3", start=14),
+        _literal("limit-7", kind="result_limit", value="7", start=18),
+    )
+    resolver_view = _semantic_view("fee_rate").model_copy(
+        update={"literal_candidates": literals}
+    )
+
+    result = solve_query_contracts(
+        resolution=_axis(),
+        view=resolver_view,
+        exact_locks=(
+            _lock("field", "fee_rate"),
+            _lock("literal", "direction-desc", span="direction-desc"),
+            _lock("literal", "limit-7", span="limit-7"),
+        ),
+        registry=REGISTRY,
+    )
+
+    assert {
+        (item.contract.ordering[0].direction, item.contract.limit)
+        for item in result.complete_candidates
+    } == {(OrderingDirection.DESC, 7)}
+
+
+def test_similarity_exact_limit_never_falls_back_to_default() -> None:
+    source = _entity_axis(
+        action=IntentType.SIMILAR, candidate_groups=(("entity-anchor",),)
+    )
+    limits = (
+        _literal("limit-3", kind="result_limit", value="3", start=2),
+        _literal("limit-7", kind="result_limit", value="7", start=8),
+    )
+    resolver_view = _semantic_view("fee_rate").model_copy(
+        update={"literal_candidates": limits}
+    )
+
+    result = solve_query_contracts(
+        resolution=source,
+        view=resolver_view,
+        exact_locks=(
+            _lock("field", "fee_rate"),
+            _lock("literal", "limit-7", span="limit-7"),
+        ),
+        registry=REGISTRY,
+    )
+
+    assert {item.contract.similarity.limit for item in result.complete_candidates} == {7}
+
+
+def test_conflicting_exact_single_value_literals_fail_closed() -> None:
+    resolver_view = _semantic_view("fee_rate").model_copy(
+        update={
+            "literal_candidates": (
+                _literal("period-1y", kind="period", value="P1Y", start=2),
+                _literal("period-3y", kind="period", value="P3Y", start=8),
+            )
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=_axis(),
+        view=resolver_view,
+        exact_locks=(
+            _lock("field", "fee_rate"),
+            _lock("literal", "period-1y", span="period-1y"),
+            _lock("literal", "period-3y", span="period-3y"),
+        ),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.reason_codes == (
+        "EXACT_LITERAL_CONFLICT",
+    )
+
+
+@pytest.mark.parametrize(
+    ("qualifier", "literal"),
+    [
+        ("period", _literal("period-1y", kind="period", value="P1Y", start=2)),
+        (
+            "currency",
+            _literal(
+                "currency-usd",
+                kind="currency",
+                value="USD",
+                start=2,
+                currency="USD",
+            ),
+        ),
+        ("as_of", _literal("date-1", kind="date", value="2026-08-24", start=2)),
+    ],
+)
+def test_required_field_qualifier_is_complete_only_with_one_value(
+    qualifier: str, literal: ResolverViewLiteralCandidate
+) -> None:
+    resolver_view = _semantic_view("fee_rate")
+    field = next(
+        item for item in resolver_view.concept_definitions if item.concept_id == "fee_rate"
+    ).model_copy(update={"required_qualifiers": (qualifier,)})
+    resolver_view = resolver_view.model_copy(
+        update={
+            "concept_definitions": tuple(
+                field if item.concept_id == "fee_rate" else item
+                for item in resolver_view.concept_definitions
+            )
+        }
+    )
+
+    missing = solve_query_contracts(
+        resolution=_axis(),
+        view=resolver_view,
+        exact_locks=(_lock("field", "fee_rate"),),
+        registry=REGISTRY,
+    )
+    complete = solve_query_contracts(
+        resolution=_axis(),
+        view=resolver_view.model_copy(update={"literal_candidates": (literal,)}),
+        exact_locks=(_lock("field", "fee_rate"),),
+        registry=REGISTRY,
+    )
+
+    assert missing.frames[0].complete_candidates == ()
+    assert missing.frames[0].contract_readiness.reason_codes == (
+        "REQUIRED_QUALIFIER_MISSING",
+    )
+    assert len(complete.frames[0].complete_candidates) == 1
+
+
+def test_required_field_qualifier_rejects_ambiguous_values() -> None:
+    resolver_view = _semantic_view("fee_rate")
+    field = next(
+        item for item in resolver_view.concept_definitions if item.concept_id == "fee_rate"
+    ).model_copy(update={"required_qualifiers": ("period",)})
+    resolver_view = resolver_view.model_copy(
+        update={
+            "concept_definitions": tuple(
+                field if item.concept_id == "fee_rate" else item
+                for item in resolver_view.concept_definitions
+            ),
+            "literal_candidates": (
+                _literal("period-1y", kind="period", value="P1Y", start=2),
+                _literal("period-3y", kind="period", value="P3Y", start=8),
+            ),
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=_axis(),
+        view=resolver_view,
+        exact_locks=(_lock("field", "fee_rate"),),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.reason_codes == (
+        "REQUIRED_QUALIFIER_AMBIGUOUS",
+    )
+
+
+@pytest.mark.parametrize("mutation", ["missing", "wrong_kind"])
+def test_candidate_rejects_missing_or_wrong_kind_registered_policy(mutation: str) -> None:
+    policies = dict(REGISTRY.policies_by_id)
+    if mutation == "missing":
+        policies.pop("stable-product-id.v1")
+    else:
+        policies["stable-product-id.v1"] = policies[
+            "stable-product-id.v1"
+        ].model_copy(update={"kind": PolicyKind.DEFAULT})
+    registry = replace(REGISTRY, policies_by_id=MappingProxyType(policies))
+
+    result = solve_query_contracts(
+        resolution=_axis(),
+        view=_semantic_view("fee_rate"),
+        exact_locks=(_lock("field", "fee_rate"),),
+        registry=registry,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.reason_codes == (
+        "POLICY_NOT_REGISTERED" if mutation == "missing" else "POLICY_KIND_MISMATCH",
+    )
+
+
+def test_canonical_dedupe_preserves_all_exact_lock_provenance() -> None:
+    locks = (
+        ExactSemanticLock(
+            lock_id="lock-field-fee-a",
+            role="field",
+            canonical_id="fee_rate",
+            evidence_span_ids=("mention-s1-0-2",),
+            source="direct_alias",
+        ),
+        ExactSemanticLock(
+            lock_id="lock-field-fee-b",
+            role="field",
+            canonical_id="fee_rate",
+            evidence_span_ids=("mention-s1-4-6",),
+            source="direct_alias",
+        ),
+    )
+
+    result = solve_query_contracts(
+        resolution=_axis(),
+        view=_semantic_view("fee_rate", "fee_rate"),
+        exact_locks=locks,
+        registry=REGISTRY,
+    )
+
+    assert len(result.complete_candidates) == 1
+    assert {
+        item.source_ref
+        for item in result.complete_candidates[0].contract.provenance
+        if item.source_kind is ProvenanceSourceKind.EXACT_LOCK
+    } >= {"lock-field-fee-a", "lock-field-fee-b"}
 
 
 def test_calculation_without_an_offered_recipe_fails_closed() -> None:

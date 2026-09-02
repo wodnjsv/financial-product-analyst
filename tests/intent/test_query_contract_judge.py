@@ -7,6 +7,7 @@ import pytest
 
 from financial_agent.intent.clova import ModelInvocationResult
 from financial_agent.intent.errors import MODEL_TIMEOUT, ModelInvocationError
+from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
 from financial_agent.intent.query_contract_judge import (
     QueryContractJudge,
     build_query_contract_judge_envelope,
@@ -45,7 +46,7 @@ def _ambiguous_candidates():
         exact_locks=(),
         registry=load_query_contract_registry(PROJECT_ROOT),
     )
-    return frame, solved.frames[0].complete_candidates
+    return frame, resolver_view, solved.frames[0].complete_candidates
 
 
 class _Adapter:
@@ -65,10 +66,11 @@ class _Adapter:
 
 
 def test_judge_schema_enum_contains_exactly_offered_complete_candidate_ids() -> None:
-    frame, candidates = _ambiguous_candidates()
+    frame, resolver_view, candidates = _ambiguous_candidates()
     envelope = build_query_contract_judge_envelope(
         question="ETF 중 규모가 큰 상품",
         frame=frame,
+        view=resolver_view,
         candidates=candidates,
     )
 
@@ -78,10 +80,11 @@ def test_judge_schema_enum_contains_exactly_offered_complete_candidate_ids() -> 
 
 
 def test_judge_prompt_contains_semantics_but_no_physical_or_sql_tokens() -> None:
-    frame, candidates = _ambiguous_candidates()
+    frame, resolver_view, candidates = _ambiguous_candidates()
     envelope = build_query_contract_judge_envelope(
         question="ETF 중 규모가 큰 상품",
         frame=frame,
+        view=resolver_view,
         candidates=candidates,
     )
     payload = json.loads(envelope.user_message)
@@ -97,15 +100,65 @@ def test_judge_prompt_contains_semantics_but_no_physical_or_sql_tokens() -> None
     assert "table_name" not in serialized
 
 
+def test_judge_prompt_includes_only_current_frame_evidence_text() -> None:
+    frame, resolver_view, candidates = _ambiguous_candidates()
+    second_frame = frame.model_copy(
+        update={"frame_id": "frame-2", "ordinal": 1, "segment_ids": ("s2",)}
+    )
+    resolver_view = resolver_view.model_copy(
+        update={
+            "evidence_candidates": (
+                EvidenceCandidate(
+                    evidence_id="evidence-s1",
+                    segment_id="s1",
+                    start_char=0,
+                    end_char=4,
+                    text="첫 문장",
+                    source_kinds=(EvidenceSourceKind.SURFACE,),
+                    offered_semantic_ids=(),
+                ),
+                EvidenceCandidate(
+                    evidence_id="evidence-s2",
+                    segment_id="s2",
+                    start_char=0,
+                    end_char=7,
+                    text="두 번째 조건",
+                    source_kinds=(EvidenceSourceKind.SURFACE,),
+                    offered_semantic_ids=(),
+                ),
+            )
+        }
+    )
+
+    envelope = build_query_contract_judge_envelope(
+        question="첫 문장. 두 번째 조건",
+        frame=second_frame,
+        view=resolver_view,
+        candidates=candidates,
+    )
+    payload = json.loads(envelope.user_message)
+
+    assert payload["frame"]["evidence"] == [
+        {
+            "end_char": 7,
+            "segment_id": "s2",
+            "start_char": 0,
+            "text": "두 번째 조건",
+        }
+    ]
+    assert "첫 문장" not in json.dumps(payload["frame"], ensure_ascii=False)
+
+
 @pytest.mark.asyncio
 async def test_unknown_judge_id_remains_ambiguous_without_repair() -> None:
-    frame, candidates = _ambiguous_candidates()
+    frame, resolver_view, candidates = _ambiguous_candidates()
     adapter = _Adapter(content='{"candidate_id":"not-offered"}')
     judge = QueryContractJudge(adapter)
 
     result = await judge.select_offered_id(
         question="ETF 중 규모가 큰 상품",
         frame=frame,
+        view=resolver_view,
         candidates=candidates,
         timeout_seconds=2.0,
     )
@@ -118,13 +171,14 @@ async def test_unknown_judge_id_remains_ambiguous_without_repair() -> None:
 
 @pytest.mark.asyncio
 async def test_timeout_remains_ambiguous_and_makes_no_repair_call() -> None:
-    frame, candidates = _ambiguous_candidates()
+    frame, resolver_view, candidates = _ambiguous_candidates()
     adapter = _Adapter(failure=ModelInvocationError(MODEL_TIMEOUT))
     judge = QueryContractJudge(adapter)
 
     result = await judge.select_offered_id(
         question="ETF 중 규모가 큰 상품",
         frame=frame,
+        view=resolver_view,
         candidates=candidates,
         timeout_seconds=2.0,
     )
@@ -136,13 +190,14 @@ async def test_timeout_remains_ambiguous_and_makes_no_repair_call() -> None:
 
 @pytest.mark.asyncio
 async def test_exhausted_deadline_stays_ambiguous_without_provider_call() -> None:
-    frame, candidates = _ambiguous_candidates()
+    frame, resolver_view, candidates = _ambiguous_candidates()
     adapter = _Adapter()
     judge = QueryContractJudge(adapter)
 
     result = await judge.select_offered_id(
         question="ETF 중 규모가 큰 상품",
         frame=frame,
+        view=resolver_view,
         candidates=candidates,
         timeout_seconds=0.0,
     )
@@ -154,13 +209,14 @@ async def test_exhausted_deadline_stays_ambiguous_without_provider_call() -> Non
 
 @pytest.mark.asyncio
 async def test_unique_candidate_needs_no_judge_call() -> None:
-    frame, candidates = _ambiguous_candidates()
+    frame, resolver_view, candidates = _ambiguous_candidates()
     adapter = _Adapter()
     judge = QueryContractJudge(adapter)
 
     result = await judge.select_offered_id(
         question="ETF 중 규모가 큰 상품",
         frame=frame,
+        view=resolver_view,
         candidates=candidates[:1],
         timeout_seconds=2.0,
     )
@@ -172,13 +228,14 @@ async def test_unique_candidate_needs_no_judge_call() -> None:
 
 @pytest.mark.asyncio
 async def test_used_repair_allowance_blocks_judge_call() -> None:
-    frame, candidates = _ambiguous_candidates()
+    frame, resolver_view, candidates = _ambiguous_candidates()
     adapter = _Adapter()
     judge = QueryContractJudge(adapter)
 
     result = await judge.select_offered_id(
         question="ETF 중 규모가 큰 상품",
         frame=frame,
+        view=resolver_view,
         candidates=candidates,
         timeout_seconds=2.0,
         repair_used=True,
