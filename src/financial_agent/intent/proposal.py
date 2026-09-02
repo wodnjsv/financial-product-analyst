@@ -94,7 +94,7 @@ class ProposalSlotKind(str, Enum):
 
 class ProposedSlotAssignment(ContractModel):
     slot_kind: ProposalSlotKind
-    value_ids: tuple[Identifier, ...]
+    value_ids: Annotated[tuple[Identifier, ...], Field(min_length=1)]
     evidence_ids: tuple[Identifier, ...]
     reason_code: Identifier
 

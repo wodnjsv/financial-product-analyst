@@ -20,6 +20,29 @@ _KOREAN_DATE_RE = re.compile(
 _PERIOD_RE = re.compile(r"(?<!\d)(?P<number>\d+)(?P<unit>년|개월)")
 _RANK_RE = re.compile(r"(?<!\d)(?P<number>\d+)위")
 _RESULT_LIMIT_RE = re.compile(r"(?<!\d)(?P<number>\d+)개")
+_NATIVE_NUMBER_VALUES = {
+    "한": "1",
+    "하나": "1",
+    "두": "2",
+    "둘": "2",
+    "세": "3",
+    "셋": "3",
+    "네": "4",
+    "넷": "4",
+    "다섯": "5",
+    "여섯": "6",
+    "일곱": "7",
+    "여덟": "8",
+    "아홉": "9",
+    "열": "10",
+}
+_NATIVE_NUMBER_ALTERNATION = "|".join(
+    sorted(_NATIVE_NUMBER_VALUES, key=len, reverse=True)
+)
+_NATIVE_RESULT_LIMIT_RE = re.compile(
+    rf"(?<![가-힣])(?P<number>{_NATIVE_NUMBER_ALTERNATION})\s*"
+    r"(?:개|종목|상품(?!군)|자리)"
+)
 _NUMBER_RE = re.compile(rf"(?<![\d,.])(?P<number>{_NUMERIC})(?![\d,.])")
 _CURRENCY_RE = re.compile(r"(?<![A-Za-z])(KRW|USD)(?![A-Za-z])|원화|달러")
 _SORT_DIRECTION_RE = re.compile(r"오름차순|내림차순|높은|낮은")
@@ -119,6 +142,16 @@ def _matches(segment: NormalizedSegment) -> list[_LiteralMatch]:
                     _decimal_string(match.group("number")),
                 )
             )
+
+    for match in _NATIVE_RESULT_LIMIT_RE.finditer(text):
+        matches.append(
+            _LiteralMatch(
+                match.start(),
+                match.end(),
+                "result_limit",
+                _NATIVE_NUMBER_VALUES[match.group("number")],
+            )
+        )
 
     for match in _CURRENCY_RE.finditer(text):
         value = _CURRENCY_VALUES[match.group()]

@@ -53,6 +53,14 @@ from .resolution import (
     ResolverBuildManifest,
     ValidatedIntentResolutionV2,
 )
+from .slot_resolution import resolve_ambiguous_slots
+from .task_binding import (
+    TaskBindingError,
+    TaskBoundIntentResolution,
+    TaskReadiness,
+    bind_task_slots,
+)
+from .task_contracts import TaskContractRegistry
 from .validation import validate_semantics
 from .view import (
     ActiveDatasetPin,
@@ -62,8 +70,8 @@ from .view import (
 )
 
 
-MAX_MODEL_TIMEOUT_SECONDS = 20.0
 _SUCCESS_CODE = "RESOLUTION_VALIDATED"
+_TASK_SUCCESS_CODE = "TASK_RESOLUTION_VALIDATED"
 _REPAIR_INSTRUCTIONS = {
     MODEL_PROPOSAL_SCHEMA_INVALID: (
         "Return a ProposalV2 with the exact schema shape. Select only offered "
@@ -112,6 +120,11 @@ class ResolutionTelemetry(ContractModel):
     stable_code: str = Field(min_length=1)
 
 
+class TaskBoundResolutionTelemetry(ResolutionTelemetry):
+    model_call_count: int = Field(ge=1, le=2)
+    conditional_slot_call_used: bool
+
+
 @dataclass(frozen=True, slots=True)
 class _PreparationTelemetry:
     normalization_ms: int
@@ -138,6 +151,12 @@ class ResolutionAttempt:
     telemetry: ResolutionTelemetry
 
 
+@dataclass(frozen=True, slots=True)
+class TaskBoundResolutionAttempt:
+    resolution: TaskBoundIntentResolution
+    telemetry: TaskBoundResolutionTelemetry
+
+
 class IntentResolverService:
     def __init__(
         self,
@@ -147,6 +166,7 @@ class IntentResolverService:
         catalog: SemanticCatalogSnapshot,
         manifest: ResolverBuildManifest,
         active_dataset_pin: ActiveDatasetPin,
+        task_contract_registry: TaskContractRegistry | None = None,
         utcnow: Callable[[], datetime] | None = None,
         timer: Callable[[], float] | None = None,
     ) -> None:
@@ -155,6 +175,7 @@ class IntentResolverService:
         self._catalog = catalog
         self._manifest = manifest
         self._active_dataset_pin = active_dataset_pin
+        self._task_contract_registry = task_contract_registry
         self._utcnow = utcnow or (lambda: datetime.now(UTC))
         self._timer = timer or perf_counter
 
@@ -241,6 +262,76 @@ class IntentResolverService:
             ),
         )
 
+    async def resolve_task_bound(
+        self, context: RequestContext
+    ) -> TaskBoundResolutionAttempt:
+        """Resolve axes once, then bind the selected server task contract."""
+        if self._task_contract_registry is None:
+            raise TaskBindingError("TASK_CONTRACT_REGISTRY_MISSING")
+        prepared = await self.prepare(context)
+        model_started = self._timer()
+        first_result = await self._adapter.invoke(
+            prepared.prompt,
+            timeout_seconds=self._remaining_model_seconds(context),
+        )
+        resolution = self.validate_axis_response(prepared, first_result.content)
+        bound = bind_task_slots(
+            resolution,
+            prepared.view,
+            self._task_contract_registry,
+        )
+        usage = dict(first_result.usage)
+        model_call_count = 1
+        if (
+            not any(
+                contract.readiness is TaskReadiness.BLOCKED
+                for contract in bound.task_contracts
+            )
+            and any(
+                contract.readiness is TaskReadiness.AMBIGUOUS
+                for contract in bound.task_contracts
+            )
+        ):
+            bound, second_usage = await resolve_ambiguous_slots(
+                adapter=self._adapter,
+                context=context,
+                bound=bound,
+                timeout_seconds=self._remaining_model_seconds(context),
+            )
+            usage = _merge_usage(usage, second_usage)
+            model_call_count = 2
+        model_ms = _duration_ms(model_started, self._timer())
+
+        telemetry = TaskBoundResolutionTelemetry(
+            normalization_ms=prepared.telemetry.normalization_ms,
+            candidate_ms=prepared.telemetry.candidate_ms,
+            model_ms=model_ms,
+            validation_ms=0,
+            semantic_candidate_count=prepared.telemetry.semantic_candidate_count,
+            entity_candidate_count=prepared.telemetry.entity_candidate_count,
+            frame_count=len(bound.resolution.canonical_frames),
+            context_link_count=len(bound.resolution.context_links),
+            usage=_usage_telemetry(usage),
+            stable_code=_TASK_SUCCESS_CODE,
+            model_call_count=model_call_count,
+            conditional_slot_call_used=bound.conditional_slot_call_used,
+        )
+        return TaskBoundResolutionAttempt(resolution=bound, telemetry=telemetry)
+
+    def validate_axis_response(
+        self,
+        prepared: PreparedResolutionRequest,
+        content: str,
+    ) -> ValidatedIntentResolutionV2:
+        _reject_non_strict_json(content)
+        try:
+            proposal = IntentResolutionProposalV2.model_validate_json(content)
+        except ValidationError:
+            raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID) from None
+        if any(frame.slot_assignments for frame in proposal.frames):
+            raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID)
+        return self.validate_response(prepared, content)
+
     def validate_response(
         self,
         prepared: PreparedResolutionRequest,
@@ -299,7 +390,7 @@ class IntentResolverService:
         remaining = (context.deadline_at - self._utcnow()).total_seconds()
         if remaining <= 0:
             raise ModelInvocationError(MODEL_TIMEOUT)
-        return min(MAX_MODEL_TIMEOUT_SECONDS, remaining)
+        return remaining
 
 
 def build_repair_envelope(
@@ -400,6 +491,16 @@ def _usage_telemetry(usage: Mapping[str, int]) -> ModelUsageTelemetry:
             total_tokens=usage["totalTokens"],
         )
     except (KeyError, ValidationError):
+        raise ResolverContractError(MODEL_SCHEMA_INVALID) from None
+
+
+def _merge_usage(
+    first: Mapping[str, int], second: Mapping[str, int]
+) -> dict[str, int]:
+    keys = ("promptTokens", "completionTokens", "totalTokens")
+    try:
+        return {key: first[key] + second[key] for key in keys}
+    except KeyError:
         raise ResolverContractError(MODEL_SCHEMA_INVALID) from None
 
 

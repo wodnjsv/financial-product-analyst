@@ -88,7 +88,7 @@ def assemble_proposal(
     _validate_normalized_segments(proposal, normalized)
 
     frames = tuple(
-        _assemble_frame(index, item, normalized)
+        _assemble_frame(index, item, normalized, view)
         for index, item in enumerate(proposal.frames)
     )
     return IntentResolutionDraftV2(
@@ -194,14 +194,6 @@ def _validate_offered_ids(proposal: IntentResolutionProposalV2, view: ResolverVi
                 if len(hint.relation_id) != 1:
                     _schema_invalid()
                 _require_subset(hint.relation_id, relation_ids)
-                selected_relation_ids = {
-                    relation_id
-                    for assignment in frame.slot_assignments
-                    if SlotKind(assignment.slot_kind) is SlotKind.RELATION
-                    for relation_id in assignment.value_ids
-                }
-                if hint.relation_id[0] not in selected_relation_ids:
-                    _schema_invalid()
             else:
                 _schema_invalid()
             if hint.mention_id:
@@ -333,13 +325,63 @@ def _validate_normalized_segments(
 
 
 def _assemble_frame(
-    index: int, item: ProposedIntentFrame, normalized: NormalizedRequest
+    index: int,
+    item: ProposedIntentFrame,
+    normalized: NormalizedRequest,
+    view: ResolverView,
 ) -> IntentFrameDraftV2:
     entity_hint_ids = tuple(
         f"entity-hint-{index:04d}-{entity_index:04d}"
         for entity_index, _ in enumerate(item.entity_hints)
     )
     normalized_by_id = {segment.segment_id: segment for segment in normalized.segments}
+    assignments = [
+        SlotAssignment(
+            slot_assignment_id=f"slot-{index:04d}-{slot_index:04d}",
+            slot_kind=SlotKind(assignment.slot_kind),
+            value_ids=assignment.value_ids,
+            evidence_span_ids=assignment.evidence_ids,
+            reason_code=assignment.reason_code,
+        )
+        for slot_index, assignment in enumerate(item.slot_assignments)
+    ]
+    selected_relation_ids = {
+        relation_id
+        for assignment in assignments
+        if assignment.slot_kind is SlotKind.RELATION
+        for relation_id in assignment.value_ids
+    }
+    for hint in item.entity_hints:
+        if (
+            hint.semantic_role is EntitySemanticRole.RELATION_OBJECT
+            and hint.relation_id
+            and hint.relation_id[0] not in selected_relation_ids
+        ):
+            relation_id = hint.relation_id[0]
+            assignments.append(
+                SlotAssignment(
+                    slot_assignment_id=f"slot-{index:04d}-{len(assignments):04d}",
+                    slot_kind=SlotKind.RELATION,
+                    value_ids=(relation_id,),
+                    evidence_span_ids=_relation_evidence_ids(
+                        item, relation_id, view
+                    ),
+                    reason_code="axis_semantic",
+                )
+            )
+            selected_relation_ids.add(relation_id)
+    for hint in item.entity_hints:
+        if hint.selected_candidate_ids:
+            assignments.append(
+                SlotAssignment(
+                    slot_assignment_id=f"slot-{index:04d}-{len(assignments):04d}",
+                    slot_kind=SlotKind.ENTITY,
+                    value_ids=hint.selected_candidate_ids,
+                    evidence_span_ids=(),
+                    reason_code="implicit",
+                )
+            )
+
     return IntentFrameDraftV2(
         frame_id=f"frame-{index:04d}",
         ordinal=index,
@@ -364,31 +406,22 @@ def _assemble_frame(
         ),
         entity_type_ids=item.entity_type_ids,
         entity_hint_ids=entity_hint_ids,
-        slot_assignments=tuple(
-            SlotAssignment(
-                slot_assignment_id=f"slot-{index:04d}-{slot_index:04d}",
-                slot_kind=SlotKind(assignment.slot_kind),
-                value_ids=assignment.value_ids,
-                evidence_span_ids=assignment.evidence_ids,
-                reason_code=assignment.reason_code,
-            )
-            for slot_index, assignment in enumerate(item.slot_assignments)
-        )
-        + tuple(
-            SlotAssignment(
-                slot_assignment_id=(
-                    f"slot-{index:04d}-{len(item.slot_assignments) + hint_index:04d}"
-                ),
-                slot_kind=SlotKind.ENTITY,
-                value_ids=hint.selected_candidate_ids,
-                evidence_span_ids=(),
-                reason_code="implicit",
-            )
-            for hint_index, hint in enumerate(item.entity_hints)
-            if hint.selected_candidate_ids
-        ),
+        slot_assignments=tuple(assignments),
         produced_result_hints=item.produced_result_hints,
         semantic_coverage=(item.semantic_coverage,),
+    )
+
+
+def _relation_evidence_ids(
+    frame: ProposedIntentFrame,
+    relation_id: str,
+    view: ResolverView,
+) -> tuple[str, ...]:
+    return tuple(
+        item.evidence_id
+        for item in view.evidence_candidates
+        if item.segment_id in frame.segment_ids
+        and relation_id in item.offered_semantic_ids
     )
 
 
@@ -527,6 +560,14 @@ def _selected_evidence_ids(
         selected.update(frame.semantic_coverage.evidence_ids)
         for slot in frame.slot_assignments:
             selected.update(slot.evidence_ids)
+        for hint in frame.entity_hints:
+            if (
+                hint.semantic_role is EntitySemanticRole.RELATION_OBJECT
+                and hint.relation_id
+            ):
+                selected.update(
+                    _relation_evidence_ids(frame, hint.relation_id[0], view)
+                )
     for mutation in proposal.slot_mutations:
         selected.update(mutation.evidence_ids)
     for flag in proposal.semantic_flag_hints:

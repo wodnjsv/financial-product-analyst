@@ -32,6 +32,9 @@ SYSTEM_MESSAGE = (
     "that conforms to the supplied response schema. Use the supplied definitions "
     "and original text to select only offered identifiers and frame ordinals. "
     "Do not create identifiers, evidence, text, or offsets. "
+    "실행 슬롯은 선택하지 말고 slot_assignments는 빈 배열로 반환한다. "
+    "ProductFamily, Action, semantic tags, entity roles, context links, and "
+    "semantic coverage만 판정한다. "
     "frame.entity_type_ids는 분석 대상 또는 관계 주체의 타입이다. "
     "entity_hints.semantic_role=relation_object이면 relation_id를 하나 선택하고, "
     "expected_entity_type_ids에는 그 관계의 객체 타입을 선택한다."
@@ -91,7 +94,6 @@ def build_clova_response_schema(
     product_family_choice = _axis_choice(
         tuple(view.product_family_ids), evidence_identifier, reason_code
     )
-    slot_assignment = _slot_assignment_schema(view, evidence_identifier, reason_code)
     entity_hint = _object(
         {
             "semantic_role": _enum_members(EntitySemanticRole),
@@ -117,7 +119,7 @@ def build_clova_response_schema(
                 view.entity_type_ids
             ),
             "semantic_coverage": _semantic_coverage_schema(evidence_identifier),
-            "slot_assignments": _array(slot_assignment),
+            "slot_assignments": _array(_string(), max_items=0),
             "entity_hints": _array(entity_hint),
             "produced_result_hints": _array(_enum_members(SourceRole)),
         }
@@ -188,13 +190,37 @@ def build_clova_response_schema(
 
 
 def _semantic_coverage_schema(evidence_identifier: dict[str, object]) -> dict[str, object]:
-    return _object(
-        {
-            "state": _enum_members(SemanticCoverageState),
-            "reason": _enum_members(SemanticCoverageReason),
-            "evidence_ids": evidence_identifier,
-        }
-    )
+    uncovered_evidence = dict(evidence_identifier)
+    uncovered_evidence["minItems"] = 1
+    return {
+        "anyOf": [
+            _object(
+                {
+                    "state": _enum_strings((SemanticCoverageState.COVERED.value,)),
+                    "reason": _enum_strings((SemanticCoverageReason.NONE.value,)),
+                    "evidence_ids": _array(_string(), max_items=0),
+                }
+            ),
+            _object(
+                {
+                    "state": _enum_strings(
+                        (
+                            SemanticCoverageState.PARTIAL.value,
+                            SemanticCoverageState.UNMAPPED.value,
+                        )
+                    ),
+                    "reason": _enum_strings(
+                        tuple(
+                            reason.value
+                            for reason in SemanticCoverageReason
+                            if reason is not SemanticCoverageReason.NONE
+                        )
+                    ),
+                    "evidence_ids": uncovered_evidence,
+                }
+            ),
+        ]
+    }
 
 
 def _literal_ids(view: ResolverView) -> tuple[str, ...]:
@@ -233,76 +259,6 @@ def _entity_ids(view: ResolverView) -> tuple[str, ...]:
 
 def _entity_mention_ids(view: ResolverView) -> tuple[str, ...]:
     return tuple(sorted(group.mention_id for group in view.entity_candidates))
-
-
-def _slot_assignment_schema(
-    view: ResolverView,
-    evidence_identifier: dict[str, object],
-    reason_code: dict[str, object],
-) -> dict[str, object]:
-    return {
-        "anyOf": [
-            _object(
-                {
-                    "slot_kind": _enum_strings((slot_kind.value,)),
-                    "value_ids": _restricted_identifier_array(
-                        _slot_value_ids(view, slot_kind)
-                    ),
-                    "evidence_ids": evidence_identifier,
-                    "reason_code": reason_code,
-                }
-            )
-            for slot_kind in _MODEL_SLOT_KINDS
-        ]
-    }
-
-
-def _slot_value_ids(view: ResolverView, slot_kind: SlotKind) -> tuple[str, ...]:
-    if slot_kind is SlotKind.RELATION:
-        return _relation_ids(view)
-    if slot_kind is SlotKind.DOCUMENT_TOPIC:
-        return _concept_ids(view, {"document_topic"})
-    if slot_kind is SlotKind.METRIC:
-        return _concept_ids(view, {"metric"})
-    if slot_kind in {
-        SlotKind.SORT_KEY,
-        SlotKind.COMPARISON_BASIS,
-        SlotKind.SIMILARITY_ANCHOR,
-    }:
-        return _concept_ids(view, {"attribute", "metric"})
-    if slot_kind is SlotKind.FILTER_OPERATOR:
-        return tuple(
-            sorted(
-                {
-                    *(value for item in view.concept_definitions for value in item.allowed_operators),
-                    *(value for item in view.concept_definitions for value in item.required_qualifiers),
-                    *(value for item in view.relation_definitions for value in item.required_qualifiers),
-                }
-            )
-        )
-    literal_kinds = {
-        SlotKind.FILTER_VALUE: {"number", "percentage", "money", "currency", "date", "period"},
-        SlotKind.PERIOD: {"period"},
-        SlotKind.CURRENCY: {"currency"},
-        SlotKind.SORT_DIRECTION: {"sort_direction"},
-        SlotKind.RESULT_LIMIT: {"result_limit"},
-        SlotKind.DATE_SCOPE: {"date"},
-    }.get(slot_kind)
-    if literal_kinds is None:
-        return ()
-    return tuple(
-        sorted(
-            item.literal_id
-            for item in view.literal_candidates
-            if item.kind in literal_kinds
-        )
-    )
-
-
-def _concept_ids(view: ResolverView, kinds: set[str]) -> tuple[str, ...]:
-    return tuple(
-        sorted(item.concept_id for item in view.concept_definitions if item.kind in kinds)
-    )
 
 
 def _axis_choice(

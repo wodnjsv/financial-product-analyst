@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from financial_agent.contracts.canonical import build_request_key
 from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.literals import extract_literals
@@ -92,3 +94,32 @@ def test_plain_number_is_extracted_when_no_typed_form_claims_its_span() -> None:
     assert [(literal.kind, literal.canonical_value) for literal in literals] == [
         ("number", "5")
     ]
+
+
+@pytest.mark.parametrize(
+    ("text", "original_text", "canonical_value"),
+    [
+        ("다섯 종목만 보여줘", "다섯 종목", "5"),
+        ("다섯개 보여줘", "다섯개", "5"),
+        ("세 개씩 보여줘", "세 개", "3"),
+        ("세 상품을 보여줘", "세 상품", "3"),
+        ("세 자리까지 순위 내줘", "세 자리", "3"),
+    ],
+)
+def test_extracts_native_korean_result_limits(
+    text: str,
+    original_text: str,
+    canonical_value: str,
+) -> None:
+    literals = extract_literals(normalized_request(text))
+
+    assert [
+        (literal.kind, literal.original_text, literal.canonical_value)
+        for literal in literals
+    ] == [("result_limit", original_text, canonical_value)]
+
+
+def test_does_not_treat_a_product_family_count_as_a_result_limit() -> None:
+    literals = extract_literals(normalized_request("두 상품군을 비교해줘"))
+
+    assert literals == ()

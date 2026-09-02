@@ -33,6 +33,8 @@ from financial_agent.intent.service import (
     IntentResolverService,
     build_repair_envelope,
 )
+from financial_agent.intent.task_binding import TaskReadiness
+from financial_agent.intent.task_contracts import load_task_contract_registry
 from financial_agent.intent.types import EntitySemanticRole, ResolutionStatus
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
@@ -253,6 +255,7 @@ def service_fixture() -> ServiceFixture:
             manifest_hash="a" * 64,
         ),
         utcnow=lambda: NOW,
+        task_contract_registry=load_task_contract_registry(PROJECT_ROOT),
     )
     return ServiceFixture(service, adapter, entity_repository, context)
 
@@ -267,6 +270,32 @@ async def test_resolve_once_parses_proposal_then_assembles_once(
     assert isinstance(result.resolution, ValidatedIntentResolutionV2)
     assert result.resolution.canonical_frames[0].frame_id == "frame-0000"
     assert result.resolution.resolution_status is ResolutionStatus.RESOLVED
+
+
+@pytest.mark.asyncio
+async def test_resolve_task_bound_separates_axes_from_server_slot_binding(
+    service_fixture: ServiceFixture,
+) -> None:
+    payload = json.loads(_valid_proposal_json())
+    payload["frames"][0]["slot_assignments"] = []
+    service_fixture.adapter.content = json.dumps(payload, ensure_ascii=False)
+
+    result = await service_fixture.service.resolve_task_bound(service_fixture.context)
+
+    assert service_fixture.adapter.call_count == 1
+    assert result.resolution.task_contracts[0].contract_id == "lookup.v1"
+    assert result.resolution.task_contracts[0].readiness is TaskReadiness.COMPLETE
+    assert result.resolution.conditional_slot_call_used is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_task_bound_rejects_model_authored_task_slots(
+    service_fixture: ServiceFixture,
+) -> None:
+    with pytest.raises(ResolverContractError, match=MODEL_PROPOSAL_SCHEMA_INVALID):
+        await service_fixture.service.resolve_task_bound(service_fixture.context)
+
+    assert service_fixture.adapter.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -333,6 +362,75 @@ async def test_service_preserves_managed_by_object_role(
     assert hint.semantic_role is EntitySemanticRole.RELATION_OBJECT
     assert hint.relation_id == ("managedBy",)
     assert hint.expected_entity_type_ids == ("AssetManager",)
+
+
+@pytest.mark.asyncio
+async def test_task_bound_relation_is_server_projected_from_axis_entity_hint(
+    service_fixture: ServiceFixture,
+) -> None:
+    question = "KODEX 200 운용사 삼성자산운용"
+    context = _context(question).model_copy(
+        update={
+            "named_entities": (
+                NamedEntityMention(
+                    mention_id="mention-etf",
+                    segment_id="s1",
+                    text="KODEX 200",
+                    expected_entity_types=("ETF",),
+                ),
+                NamedEntityMention(
+                    mention_id="mention-manager",
+                    segment_id="s1",
+                    text="삼성자산운용",
+                    expected_entity_types=("AssetManager",),
+                ),
+            )
+        }
+    )
+    service_fixture.entity_repository.responses = MappingProxyType(
+        {
+            "mention-etf": (
+                EntityCandidate(
+                    entity_id="etf-kodex200",
+                    canonical_name="KODEX 200",
+                    ontology_type_ids=("DomesticETF", "ETF", "FinancialProduct"),
+                    product_family="domestic_etf",
+                    match_kind="exact_name",
+                    score=1_000_000,
+                    source_id="source-etf-kodex200",
+                ),
+            ),
+            "mention-manager": (
+                EntityCandidate(
+                    entity_id="manager-samsung",
+                    canonical_name="삼성자산운용",
+                    ontology_type_ids=("AssetManager", "Organization"),
+                    product_family=None,
+                    match_kind="exact_name",
+                    score=1_000_000,
+                    source_id="source-manager-samsung",
+                ),
+            ),
+        }
+    )
+    prepared = await service_fixture.service.prepare(context)
+    evidence_id = next(
+        item.evidence_id
+        for item in prepared.view.evidence_candidates
+        if "managedBy" in item.offered_semantic_ids
+    )
+    payload = json.loads(_managed_by_proposal_json(evidence_id))
+    payload["frames"][0]["slot_assignments"] = []
+    service_fixture.adapter.content = json.dumps(payload, ensure_ascii=False)
+
+    attempt = await service_fixture.service.resolve_task_bound(context)
+    contract = attempt.resolution.task_contracts[0]
+
+    assert service_fixture.adapter.call_count == 1
+    assert contract.readiness is TaskReadiness.COMPLETE
+    assert {
+        binding.slot_kind.value: binding.value_ids for binding in contract.bindings
+    }["relation"] == ("managedBy",)
 
 
 @pytest.mark.asyncio
@@ -440,6 +538,15 @@ async def test_model_timeout_is_derived_from_request_deadline(
     await service_fixture.service.resolve_once(service_fixture.context)
 
     assert service_fixture.adapter.timeouts == [pytest.approx(8.0)]
+
+
+@pytest.mark.asyncio
+async def test_model_timeout_is_not_capped_at_twenty_seconds(
+    service_fixture: ServiceFixture,
+) -> None:
+    await service_fixture.service.resolve_once(_context(deadline_seconds=55.0))
+
+    assert service_fixture.adapter.timeouts == [pytest.approx(55.0)]
 
 
 @pytest.mark.asyncio

@@ -494,13 +494,20 @@ def test_assembler_bounds_expected_entity_types_to_the_registered_view() -> None
         assemble_proposal(value, normalized(), view())
 
 
-def test_assembler_rejects_managed_by_object_when_relation_is_not_selected() -> None:
-    with pytest.raises(ResolverContractError, match=MODEL_PROPOSAL_SCHEMA_INVALID):
-        assemble_proposal(
-            relation_object_without_selected_relation(proposal()),
-            normalized(),
-            view_with_managed_by(),
-        )
+def test_assembler_server_projects_relation_from_axis_object_hint() -> None:
+    draft = assemble_proposal(
+        relation_object_without_selected_relation(proposal()),
+        normalized(),
+        view_with_managed_by(),
+    )
+
+    relation = next(
+        assignment
+        for assignment in draft.intent_frames[0].slot_assignments
+        if assignment.slot_kind is SlotKind.RELATION
+    )
+    assert relation.value_ids == ("managedBy",)
+    assert relation.reason_code == "axis_semantic"
 
 
 @pytest.mark.parametrize(

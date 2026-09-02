@@ -73,6 +73,21 @@ def test_proposal_accepts_server_selected_ids_and_positional_frames() -> None:
     assert proposal.frames[0].segment_ids == ("s1",)
 
 
+def test_proposal_rejects_a_slot_assignment_without_a_value() -> None:
+    payload = valid_proposal_payload()
+    payload["frames"][0]["slot_assignments"] = [
+        {
+            "slot_kind": "metric",
+            "value_ids": [],
+            "evidence_ids": ["e1"],
+            "reason_code": "explicit",
+        }
+    ]
+
+    with pytest.raises(ValidationError):
+        IntentResolutionProposalV2.model_validate_json(json.dumps(payload))
+
+
 def test_proposal_preserves_explicit_entity_types_and_selected_candidates() -> None:
     payload = valid_proposal_payload()
     payload["frames"][0]["entity_type_ids"] = ["ETF"]

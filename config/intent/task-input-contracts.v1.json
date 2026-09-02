@@ -1,0 +1,13 @@
+{
+  "registry_version": "task-input-contracts.v1",
+  "contracts": [
+    {"contract_id":"lookup.v1","action_id":"lookup","required_slot_kinds":[],"optional_slot_kinds":["relation","document_topic","date_scope"],"result_shape":"product_list"},
+    {"contract_id":"screen.v1","action_id":"screen","required_slot_kinds":["filter_value"],"optional_slot_kinds":["metric","filter_operator","relation","period","currency","date_scope"],"result_shape":"product_list"},
+    {"contract_id":"rank.v1","action_id":"rank","required_slot_kinds":["sort_key","result_limit"],"optional_slot_kinds":["sort_direction","filter_operator","filter_value","period","currency","date_scope"],"result_shape":"top_k"},
+    {"contract_id":"compare.v1","action_id":"compare","required_slot_kinds":["metric"],"optional_slot_kinds":["comparison_basis","entity","relation","period","currency","date_scope"],"result_shape":"comparison_table"},
+    {"contract_id":"aggregate.v1","action_id":"aggregate","required_slot_kinds":["metric"],"optional_slot_kinds":["filter_operator","filter_value","period","currency","date_scope"],"result_shape":"single_value"},
+    {"contract_id":"calculate.v1","action_id":"calculate","required_slot_kinds":["metric"],"optional_slot_kinds":["entity","period","currency","date_scope"],"result_shape":"single_value"},
+    {"contract_id":"similar.v1","action_id":"similar","required_slot_kinds":["similarity_anchor"],"optional_slot_kinds":["metric","filter_operator","filter_value"],"result_shape":"product_list"},
+    {"contract_id":"explain.v1","action_id":"explain","required_slot_kinds":[],"optional_slot_kinds":["entity","relation","document_topic"],"result_shape":"explanation"}
+  ]
+}

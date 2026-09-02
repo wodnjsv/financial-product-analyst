@@ -228,10 +228,13 @@ def test_prompt_explains_subject_and_relation_object_type_roles() -> None:
 
 
 def test_response_schema_enums_only_offered_semantic_ids() -> None:
-    schema = build_clova_response_schema(make_view())
+    envelope = build_prompt(make_context(), make_view())
+    schema = envelope.response_schema
     enums = collect_enums(schema)
+    view = json.loads(envelope.user_message)['view']
 
-    assert 'aum' in enums
+    assert view['semantic_candidates'][0]['items'][0]['semantic_id'] == 'aum'
+    assert 'aum' not in enums
     assert 'invented_metric' not in enums
     assert_supported_schema(schema)
 
@@ -244,6 +247,26 @@ def test_response_schema_requires_a_frame_segment_and_at_most_one_action() -> No
     assert frames['minItems'] == 1
     assert frame['segment_ids']['minItems'] == 1
     assert frame['action_choice']['properties']['selected_ids']['maxItems'] == 1
+
+
+def test_response_schema_encodes_semantic_coverage_state_invariant() -> None:
+    schema = build_clova_response_schema(make_view())
+    coverage = schema['properties']['frames']['items']['properties'][
+        'semantic_coverage'
+    ]
+    covered, uncovered = coverage['anyOf']
+
+    assert covered['properties']['state']['enum'] == ['covered']
+    assert covered['properties']['reason']['enum'] == ['none']
+    assert covered['properties']['evidence_ids']['maxItems'] == 0
+    assert uncovered['properties']['state']['enum'] == ['partial', 'unmapped']
+    assert uncovered['properties']['reason']['enum'] == [
+        'lexical_ood',
+        'domain_ood',
+        'unsupported_operation',
+        'missing_critical_semantic',
+    ]
+    assert uncovered['properties']['evidence_ids']['minItems'] == 1
 
 
 def test_response_schema_uses_empty_arrays_when_no_dynamic_id_is_offered() -> None:
@@ -378,25 +401,25 @@ def test_response_schema_uses_stable_reason_codes() -> None:
     assert schema['properties']['semantic_flag_hints']['items']['properties']['reason_code'] == expected
 
 
-def test_response_schema_restricts_non_entity_value_ids_by_slot_kind() -> None:
+def test_response_schema_forbids_hcx_from_selecting_executable_task_slots() -> None:
     schema = build_clova_response_schema(make_view())
     slot_schema = schema['properties']['frames']['items']['properties'][
         'slot_assignments'
-    ]['items']
-    variants = {
-        item['properties']['slot_kind']['enum'][0]: item['properties']['value_ids']
-        for item in slot_schema['anyOf']
-    }
+    ]
 
-    assert 'entity' not in variants
-    assert variants['metric']['items']['enum'] == ['aum']
-    assert variants['filter_value']['items']['enum'] == ['literal-1']
-    assert variants['result_limit'] == {
+    assert slot_schema == {
         'type': 'array',
         'items': {'type': 'string'},
         'maxItems': 0,
     }
-    assert 'unit' not in variants
+
+
+def test_prompt_assigns_task_slot_binding_to_the_server() -> None:
+    envelope = build_prompt(make_context(), make_view())
+
+    assert '실행 슬롯은 선택하지 말고 slot_assignments는 빈 배열로 반환한다.' in (
+        envelope.system_message
+    )
 
 
 def test_response_schema_does_not_advertise_the_unsupported_unit_slot() -> None:

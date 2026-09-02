@@ -16,6 +16,11 @@ from financial_agent.contracts.query import (
 )
 from financial_agent.intent.catalog import SemanticCatalogSnapshot
 from financial_agent.intent.resolution import ValidatedIntentResolutionV2
+from financial_agent.intent.task_binding import (
+    TaskBoundIntentResolution,
+    TaskReadiness,
+)
+from financial_agent.intent.task_contracts import TaskContractRegistry
 from financial_agent.intent.types import SemanticTag, SlotKind
 from financial_agent.intent.view import ResolverView
 
@@ -62,17 +67,26 @@ class QueryPlanCompiler:
         *,
         catalog: SemanticCatalogSnapshot,
         registry: PlanningRegistry,
+        task_contract_registry: TaskContractRegistry | None = None,
     ) -> None:
         self._catalog = catalog
         self._registry = registry
+        self._task_contract_registry = task_contract_registry
 
     def compile(
         self,
-        resolution: ValidatedIntentResolutionV2,
+        resolution: ValidatedIntentResolutionV2 | TaskBoundIntentResolution,
         view: ResolverView,
     ) -> QueryPlanCompilation:
+        task_bound = (
+            resolution if isinstance(resolution, TaskBoundIntentResolution) else None
+        )
+        if task_bound is not None:
+            resolution = task_bound.resolution
         self._validate_pins(resolution, view)
         view_hash = canonical_sha256(view)
+        if task_bound is not None:
+            self._validate_task_contract_pin(task_bound)
         decision = decide_route(resolution, self._registry)
         if decision.route is CompilationRoute.ABSTAIN:
             return self._abstain(
@@ -80,6 +94,19 @@ class QueryPlanCompiler:
                 view_hash,
                 decision.issue_code or "COMPILATION_BLOCKED",
             )
+        if task_bound is not None:
+            incomplete = tuple(
+                contract.frame_id
+                for contract in task_bound.task_contracts
+                if contract.readiness is not TaskReadiness.COMPLETE
+            )
+            if incomplete and decision.route is not CompilationRoute.EXPLORE:
+                return self._abstain(
+                    resolution,
+                    view_hash,
+                    "TASK_CONTRACT_INCOMPLETE",
+                    incomplete,
+                )
         try:
             lowered = lower_inputs(resolution, view)
             primitive_ids = self._primitive_ids(
@@ -122,6 +149,17 @@ class QueryPlanCompiler:
             resolver_view_hash=view_hash,
             compiler_manifest=self._manifest(),
         )
+
+    def _validate_task_contract_pin(
+        self, resolution: TaskBoundIntentResolution
+    ) -> None:
+        registry = self._task_contract_registry
+        if (
+            registry is None
+            or resolution.task_contract_registry_version != registry.registry_version
+            or resolution.task_contract_registry_hash != registry.registry_hash
+        ):
+            raise CompilerInvariantError("TASK_CONTRACT_REGISTRY_MISMATCH")
 
     def _validate_pins(
         self,

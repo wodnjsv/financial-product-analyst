@@ -33,7 +33,7 @@ from .resolution import ContractFileHash, ResolverBuildManifest
 NORMALIZER_VERSION = "intent-normalizer-v1"
 CANDIDATE_POLICY_VERSION = "intent-candidate-v2"
 RESOLVER_SCHEMA_VERSION = "2.0"
-PROMPT_VERSION = "intent-resolver-ko-v4"
+PROMPT_VERSION = "intent-resolver-ko-v5-axis-only"
 ADAPTER_VERSION = "clova-chat-v3-proposal-v2"
 
 MAX_CANDIDATES_PER_MENTION = 5

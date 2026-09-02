@@ -11,6 +11,8 @@ from financial_agent.contracts.enums import (
 from financial_agent.contracts.values import decode_contract_value
 from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.draft import EntityHintV2
+from financial_agent.intent.task_binding import bind_task_slots
+from financial_agent.intent.task_contracts import load_task_contract_registry
 from financial_agent.intent.types import (
     EntitySemanticRole,
     ResolutionStatus,
@@ -22,6 +24,10 @@ from financial_agent.planning.compiler import QueryPlanCompiler
 from financial_agent.planning.compiler import CompilerInvariantError
 from financial_agent.planning.contracts import CompilationRoute
 from financial_agent.planning.registry import load_planning_registry
+from financial_agent.intent.view import (
+    ResolverViewSemanticCandidate,
+    ResolverViewSemanticCandidateGroup,
+)
 
 from .fixtures import (
     cross_family_resolution,
@@ -44,6 +50,46 @@ def compiler() -> QueryPlanCompiler:
     )
 
 
+def task_bound_compiler() -> QueryPlanCompiler:
+    return QueryPlanCompiler(
+        catalog=load_catalog(PROJECT_ROOT),
+        registry=load_planning_registry(PROJECT_ROOT),
+        task_contract_registry=load_task_contract_registry(PROJECT_ROOT),
+    )
+
+
+def task_bound_rank(*, include_sort_key: bool = True):
+    source = resolution()
+    axis_frame = source.canonical_frames[0].model_copy(update={"slot_assignments": ()})
+    axis = source.model_copy(update={"canonical_frames": (axis_frame,)})
+    resolver_view = view()
+    if include_sort_key:
+        resolver_view = resolver_view.model_copy(
+            update={
+                "semantic_candidates": (
+                    ResolverViewSemanticCandidateGroup(
+                        mention_id="mention-aum",
+                        items=(
+                            ResolverViewSemanticCandidate(
+                                semantic_id="aum",
+                                match_kind="direct_alias",
+                                score=1_000_000,
+                            ),
+                        ),
+                    ),
+                )
+            }
+        )
+    return (
+        bind_task_slots(
+            axis,
+            resolver_view,
+            load_task_contract_registry(PROJECT_ROOT),
+        ),
+        resolver_view,
+    )
+
+
 def test_single_family_rank_lowers_literals_and_uses_fast_archetype() -> None:
     """Catches loss of the AUM sort key or top-five literal during lowering."""
     result = compiler().compile(resolution(), view())
@@ -63,6 +109,53 @@ def test_single_family_rank_lowers_literals_and_uses_fast_archetype() -> None:
     assert result.query_plan.initial_answerability is InitialAnswerability.SUPPORTED
     rank = result.query_plan.operations[-1]
     assert "policy:rank-coverage.v1" in rank.parameter_ids
+
+
+def test_task_bound_rank_compiles_only_after_contract_is_complete() -> None:
+    bound, resolver_view = task_bound_rank()
+
+    result = task_bound_compiler().compile(bound, resolver_view)
+
+    assert result.route is CompilationRoute.FAST
+    assert result.matched_archetype_id == "rank.single-family.v1"
+
+
+def test_task_bound_rank_blocks_before_routing_when_required_slot_is_missing() -> None:
+    bound, resolver_view = task_bound_rank(include_sort_key=False)
+
+    result = task_bound_compiler().compile(bound, resolver_view)
+
+    assert result.route is CompilationRoute.ABSTAIN
+    assert result.blocking_issues[0].code == "TASK_CONTRACT_INCOMPLETE"
+
+
+def test_task_bound_resolution_rejects_task_registry_hash_drift() -> None:
+    bound, resolver_view = task_bound_rank()
+    drifted = bound.model_copy(update={"task_contract_registry_hash": "0" * 64})
+
+    with pytest.raises(
+        CompilerInvariantError, match="TASK_CONTRACT_REGISTRY_MISMATCH"
+    ):
+        task_bound_compiler().compile(drifted, resolver_view)
+
+
+def test_task_bound_lexical_ood_keeps_bounded_explore_route() -> None:
+    source = resolution(
+        status=ResolutionStatus.UNMAPPED,
+        coverage=SemanticCoverageState.PARTIAL,
+    )
+    axis_frame = source.canonical_frames[0].model_copy(update={"slot_assignments": ()})
+    axis = source.model_copy(update={"canonical_frames": (axis_frame,)})
+    bound = bind_task_slots(
+        axis,
+        view(),
+        load_task_contract_registry(PROJECT_ROOT),
+    )
+
+    result = task_bound_compiler().compile(bound, view())
+
+    assert result.route is CompilationRoute.EXPLORE
+    assert result.primitive_ids == ("explore-catalog",)
 
 
 def test_selected_entity_is_carried_into_each_scoped_operation() -> None:
