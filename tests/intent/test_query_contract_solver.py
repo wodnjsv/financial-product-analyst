@@ -713,7 +713,7 @@ def test_similarity_exact_limit_never_falls_back_to_default() -> None:
 
 
 @pytest.mark.parametrize("action", [IntentType.RANK, IntentType.SIMILAR])
-@pytest.mark.parametrize("limit", ["0", "101"])
+@pytest.mark.parametrize("limit", ["-1", "0", "101"])
 def test_rank_and_similarity_invalid_limits_fail_closed(
     action: IntentType, limit: str
 ) -> None:
@@ -744,6 +744,12 @@ def test_rank_and_similarity_invalid_limits_fail_closed(
     assert result.frames[0].contract_readiness.reason_codes == (
         "LIMIT_OUT_OF_RANGE",
     )
+    rejection = next(
+        item
+        for item in result.frames[0].rejections
+        if item.reason_code == "LIMIT_OUT_OF_RANGE"
+    )
+    assert rejection.candidate_ids == ("invalid-limit",)
 
 
 def test_conflicting_exact_single_value_literals_fail_closed() -> None:

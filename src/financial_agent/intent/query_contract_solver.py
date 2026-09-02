@@ -711,7 +711,7 @@ def _rank(
         rejections,
     )
     parsed_limits = _validated_limit_values(
-        frame, variant_id, raw_limits, rejections
+        frame, variant_id, raw_limits, view, locks, rejections
     )
     if parsed_limits is None:
         return ()
@@ -903,7 +903,7 @@ def _similar(
     ):
         return ()
     parsed_limits = _validated_limit_values(
-        frame, variant_id, offered_limits, rejections
+        frame, variant_id, offered_limits, view, locks, rejections
     )
     if parsed_limits is None:
         return ()
@@ -1143,27 +1143,46 @@ def _validated_limit_values(
     frame: ValidatedIntentFrameV2,
     variant_id: str,
     values: tuple[str, ...],
+    view: ResolverView,
+    locks: tuple[ExactSemanticLock, ...],
     rejections: list[CandidateRejection],
 ) -> tuple[int, ...] | None:
     parsed: list[int] = []
-    invalid: list[str] = []
+    invalid_values: list[str] = []
     for value in values:
         try:
             limit = int(value)
         except ValueError:
-            invalid.append(f"literal-{canonical_sha256(value)[:16]}")
+            invalid_values.append(value)
             continue
         if not 1 <= limit <= 100:
-            invalid.append(value)
+            invalid_values.append(value)
         else:
             parsed.append(limit)
-    if invalid:
+    if invalid_values:
+        selected, _ = _selected_literal_candidates(
+            frame, view, locks, "result_limit"
+        )
+        invalid_set = set(invalid_values)
+        source_ids = tuple(
+            item.literal_id
+            for item in selected
+            if item.canonical_value in invalid_set
+        )
+        unmatched = invalid_set - {
+            item.canonical_value
+            for item in selected
+            if item.canonical_value in invalid_set
+        }
+        fallback_ids = tuple(
+            f"literal-{canonical_sha256(value)[:16]}" for value in sorted(unmatched)
+        )
         rejections.append(
             _rejection(
                 frame,
                 variant_id,
                 "limit",
-                tuple(invalid),
+                (*source_ids, *fallback_ids),
                 "LIMIT_OUT_OF_RANGE",
             )
         )
