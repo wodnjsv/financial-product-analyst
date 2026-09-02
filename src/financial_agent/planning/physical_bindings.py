@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
@@ -40,12 +40,47 @@ POLICY_REGISTRY_VERSION = "semantic-sql-policies.v1"
 EXPECTED_POLICY_REGISTRY_HASH = (
     "cf4f5065eb4fdae76902a1c0bd817700129ad077fe56795c05ab95d76937abf4"
 )
+EXPECTED_POLICY_IDS = frozenset(
+    {
+        "approved-cross-family.v1",
+        "cosine-complete-dimensions.v1",
+        "default-direction-descending.v1",
+        "default-explanation-profile.v1",
+        "default-limit-5.v1",
+        "default-product-projection.v1",
+        "distinct-entity.v1",
+        "equal-width-10.v1",
+        "exclude_missing.v1",
+        "identity-unit.v1",
+        "minimum-dimension-coverage.v1",
+        "no-dedup.v1",
+        "public-fund-representative-share.v1",
+        "representative-product.v1",
+        "same-definition-period-unit.v1",
+        "semantic-percent-to-percentage-point.v1",
+        "source-product.v1",
+        "stable-product-id.v1",
+    }
+)
+EXPECTED_SEMANTIC_REGISTRY_PINS = QueryRegistryPinsV2(
+    contract_registry_version="query-contract-registry.v2",
+    contract_registry_hash="06c2f97da35f07ccaa237e0a63a7d2d9a8a2c14040dd2e09e97d0bcb86d88baf",
+    operator_registry_version="query-operator-registry.v1",
+    operator_registry_hash="d9f1775b563cea24b0b8eaa1e79d9bd864df9defa483ad17aec0738af88f53ba",
+    policy_registry_version="query-policy-registry.v1",
+    policy_registry_hash="1dbb8eedf8340aae5b359692cd04c869d07d66681e3609a25623f7208513ce3a",
+)
+EXPECTED_CATALOG_VERSION = "semantic-query-catalog.v1"
+EXPECTED_CATALOG_HASH = "c1e88ebd353e6306e8f61f4bef31d23fbed802adf4811a8ea287e40dbde73076"
+EXPECTED_CATALOG_PROJECTION_HASH = (
+    "86068f09df86b6dc982d6b721490982530ddceba575fe70881e0d57529ae3e94"
+)
 EXPECTED_BINDING_DEFINITION_HASHES = MappingProxyType(
     {
         "domestic-etf-aum.v1": "fc0f0ff113f131cf1bd7cd6f89cdfd347b0800ef27388201650dfa4fa6515dd2",
-        "domestic-etf-fee-rate.v1": "cefc7708cc734e80477f7bb74de782c9433f30b09f096a90c467a19441a71a20",
+        "domestic-etf-fee-rate.v1": "61660f5ea46b56520d2c0c1b92c05bc54111b103cd89d919ae90d84287fecf59",
         "overseas-etf-aum.v1": "4708f1c313bb4cfbbd981f12cec9003b1c497b24e2877f45ba7b56a0b6c309bc",
-        "overseas-etf-fee-rate.v1": "aac9da7ebd301ee4561c9153a17f087bb6d568217696f1c483b7b8c7747ea727",
+        "overseas-etf-fee-rate.v1": "ef0619e24bf6f998e138abaa38d4523a120dc8764f759b40993da4b91a182f3a",
         "public-fund-aum.v1": "731531d48d009b06e0d160fa7dcee0460eda2233061223abd17c1ee5b0d60304",
         "public-fund-fee-rate.v1": "71d2d86915ce6380d05a809fe66204562981a049c1384ef1047bc8a510f15b15",
     }
@@ -79,7 +114,14 @@ EXPECTED_MAPPER_BINDINGS = MappingProxyType(
         ),
     }
 )
-_REGISTRY_CONSTRUCTION_TOKEN = object()
+TRUSTED_PUBLIC_FUND_MANIFEST_PINS = MappingProxyType(
+    {
+        "synthetic-public-fund-complete.v1": (
+            "43138033043db74566a74023c18b83e01b9637c1041ae737758aef55aaa9b36f",
+            "6e9ad494b382ba2e82acbdb6cd00c011683c91f6b096effe7c89fb36b3f4fd2e",
+        )
+    }
+)
 
 
 class ObservationValueColumn(str, Enum):
@@ -274,15 +316,63 @@ class PhysicalBindingRegistry:
     semantic_registry_pins: QueryRegistryPinsV2
     physical_policy_registry_version: str
     physical_policy_registry_hash: str
-    _construction_token: object = dataclass_field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if self._construction_token is not _REGISTRY_CONSTRUCTION_TOKEN:
-            raise ValueError("registry must be created by the validated loader")
+        catalog_concept_ids = frozenset(self.catalog_concept_ids)
+        catalog_families = {
+            concept_id: frozenset(families)
+            for concept_id, families in self.catalog_families_by_concept.items()
+        }
+        if self.registry_version != BINDING_REGISTRY_VERSION:
+            raise ValueError("registry definition mismatch")
+        if (
+            self.catalog_version != EXPECTED_CATALOG_VERSION
+            or self.catalog_hash != EXPECTED_CATALOG_HASH
+        ):
+            raise ValueError("registry definition mismatch")
+        if self.semantic_registry_pins != EXPECTED_SEMANTIC_REGISTRY_PINS:
+            raise ValueError("registry definition mismatch")
+        if (
+            self.physical_policy_registry_version != POLICY_REGISTRY_VERSION
+            or self.physical_policy_registry_hash != EXPECTED_POLICY_REGISTRY_HASH
+        ):
+            raise ValueError("registry definition mismatch")
+        by_id = dict(self.bindings_by_id)
+        if set(by_id) != set(EXPECTED_BINDING_DEFINITION_HASHES) or any(
+            canonical_sha256(binding) != EXPECTED_BINDING_DEFINITION_HASHES[binding_id]
+            for binding_id, binding in by_id.items()
+        ):
+            raise ValueError("registry definition mismatch")
+        expected_pairs = {
+            (binding.product_family_id.value, binding.semantic_concept_id): binding
+            for binding in by_id.values()
+        }
+        if dict(self.bindings_by_family_concept) != expected_pairs:
+            raise ValueError("registry definition mismatch")
+        catalog_projection = {
+            "concepts": {
+                concept_id: sorted(families)
+                for concept_id, families in sorted(catalog_families.items())
+            }
+        }
+        if (
+            frozenset(catalog_families) != catalog_concept_ids
+            or canonical_sha256(catalog_projection) != EXPECTED_CATALOG_PROJECTION_HASH
+        ):
+            raise ValueError("registry definition mismatch")
+        payload = _BindingRegistryPayload(
+            registry_version=self.registry_version,
+            semantic_registry_pins=self.semantic_registry_pins,
+            physical_policy_registry_version=self.physical_policy_registry_version,
+            physical_policy_registry_hash=self.physical_policy_registry_hash,
+            bindings=tuple(by_id[item] for item in sorted(by_id)),
+        )
+        if canonical_sha256(payload) != self.registry_hash:
+            raise ValueError("registry hash mismatch")
         object.__setattr__(
             self,
             "bindings_by_id",
-            MappingProxyType(dict(self.bindings_by_id)),
+            MappingProxyType(dict(sorted(by_id.items()))),
         )
         object.__setattr__(
             self,
@@ -292,8 +382,9 @@ class PhysicalBindingRegistry:
         object.__setattr__(
             self,
             "catalog_families_by_concept",
-            MappingProxyType(dict(self.catalog_families_by_concept)),
+            MappingProxyType(dict(catalog_families)),
         )
+        object.__setattr__(self, "catalog_concept_ids", catalog_concept_ids)
 
     def binding_for(
         self, family_id: str | ProductFamily, concept_id: str
@@ -307,19 +398,31 @@ class SemanticSqlPolicyRegistry:
     registry_version: str
     registry_hash: str
     policies_by_id: Mapping[str, SemanticSqlPolicyDefinition]
-    _construction_token: object = dataclass_field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if self._construction_token is not _REGISTRY_CONSTRUCTION_TOKEN:
-            raise ValueError("registry must be created by the validated loader")
+        policies = dict(self.policies_by_id)
+        if set(policies) != EXPECTED_POLICY_IDS:
+            raise ValueError("registry definition mismatch")
+        payload = _PolicyRegistryPayload(
+            registry_version=self.registry_version,
+            policies=tuple(policies[item] for item in sorted(policies)),
+        )
+        if (
+            self.registry_version != POLICY_REGISTRY_VERSION
+            or canonical_sha256(payload) != EXPECTED_POLICY_REGISTRY_HASH
+        ):
+            raise ValueError("registry definition mismatch")
+        if self.registry_hash != EXPECTED_POLICY_REGISTRY_HASH:
+            raise ValueError("registry hash mismatch")
         object.__setattr__(
             self,
             "policies_by_id",
-            MappingProxyType(dict(self.policies_by_id)),
+            MappingProxyType(dict(sorted(policies.items()))),
         )
 
 
 class RepresentativeShareEdge(_StrictModel):
+    dataset_pin: Sha256Hex
     representative_id: Identifier
     share_class_id: Identifier
     predicate_id: Identifier
@@ -329,6 +432,7 @@ class RepresentativeShareEdge(_StrictModel):
 
 
 class PopulationMetricOwnership(_StrictModel):
+    dataset_pin: Sha256Hex
     representative_id: Identifier
     metric_id: Identifier
     owner_entity_id: Identifier
@@ -337,19 +441,59 @@ class PopulationMetricOwnership(_StrictModel):
     source_id: Identifier
 
 
+class DatasetSourceRecord(_StrictModel):
+    dataset_pin: Sha256Hex
+    source_id: Identifier
+
+
+class DatasetEvidenceRecord(_StrictModel):
+    dataset_pin: Sha256Hex
+    evidence_id: Identifier
+    source_id: Identifier
+
+
+class PublicFundDatasetManifest(_StrictModel):
+    manifest_id: Identifier
+    dataset_pin: Sha256Hex
+    physical_policy_registry_version: Identifier
+    physical_policy_registry_hash: Sha256Hex
+    population_grain_policy_id: Identifier
+    dedup_policy_id: Identifier
+    authoritative_share_class_ids: tuple[Identifier, ...] = Field(min_length=1)
+    source_records: tuple[DatasetSourceRecord, ...] = Field(min_length=1)
+    evidence_records: tuple[DatasetEvidenceRecord, ...] = Field(min_length=1)
+    representative_share_edges: tuple[RepresentativeShareEdge, ...] = Field(
+        min_length=1
+    )
+    population_metric_ownerships: tuple[PopulationMetricOwnership, ...] = Field(
+        min_length=1
+    )
+
+    @model_validator(mode="after")
+    def validate_manifest_shape(self):
+        _require_unique(self.authoritative_share_class_ids)
+        _require_unique(tuple(item.source_id for item in self.source_records))
+        _require_unique(tuple(item.evidence_id for item in self.evidence_records))
+        _require_unique(tuple(item.relation_id for item in self.representative_share_edges))
+        _require_unique(
+            tuple(item.observation_id for item in self.population_metric_ownerships)
+        )
+        return self
+
+
 class PhysicalReadinessFacts(_StrictModel):
     known_entity_ids: frozenset[Identifier] = frozenset()
     known_group_basis_ids: frozenset[Identifier] = frozenset()
     known_prior_result_binding_ids: frozenset[Identifier] = frozenset()
     known_value_ref_ids: frozenset[Identifier] = frozenset()
-    verified_relation_ids: frozenset[Identifier] = frozenset()
-    verified_observation_ids: frozenset[Identifier] = frozenset()
-    verified_evidence_ids: frozenset[Identifier] = frozenset()
-    verified_source_ids: frozenset[Identifier] = frozenset()
-    public_fund_share_class_ids: frozenset[Identifier] = frozenset()
-    representative_share_edges: tuple[RepresentativeShareEdge, ...] = ()
-    ambiguous_share_class_ids: frozenset[Identifier] = frozenset()
-    population_metric_ownerships: tuple[PopulationMetricOwnership, ...] = ()
+    public_fund_manifest: PublicFundDatasetManifest | None = None
+    public_fund_manifest_hash: Sha256Hex | None = None
+
+    @model_validator(mode="after")
+    def validate_manifest_pair(self):
+        if bool(self.public_fund_manifest) != bool(self.public_fund_manifest_hash):
+            raise ValueError("public fund manifest and hash must be supplied together")
+        return self
 
 
 def load_physical_binding_registry(
@@ -417,7 +561,6 @@ def load_physical_binding_registry(
         semantic_registry_pins=payload.semantic_registry_pins,
         physical_policy_registry_version=payload.physical_policy_registry_version,
         physical_policy_registry_hash=payload.physical_policy_registry_hash,
-        _construction_token=_REGISTRY_CONSTRUCTION_TOKEN,
     )
 
 
@@ -454,7 +597,6 @@ def load_semantic_sql_policy_registry(
         registry_version=payload.registry_version,
         registry_hash=canonical_sha256(payload),
         policies_by_id=MappingProxyType(dict(sorted(indexed.items()))),
-        _construction_token=_REGISTRY_CONSTRUCTION_TOKEN,
     )
 
 
@@ -511,7 +653,16 @@ def _validate_binding(
     expected_qualifiers = tuple(
         SemanticQualifierId(item) for item in concept.required_qualifiers
     )
-    if set(binding.required_qualifier_ids) != set(expected_qualifiers):
+    actual_qualifiers = set(binding.required_qualifier_ids)
+    expected_qualifier_set = set(expected_qualifiers)
+    extra_qualifiers = actual_qualifiers - expected_qualifier_set
+    if not expected_qualifier_set <= actual_qualifiers or (
+        extra_qualifiers
+        and not (
+            binding.semantic_concept_id == "fee_rate"
+            and extra_qualifiers == {SemanticQualifierId.UNIT}
+        )
+    ):
         raise ValueError("binding required qualifier mismatch")
     if not set(binding.required_qualifier_ids) <= set(binding.supported_qualifier_ids):
         raise ValueError("required qualifier not supported")

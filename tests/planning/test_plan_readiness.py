@@ -5,14 +5,18 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
+from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.intent.query_contracts import (
     PlanReadiness,
     SolvedQueryContractCandidateV2,
 )
 from financial_agent.intent.query_contract_registry import load_query_contract_registry
 from financial_agent.planning.physical_bindings import (
+    DatasetEvidenceRecord,
+    DatasetSourceRecord,
     PhysicalReadinessFacts,
     PopulationMetricOwnership,
+    PublicFundDatasetManifest,
     RepresentativeShareEdge,
     load_physical_binding_registry,
     load_semantic_sql_policy_registry,
@@ -23,6 +27,7 @@ from financial_agent.planning.readiness import assess_plan_readiness
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _CANDIDATE_ADAPTER = TypeAdapter(SolvedQueryContractCandidateV2)
 _SEMANTIC_REGISTRY = load_query_contract_registry(PROJECT_ROOT)
+_DATASET_PIN = "43138033043db74566a74023c18b83e01b9637c1041ae737758aef55aaa9b36f"
 
 
 def _validate(payload: dict[str, object]):
@@ -70,6 +75,8 @@ def _common(action: str, family: str = "public_fund") -> dict[str, object]:
 
 def _screen(field: str = "fee_rate", family: str = "public_fund"):
     payload = _common("screen", family)
+    if field == "fee_rate":
+        payload["qualifiers"]["unit_id"] = "percent"
     payload["predicate"] = {
         "node_type": "atom",
         "field_concept_id": field,
@@ -102,20 +109,54 @@ def _public_fund_aum_sum():
     return _validate(payload)
 
 
-def _verified_population_facts() -> PhysicalReadinessFacts:
-    return PhysicalReadinessFacts(
-        known_entity_ids=frozenset({"representative-a", "share-a", "share-b"}),
-        verified_relation_ids=frozenset({"relation-a", "relation-b"}),
-        verified_observation_ids=frozenset({"observation-a"}),
-        verified_evidence_ids=frozenset({
-            "evidence-a", "evidence-b", "evidence-observation-a"
-        }),
-        verified_source_ids=frozenset({
-            "source-a", "source-b", "source-observation-a"
-        }),
-        public_fund_share_class_ids=frozenset({"share-a", "share-b"}),
+def _public_fund_representative_count():
+    payload = _common("aggregate")
+    payload["aggregation"] = {
+        "function_id": "count",
+        "target_field_concept_id": None,
+        "count_population_id": "representative-product.v1",
+        "group_by_field_concept_ids": [],
+        "bucket_policy_id": None,
+        "population_grain_id": "representative-product.v1",
+        "dedup_policy_id": "public-fund-representative-share.v1",
+    }
+    payload["predicate"] = None
+    return _validate(payload)
+
+
+def _verified_population_manifest() -> PublicFundDatasetManifest:
+    return PublicFundDatasetManifest(
+        manifest_id="synthetic-public-fund-complete.v1",
+        dataset_pin=_DATASET_PIN,
+        physical_policy_registry_version="semantic-sql-policies.v1",
+        physical_policy_registry_hash="cf4f5065eb4fdae76902a1c0bd817700129ad077fe56795c05ab95d76937abf4",
+        population_grain_policy_id="representative-product.v1",
+        dedup_policy_id="public-fund-representative-share.v1",
+        authoritative_share_class_ids=("share-a", "share-b"),
+        source_records=tuple(
+            DatasetSourceRecord(dataset_pin=_DATASET_PIN, source_id=source_id)
+            for source_id in ("source-a", "source-b", "source-observation-a")
+        ),
+        evidence_records=(
+            DatasetEvidenceRecord(
+                dataset_pin=_DATASET_PIN,
+                evidence_id="evidence-a",
+                source_id="source-a",
+            ),
+            DatasetEvidenceRecord(
+                dataset_pin=_DATASET_PIN,
+                evidence_id="evidence-b",
+                source_id="source-b",
+            ),
+            DatasetEvidenceRecord(
+                dataset_pin=_DATASET_PIN,
+                evidence_id="evidence-observation-a",
+                source_id="source-observation-a",
+            ),
+        ),
         representative_share_edges=(
             RepresentativeShareEdge(
+                dataset_pin=_DATASET_PIN,
                 representative_id="representative-a",
                 share_class_id="share-a",
                 predicate_id="hasShareClass",
@@ -124,6 +165,7 @@ def _verified_population_facts() -> PhysicalReadinessFacts:
                 source_id="source-a",
             ),
             RepresentativeShareEdge(
+                dataset_pin=_DATASET_PIN,
                 representative_id="representative-a",
                 share_class_id="share-b",
                 predicate_id="hasShareClass",
@@ -132,9 +174,9 @@ def _verified_population_facts() -> PhysicalReadinessFacts:
                 source_id="source-b",
             ),
         ),
-        ambiguous_share_class_ids=frozenset(),
         population_metric_ownerships=(
             PopulationMetricOwnership(
+                dataset_pin=_DATASET_PIN,
                 representative_id="representative-a",
                 metric_id="organizer.prfd01n001.net_assets",
                 owner_entity_id="representative-a",
@@ -143,6 +185,15 @@ def _verified_population_facts() -> PhysicalReadinessFacts:
                 source_id="source-observation-a",
             ),
         ),
+    )
+
+
+def _verified_population_facts() -> PhysicalReadinessFacts:
+    manifest = _verified_population_manifest()
+    return PhysicalReadinessFacts(
+        known_entity_ids=frozenset({"representative-a", "share-a", "share-b"}),
+        public_fund_manifest=manifest,
+        public_fund_manifest_hash=canonical_sha256(manifest),
     )
 
 
@@ -195,6 +246,52 @@ def test_public_fund_source_grain_sum_never_executes() -> None:
     assert "PUBLIC_FUND_REPRESENTATIVE_POLICY_REQUIRED" in result.reason_codes
 
 
+def test_public_fund_representative_count_requires_population_proof() -> None:
+    result = assess_plan_readiness(
+        _public_fund_representative_count(),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+    )
+
+    assert result.readiness is PlanReadiness.LIMITED
+    assert "PUBLIC_FUND_GRAIN_UNVERIFIED" in result.reason_codes
+
+
+def test_public_fund_representative_count_uses_complete_manifest_proof() -> None:
+    result = assess_plan_readiness(
+        _public_fund_representative_count(),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+        facts=_verified_population_facts(),
+    )
+
+    assert result.readiness is PlanReadiness.EXECUTABLE
+    assert result.reason_codes == ()
+
+
+def test_public_fund_representative_count_rejects_manifest_subset() -> None:
+    base = _verified_population_facts()
+    manifest = base.public_fund_manifest.model_copy(
+        update={
+            "authoritative_share_class_ids": ("share-a",),
+            "representative_share_edges": (
+                base.public_fund_manifest.representative_share_edges[0],
+            ),
+        }
+    )
+    facts = base.model_copy(update={"public_fund_manifest": manifest})
+
+    result = assess_plan_readiness(
+        _public_fund_representative_count(),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+        facts=facts,
+    )
+
+    assert result.readiness is PlanReadiness.LIMITED
+    assert "PUBLIC_FUND_MANIFEST_UNTRUSTED" in result.reason_codes
+
+
 def test_public_fund_aum_rank_never_uses_share_class_rows_as_products() -> None:
     payload = _common("rank", "public_fund")
     payload["qualifiers"]["as_of_date"] = "2026-08-24"
@@ -221,8 +318,12 @@ def test_public_fund_aum_rank_never_uses_share_class_rows_as_products() -> None:
 
 
 def test_representative_proof_is_computed_not_declared() -> None:
-    facts = _verified_population_facts().model_copy(
+    base = _verified_population_facts()
+    manifest = base.public_fund_manifest.model_copy(
         update={"representative_share_edges": ()}
+    )
+    facts = base.model_copy(
+        update={"public_fund_manifest": manifest}
     )
 
     result = assess_plan_readiness(
@@ -236,27 +337,113 @@ def test_representative_proof_is_computed_not_declared() -> None:
     assert "PUBLIC_FUND_REPRESENTATIVE_COVERAGE_INCOMPLETE" in result.reason_codes
 
 
+def test_self_consistent_manifest_subset_cannot_claim_complete_population() -> None:
+    base = _verified_population_facts()
+    manifest = base.public_fund_manifest.model_copy(
+        update={
+            "authoritative_share_class_ids": ("share-a",),
+            "representative_share_edges": (
+                base.public_fund_manifest.representative_share_edges[0],
+            ),
+        }
+    )
+    facts = base.model_copy(update={"public_fund_manifest": manifest})
+
+    result = assess_plan_readiness(
+        _public_fund_aum_sum(),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+        facts=facts,
+    )
+
+    assert result.readiness is PlanReadiness.LIMITED
+    assert "PUBLIC_FUND_MANIFEST_UNTRUSTED" in result.reason_codes
+
+
+def test_manifest_requires_same_dataset_pin_and_linked_evidence_source() -> None:
+    base = _verified_population_facts()
+    edge = base.public_fund_manifest.representative_share_edges[0].model_copy(
+        update={"dataset_pin": "f" * 64, "evidence_id": "missing-evidence"}
+    )
+    manifest = base.public_fund_manifest.model_copy(
+        update={
+            "representative_share_edges": (
+                edge,
+                base.public_fund_manifest.representative_share_edges[1],
+            )
+        }
+    )
+    facts = base.model_copy(update={"public_fund_manifest": manifest})
+
+    result = assess_plan_readiness(
+        _public_fund_aum_sum(),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+        facts=facts,
+    )
+
+    assert result.readiness is PlanReadiness.LIMITED
+    assert {
+        "PUBLIC_FUND_MANIFEST_UNTRUSTED",
+        "PUBLIC_FUND_DATASET_PIN_MISMATCH",
+        "PUBLIC_FUND_EVIDENCE_PATH_UNVERIFIED",
+    } <= set(result.reason_codes)
+
+
+def test_manifest_is_bound_to_exact_representative_policy_registry() -> None:
+    base = _verified_population_facts()
+    manifest = base.public_fund_manifest.model_copy(
+        update={"dedup_policy_id": "no-dedup.v1"}
+    )
+    facts = base.model_copy(update={"public_fund_manifest": manifest})
+
+    result = assess_plan_readiness(
+        _public_fund_aum_sum(),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+        facts=facts,
+    )
+
+    assert result.readiness is PlanReadiness.LIMITED
+    assert {
+        "PUBLIC_FUND_MANIFEST_UNTRUSTED",
+        "PUBLIC_FUND_MANIFEST_POLICY_MISMATCH",
+    } <= set(result.reason_codes)
+
+
 def test_representative_proof_rejects_ambiguity_cycles_and_multiple_aum_owners() -> None:
     base = _verified_population_facts()
-    facts = base.model_copy(
+    manifest = base.public_fund_manifest
+    extra_sources = tuple(
+        DatasetSourceRecord(dataset_pin=_DATASET_PIN, source_id=source_id)
+        for source_id in (
+            "source-c", "source-cycle", "source-observation-b"
+        )
+    )
+    extra_evidence = (
+        DatasetEvidenceRecord(
+            dataset_pin=_DATASET_PIN,
+            evidence_id="evidence-c",
+            source_id="source-c",
+        ),
+        DatasetEvidenceRecord(
+            dataset_pin=_DATASET_PIN,
+            evidence_id="evidence-cycle",
+            source_id="source-cycle",
+        ),
+        DatasetEvidenceRecord(
+            dataset_pin=_DATASET_PIN,
+            evidence_id="evidence-observation-b",
+            source_id="source-observation-b",
+        ),
+    )
+    changed_manifest = manifest.model_copy(
         update={
-            "known_entity_ids": frozenset(
-                {"representative-a", "representative-b", "share-a", "share-b"}
-            ),
-            "verified_relation_ids": frozenset({
-                "relation-a", "relation-b", "relation-c", "relation-cycle"
-            }),
-            "verified_observation_ids": frozenset({"observation-a", "observation-b"}),
-            "verified_evidence_ids": frozenset({
-                "evidence-a", "evidence-b", "evidence-c", "evidence-cycle",
-                "evidence-observation-a", "evidence-observation-b",
-            }),
-            "verified_source_ids": frozenset({
-                "source-a", "source-b", "source-c", "source-cycle",
-                "source-observation-a", "source-observation-b",
-            }),
-            "representative_share_edges": base.representative_share_edges + (
+            "source_records": manifest.source_records + extra_sources,
+            "evidence_records": manifest.evidence_records + extra_evidence,
+            "representative_share_edges": manifest.representative_share_edges + (
                 RepresentativeShareEdge(
+                    dataset_pin=_DATASET_PIN,
                     representative_id="representative-b",
                     share_class_id="share-a",
                     predicate_id="hasShareClass",
@@ -265,6 +452,7 @@ def test_representative_proof_rejects_ambiguity_cycles_and_multiple_aum_owners()
                     source_id="source-c",
                 ),
                 RepresentativeShareEdge(
+                    dataset_pin=_DATASET_PIN,
                     representative_id="share-a",
                     share_class_id="representative-a",
                     predicate_id="hasShareClass",
@@ -273,8 +461,9 @@ def test_representative_proof_rejects_ambiguity_cycles_and_multiple_aum_owners()
                     source_id="source-cycle",
                 ),
             ),
-            "population_metric_ownerships": base.population_metric_ownerships + (
+            "population_metric_ownerships": manifest.population_metric_ownerships + (
                 PopulationMetricOwnership(
+                    dataset_pin=_DATASET_PIN,
                     representative_id="representative-a",
                     metric_id="organizer.prfd01n001.net_assets",
                     owner_entity_id="representative-a",
@@ -283,6 +472,14 @@ def test_representative_proof_rejects_ambiguity_cycles_and_multiple_aum_owners()
                     source_id="source-observation-b",
                 ),
             ),
+        }
+    )
+    facts = base.model_copy(
+        update={
+            "known_entity_ids": frozenset(
+                {"representative-a", "representative-b", "share-a", "share-b"}
+            ),
+            "public_fund_manifest": changed_manifest,
         }
     )
 
@@ -347,6 +544,66 @@ def test_percent_conversion_comes_from_physical_binding() -> None:
     assert result.unit_conversion_policy_ids == (
         "semantic-percent-to-percentage-point.v1",
     )
+
+
+def test_fee_rate_requires_explicit_percentage_qualifier() -> None:
+    payload = json.loads(_screen("fee_rate", "domestic_etf").model_dump_json())
+    payload["qualifiers"]["unit_id"] = None
+
+    result = assess_plan_readiness(
+        _validate(payload),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+    )
+
+    assert result.readiness is PlanReadiness.LIMITED
+    assert "PHYSICAL_REQUIRED_QUALIFIER_MISSING" in result.reason_codes
+
+
+def test_invented_aum_currency_and_unit_qualifiers_fail_closed() -> None:
+    payload = _common("lookup", "domestic_etf")
+    payload["qualifiers"] = {
+        "period_id": None,
+        "currency_id": "INVENTED",
+        "unit_id": "invented-unit",
+        "as_of_date": "2026-08-24",
+    }
+    payload["projections"] = {
+        "field_concept_ids": ["aum"],
+        "default_profile_id": None,
+    }
+
+    result = assess_plan_readiness(
+        _validate(payload),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+    )
+
+    assert result.readiness is PlanReadiness.BLOCKED
+    assert {
+        "CURRENCY_QUALIFIER_NOT_REGISTERED",
+        "UNIT_QUALIFIER_NOT_REGISTERED",
+    } <= set(result.reason_codes)
+
+
+def test_count_without_field_binding_still_validates_qualifier_registry() -> None:
+    payload = json.loads(_public_fund_representative_count().model_dump_json())
+    payload["qualifiers"]["currency_id"] = "INVENTED"
+    payload["qualifiers"]["unit_id"] = "invented-unit"
+
+    result = assess_plan_readiness(
+        _validate(payload),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+        facts=_verified_population_facts(),
+    )
+
+    assert result.readiness is PlanReadiness.BLOCKED
+    assert {
+        "CURRENCY_QUALIFIER_NOT_REGISTERED",
+        "UNIT_QUALIFIER_NOT_REGISTERED",
+        "QUALIFIER_ACTION_UNSUPPORTED",
+    } <= set(result.reason_codes)
 
 
 def test_fee_rate_rejects_integer_and_non_percent_units() -> None:
@@ -419,6 +676,32 @@ def test_mixed_family_aum_rank_without_normalization_is_limited() -> None:
     assert "CURRENCY_NORMALIZATION_POLICY_REQUIRED" in result.reason_codes
 
 
+def test_domestic_overseas_aum_compare_requires_normalization() -> None:
+    payload = _common("compare", "domestic_etf")
+    payload["scope"]["product_family_ids"] = ["domestic_etf", "overseas_etf"]
+    payload["qualifiers"]["as_of_date"] = "2026-08-24"
+    payload["comparison"] = {
+        "subject_refs": ["entity-a", "entity-b"],
+        "group_basis_id": None,
+        "metric_concept_ids": ["aum"],
+        "projection_profile_id": None,
+        "basis_policy_id": "same-definition-period-unit.v1",
+        "normalization_policy_id": None,
+    }
+
+    result = assess_plan_readiness(
+        _validate(payload),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+        facts=PhysicalReadinessFacts(
+            known_entity_ids=frozenset({"entity-a", "entity-b"})
+        ),
+    )
+
+    assert result.readiness is PlanReadiness.LIMITED
+    assert "CURRENCY_NORMALIZATION_POLICY_REQUIRED" in result.reason_codes
+
+
 def test_required_as_of_qualifier_is_independently_enforced() -> None:
     payload = _common("lookup", "domestic_etf")
     payload["projections"] = {
@@ -437,6 +720,7 @@ def test_required_as_of_qualifier_is_independently_enforced() -> None:
 
 def test_comparison_checks_metrics_and_basis_policy() -> None:
     payload = _common("compare", "domestic_etf")
+    payload["qualifiers"]["unit_id"] = "percent"
     payload["comparison"] = {
         "subject_refs": ["entity-a", "entity-b"],
         "group_basis_id": None,
@@ -462,6 +746,7 @@ def test_comparison_checks_metrics_and_basis_policy() -> None:
 
 def test_calculation_requires_a_registered_recipe() -> None:
     payload = _common("calculate", "domestic_etf")
+    payload["qualifiers"]["unit_id"] = "percent"
     payload["calculation"] = {
         "recipe_id": "unregistered-recipe.v1",
         "operands": [
@@ -544,6 +829,7 @@ def test_unknown_count_population_and_comparison_subjects_fail_closed() -> None:
     assert "COUNT_POPULATION_MISMATCH" in count_result.reason_codes
 
     compare = _common("compare", "domestic_etf")
+    compare["qualifiers"]["unit_id"] = "percent"
     compare["comparison"] = {
         "subject_refs": ["unknown-a", "unknown-b"],
         "group_basis_id": None,
@@ -563,6 +849,7 @@ def test_unknown_count_population_and_comparison_subjects_fail_closed() -> None:
 
 def test_scope_entity_and_prior_result_binding_fail_closed() -> None:
     payload = _common("lookup", "domestic_etf")
+    payload["qualifiers"]["unit_id"] = "percent"
     payload["scope"]["entity_refs"] = ["unknown-entity"]
     payload["scope"]["prior_result_binding"] = "unknown-result"
     payload["projections"] = {
@@ -585,6 +872,7 @@ def test_scope_entity_and_prior_result_binding_fail_closed() -> None:
 
 def test_unknown_comparison_group_basis_fails_closed() -> None:
     payload = _common("compare", "domestic_etf")
+    payload["qualifiers"]["unit_id"] = "percent"
     payload["comparison"] = {
         "subject_refs": [],
         "group_basis_id": "invented-group-basis",
@@ -656,7 +944,7 @@ def test_grouping_and_aggregate_operator_are_both_checked() -> None:
     payload["qualifiers"] = {
         "period_id": None,
         "currency_id": None,
-        "unit_id": None,
+        "unit_id": "percent",
         "as_of_date": "2026-08-24",
     }
     payload["aggregation"] = {

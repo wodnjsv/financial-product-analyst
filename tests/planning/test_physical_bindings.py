@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from financial_agent.planning.physical_bindings import (
     ObservationValueColumn,
     PhysicalBindingAvailability,
+    PhysicalReadinessFacts,
     load_physical_binding_registry,
     load_semantic_sql_policy_registry,
 )
@@ -219,10 +220,71 @@ def test_registry_direct_construction_cannot_bypass_validated_loader() -> None:
     bindings = load_physical_binding_registry(PROJECT_ROOT)
     policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
 
-    with pytest.raises(ValueError, match="validated loader"):
-        replace(bindings, _construction_token=object())
-    with pytest.raises(ValueError, match="validated loader"):
-        replace(policies, _construction_token=object())
+    with pytest.raises(ValueError, match="registry definition mismatch"):
+        replace(bindings, registry_version="invented-bindings.v1")
+    with pytest.raises(ValueError, match="registry definition mismatch"):
+        replace(policies, registry_version="invented-policies.v1")
+
+
+def test_registry_replace_cannot_clone_token_and_alter_validated_content() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+
+    with pytest.raises(ValueError, match="registry hash mismatch"):
+        replace(bindings, registry_hash="f" * 64)
+    with pytest.raises(ValueError, match="registry definition mismatch"):
+        replace(bindings, bindings_by_id={})
+    with pytest.raises(ValueError, match="registry definition mismatch"):
+        replace(bindings, bindings_by_family_concept={})
+    with pytest.raises(ValueError, match="registry definition mismatch"):
+        replace(bindings, catalog_families_by_concept={})
+    with pytest.raises(ValueError, match="registry definition mismatch"):
+        replace(
+            bindings,
+            semantic_registry_pins=bindings.semantic_registry_pins.model_copy(
+                update={"operator_registry_hash": "f" * 64}
+            ),
+        )
+    with pytest.raises(ValueError, match="registry definition mismatch"):
+        replace(bindings, physical_policy_registry_hash="f" * 64)
+    with pytest.raises(ValueError, match="registry hash mismatch"):
+        replace(policies, registry_hash="f" * 64)
+    with pytest.raises(ValueError, match="registry definition mismatch"):
+        replace(policies, policies_by_id={})
+    altered_policies = dict(policies.policies_by_id)
+    altered_policies["identity-unit.v1"] = altered_policies[
+        "identity-unit.v1"
+    ].model_copy(update={"verified": False, "unavailable_reason_code": "INVENTED"})
+    with pytest.raises(ValueError, match="registry definition mismatch"):
+        replace(policies, policies_by_id=altered_policies)
+
+
+def test_registry_replace_deep_freezes_mutable_input_collections() -> None:
+    registry = load_physical_binding_registry(PROJECT_ROOT)
+    mutable_concepts = set(registry.catalog_concept_ids)
+    mutable_families = {
+        concept_id: set(families)
+        for concept_id, families in registry.catalog_families_by_concept.items()
+    }
+
+    cloned = replace(
+        registry,
+        catalog_concept_ids=mutable_concepts,  # type: ignore[arg-type]
+        catalog_families_by_concept=mutable_families,  # type: ignore[arg-type]
+    )
+    mutable_concepts.clear()
+    mutable_families["aum"].clear()
+
+    assert cloned.catalog_concept_ids == registry.catalog_concept_ids
+    assert cloned.catalog_families_by_concept["aum"] == registry.catalog_families_by_concept["aum"]
+    assert isinstance(cloned.catalog_families_by_concept["aum"], frozenset)
+
+
+def test_readiness_facts_reject_caller_asserted_verified_id_sets() -> None:
+    with pytest.raises(ValidationError):
+        PhysicalReadinessFacts.model_validate(
+            {"verified_relation_ids": ["caller-asserted-relation"]}
+        )
 
 
 def test_policy_loader_rejects_duplicate_and_unknown_relation(tmp_path: Path) -> None:

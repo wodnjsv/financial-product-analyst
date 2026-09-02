@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from pydantic import ConfigDict
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
@@ -21,6 +22,8 @@ from financial_agent.intent.query_contracts import (
 )
 
 from .physical_bindings import (
+    EXPECTED_POLICY_REGISTRY_HASH,
+    POLICY_REGISTRY_VERSION,
     PhysicalBindingAvailability,
     PhysicalBindingDefinition,
     PhysicalBindingRegistry,
@@ -29,7 +32,13 @@ from .physical_bindings import (
     SemanticQualifierId,
     SemanticSqlPolicyKind,
     SemanticSqlPolicyRegistry,
+    TRUSTED_PUBLIC_FUND_MANIFEST_PINS,
 )
+
+
+_KNOWN_CURRENCY_QUALIFIER_IDS = frozenset({"KRW", "USD"})
+_KNOWN_UNIT_QUALIFIER_IDS = frozenset({"percent", "KRW", "USD"})
+_PERIOD_QUALIFIER_PATTERN = re.compile(r"^P[1-9][0-9]*(?:Y|M)$")
 
 
 class PlanReadinessResult(ContractModel):
@@ -211,10 +220,16 @@ def assess_plan_readiness(
                 policy_roles.append((policy_id, expected_kind, "SQL_POLICY_NOT_REGISTERED"))
     for policy_id, expected_kind, missing_reason in policy_roles:
         _assess_policy(policy_id, expected_kind, missing_reason, families, policies, state)
-    _assess_qualifiers(contract.qualifiers, resolved_bindings, state)
+    _assess_qualifiers(contract, resolved_bindings, state)
     if contract.action_id is IntentType.AGGREGATE:
         _assess_aggregate_grain(
-            contract.aggregation, resolved_bindings, policies, facts, state
+            contract.aggregation,
+            families,
+            resolved_bindings,
+            bindings,
+            policies,
+            facts,
+            state,
         )
     _assess_currency_normalization(contract, resolved_bindings, state)
     if contract.action_id is IntentType.RANK and any(
@@ -335,26 +350,49 @@ def _assess_policy(
         state.add(policy.unavailable_reason_code or "SQL_POLICY_UNVERIFIED", PlanReadiness.LIMITED)
 
 
-def _assess_qualifiers(qualifiers, bindings, state: _Assessment) -> None:
+def _assess_qualifiers(contract, bindings, state: _Assessment) -> None:
+    qualifiers = contract.qualifiers
     requested = set()
     if qualifiers.period_id is not None:
         requested.add(SemanticQualifierId.PERIOD)
+        if _PERIOD_QUALIFIER_PATTERN.fullmatch(qualifiers.period_id) is None:
+            state.add("PERIOD_QUALIFIER_NOT_REGISTERED", PlanReadiness.BLOCKED)
     if qualifiers.currency_id is not None:
         requested.add(SemanticQualifierId.CURRENCY)
+        if qualifiers.currency_id not in _KNOWN_CURRENCY_QUALIFIER_IDS:
+            state.add("CURRENCY_QUALIFIER_NOT_REGISTERED", PlanReadiness.BLOCKED)
     if qualifiers.unit_id is not None:
         requested.add(SemanticQualifierId.UNIT)
+        if qualifiers.unit_id not in _KNOWN_UNIT_QUALIFIER_IDS:
+            state.add("UNIT_QUALIFIER_NOT_REGISTERED", PlanReadiness.BLOCKED)
     if qualifiers.as_of_date is not None:
         requested.add(SemanticQualifierId.AS_OF)
+    if (
+        contract.action_id is IntentType.AGGREGATE
+        and contract.aggregation.function_id is AggregationFunction.COUNT
+        and requested & {SemanticQualifierId.CURRENCY, SemanticQualifierId.UNIT}
+    ):
+        state.add("QUALIFIER_ACTION_UNSUPPORTED", PlanReadiness.BLOCKED)
     for binding in bindings:
         if not set(binding.required_qualifier_ids) <= requested:
             state.add("PHYSICAL_REQUIRED_QUALIFIER_MISSING", PlanReadiness.LIMITED)
         if not requested <= set(binding.supported_qualifier_ids):
             state.add("PHYSICAL_QUALIFIER_UNSUPPORTED", PlanReadiness.LIMITED)
+        if qualifiers.unit_id is not None and (
+            not binding.accepted_semantic_unit_ids
+            or qualifiers.unit_id not in binding.accepted_semantic_unit_ids
+        ):
+            state.add("SEMANTIC_UNIT_NOT_SUPPORTED", PlanReadiness.BLOCKED)
 
 
 def _assess_aggregate_grain(
-    aggregation, bindings, policies, facts: PhysicalReadinessFacts | None,
-    state: _Assessment
+    aggregation,
+    families,
+    bindings,
+    binding_registry: PhysicalBindingRegistry,
+    policies,
+    facts: PhysicalReadinessFacts | None,
+    state: _Assessment,
 ) -> None:
     grain_id = aggregation.population_grain_id
     dedup_id = aggregation.dedup_policy_id
@@ -380,6 +418,26 @@ def _assess_aggregate_grain(
                 else "POPULATION_GRAIN_UNVERIFIED",
                 PlanReadiness.LIMITED,
             )
+    if (
+        aggregation.function_id is AggregationFunction.COUNT
+        and ProductFamily.PUBLIC_FUND in families
+    ):
+        if (
+            grain_id != "representative-product.v1"
+            or aggregation.count_population_id != "representative-product.v1"
+            or dedup_id != "public-fund-representative-share.v1"
+        ):
+            state.add(
+                "PUBLIC_FUND_REPRESENTATIVE_POLICY_REQUIRED",
+                PlanReadiness.LIMITED,
+            )
+        else:
+            public_aum = binding_registry.binding_for(ProductFamily.PUBLIC_FUND, "aum")
+            if public_aum is None:
+                state.add("PUBLIC_FUND_GRAIN_UNVERIFIED", PlanReadiness.LIMITED)
+            else:
+                for reason in _public_fund_population_proof(public_aum, facts):
+                    state.add(reason, PlanReadiness.LIMITED)
     grain = policies.policies_by_id.get(grain_id)
     dedup = policies.policies_by_id.get(dedup_id)
     if grain is not None and dedup is not None:
@@ -393,35 +451,70 @@ def _public_fund_population_proof(
 ) -> set[str]:
     if facts is None:
         return {"PUBLIC_FUND_GRAIN_UNVERIFIED"}
+    manifest = facts.public_fund_manifest
+    declared_manifest_hash = facts.public_fund_manifest_hash
+    if manifest is None or declared_manifest_hash is None:
+        return {"PUBLIC_FUND_GRAIN_UNVERIFIED"}
     reasons: set[str] = set()
-    shares = set(facts.public_fund_share_class_ids)
-    edges = facts.representative_share_edges
+    computed_manifest_hash = canonical_sha256(manifest)
+    trusted_pin = TRUSTED_PUBLIC_FUND_MANIFEST_PINS.get(manifest.manifest_id)
+    if (
+        declared_manifest_hash != computed_manifest_hash
+        or trusted_pin != (manifest.dataset_pin, computed_manifest_hash)
+    ):
+        reasons.add("PUBLIC_FUND_MANIFEST_UNTRUSTED")
+    if (
+        manifest.physical_policy_registry_version != POLICY_REGISTRY_VERSION
+        or manifest.physical_policy_registry_hash != EXPECTED_POLICY_REGISTRY_HASH
+        or manifest.population_grain_policy_id != "representative-product.v1"
+        or manifest.dedup_policy_id != "public-fund-representative-share.v1"
+    ):
+        reasons.add("PUBLIC_FUND_MANIFEST_POLICY_MISMATCH")
+    shares = set(manifest.authoritative_share_class_ids)
+    edges = manifest.representative_share_edges
     if not shares:
         reasons.add("PUBLIC_FUND_REPRESENTATIVE_FACTS_MISSING")
+    sources = {item.source_id: item for item in manifest.source_records}
+    evidence = {item.evidence_id: item for item in manifest.evidence_records}
+    if any(item.dataset_pin != manifest.dataset_pin for item in sources.values()):
+        reasons.add("PUBLIC_FUND_DATASET_PIN_MISMATCH")
+    for item in evidence.values():
+        source = sources.get(item.source_id)
+        if (
+            item.dataset_pin != manifest.dataset_pin
+            or source is None
+            or source.dataset_pin != manifest.dataset_pin
+        ):
+            reasons.add("PUBLIC_FUND_EVIDENCE_PATH_UNVERIFIED")
     incoming: dict[str, set[str]] = {share_id: set() for share_id in shares}
     graph: dict[str, set[str]] = {}
     for edge in edges:
         if edge.predicate_id != "hasShareClass":
             reasons.add("PUBLIC_FUND_REPRESENTATIVE_RELATION_UNVERIFIED")
+        if edge.dataset_pin != manifest.dataset_pin:
+            reasons.add("PUBLIC_FUND_DATASET_PIN_MISMATCH")
+        evidence_record = evidence.get(edge.evidence_id)
+        source_record = sources.get(edge.source_id)
         if (
-            edge.relation_id not in facts.verified_relation_ids
-            or edge.evidence_id not in facts.verified_evidence_ids
-            or edge.source_id not in facts.verified_source_ids
+            edge.dataset_pin != manifest.dataset_pin
+            or evidence_record is None
+            or source_record is None
+            or evidence_record.source_id != edge.source_id
+            or evidence_record.dataset_pin != manifest.dataset_pin
+            or source_record.dataset_pin != manifest.dataset_pin
         ):
             reasons.add("PUBLIC_FUND_EVIDENCE_PATH_UNVERIFIED")
         incoming.setdefault(edge.share_class_id, set()).add(edge.representative_id)
         graph.setdefault(edge.representative_id, set()).add(edge.share_class_id)
     if set(incoming) != shares or any(len(items) != 1 for items in incoming.values()):
         reasons.add("PUBLIC_FUND_REPRESENTATIVE_COVERAGE_INCOMPLETE")
-    if facts.ambiguous_share_class_ids or any(len(items) > 1 for items in incoming.values()):
+    if any(len(items) > 1 for items in incoming.values()):
         reasons.add("PUBLIC_FUND_REPRESENTATIVE_AMBIGUOUS")
     if _has_cycle(graph):
         reasons.add("PUBLIC_FUND_REPRESENTATIVE_CYCLE")
     representatives = {edge.representative_id for edge in edges}
-    if not (shares | representatives) <= set(facts.known_entity_ids):
-        reasons.add("PUBLIC_FUND_REPRESENTATIVE_FACTS_MISSING")
     ownerships = [
-        item for item in facts.population_metric_ownerships
+        item for item in manifest.population_metric_ownerships
         if item.metric_id in binding.approved_metric_ids
     ]
     by_representative: dict[str, list[PopulationMetricOwnership]] = {
@@ -429,10 +522,17 @@ def _public_fund_population_proof(
     }
     for ownership in ownerships:
         by_representative.setdefault(ownership.representative_id, []).append(ownership)
+        if ownership.dataset_pin != manifest.dataset_pin:
+            reasons.add("PUBLIC_FUND_DATASET_PIN_MISMATCH")
+        evidence_record = evidence.get(ownership.evidence_id)
+        source_record = sources.get(ownership.source_id)
         if (
-            ownership.observation_id not in facts.verified_observation_ids
-            or ownership.evidence_id not in facts.verified_evidence_ids
-            or ownership.source_id not in facts.verified_source_ids
+            ownership.dataset_pin != manifest.dataset_pin
+            or evidence_record is None
+            or source_record is None
+            or evidence_record.source_id != ownership.source_id
+            or evidence_record.dataset_pin != manifest.dataset_pin
+            or source_record.dataset_pin != manifest.dataset_pin
         ):
             reasons.add("PUBLIC_FUND_EVIDENCE_PATH_UNVERIFIED")
     if set(by_representative) != representatives:
@@ -469,14 +569,21 @@ def _has_cycle(graph: dict[str, set[str]]) -> bool:
 
 
 def _assess_currency_normalization(contract, bindings, state: _Assessment) -> None:
-    if contract.action_id not in {IntentType.RANK, IntentType.AGGREGATE}:
+    if contract.action_id not in {
+        IntentType.RANK,
+        IntentType.AGGREGATE,
+        IntentType.COMPARE,
+    }:
         return
     aum_bindings = [
         binding for binding in bindings if binding.semantic_concept_id == "aum"
     ]
-    if any(binding.currency_normalization_required for binding in aum_bindings) or len(
-        {binding.product_family_id for binding in aum_bindings}
-    ) > 1:
+    cross_family = len(set(contract.scope.product_family_ids)) > 1
+    if (
+        cross_family
+        or any(binding.currency_normalization_required for binding in aum_bindings)
+        or len({binding.product_family_id for binding in aum_bindings}) > 1
+    ):
         state.add("CURRENCY_NORMALIZATION_POLICY_REQUIRED", PlanReadiness.LIMITED)
 
 
