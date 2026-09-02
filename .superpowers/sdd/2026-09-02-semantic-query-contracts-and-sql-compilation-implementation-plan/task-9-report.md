@@ -160,3 +160,47 @@ Round 1 verification:
 The three PostgreSQL cases remain explicitly **unmeasured** because
 `FINANCIAL_AGENT_TEST_DATABASE_URL` is not configured. No SQLite substitute
 was used.
+
+## Review fix round 2
+
+Base: `00af45b57a67259148372fe184779bf5f5bdca2c`.
+
+RED was observed in two focused tests: the nonzero ungrouped COUNT mapper
+rejected newly required lineage columns, and the compiled COUNT statement did
+not project any population lineage.
+
+The COUNT value query now remains independent from a second whole-population
+lineage aggregation. The two one-row subqueries are joined only after the
+distinct product count is complete, so observation/evidence joins cannot
+multiply the count. Nonzero COUNT results require nonempty flat
+`observation_ids`, `evidence_ids`, and `source_ids`; a zero count alone may map
+PostgreSQL null aggregate arrays to empty tuples. Product identifier cardinality
+checking and the numeric zero value are unchanged.
+
+For a representative public-fund COUNT, the lineage branch is additionally
+restricted to the manifest-owned entity, metric, observation, evidence, and
+source tuple. Ordinary source-product COUNT has no metric binding in its
+logical contract, so it retains the complete scoped observation lineage rather
+than inventing metric ownership.
+
+The PostgreSQL conformance case now requires the six-product COUNT to retain
+nonempty observation/evidence lineage and `source:source-one`.
+
+Round 2 verification:
+
+```text
+.venv/bin/pytest -q tests/sql/test_result_mapping.py tests/sql/test_executor.py tests/sql/test_compiler.py tests/sql/test_property_matrix.py
+176 passed
+
+.venv/bin/pytest -q tests/sql tests/planning/test_semantic_compiler.py tests/planning/test_logical_query.py tests/planning/test_plan_readiness.py tests/planning/test_physical_bindings.py
+309 passed
+
+.venv/bin/pytest -q -m "not postgres and not ncp_integration and not performance and not organizer_data and not object_storage and not official_data and not jena_integration and not clova_integration"
+2142 passed, 1 skipped, 451 deselected
+
+.venv/bin/pytest -q tests/integration/test_semantic_sql_postgres.py
+3 skipped
+```
+
+PostgreSQL remains explicitly **unmeasured** because the approved URL is not
+configured. No SQLite substitute was used.

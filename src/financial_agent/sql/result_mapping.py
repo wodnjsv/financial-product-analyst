@@ -145,7 +145,15 @@ def map_sql_rows(
                 )
             )
 
-        _collect_aggregate_lineage(row, lineage)
+        _collect_aggregate_lineage(
+            row,
+            lineage,
+            empty_count=(
+                isinstance(operation, LogicalAggregateOperationV2)
+                and operation.aggregation.function_id is AggregationFunction.COUNT
+                and row.get("aggregate_value") == 0
+            ),
+        )
         row_payload = {
             "request_id": request.compiled_request_id,
             "entity_ids": list(entity_ids),
@@ -247,9 +255,15 @@ def _expected_columns(
     group_count = len(operation.aggregation.group_by_field_concept_ids)
     columns = {f"group_{index}" for index in range(group_count)}
     if operation.aggregation.function_id is AggregationFunction.COUNT:
-        columns.update({"aggregate_value", "product_ids"})
-        if group_count:
-            columns.add("observation_ids")
+        columns.update(
+            {
+                "aggregate_value",
+                "product_ids",
+                "observation_ids",
+                "evidence_ids",
+                "source_ids",
+            }
+        )
     else:
         if operation.aggregation.function_id is not AggregationFunction.DISTRIBUTION:
             columns.add("aggregate_value")
@@ -395,7 +409,10 @@ def _collect_field_lineage(row, *, prefix: str, index: int, target: set[str]) ->
         target.add("source:" + item)
 
 
-def _collect_aggregate_lineage(row: Mapping[str, object], target: set[str]) -> None:
+def _collect_aggregate_lineage(
+    row: Mapping[str, object], target: set[str], *, empty_count: bool
+) -> None:
+    count_value = row.get("aggregate_value")
     for column, prefix in (
         ("observation_ids", "observation:"),
         ("evidence_ids", "evidence:"),
@@ -403,7 +420,16 @@ def _collect_aggregate_lineage(row: Mapping[str, object], target: set[str]) -> N
     ):
         if column not in row:
             continue
-        for item in _identifier_array(row[column], f"RETURNED_{column.upper()}_MALFORMED"):
+        value = row[column]
+        if value is None and empty_count:
+            values = ()
+        else:
+            values = _identifier_array(
+                value, f"RETURNED_{column.upper()}_MALFORMED"
+            )
+            if count_value is not None and count_value != 0 and not values:
+                raise SqlResultMappingError(f"RETURNED_{column.upper()}_MALFORMED")
+        for item in values:
             target.add(prefix + item)
 
 

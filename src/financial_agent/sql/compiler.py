@@ -896,8 +896,116 @@ def _aggregate(context, base, where, family, operation):
             else ()
         ),
     )
+    if spec.function_id is AggregationFunction.COUNT and not groups:
+        statement = _attach_count_population_lineage(context, statement, base, where)
     _record(context, "operation.aggregation.population", "catalog-product-family.v1", PhysicalLoweringKind.DEDUPLICATION, policy_ids=(spec.population_grain_id, spec.dedup_policy_id))
     return statement
+
+
+def _attach_count_population_lineage(context, numeric_statement, base, where):
+    """Attach whole-population lineage without joining it into COUNT itself."""
+
+    numeric = numeric_statement.subquery("count_values")
+    observation_alias = observation_record.alias("count_observation")
+    origin_alias = evidence_observation_origin.alias("count_evidence_origin")
+    evidence_alias = evidence_record.alias("count_evidence")
+    source_alias = source_record.alias("count_source")
+    lineage_filters = [
+        evidence_alias.c.evidence_kind
+        == context.params.bind("observation", prefix="count_evidence_kind")
+    ]
+    operation = context.task.operation
+    ownerships = ()
+    if (
+        isinstance(operation, LogicalAggregateOperationV2)
+        and operation.aggregation.population_grain_id
+        == "representative-product.v1"
+        and context.facts is not None
+        and context.facts.public_fund_manifest is not None
+    ):
+        ownerships = context.facts.public_fund_manifest.population_metric_ownerships
+    if ownerships:
+        lineage_filters.append(
+            sa.or_(
+                *(
+                    sa.and_(
+                        observation_alias.c.entity_id
+                        == context.params.bind(
+                            item.owner_entity_id, prefix="count_owned_entity_id"
+                        ),
+                        observation_alias.c.metric_id
+                        == context.params.bind(
+                            item.metric_id, prefix="count_owned_metric_id"
+                        ),
+                        observation_alias.c.observation_id
+                        == context.params.bind(
+                            item.observation_id, prefix="count_owned_observation_id"
+                        ),
+                        origin_alias.c.evidence_id
+                        == context.params.bind(
+                            item.evidence_id, prefix="count_owned_evidence_id"
+                        ),
+                        evidence_alias.c.source_id
+                        == context.params.bind(
+                            item.source_id, prefix="count_owned_source_id"
+                        ),
+                    )
+                    for item in ownerships
+                )
+            )
+        )
+    lineage_base = (
+        base.join(
+            observation_alias,
+            sa.and_(
+                observation_alias.c.dataset_version == product.c.dataset_version,
+                observation_alias.c.entity_id == product.c.entity_id,
+            ),
+        )
+        .join(
+            origin_alias,
+            sa.and_(
+                origin_alias.c.dataset_version == observation_alias.c.dataset_version,
+                origin_alias.c.observation_id == observation_alias.c.observation_id,
+            ),
+        )
+        .join(
+            evidence_alias,
+            sa.and_(
+                evidence_alias.c.dataset_version == origin_alias.c.dataset_version,
+                evidence_alias.c.evidence_id == origin_alias.c.evidence_id,
+            ),
+        )
+        .join(
+            source_alias,
+            sa.and_(
+                source_alias.c.dataset_version == evidence_alias.c.dataset_version,
+                source_alias.c.source_id == evidence_alias.c.source_id,
+            ),
+        )
+    )
+    lineage = (
+        sa.select(
+            sa.func.array_agg(sa.distinct(observation_alias.c.observation_id)).label(
+                "observation_ids"
+            ),
+            sa.func.array_agg(sa.distinct(evidence_alias.c.evidence_id)).label(
+                "evidence_ids"
+            ),
+            sa.func.array_agg(sa.distinct(source_alias.c.source_id)).label(
+                "source_ids"
+            ),
+        )
+        .select_from(lineage_base)
+        .where(*where, *lineage_filters)
+        .subquery("count_population_lineage")
+    )
+    return sa.select(
+        *numeric.c,
+        lineage.c.observation_ids,
+        lineage.c.evidence_ids,
+        lineage.c.source_ids,
+    ).select_from(numeric.join(lineage, sa.true()))
 
 
 def _attach_flat_aggregate_evidence(

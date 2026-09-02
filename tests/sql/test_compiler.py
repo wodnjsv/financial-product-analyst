@@ -250,6 +250,9 @@ def test_count_grouping_and_comparison_lowerings() -> None:
     count = COMPILER.compile_task(count_plan, count_plan.tasks[0].task_id)
     assert count.request is not None
     assert "count(DISTINCT catalog.product.entity_id)" in count.request.statement
+    assert "observation_ids" in count.request.statement
+    assert "evidence_ids" in count.request.statement
+    assert "source_ids" in count.request.statement
 
     grouped_plan = make_plan(
         LogicalAggregateOperationV2(
@@ -496,6 +499,44 @@ def test_public_fund_proof_restricts_relation_observation_evidence_and_source_ro
         "evidence-observation-a", "source-a", "source-b", "source-observation-a",
     } <= values
     assert "evidence.evidence_relation_origin" in outcome.request.statement
+
+
+def test_public_fund_representative_count_lineage_is_manifest_owned() -> None:
+    plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="representative-product.v1",
+                population_grain_id="representative-product.v1",
+                dedup_policy_id="public-fund-representative-share.v1",
+            )
+        ),
+        family=ProductFamily.PUBLIC_FUND,
+        binding_ids=(),
+        policy_ids=(
+            "representative-product.v1",
+            "public-fund-representative-share.v1",
+        ),
+        evidence=(
+            "observation_record",
+            "relation_record",
+            "evidence_record",
+            "source_record",
+        ),
+        qualifiers=QueryQualifiersV2(),
+    )
+
+    outcome = COMPILER.compile_task(
+        plan, plan.tasks[0].task_id, readiness_facts=verified_public_fund_facts()
+    )
+
+    assert outcome.request is not None, outcome.rejection
+    values = {decode_contract_value(item.value) for item in outcome.request.parameters}
+    assert {
+        "observation-a",
+        "evidence-observation-a",
+        "source-observation-a",
+    } <= values
 
 
 def test_restore_rerenders_the_closed_manifest_and_rejects_semantically_unowned_sql() -> None:

@@ -234,25 +234,76 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
     assert outcome.request is not None
     mapped = map_sql_rows(
         outcome.request,
-        [{"aggregate_value": 2, "product_ids": ["product-a", "product-b"]}],
+        [
+            {
+                "aggregate_value": 2,
+                "product_ids": ["product-a", "product-b"],
+                "observation_ids": ["observation-a", "observation-b"],
+                "evidence_ids": ["evidence-a", "evidence-b"],
+                "source_ids": ["source-a"],
+            }
+        ],
     )
     assert mapped.result_rows[0].fields[0].value.value == 2
+    assert mapped.evidence_refs == (
+        "evidence:evidence-a",
+        "evidence:evidence-b",
+        "observation:observation-a",
+        "observation:observation-b",
+        "source:source-a",
+    )
     with pytest.raises(SqlResultMappingError, match="RETURNED_COUNT_CARDINALITY_MISMATCH"):
         map_sql_rows(
             outcome.request,
-            [{"aggregate_value": 1, "product_ids": ["product-a", "product-b"]}],
+            [
+                {
+                    "aggregate_value": 1,
+                    "product_ids": ["product-a", "product-b"],
+                    "observation_ids": ["observation-a", "observation-b"],
+                    "evidence_ids": ["evidence-a", "evidence-b"],
+                    "source_ids": ["source-a"],
+                }
+            ],
         )
 
     empty = map_sql_rows(
         outcome.request,
-        [{"aggregate_value": 0, "product_ids": None}],
+        [
+            {
+                "aggregate_value": 0,
+                "product_ids": None,
+                "observation_ids": None,
+                "evidence_ids": None,
+                "source_ids": None,
+            }
+        ],
     )
     assert empty.result_rows[0].fields[0].value.value == 0
     assert empty.result_rows[0].entity_ids == ()
     with pytest.raises(SqlResultMappingError, match="RETURNED_PRODUCT_IDS_MALFORMED"):
         map_sql_rows(
             outcome.request,
-            [{"aggregate_value": 1, "product_ids": None}],
+            [
+                {
+                    "aggregate_value": 1,
+                    "product_ids": None,
+                    "observation_ids": ["observation-a"],
+                    "evidence_ids": ["evidence-a"],
+                    "source_ids": ["source-a"],
+                }
+            ],
+        )
+    with pytest.raises(SqlResultMappingError, match="RETURNED_COLUMN_SET_MISMATCH"):
+        map_sql_rows(
+            outcome.request,
+            [
+                {
+                    "aggregate_value": 1,
+                    "product_ids": ["product-a"],
+                    "observation_ids": ["observation-a"],
+                    "evidence_ids": ["evidence-a"],
+                }
+            ],
         )
 
     row = _lookup_row()

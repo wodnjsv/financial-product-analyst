@@ -343,7 +343,11 @@ async def test_aggregates_grouping_date_unit_and_split_families(semantic_sql_run
         policy_ids=("source-product.v1", "no-dedup.v1"),
         qualifiers=QueryQualifiersV2(),
     )
-    assert (await _execute(semantic_sql_runner, count_plan)).result_rows[0].fields[0].value.value == 6
+    count_result = await _execute(semantic_sql_runner, count_plan)
+    assert count_result.result_rows[0].fields[0].value.value == 6
+    assert any(item.startswith("observation:") for item in count_result.evidence_refs)
+    assert any(item.startswith("evidence:") for item in count_result.evidence_refs)
+    assert "source:source-one" in count_result.evidence_refs
 
     grouped = make_plan(
         LogicalAggregateOperationV2(
