@@ -35,7 +35,12 @@ from financial_agent.planning.physical_bindings import (
     TRUSTED_PUBLIC_FUND_MANIFEST_PINS,
 )
 
-from .contracts import SqlParameter, SqlValueKind
+from .contracts import (
+    DeferredSqlParameter,
+    SqlParameter,
+    SqlParameterInput,
+    SqlValueKind,
+)
 
 
 # Enum values are registry data; columns are imported code objects. Registry strings
@@ -57,7 +62,7 @@ class SqlCompileRejection(Exception):
 
 @dataclass(slots=True)
 class ParameterBuilder:
-    parameters: list[SqlParameter] = field(default_factory=list)
+    parameters: list[SqlParameterInput] = field(default_factory=list)
     _counter: int = 0
 
     def bind(self, value, *, prefix: str = "value") -> sa.BindParameter:
@@ -72,6 +77,27 @@ class ParameterBuilder:
             )
         )
         return sa.bindparam(name)
+
+    def bind_prior_result(
+        self,
+        binding_id: str,
+        entity_ids: tuple[str, ...] | None,
+    ) -> sa.BindParameter:
+        name = f"prior_result_{self._counter}"
+        self._counter += 1
+        if entity_ids is None:
+            self.parameters.append(
+                DeferredSqlParameter(name=name, binding_id=binding_id)
+            )
+        else:
+            self.parameters.append(
+                SqlParameter(
+                    name=name,
+                    value=encode_contract_value(entity_ids),
+                    value_kind=SqlValueKind.TUPLE,
+                )
+            )
+        return sa.bindparam(name, type_=sa.ARRAY(sa.String()))
 
 
 def physical_value_column(binding: PhysicalBindingDefinition):

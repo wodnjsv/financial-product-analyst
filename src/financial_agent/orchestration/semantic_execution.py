@@ -5,17 +5,18 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, TypeAdapter, model_validator
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex, UtcDateTime
 from financial_agent.contracts.canonical import canonical_sha256
-from financial_agent.contracts.enums import Capability, ToolStatus
+from financial_agent.contracts.enums import Capability, Cardinality, ToolStatus
 from financial_agent.contracts.execution import (
     BindingTypeInput,
     BindingValue,
     ExecutionTask,
     ToolResult,
 )
+from financial_agent.contracts.values import decode_contract_value
 from financial_agent.planning.logical_query import LogicalQueryPlanV2, LogicalQueryTaskV2
 from financial_agent.planning.primitive_contracts import LogicalExecutionRoute
 from financial_agent.sql.contracts import (
@@ -23,13 +24,14 @@ from financial_agent.sql.contracts import (
     validate_compiled_request_ownership,
 )
 
+from .semantic_derivation import (
+    active_planning_registry,
+    derive_semantic_execution_graph,
+    semantic_binding_value_type,
+    semantic_execution_task_id,
+)
 
-def semantic_execution_task_id(logical_task_id: str) -> str:
-    return f"semantic-execution:{logical_task_id}"
-
-
-def semantic_binding_value_type(cardinality) -> str:
-    return f"semantic-result:{cardinality.value}"
+_IDENTIFIER_ADAPTER = TypeAdapter(Identifier)
 
 
 class SemanticExecutionInputBase(ContractModel):
@@ -56,6 +58,12 @@ class SemanticExecutionInputBase(ContractModel):
         ):
             raise ValueError("SEMANTIC_EXECUTION_PLAN_PIN_MISMATCH")
         logical_task = self.logical_task()
+        authoritative_graph = derive_semantic_execution_graph(
+            plan, active_planning_registry()
+        )
+        authoritative_tasks = {item.task_id: item for item in authoritative_graph.tasks}
+        if authoritative_tasks.get(self.task.task_id) != self.task:
+            raise ValueError("SEMANTIC_EXECUTION_TASK_OWNERSHIP_MISMATCH")
         expected_dependencies = tuple(
             semantic_execution_task_id(item.upstream_task_id)
             for item in plan.dependencies
@@ -113,6 +121,12 @@ class SemanticExecutionInputBase(ContractModel):
             upstream = logical_by_execution_id.get(result.task_id)
             if upstream is None:
                 raise ValueError("SEMANTIC_DEPENDENCY_RESULT_MISMATCH")
+            upstream_task = authoritative_tasks[result.task_id]
+            if (
+                result.producer != f"executor:{upstream_task.capability.value}"
+                or result.result_type is not upstream_task.expected_output_type
+            ):
+                raise ValueError("SEMANTIC_DEPENDENCY_RESULT_INVALID")
             expected_result_bindings = {
                 item.binding_id: semantic_binding_value_type(item.cardinality)
                 for item in upstream.produced_result_bindings
@@ -122,6 +136,15 @@ class SemanticExecutionInputBase(ContractModel):
             }
             if expected_result_bindings != actual_result_bindings:
                 raise ValueError("SEMANTIC_DEPENDENCY_BINDING_MISMATCH")
+            cardinality_by_binding = {
+                item.binding_id: item.cardinality
+                for item in upstream.produced_result_bindings
+            }
+            for binding in result.binding_values:
+                _validate_identifier_binding(
+                    binding.value,
+                    cardinality_by_binding[binding.binding_name],
+                )
         values = {item.binding_name: item for item in self.binding_values}
         value_names = tuple(item.binding_name for item in self.binding_values)
         if (
@@ -213,6 +236,25 @@ SemanticExecutorRequest = Annotated[
     SemanticSqlTaskExecutionInput | SemanticToolTaskExecutionInput,
     Field(discriminator="request_kind"),
 ]
+
+
+def _validate_identifier_binding(value, cardinality: Cardinality) -> None:
+    decoded = decode_contract_value(value)
+    if cardinality is Cardinality.MANY:
+        if not isinstance(decoded, tuple) or not decoded:
+            raise ValueError("SEMANTIC_DEPENDENCY_BINDING_MISMATCH")
+        identifiers = decoded
+    else:
+        if not isinstance(decoded, str):
+            raise ValueError("SEMANTIC_DEPENDENCY_BINDING_MISMATCH")
+        identifiers = (decoded,)
+    try:
+        for identifier in identifiers:
+            if not isinstance(identifier, str):
+                raise ValueError
+            _IDENTIFIER_ADAPTER.validate_python(identifier)
+    except ValueError as error:
+        raise ValueError("SEMANTIC_DEPENDENCY_BINDING_MISMATCH") from error
 
 
 __all__ = [

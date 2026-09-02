@@ -5,13 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import MappingProxyType
 import sqlalchemy as sa
-from pydantic import ConfigDict, ValidationError, model_validator
+from pydantic import ConfigDict, TypeAdapter, ValidationError, model_validator
 from sqlalchemy.dialects import postgresql
 
 from financial_agent.contracts.base import ContractModel, Identifier
-from financial_agent.contracts.enums import ProductFamily
+from financial_agent.contracts.enums import Capability, Cardinality, ProductFamily, ToolStatus
+from financial_agent.contracts.execution import BindingValue, ToolResult
+from financial_agent.contracts.values import decode_contract_value
 from financial_agent.db.schema.catalog import entity, product
-from financial_agent.contracts.canonical import canonical_json_bytes
+from financial_agent.contracts.canonical import canonical_json_bytes, canonical_sha256
 from financial_agent.db.schema.evidence import (
     evidence_observation_origin,
     evidence_relation_origin,
@@ -51,6 +53,7 @@ from .contracts import (
     PhysicalSqlRenderManifest,
     PhysicalLoweringKind,
     PhysicalLoweringRecord,
+    DeferredSqlParameter,
     SqlParameter,
     compiled_sql_request_id,
     identifier_occurrences,
@@ -102,12 +105,13 @@ class _Context:
     observation_aliases: dict[str, sa.Alias]
     evidence_aliases: dict[str, sa.Alias]
     count_lineage_metric_definition_refs: tuple[str, ...]
+    prior_result_entity_ids: tuple[str, ...] | None
 
 
 @dataclass(frozen=True, slots=True)
 class RenderedPhysicalSql:
     statement: str
-    parameters: tuple[SqlParameter, ...]
+    parameters: tuple[SqlParameter | DeferredSqlParameter, ...]
     lowering_records: tuple[PhysicalLoweringRecord, ...]
     evidence_projection_ids: tuple[EvidenceLocator, ...]
     population_manifest_id: str | None
@@ -182,6 +186,7 @@ class SemanticSqlCompiler:
                 count_lineage_metric_definition_refs=_count_lineage_metric_definition_refs(
                     task, self._bindings, readiness_facts
                 ),
+                prior_result_entity_ids=None,
             )
             rendered = _render_context(context)
             manifest_facts = (
@@ -220,6 +225,7 @@ class SemanticSqlCompiler:
                 count_lineage_metric_definition_refs=(
                     rendered.count_lineage_metric_definition_refs
                 ),
+                prior_result_entity_ids=None,
             )
             manifest_draft = PhysicalSqlRenderManifest.model_construct(
                 manifest_id="pending", **manifest_kwargs
@@ -297,7 +303,11 @@ class SemanticSqlCompiler:
         if outcome.request is None:
             code = outcome.rejection.code if outcome.rejection is not None else "UNKNOWN"
             raise ValueError(f"COMPILED_SQL_ACTIVE_RECOMPILATION_REJECTED:{code}")
-        if canonical_json_bytes(outcome.request) != canonical_json_bytes(request):
+        expected = outcome.request
+        entity_ids = request.render_manifest.prior_result_entity_ids
+        if entity_ids is not None:
+            expected = _bind_compiled_request(expected, entity_ids)
+        if canonical_json_bytes(expected) != canonical_json_bytes(request):
             raise ValueError("COMPILED_SQL_ACTIVE_RECOMPILATION_MISMATCH")
 
     def _validate_ownership(
@@ -360,6 +370,159 @@ class SemanticSqlCompiler:
             raise SqlCompileRejection("DATASET_PROVENANCE_MISMATCH")
 
 
+class SemanticSqlRuntimeBinder:
+    """Resolve compiler-declared prior-result slots without altering SQL text."""
+
+    def __init__(self, compiler: SemanticSqlCompiler) -> None:
+        self._compiler = compiler
+
+    def bind(
+        self,
+        request: CompiledSqlRequest,
+        logical_plan: LogicalQueryPlanV2,
+        binding_values: tuple[BindingValue, ...],
+        *,
+        dependency_results: tuple[ToolResult, ...],
+    ) -> CompiledSqlRequest:
+        validate_compiled_request_ownership(request, logical_plan)
+        self._compiler.validate_request_for_execution(
+            request,
+            logical_plan,
+            readiness_facts=request.render_manifest.readiness_facts,
+        )
+        task = next(
+            item for item in logical_plan.tasks if item.task_id == request.task_id
+        )
+        if task.scope.prior_result_binding is None:
+            if binding_values:
+                raise ValueError("PRIOR_RESULT_BINDING_UNDECLARED")
+            return request
+        if request.render_manifest.prior_result_entity_ids is not None:
+            raise ValueError("PRIOR_RESULT_REQUEST_ALREADY_BOUND")
+        if len(task.prior_result_inputs) != 1 or len(binding_values) != 1:
+            raise ValueError("PRIOR_RESULT_BINDING_INVALID")
+        declaration = task.prior_result_inputs[0]
+        binding = binding_values[0]
+        if (
+            binding.binding_name != declaration.binding_id
+            or binding.value_type
+            != f"semantic-result:{declaration.cardinality.value}"
+        ):
+            raise ValueError("PRIOR_RESULT_BINDING_INVALID")
+        producer_task_id = f"semantic-execution:{declaration.producer_task_id}"
+        producer_task = next(
+            item
+            for item in logical_plan.tasks
+            if item.task_id == declaration.producer_task_id
+        )
+        producer_capability = (
+            Capability.RDB_LOOKUP
+            if all(
+                step.execution_route.value == "semantic_sql"
+                for step in producer_task.execution_steps
+            )
+            else producer_task.execution_steps[-1].capability
+        )
+        expected_result_type = self._compiler._planning.primitives_by_id[
+            producer_task.execution_steps[-1].primitive_id
+        ].result_type
+        if len(dependency_results) != 1:
+            raise ValueError("PRIOR_RESULT_DEPENDENCY_INVALID")
+        dependency = dependency_results[0]
+        if (
+            dependency.task_id != producer_task_id
+            or dependency.producer != f"executor:{producer_capability.value}"
+            or dependency.result_type is not expected_result_type
+            or dependency.status is not ToolStatus.SUCCESS
+            or dependency.request_key != logical_plan.request_key
+            or dependency.run_id != logical_plan.run_id
+            or dependency.dataset_version != logical_plan.dataset_version
+            or dependency.cutoff_date != logical_plan.cutoff_date
+            or dependency.created_at != logical_plan.created_at
+            or dependency.result_hash
+            != canonical_sha256(dependency, exclude_fields=("result_hash",))
+        ):
+            raise ValueError("PRIOR_RESULT_DEPENDENCY_INVALID")
+        origins = tuple(
+            value
+            for result in dependency_results
+            if result.task_id == producer_task_id
+            for value in result.binding_values
+            if value.binding_name == declaration.binding_id
+        )
+        if origins != (binding,):
+            raise ValueError("PRIOR_RESULT_BINDING_ORIGIN_MISMATCH")
+        entity_ids = _canonical_prior_result_ids(binding, declaration.cardinality)
+        bound = _bind_compiled_request(request, entity_ids)
+        self._compiler.validate_request_for_execution(
+            bound,
+            logical_plan,
+            readiness_facts=bound.render_manifest.readiness_facts,
+        )
+        return bound
+
+
+_IDENTIFIER_ADAPTER = TypeAdapter(Identifier)
+
+
+def _canonical_prior_result_ids(
+    binding: BindingValue,
+    cardinality: Cardinality,
+) -> tuple[str, ...]:
+    decoded = decode_contract_value(binding.value)
+    if cardinality is Cardinality.MANY:
+        if not isinstance(decoded, tuple) or not decoded:
+            raise ValueError("PRIOR_RESULT_BINDING_INVALID")
+        candidates = decoded
+    else:
+        if not isinstance(decoded, str):
+            raise ValueError("PRIOR_RESULT_BINDING_INVALID")
+        candidates = (decoded,)
+    try:
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                raise ValueError
+            _IDENTIFIER_ADAPTER.validate_python(candidate)
+    except ValueError as error:
+        raise ValueError("PRIOR_RESULT_BINDING_INVALID") from error
+    return tuple(sorted(set(candidates)))
+
+
+def _bind_compiled_request(
+    request: CompiledSqlRequest,
+    entity_ids: tuple[str, ...],
+) -> CompiledSqlRequest:
+    manifest_draft = request.render_manifest.model_copy(
+        update={
+            "manifest_id": "pending",
+            "prior_result_entity_ids": entity_ids,
+        }
+    )
+    manifest = PhysicalSqlRenderManifest.model_validate(
+        manifest_draft.model_copy(
+            update={
+                "manifest_id": physical_sql_render_manifest_id(manifest_draft)
+            }
+        ).model_dump()
+    )
+    rendered = render_physical_sql_manifest(manifest)
+    draft = request.model_copy(
+        update={
+            "compiled_request_id": "pending",
+            "render_manifest": manifest,
+            "statement": rendered.statement,
+            "parameters": rendered.parameters,
+            "lowering_records": rendered.lowering_records,
+            "evidence_projection_ids": rendered.evidence_projection_ids,
+        }
+    )
+    return CompiledSqlRequest.model_validate(
+        draft.model_copy(
+            update={"compiled_request_id": compiled_sql_request_id(draft)}
+        ).model_dump()
+    )
+
+
 def render_physical_sql_manifest(
     manifest: PhysicalSqlRenderManifest,
 ) -> RenderedPhysicalSql:
@@ -392,6 +555,7 @@ def render_physical_sql_manifest(
         count_lineage_metric_definition_refs=(
             manifest.count_lineage_metric_definition_refs
         ),
+        prior_result_entity_ids=manifest.prior_result_entity_ids,
     )
     try:
         return _render_context(context)
@@ -453,8 +617,6 @@ def _compile_statement(context: _Context):
     task = context.task
     if len(task.scope.product_family_ids) != 1:
         raise SqlCompileRejection("SQL_SINGLE_FAMILY_SCOPE_REQUIRED")
-    if task.scope.prior_result_binding is not None:
-        raise SqlCompileRejection("PRIOR_RESULT_SQL_INPUT_NOT_BOUND")
     family = task.scope.product_family_ids[0]
     base = product.join(
         entity,
@@ -469,6 +631,12 @@ def _compile_statement(context: _Context):
         product.c.dataset_version == dataset,
         product.c.product_family == family_param,
     ]
+    if task.scope.prior_result_binding is not None:
+        prior_result = context.params.bind_prior_result(
+            task.scope.prior_result_binding,
+            context.prior_result_entity_ids,
+        )
+        where.append(product.c.entity_id == sa.any_(prior_result))
     _record(context, "scope.product_family_ids", "catalog-product-family.v1", PhysicalLoweringKind.SCOPE)
     if task.scope.entity_refs:
         where.append(

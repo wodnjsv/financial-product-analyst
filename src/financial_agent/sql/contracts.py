@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from enum import Enum
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 
@@ -106,6 +106,17 @@ class SqlParameter(_StrictModel):
         return self
 
 
+class DeferredSqlParameter(_StrictModel):
+    """Compiler-owned slot that can only be resolved by the runtime binder."""
+
+    name: Identifier
+    binding_id: Identifier
+    value_kind: Literal[SqlValueKind.TUPLE] = SqlValueKind.TUPLE
+
+
+SqlParameterInput: TypeAlias = SqlParameter | DeferredSqlParameter
+
+
 class PhysicalLoweringRecord(_StrictModel):
     lowering_id: Identifier
     semantic_path: Identifier
@@ -164,6 +175,7 @@ class PhysicalSqlRenderManifest(_StrictModel):
     lowering_record_ids: tuple[Identifier, ...]
     evidence_projection_ids: tuple[EvidenceLocator, ...] = Field(strict=False)
     count_lineage_metric_definition_refs: tuple[Identifier, ...] = ()
+    prior_result_entity_ids: tuple[Identifier, ...] | None = None
 
     @model_validator(mode="after")
     def validate_manifest(self):
@@ -197,6 +209,15 @@ class PhysicalSqlRenderManifest(_StrictModel):
             self.count_lineage_metric_definition_refs,
             label="COUNT lineage metric definitions",
         )
+        has_prior_result = self.logical_task.scope.prior_result_binding is not None
+        if not has_prior_result and self.prior_result_entity_ids is not None:
+            raise ValueError("SQL_MANIFEST_PRIOR_RESULT_MISMATCH")
+        if self.prior_result_entity_ids is not None and (
+            not self.prior_result_entity_ids
+            or self.prior_result_entity_ids
+            != tuple(sorted(set(self.prior_result_entity_ids)))
+        ):
+            raise ValueError("SQL_MANIFEST_PRIOR_RESULT_MISMATCH")
         if self.manifest_id != physical_sql_render_manifest_id(self):
             raise ValueError("SQL_RENDER_MANIFEST_ID_MISMATCH")
         return self
@@ -210,7 +231,7 @@ class CompiledSqlRequest(_StrictModel):
     render_manifest: PhysicalSqlRenderManifest
     execution_ownership_required: Literal[True] = True
     statement: str = Field(min_length=1)
-    parameters: tuple[SqlParameter, ...]
+    parameters: tuple[SqlParameterInput, ...]
     lowering_records: tuple[PhysicalLoweringRecord, ...] = Field(min_length=1)
     applied_policy_ids: tuple[Identifier, ...]
     evidence_projection_ids: tuple[EvidenceLocator, ...] = Field(strict=False)

@@ -16,6 +16,7 @@ from financial_agent.orchestration.executors import (
     SqlCapabilityExecutor,
     TaskExecutionInput,
     build_tool_result,
+    expected_result_hash,
 )
 from financial_agent.orchestration.semantic_execution import (
     SemanticSqlTaskExecutionInput,
@@ -34,6 +35,7 @@ from .test_semantic_graph import (
     sql_dependency_compilation,
     sql_request,
     tool_compilation,
+    tool_dependency_compilation,
 )
 
 
@@ -287,3 +289,133 @@ async def test_sql_capability_executor_accepts_only_semantic_sql_and_calls_runne
     assert decode_contract_value(producer_result.binding_values[0].value) == (
         "product-1",
     )
+
+
+def test_semantic_dependency_rejects_forged_upstream_contract_and_payload_shape() -> None:
+    compilation = tool_dependency_compilation()
+    bundle = SemanticExecutionGraphCompiler(
+        load_planning_registry(PROJECT_ROOT),
+        compiled_request_provider=lambda *_: None,
+    ).compile(compilation)
+    producer, consumer = bundle.graph.tasks
+    binding_type = BindingTypeInput(
+        binding_name="result-set-1", value_type="semantic-result:many"
+    )
+    producer_request = SemanticToolTaskExecutionInput(
+        request_key=bundle.graph.request_key,
+        run_id=bundle.graph.run_id,
+        dataset_version=bundle.graph.dataset_version,
+        cutoff_date=bundle.graph.cutoff_date,
+        created_at=bundle.graph.created_at,
+        task=producer,
+        logical_query_plan=bundle.logical_query_plan,
+        dependency_results=(),
+        binding_values=(),
+        binding_types=(binding_type,),
+    )
+    produced = BindingValue(
+        binding_name="result-set-1",
+        value_type="semantic-result:many",
+        value=encode_contract_value(("product-1",)),
+    )
+    producer_result = build_tool_result(
+        producer_request,
+        status=ToolStatus.SUCCESS,
+        binding_values=(produced,),
+        latency_ms=1,
+    )
+
+    def consumer_payload(result, value=produced):
+        return dict(
+            request_key=bundle.graph.request_key,
+            run_id=bundle.graph.run_id,
+            dataset_version=bundle.graph.dataset_version,
+            cutoff_date=bundle.graph.cutoff_date,
+            created_at=bundle.graph.created_at,
+            task=consumer,
+            logical_query_plan=bundle.logical_query_plan,
+            dependency_results=(result,),
+            binding_values=(value,),
+            binding_types=(binding_type,),
+        )
+
+    wrong_producer = producer_result.model_copy(
+        update={"producer": "executor:graph_traversal"}
+    )
+    wrong_producer = wrong_producer.model_copy(
+        update={"result_hash": expected_result_hash(wrong_producer)}
+    )
+    with pytest.raises(ValueError, match="SEMANTIC_DEPENDENCY_RESULT_INVALID"):
+        SemanticToolTaskExecutionInput(**consumer_payload(wrong_producer))
+
+    wrong_result_type = producer_result.model_copy(
+        update={"result_type": ResultType.SCALAR}
+    )
+    wrong_result_type = wrong_result_type.model_copy(
+        update={"result_hash": expected_result_hash(wrong_result_type)}
+    )
+    with pytest.raises(ValueError, match="SEMANTIC_DEPENDENCY_RESULT_INVALID"):
+        SemanticToolTaskExecutionInput(**consumer_payload(wrong_result_type))
+
+    scalar_many = produced.model_copy(
+        update={"value": encode_contract_value("product-1")}
+    )
+    malformed_result = build_tool_result(
+        producer_request,
+        status=ToolStatus.SUCCESS,
+        binding_values=(scalar_many,),
+        latency_ms=1,
+    )
+    with pytest.raises(ValueError, match="SEMANTIC_DEPENDENCY_BINDING_MISMATCH"):
+        SemanticToolTaskExecutionInput(
+            **consumer_payload(malformed_result, scalar_many)
+        )
+
+
+def test_semantic_scalar_dependency_rejects_tuple_payload() -> None:
+    compilation = tool_dependency_compilation("one")
+    bundle = SemanticExecutionGraphCompiler(
+        load_planning_registry(PROJECT_ROOT),
+        compiled_request_provider=lambda *_: None,
+    ).compile(compilation)
+    producer, consumer = bundle.graph.tasks
+    binding_type = BindingTypeInput(
+        binding_name="result-set-1", value_type="semantic-result:one"
+    )
+    producer_request = SemanticToolTaskExecutionInput(
+        request_key=bundle.graph.request_key,
+        run_id=bundle.graph.run_id,
+        dataset_version=bundle.graph.dataset_version,
+        cutoff_date=bundle.graph.cutoff_date,
+        created_at=bundle.graph.created_at,
+        task=producer,
+        logical_query_plan=bundle.logical_query_plan,
+        dependency_results=(),
+        binding_values=(),
+        binding_types=(binding_type,),
+    )
+    malformed = BindingValue(
+        binding_name="result-set-1",
+        value_type="semantic-result:one",
+        value=encode_contract_value(("product-1",)),
+    )
+    result = build_tool_result(
+        producer_request,
+        status=ToolStatus.SUCCESS,
+        binding_values=(malformed,),
+        latency_ms=1,
+    )
+
+    with pytest.raises(ValueError, match="SEMANTIC_DEPENDENCY_BINDING_MISMATCH"):
+        SemanticToolTaskExecutionInput(
+            request_key=bundle.graph.request_key,
+            run_id=bundle.graph.run_id,
+            dataset_version=bundle.graph.dataset_version,
+            cutoff_date=bundle.graph.cutoff_date,
+            created_at=bundle.graph.created_at,
+            task=consumer,
+            logical_query_plan=bundle.logical_query_plan,
+            dependency_results=(result,),
+            binding_values=(malformed,),
+            binding_types=(binding_type,),
+        )

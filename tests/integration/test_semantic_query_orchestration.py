@@ -8,6 +8,7 @@ import pytest
 
 from financial_agent.contracts.enums import Capability, ExecutionOutcome, ToolStatus
 from financial_agent.contracts.execution import ToolResult
+from financial_agent.contracts.values import decode_contract_value
 from financial_agent.orchestration.executors import (
     CapabilityExecutor,
     ExecutorRegistry,
@@ -20,10 +21,14 @@ from financial_agent.orchestration.semantic_graph import SemanticExecutionGraphC
 from financial_agent.orchestration.service import Orchestrator
 from financial_agent.planning.registry import load_planning_registry
 from financial_agent.sql.result_mapping import MappedSqlResult
+from financial_agent.sql.compiler import SemanticSqlRuntimeBinder
+from financial_agent.sql.contracts import DeferredSqlParameter, SqlParameter
+from financial_agent.sql.executor import ReadOnlySqlRunner
 
 from tests.orchestration.test_semantic_graph import (
     sql_compilation,
     sql_request,
+    sql_dependency_compilation,
     tool_compilation,
     tool_dependency_compilation,
 )
@@ -100,6 +105,82 @@ async def test_semantic_sql_runs_through_the_existing_orchestrator_scheduler() -
     assert result.execution_outcome is ExecutionOutcome.COMPLETED
     assert len(runner.calls) == 1
     assert result.tool_results[0].status is ToolStatus.EMPTY
+
+
+@pytest.mark.asyncio
+async def test_sql_producer_result_is_bound_into_dependent_sql_request() -> None:
+    from financial_agent.contracts.execution import ResultRow
+    from tests.orchestration.test_semantic_graph import SQL_COMPILER
+    from tests.sql.test_executor import FakeEngine
+
+    compilation = sql_dependency_compilation()
+    plan = compilation.logical_query_plan
+    assert plan is not None
+    requests = {}
+    for task in plan.tasks:
+        outcome = SQL_COMPILER.compile_task(plan, task.task_id)
+        assert outcome.request is not None
+        requests[task.task_id] = outcome.request
+    assert any(
+        isinstance(item, DeferredSqlParameter)
+        for item in requests[plan.tasks[1].task_id].parameters
+    )
+
+    class DependencyRunner:
+        def __init__(self, consumer_runner):
+            self.calls = []
+            self.consumer_runner = consumer_runner
+
+        async def execute(self, request, logical_plan, *, readiness_facts=None):
+            self.calls.append(request)
+            if len(self.calls) == 1:
+                return MappedSqlResult(
+                    result_rows=(
+                        ResultRow(
+                            row_id="row-2",
+                            entity_ids=("product-2",),
+                            fields=(),
+                        ),
+                        ResultRow(
+                            row_id="row-1",
+                            entity_ids=("product-1",),
+                            fields=(),
+                        ),
+                    ),
+                    evidence_refs=("evidence-1",),
+                    exclusions=(),
+                    warnings=(),
+                )
+            return await self.consumer_runner.execute(
+                request,
+                logical_plan,
+                readiness_facts=readiness_facts,
+            )
+
+    engine = FakeEngine([])
+    runner = DependencyRunner(ReadOnlySqlRunner(engine, SQL_COMPILER))
+    executor = SqlCapabilityExecutor(
+        runner,
+        runtime_binder=SemanticSqlRuntimeBinder(SQL_COMPILER),
+    )
+    result = await orchestrator(
+        ExecutorRegistry(((Capability.RDB_LOOKUP, executor),)),
+        lambda _, task: requests[task.task_id],
+    ).execute_semantic(compilation)
+
+    assert result.execution_outcome is ExecutionOutcome.COMPLETED
+    assert len(runner.calls) == 2
+    consumer_request = runner.calls[1]
+    assert all(isinstance(item, SqlParameter) for item in consumer_request.parameters)
+    bound_values = [
+        decode_contract_value(item.value)
+        for item in consumer_request.parameters
+        if decode_contract_value(item.value) == ("product-1", "product-2")
+    ]
+    assert bound_values == [("product-1", "product-2")]
+    assert engine.connect_count == 1
+    business_parameters = engine.connection.executions[1][1]
+    assert ("product-1", "product-2") in business_parameters.values()
 
 
 @pytest.mark.asyncio

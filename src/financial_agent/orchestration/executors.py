@@ -204,8 +204,9 @@ def _result_payload(
 class SqlCapabilityExecutor(CapabilityExecutor):
     """The only adapter authorized to cross from orchestration into SQL."""
 
-    def __init__(self, runner) -> None:
+    def __init__(self, runner, *, runtime_binder=None) -> None:
         self._runner = runner
+        self._runtime_binder = runtime_binder
 
     async def execute(self, request: ExecutorRequest) -> ToolResult:
         if not isinstance(request, SemanticSqlTaskExecutionInput):
@@ -213,19 +214,33 @@ class SqlCapabilityExecutor(CapabilityExecutor):
         request = SemanticSqlTaskExecutionInput.model_validate_json(
             canonical_json_bytes(request)
         )
+        if request.binding_values and self._runtime_binder is None:
+            raise ValueError("SEMANTIC_SQL_RUNTIME_BINDER_REQUIRED")
+        compiled_request = (
+            self._runtime_binder.bind(
+                request.compiled_request,
+                request.logical_query_plan,
+                request.binding_values,
+                dependency_results=request.dependency_results,
+            )
+            if self._runtime_binder is not None
+            else request.compiled_request
+        )
         mapped = await self._runner.execute(
-            request.compiled_request,
+            compiled_request,
             request.logical_query_plan,
-            readiness_facts=request.compiled_request.render_manifest.readiness_facts,
+            readiness_facts=compiled_request.render_manifest.readiness_facts,
         )
         status = ToolStatus.SUCCESS if mapped.result_rows else ToolStatus.EMPTY
         binding_values: tuple[BindingValue, ...] = ()
         if status is ToolStatus.SUCCESS and request.task.produces_bindings:
             entity_ids = tuple(
-                dict.fromkeys(
-                    entity_id
-                    for row in mapped.result_rows
-                    for entity_id in row.entity_ids
+                sorted(
+                    set(
+                        entity_id
+                        for row in mapped.result_rows
+                        for entity_id in row.entity_ids
+                    )
                 )
             )
             values = []

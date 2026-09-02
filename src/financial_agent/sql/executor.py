@@ -13,7 +13,7 @@ from financial_agent.planning.logical_query import LogicalQueryPlanV2
 from financial_agent.planning.physical_bindings import PhysicalReadinessFacts
 
 from .compiler import SemanticSqlCompiler
-from .contracts import CompiledSqlRequest
+from .contracts import CompiledSqlRequest, DeferredSqlParameter
 from .result_mapping import MAX_RETURNED_ROWS, MappedSqlResult, map_sql_rows
 
 
@@ -67,6 +67,8 @@ class ReadOnlySqlRunner:
             self._default_timeout_ms if timeout_ms is None else timeout_ms
         )
         _assert_read_only(request.statement)
+        if any(isinstance(item, DeferredSqlParameter) for item in request.parameters):
+            raise SqlExecutionError("SQL_DEFERRED_PARAMETER_UNBOUND")
         request_before = canonical_json_bytes(request)
         try:
             self._compiler.validate_request_for_execution(

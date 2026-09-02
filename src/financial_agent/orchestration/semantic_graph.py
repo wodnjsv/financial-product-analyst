@@ -7,18 +7,20 @@ from collections.abc import Callable
 from pydantic import model_validator
 
 from financial_agent.contracts.base import ContractModel, Identifier
-from financial_agent.contracts.canonical import canonical_json_bytes, canonical_sha256
+from financial_agent.contracts.canonical import canonical_json_bytes
 from financial_agent.contracts.enums import Capability
-from financial_agent.contracts.execution import ExecutionGraph, ExecutionTask
-from financial_agent.contracts.query import BindingSpec
+from financial_agent.contracts.execution import ExecutionGraph
 from financial_agent.planning.logical_query import LogicalQueryPlanV2, LogicalQueryTaskV2
 from financial_agent.planning.primitive_contracts import LogicalExecutionRoute
 from financial_agent.planning.registry import PlanningRegistry
 from financial_agent.planning.semantic_compiler import SemanticQueryPlanCompilation
 from financial_agent.sql.contracts import CompiledSqlRequest, validate_compiled_request_ownership
 
-from .graph import _critical_path
-from .semantic_execution import semantic_binding_value_type, semantic_execution_task_id
+from .semantic_derivation import (
+    active_planning_registry,
+    derive_semantic_execution_graph,
+    semantic_execution_task_id,
+)
 
 
 CompiledRequestProvider = Callable[
@@ -42,6 +44,11 @@ class SemanticExecutionGraphCompilation(ContractModel):
 
     @model_validator(mode="after")
     def validate_compilation(self):
+        expected_graph = derive_semantic_execution_graph(
+            self.logical_query_plan, active_planning_registry()
+        )
+        if canonical_json_bytes(self.graph) != canonical_json_bytes(expected_graph):
+            raise ValueError("SEMANTIC_GRAPH_DERIVATION_MISMATCH")
         task_ids = tuple(item.execution_task_id for item in self.compiled_requests)
         if len(task_ids) != len(set(task_ids)):
             raise ValueError("SEMANTIC_COMPILED_REQUEST_DUPLICATE")
@@ -114,37 +121,15 @@ class SemanticExecutionGraphCompiler:
         ):
             raise SemanticGraphCompilationError("PLANNING_REGISTRY_PIN_MISMATCH")
 
-        dependencies_by_task = {
-            task.task_id: tuple(
-                semantic_execution_task_id(edge.upstream_task_id)
-                for edge in plan.dependencies
-                if edge.downstream_task_id == task.task_id
-            )
-            for task in plan.tasks
-        }
-        tasks: list[ExecutionTask] = []
+        try:
+            graph = derive_semantic_execution_graph(plan, self._registry)
+        except ValueError as error:
+            raise SemanticGraphCompilationError(str(error)) from error
         compiled_requests: list[SemanticCompiledRequest] = []
         for logical_task in plan.tasks:
-            primitives = []
-            for step in logical_task.execution_steps:
-                primitive = self._registry.primitives_by_id.get(step.primitive_id)
-                if (
-                    primitive is None
-                    or step.action_id not in primitive.action_ids
-                    or step.capability is not primitive.capability
-                ):
-                    raise SemanticGraphCompilationError(
-                        "SEMANTIC_PRIMITIVE_REGISTRY_MISMATCH"
-                    )
-                primitives.append(primitive)
             sql_route = all(
                 step.execution_route is LogicalExecutionRoute.SEMANTIC_SQL
                 for step in logical_task.execution_steps
-            )
-            capability = (
-                Capability.RDB_LOOKUP
-                if sql_route
-                else logical_task.execution_steps[-1].capability
             )
             execution_task_id = semantic_execution_task_id(logical_task.task_id)
             if sql_route:
@@ -164,68 +149,6 @@ class SemanticExecutionGraphCompiler:
                         execution_task_id=execution_task_id, request=request
                     )
                 )
-            final_primitive = primitives[-1]
-            tasks.append(
-                ExecutionTask(
-                    task_id=execution_task_id,
-                    subtask_id=logical_task.frame_id,
-                    capability=capability,
-                    operation_id=logical_task.task_id,
-                    binding_inputs=tuple(
-                        item.binding_id for item in logical_task.prior_result_inputs
-                    ),
-                    produces_bindings=tuple(
-                        item.binding_id
-                        for item in logical_task.produced_result_bindings
-                    ),
-                    depends_on=dependencies_by_task[logical_task.task_id],
-                    expected_output_type=final_primitive.result_type,
-                    required_evidence_fields=logical_task.evidence_requirements,
-                    budget_ms=sum(item.budget_ms for item in primitives),
-                )
-            )
-        task_tuple = tuple(tasks)
-        critical_path = _critical_path(task_tuple)
-        total_budget = sum(
-            next(item.budget_ms for item in task_tuple if item.task_id == task_id)
-            for task_id in critical_path
-        )
-        binding_specs = tuple(
-            BindingSpec(
-                binding_name=item.binding_id,
-                value_type=semantic_binding_value_type(item.cardinality),
-                producer_subtask_id=task.frame_id,
-                cardinality=item.cardinality,
-            )
-            for task in plan.tasks
-            for item in task.produced_result_bindings
-        )
-        graph_seed = canonical_sha256(
-            {
-                "compilation_id": compilation.compilation_id,
-                "tasks": [item.model_dump(mode="json") for item in task_tuple],
-                "compiled_request_ids": [
-                    item.request.compiled_request_id for item in compiled_requests
-                ],
-                "registry_hash": self._registry.registry_hash,
-            }
-        )
-        try:
-            graph = ExecutionGraph(
-                request_key=plan.request_key,
-                run_id=plan.run_id,
-                dataset_version=plan.dataset_version,
-                cutoff_date=plan.cutoff_date,
-                producer="semantic-execution-graph-compiler",
-                created_at=plan.created_at,
-                graph_id=f"semantic-graph-{graph_seed[:24]}",
-                tasks=task_tuple,
-                binding_specs=binding_specs,
-                critical_path=critical_path,
-                total_budget_ms=total_budget,
-            )
-        except ValueError as error:
-            raise SemanticGraphCompilationError("SEMANTIC_GRAPH_INVALID") from error
         return SemanticExecutionGraphCompilation(
             graph=graph,
             logical_query_plan=plan,

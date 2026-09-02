@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from financial_agent.contracts.enums import Capability
+from financial_agent.contracts.enums import Capability, ProductFamily, ResultType
+from financial_agent.contracts.execution import NamedValue
+from financial_agent.contracts.values import encode_contract_value
 from financial_agent.intent.query_contract_solver import QueryContractCandidate
 from financial_agent.intent.query_contracts import QueryQualifiersV2
 from financial_agent.orchestration.semantic_execution import (
@@ -84,7 +86,7 @@ def tool_compilation():
     )
 
 
-def tool_dependency_compilation():
+def tool_dependency_compilation(cardinality="many"):
     from financial_agent.contracts.enums import Cardinality
     from financial_agent.planning.semantic_compiler import PriorResultOwnershipV2
 
@@ -107,7 +109,7 @@ def tool_dependency_compilation():
             PriorResultOwnershipV2(
                 binding_id="result-set-1",
                 producer_frame_id="frame-1",
-                cardinality=Cardinality.MANY,
+                cardinality=Cardinality(cardinality),
             ),
         ),
     )
@@ -133,7 +135,18 @@ def sql_dependency_compilation():
     from tests.planning.test_semantic_compiler import _rank
 
     first = qualified(_rank("frame-1"))
-    second = qualified(_rank("frame-2", "result-set-1"))
+    second = _rank("frame-2", "result-set-1")
+    second = QueryContractCandidate(
+        candidate_id=second.candidate_id,
+        contract=second.contract.model_copy(
+            update={
+                "scope": second.contract.scope.model_copy(
+                    update={"product_family_ids": (ProductFamily.DOMESTIC_ETF,)}
+                )
+            }
+        ),
+    )
+    second = qualified(second)
     return _compile(
         (first, second),
         (_assessment(first), _assessment(second)),
@@ -233,12 +246,57 @@ def test_semantic_graph_bundle_rejects_request_against_foreign_plan_instance() -
     )
 
     with pytest.raises(
-        ValueError, match="SEMANTIC_COMPILED_REQUEST_OWNERSHIP_MISMATCH"
+        ValueError,
+        match="SEMANTIC_(?:GRAPH_DERIVATION|COMPILED_REQUEST_OWNERSHIP)_MISMATCH",
     ):
         SemanticExecutionGraphCompilation(
             graph=graph_result.graph,
             logical_query_plan=foreign_plan,
             compiled_requests=graph_result.compiled_requests,
+        )
+
+
+@pytest.mark.parametrize(
+    ("graph_update", "task_update"),
+    (
+        ({"run_id": "foreign-run"}, {}),
+        ({"producer": "foreign-compiler"}, {}),
+        ({"critical_path": ()}, {}),
+        ({}, {"task_id": "semantic-execution:foreign"}),
+        ({}, {"capability": Capability.KEYWORD_SEARCH}),
+        ({}, {"depends_on": ("semantic-execution:foreign",)}),
+        ({}, {"expected_output_type": ResultType.SCALAR}),
+        ({}, {"budget_ms": 1}),
+        (
+            {},
+            {
+                "literal_inputs": (
+                    NamedValue(
+                        name="forged",
+                        value=encode_contract_value("forged"),
+                    ),
+                )
+            },
+        ),
+    ),
+)
+def test_semantic_graph_bundle_rejects_graph_not_derived_from_plan(
+    graph_update, task_update
+) -> None:
+    compilation = sql_compilation()
+    request = sql_request(compilation)
+    bundle = SemanticExecutionGraphCompiler(
+        load_planning_registry(PROJECT_ROOT),
+        compiled_request_provider=lambda *_: request,
+    ).compile(compilation)
+    task = bundle.graph.tasks[0].model_copy(update=task_update)
+    graph = bundle.graph.model_copy(update={**graph_update, "tasks": (task,)})
+
+    with pytest.raises(ValueError):
+        SemanticExecutionGraphCompilation(
+            graph=graph,
+            logical_query_plan=bundle.logical_query_plan,
+            compiled_requests=bundle.compiled_requests,
         )
 
 
@@ -299,7 +357,10 @@ def test_semantic_tool_input_forbids_rdb_and_requires_exact_logical_task() -> No
     assert valid.request_kind == "semantic_tool"
 
     rdb_task = task.model_copy(update={"capability": Capability.RDB_LOOKUP})
-    with pytest.raises(ValueError, match="SEMANTIC_TOOL_RDB_FORBIDDEN"):
+    with pytest.raises(
+        ValueError,
+        match="SEMANTIC_(?:TOOL_RDB_FORBIDDEN|EXECUTION_TASK_OWNERSHIP_MISMATCH)",
+    ):
         SemanticToolTaskExecutionInput.model_validate(
             {**valid.model_dump(), "task": rdb_task.model_dump()}
         )
