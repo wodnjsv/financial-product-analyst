@@ -188,6 +188,12 @@
   설계 결함을 보완하기 위해 action별 `ResolvedQueryContractV2`, exact family·
   operator lock, bounded contract candidate solver, `LogicalQueryPlanV2`, 결정론적
   semantic-to-SQL compiler 방향을 [ADR-0029](decisions/ADR-0029-use-semantic-query-contracts-and-deterministic-sql-compilation.md)로 승인했다. 작성된 상세 명세 검토와 별도 구현 계획 승인이 끝나기 전에는 런타임 코드를 변경하지 않는다.
+- Task 1 audit-only fixture는 core 52개(`03de130a…3618a2`)와 held-out 160 case의
+  action-bearing 209 frame(`bd40481c…f4c7de`)을 SHA-256으로 pin했다. V1
+  representability는 94/209로 고정했고, generated requirement snapshot은 52개
+  core question과 209개 frame의 semantic requirement 또는 명시적 unsupported
+  reason을 담는다. 평가 fixture만 변경했으며 resolver·planner 런타임은 변경하지
+  않았다.
 
 기준 보고서: [Intent Resolver Phase 1 Verification](reports/2026-08-31-intent-resolver-phase1-verification.md), [QueryPlan and Orchestrator Verification](reports/2026-09-02-query-plan-orchestrator-verification.md)
 

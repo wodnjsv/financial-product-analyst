@@ -1,0 +1,291 @@
+{
+  "schema_version": "query-contract-adjudications.v1",
+  "adjudications": [
+    {
+      "source": "heldout",
+      "case_id": "HKO-PAR-011",
+      "frame_ordinal": 0,
+      "original_action_id": "screen",
+      "adjudicated_action_id": "rank",
+      "support_status": "supported",
+      "reason_code": "QUALITATIVE_FEE_IS_ORDERING",
+      "semantic_overrides": {
+        "ordering": {
+          "field": "fee_rate",
+          "direction": "asc",
+          "limit_policy": "default-limit-5.v1"
+        }
+      }
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-PAR-012",
+      "frame_ordinal": 0,
+      "original_action_id": "screen",
+      "adjudicated_action_id": "rank",
+      "support_status": "supported",
+      "reason_code": "QUALITATIVE_FEE_IS_ORDERING",
+      "semantic_overrides": {
+        "ordering": {
+          "field": "fee_rate",
+          "direction": "asc",
+          "limit_policy": "default-limit-5.v1"
+        }
+      }
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-PAR-013",
+      "frame_ordinal": 0,
+      "original_action_id": "screen",
+      "adjudicated_action_id": "rank",
+      "support_status": "supported",
+      "reason_code": "QUALITATIVE_FEE_IS_ORDERING",
+      "semantic_overrides": {
+        "ordering": {
+          "field": "fee_rate",
+          "direction": "asc",
+          "limit_policy": "default-limit-5.v1"
+        }
+      }
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-PAR-014",
+      "frame_ordinal": 0,
+      "original_action_id": "screen",
+      "adjudicated_action_id": "rank",
+      "support_status": "supported",
+      "reason_code": "QUALITATIVE_FEE_IS_ORDERING",
+      "semantic_overrides": {
+        "ordering": {
+          "field": "fee_rate",
+          "direction": "asc",
+          "limit_policy": "default-limit-5.v1"
+        }
+      }
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-PAR-015",
+      "frame_ordinal": 0,
+      "original_action_id": "screen",
+      "adjudicated_action_id": "rank",
+      "support_status": "supported",
+      "reason_code": "QUALITATIVE_FEE_IS_ORDERING",
+      "semantic_overrides": {
+        "ordering": {
+          "field": "fee_rate",
+          "direction": "asc",
+          "limit_policy": "default-limit-5.v1"
+        }
+      }
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-CTX-040",
+      "frame_ordinal": 1,
+      "original_action_id": "screen",
+      "adjudicated_action_id": "rank",
+      "support_status": "supported",
+      "reason_code": "QUALITATIVE_FEE_IS_ORDERING",
+      "semantic_overrides": {
+        "ordering": {
+          "field": "fee_rate",
+          "direction": "asc",
+          "limit_policy": "default-limit-5.v1"
+        }
+      }
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-OOD-VOC-001",
+      "frame_ordinal": 0,
+      "original_action_id": "screen",
+      "adjudicated_action_id": "screen",
+      "support_status": "unsupported",
+      "reason_code": "LEXICAL_OOD",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-OOD-VOC-002",
+      "frame_ordinal": 0,
+      "original_action_id": "screen",
+      "adjudicated_action_id": "screen",
+      "support_status": "unsupported",
+      "reason_code": "LEXICAL_OOD",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-OOD-VOC-003",
+      "frame_ordinal": 0,
+      "original_action_id": "rank",
+      "adjudicated_action_id": "rank",
+      "support_status": "unsupported",
+      "reason_code": "LEXICAL_OOD",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-OOD-VOC-004",
+      "frame_ordinal": 0,
+      "original_action_id": "compare",
+      "adjudicated_action_id": "compare",
+      "support_status": "unsupported",
+      "reason_code": "LEXICAL_OOD",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-OOD-VOC-005",
+      "frame_ordinal": 0,
+      "original_action_id": "rank",
+      "adjudicated_action_id": "rank",
+      "support_status": "unsupported",
+      "reason_code": "LEXICAL_OOD",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-OOD-VOC-006",
+      "frame_ordinal": 0,
+      "original_action_id": "lookup",
+      "adjudicated_action_id": "lookup",
+      "support_status": "unsupported",
+      "reason_code": "LEXICAL_OOD",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-OOD-VOC-007",
+      "frame_ordinal": 0,
+      "original_action_id": "screen",
+      "adjudicated_action_id": "screen",
+      "support_status": "unsupported",
+      "reason_code": "LEXICAL_OOD",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-OOD-VOC-008",
+      "frame_ordinal": 0,
+      "original_action_id": "lookup",
+      "adjudicated_action_id": "lookup",
+      "support_status": "unsupported",
+      "reason_code": "LEXICAL_OOD",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-OOD-VOC-009",
+      "frame_ordinal": 0,
+      "original_action_id": "compare",
+      "adjudicated_action_id": "compare",
+      "support_status": "unsupported",
+      "reason_code": "LEXICAL_OOD",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "heldout",
+      "case_id": "HKO-OOD-VOC-010",
+      "frame_ordinal": 0,
+      "original_action_id": "lookup",
+      "adjudicated_action_id": "lookup",
+      "support_status": "unsupported",
+      "reason_code": "LEXICAL_OOD",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "core",
+      "case_id": "FLT-OETF-001",
+      "frame_ordinal": 0,
+      "original_action_id": "screen",
+      "adjudicated_action_id": "screen",
+      "support_status": "supported",
+      "reason_code": "NUMERIC_FEE_THRESHOLD_IS_PREDICATE",
+      "semantic_overrides": {
+        "predicate": {
+          "field": "fee_rate",
+          "operator": "lte",
+          "value": {
+            "kind": "decimal",
+            "decimal": "0.5",
+            "unit": "percent"
+          }
+        }
+      }
+    },
+    {
+      "source": "core",
+      "case_id": "UNS-FCAST-001",
+      "frame_ordinal": 0,
+      "original_action_id": "rank",
+      "adjudicated_action_id": "rank",
+      "support_status": "unsupported",
+      "reason_code": "POLICY_PROHIBITED_FORECAST",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "core",
+      "case_id": "UNS-PERS-001",
+      "frame_ordinal": 0,
+      "original_action_id": "rank",
+      "adjudicated_action_id": "rank",
+      "support_status": "unsupported",
+      "reason_code": "POLICY_PROHIBITED_PERSONALIZED_ADVICE",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "core",
+      "case_id": "UNS-RT-001",
+      "frame_ordinal": 0,
+      "original_action_id": "lookup",
+      "adjudicated_action_id": "lookup",
+      "support_status": "unsupported",
+      "reason_code": "REAL_TIME_DATA_OUT_OF_SCOPE",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "core",
+      "case_id": "UNS-ORDER-001",
+      "frame_ordinal": 0,
+      "original_action_id": "lookup",
+      "adjudicated_action_id": "lookup",
+      "support_status": "unsupported",
+      "reason_code": "POLICY_PROHIBITED_ORDER_EXECUTION",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "core",
+      "case_id": "UNS-GRADE-001",
+      "frame_ordinal": 0,
+      "original_action_id": "lookup",
+      "adjudicated_action_id": "lookup",
+      "support_status": "unsupported",
+      "reason_code": "SEMANTIC_CONCEPT_NOT_REGISTERED",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "core",
+      "case_id": "UNS-ENTITY-001",
+      "frame_ordinal": 0,
+      "original_action_id": "lookup",
+      "adjudicated_action_id": "lookup",
+      "support_status": "unsupported",
+      "reason_code": "SEMANTIC_CONCEPT_NOT_REGISTERED",
+      "semantic_overrides": {}
+    },
+    {
+      "source": "core",
+      "case_id": "UNS-PRODUCT-001",
+      "frame_ordinal": 0,
+      "original_action_id": "lookup",
+      "adjudicated_action_id": "lookup",
+      "support_status": "unsupported",
+      "reason_code": "ENTITY_NOT_FOUND_IN_SNAPSHOT",
+      "semantic_overrides": {}
+    }
+  ]
+}

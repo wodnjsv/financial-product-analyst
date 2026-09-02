@@ -1,0 +1,4453 @@
+{
+  "counts": {
+    "core_questions": 52,
+    "heldout_cases": 160,
+    "heldout_frames": 209
+  },
+  "requirements": [
+    {
+      "action_id": "lookup",
+      "case_id": "LKP-DETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "LKP-OETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "LKP-BOND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "LKP-FUND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "FLT-DETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "FLT-OETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "semantic_overrides": {
+        "predicate": {
+          "field": "fee_rate",
+          "operator": "lte",
+          "value": {
+            "decimal": "0.5",
+            "kind": "decimal",
+            "unit": "percent"
+          }
+        }
+      },
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "FLT-BOND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "FLT-FUND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "RANK-DETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "RANK-OETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "RANK-BOND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "RANK-FUND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "calculate",
+      "case_id": "CALC-DETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "calculation.recipe",
+        "calculation.operands"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "calculate",
+      "case_id": "CALC-BOND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "calculation.recipe",
+        "calculation.operands"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "CALC-FUND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "CALC-CROSS-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "CMP-RET-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "CMP-AUM-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "CMP-RISK-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "CMP-FEE-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "REL-HOLD-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "REL-HOLD-002",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "REL-HOLD-003",
+      "frame_ordinal": 0,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "REL-HOLD-004",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "REL-MGR-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "REL-SIM-FUND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "REL-SIM-BOND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "REL-IDX-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "REL-FUND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "CTX-DETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "CTX-DETF-002",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "CTX-AMB-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "CTX-CROSS-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "calculate",
+      "case_id": "MIS-OETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "calculation.recipe",
+        "calculation.operands"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "MIS-DETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "MIS-BOND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "MIS-FUND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "AMB-RET-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "AMB-SIM-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "AMB-AUM-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "AMB-NAME-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "case_id": "UNS-FCAST-001",
+      "frame_ordinal": 0,
+      "reason_code": "POLICY_PROHIBITED_FORECAST",
+      "source": "core",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "UNS-PERS-001",
+      "frame_ordinal": 0,
+      "reason_code": "POLICY_PROHIBITED_PERSONALIZED_ADVICE",
+      "source": "core",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "UNS-RT-001",
+      "frame_ordinal": 0,
+      "reason_code": "REAL_TIME_DATA_OUT_OF_SCOPE",
+      "source": "core",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "UNS-ORDER-001",
+      "frame_ordinal": 0,
+      "reason_code": "POLICY_PROHIBITED_ORDER_EXECUTION",
+      "source": "core",
+      "support_status": "unsupported"
+    },
+    {
+      "action_id": "explain",
+      "case_id": "DOC-FUND-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "explanation.topic_or_profile"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "REL-OETF-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "REL-THEME-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "REL-CORP-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "core",
+      "support_status": "supported"
+    },
+    {
+      "case_id": "UNS-GRADE-001",
+      "frame_ordinal": 0,
+      "reason_code": "SEMANTIC_CONCEPT_NOT_REGISTERED",
+      "source": "core",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "UNS-ENTITY-001",
+      "frame_ordinal": 0,
+      "reason_code": "SEMANTIC_CONCEPT_NOT_REGISTERED",
+      "source": "core",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "UNS-PRODUCT-001",
+      "frame_ordinal": 0,
+      "reason_code": "ENTITY_NOT_FOUND_IN_SNAPSHOT",
+      "source": "core",
+      "support_status": "unsupported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-002",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-003",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-004",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-005",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-006",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-007",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-008",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-009",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-010",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-011",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "semantic_overrides": {
+        "ordering": {
+          "direction": "asc",
+          "field": "fee_rate",
+          "limit_policy": "default-limit-5.v1"
+        }
+      },
+      "source": "heldout",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-012",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "semantic_overrides": {
+        "ordering": {
+          "direction": "asc",
+          "field": "fee_rate",
+          "limit_policy": "default-limit-5.v1"
+        }
+      },
+      "source": "heldout",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-013",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "semantic_overrides": {
+        "ordering": {
+          "direction": "asc",
+          "field": "fee_rate",
+          "limit_policy": "default-limit-5.v1"
+        }
+      },
+      "source": "heldout",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-014",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "semantic_overrides": {
+        "ordering": {
+          "direction": "asc",
+          "field": "fee_rate",
+          "limit_policy": "default-limit-5.v1"
+        }
+      },
+      "source": "heldout",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-PAR-015",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "semantic_overrides": {
+        "ordering": {
+          "direction": "asc",
+          "field": "fee_rate",
+          "limit_policy": "default-limit-5.v1"
+        }
+      },
+      "source": "heldout",
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-PAR-016",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-PAR-017",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-PAR-018",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-PAR-019",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-PAR-020",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-PAR-021",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "period": [
+          "P1Y"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-PAR-022",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "period": [
+          "P1Y"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-PAR-023",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "period": [
+          "P1Y"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-PAR-024",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "period": [
+          "P1Y"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-PAR-025",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum",
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "period": [
+          "P1Y"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-PAR-026",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-PAR-027",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-PAR-028",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-PAR-029",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-PAR-030",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "calculate",
+      "case_id": "HKO-PAR-031",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "calculation.recipe",
+        "calculation.operands"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "remaining_days"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "calculate",
+      "case_id": "HKO-PAR-032",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "calculation.recipe",
+        "calculation.operands"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "remaining_days"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "calculate",
+      "case_id": "HKO-PAR-033",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "calculation.recipe",
+        "calculation.operands"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "remaining_days"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "calculate",
+      "case_id": "HKO-PAR-034",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "calculation.recipe",
+        "calculation.operands"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "remaining_days"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "calculate",
+      "case_id": "HKO-PAR-035",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "calculation.recipe",
+        "calculation.operands"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "remaining_days"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "HKO-PAR-036",
+      "frame_ordinal": 0,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "similarity_anchor": [
+          "synthetic_alpha_etf"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "HKO-PAR-037",
+      "frame_ordinal": 0,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "similarity_anchor": [
+          "synthetic_alpha_etf"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "HKO-PAR-038",
+      "frame_ordinal": 0,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "similarity_anchor": [
+          "synthetic_alpha_etf"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "HKO-PAR-039",
+      "frame_ordinal": 0,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "similarity_anchor": [
+          "synthetic_alpha_etf"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "HKO-PAR-040",
+      "frame_ordinal": 0,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "similarity_anchor": [
+          "synthetic_alpha_etf"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "pension_eligibility"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-001",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-002",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "pension_eligibility"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-002",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-003",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "pension_eligibility"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-003",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-004",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-004",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "sort_key": [
+          "yield_rate"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-005",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-005",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "sort_key": [
+          "yield_rate"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-006",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-006",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "sort_key": [
+          "yield_rate"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CMP-007",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "region"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CMP-007",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "period": [
+          "P1Y"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CMP-008",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "region"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CMP-008",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "period": [
+          "P1Y"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CMP-009",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "region"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CMP-009",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "trailing_1y_historical_cumulative_return"
+        ],
+        "period": [
+          "P1Y"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-CMP-010",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "explain",
+      "case_id": "HKO-CMP-010",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "explanation.topic_or_profile"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "document_topic": [
+          "product_structure"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-CMP-011",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "explain",
+      "case_id": "HKO-CMP-011",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "explanation.topic_or_profile"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "document_topic": [
+          "product_structure"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-CMP-012",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "explain",
+      "case_id": "HKO-CMP-012",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "explanation.topic_or_profile"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "document_topic": [
+          "product_structure"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-013",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-013",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-014",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-014",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-015",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-015",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "3"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-016",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-017",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-018",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-019",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "filter_operator": [
+          "less_than"
+        ],
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-020",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "filter_operator": [
+          "less_than"
+        ],
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-021",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "filter_operator": [
+          "less_than"
+        ],
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-022",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-CMP-022",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-023",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-CMP-023",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-CMP-024",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "aggregate",
+      "case_id": "HKO-CMP-024",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "aggregation.function",
+        "aggregation.target",
+        "aggregation.population_grain",
+        "aggregation.dedup_policy"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CMP-025",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "HKO-CMP-025",
+      "frame_ordinal": 1,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "similarity_anchor": [
+          "synthetic_comparison_result"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CMP-026",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "HKO-CMP-026",
+      "frame_ordinal": 1,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "similarity_anchor": [
+          "synthetic_comparison_result"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CMP-027",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "HKO-CMP-027",
+      "frame_ordinal": 1,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "similarity_anchor": [
+          "synthetic_comparison_result"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-028",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "explain",
+      "case_id": "HKO-CMP-028",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "explanation.topic_or_profile"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "document_topic": [
+          "risk_factor"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-029",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "explain",
+      "case_id": "HKO-CMP-029",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "explanation.topic_or_profile"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "document_topic": [
+          "risk_factor"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CMP-030",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "explain",
+      "case_id": "HKO-CMP-030",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "explanation.topic_or_profile"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "document_topic": [
+          "risk_factor"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-001",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-002",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-002",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-003",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-003",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-004",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-004",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-005",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-005",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-006",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-006",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-007",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-007",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-008",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-008",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "period": [
+          "P1Y"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-009",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-009",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "fee_rate"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-010",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-010",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-011",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-011",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "pension_eligibility"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-012",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-012",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-013",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-013",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "currency"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-014",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-014",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "tracksIndex"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-015",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-015",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-016",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-016",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-017",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-017",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-018",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-018",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-019",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-019",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-020",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-020",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-021",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-021",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "pension_eligibility"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-022",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-022",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-023",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-023",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-024",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "result_limit": [
+          "5"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-024",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-025",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-025",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-026",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-026",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-027",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-027",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-028",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-028",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-029",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "HKO-CTX-029",
+      "frame_ordinal": 1,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "similarity_anchor": [
+          "similar"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-030",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-030",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "pension_eligibility"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-031",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-031",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "fee_rate"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "compare",
+      "case_id": "HKO-CTX-032",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "comparison.subjects",
+        "comparison.metrics",
+        "comparison.basis"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "comparison_basis": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-032",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-033",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-033",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-034",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-034",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "managedBy"
+        ],
+        "relation": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-035",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-035",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "sort_key": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-036",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-036",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "product_risk_grade"
+        ],
+        "relation": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-037",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-037",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ],
+        "relation": [
+          "managedBy"
+        ],
+        "result_limit": [
+          "3"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-038",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-038",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-039",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-CTX-039",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "managedBy"
+        ],
+        "relation": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-040",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "relation": [
+          "managedBy"
+        ],
+        "result_limit": [
+          "1"
+        ],
+        "sort_key": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-CTX-040",
+      "frame_ordinal": 1,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "semantic_overrides": {
+        "ordering": {
+          "direction": "asc",
+          "field": "fee_rate",
+          "limit_policy": "default-limit-5.v1"
+        }
+      },
+      "source": "heldout",
+      "support_status": "supported"
+    },
+    {
+      "case_id": "HKO-OOD-VOC-001",
+      "frame_ordinal": 0,
+      "reason_code": "LEXICAL_OOD",
+      "source": "heldout",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "HKO-OOD-VOC-002",
+      "frame_ordinal": 0,
+      "reason_code": "LEXICAL_OOD",
+      "source": "heldout",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "HKO-OOD-VOC-003",
+      "frame_ordinal": 0,
+      "reason_code": "LEXICAL_OOD",
+      "source": "heldout",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "HKO-OOD-VOC-004",
+      "frame_ordinal": 0,
+      "reason_code": "LEXICAL_OOD",
+      "source": "heldout",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "HKO-OOD-VOC-005",
+      "frame_ordinal": 0,
+      "reason_code": "LEXICAL_OOD",
+      "source": "heldout",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "HKO-OOD-VOC-006",
+      "frame_ordinal": 0,
+      "reason_code": "LEXICAL_OOD",
+      "source": "heldout",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "HKO-OOD-VOC-007",
+      "frame_ordinal": 0,
+      "reason_code": "LEXICAL_OOD",
+      "source": "heldout",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "HKO-OOD-VOC-008",
+      "frame_ordinal": 0,
+      "reason_code": "LEXICAL_OOD",
+      "source": "heldout",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "HKO-OOD-VOC-009",
+      "frame_ordinal": 0,
+      "reason_code": "LEXICAL_OOD",
+      "source": "heldout",
+      "support_status": "unsupported"
+    },
+    {
+      "case_id": "HKO-OOD-VOC-010",
+      "frame_ordinal": 0,
+      "reason_code": "LEXICAL_OOD",
+      "source": "heldout",
+      "support_status": "unsupported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-OOD-CTX-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "similar",
+      "case_id": "HKO-OOD-CTX-002",
+      "frame_ordinal": 0,
+      "required_components": [
+        "similarity.anchor",
+        "similarity.policy",
+        "similarity.dimensions",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "similarity_anchor": [
+          "similar"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-OOD-CTX-003",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-OOD-CTX-004",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-OOD-CTX-005",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-OOD-CTX-006",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-OOD-CTX-007",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-OOD-CTX-008",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "currency"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-OOD-CTX-009",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "fee_rate"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-OOD-CTX-010",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "rank",
+      "case_id": "HKO-NEG-POL-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "ordering.field",
+        "ordering.direction",
+        "limit"
+      ],
+      "source": "heldout",
+      "source_slot_values": {},
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-NEG-POL-002",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {},
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-POL-003",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {},
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-POL-004",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {},
+      "support_status": "supported"
+    },
+    {
+      "action_id": "screen",
+      "case_id": "HKO-NEG-POL-005",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "predicate.field",
+        "predicate.operator",
+        "predicate.value"
+      ],
+      "source": "heldout",
+      "source_slot_values": {},
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-INJ-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-INJ-002",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-INJ-003",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-INJ-004",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-INJ-005",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "managedBy"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-UNI-001",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "aum"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-UNI-002",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "product_risk_grade"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-UNI-003",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "trailing_1y_historical_cumulative_return"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-UNI-004",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "currency"
+        ]
+      },
+      "support_status": "supported"
+    },
+    {
+      "action_id": "lookup",
+      "case_id": "HKO-NEG-UNI-005",
+      "frame_ordinal": 0,
+      "required_components": [
+        "scope",
+        "projection"
+      ],
+      "source": "heldout",
+      "source_slot_values": {
+        "metric": [
+          "credit_grade"
+        ]
+      },
+      "support_status": "supported"
+    }
+  ],
+  "schema_version": "query-contract-requirements.v1",
+  "sources": {
+    "core": {
+      "path": "tests/gold/core_questions.json",
+      "sha256": "03de130a2a67fd21e782e81ba10524d6a6e769494cfeedc95b05b584ae3618a2"
+    },
+    "heldout": {
+      "path": "tests/evaluation/intent/intent_resolution_heldout_ko_v3.json",
+      "sha256": "bd40481c57975d66a84a98005b771761c023ae5461cbd3c232508522bbf4c7de"
+    }
+  }
+}
