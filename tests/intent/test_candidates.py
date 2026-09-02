@@ -248,3 +248,36 @@ def test_semantic_fuzzy_score_and_exact_deduplication() -> None:
     assert [item.match_kind for item in _items_for(exact, "abcdef")] == [
         "direct_alias"
     ]
+
+
+@pytest.mark.parametrize(
+    ("surface", "semantic_id"),
+    [
+        ("보수", "fee_rate"),
+        ("규모", "aum"),
+        ("좋은", "rank"),
+        ("낮은", "rank"),
+    ],
+)
+def test_broad_korean_terms_remain_bounded_group_candidates(
+    snapshot: SemanticCatalogSnapshot, surface: str, semantic_id: str
+) -> None:
+    """Catches broad Korean terms disappearing instead of remaining unlocked choices."""
+    created_at = datetime(2026, 9, 2, tzinfo=timezone.utc)
+    context = RequestContext(
+        request_key=build_request_key("broad", surface, "dataset-v1", "1.0"),
+        run_id="run-broad",
+        dataset_version="dataset-v1",
+        producer="test",
+        created_at=created_at,
+        question_id="broad",
+        question=surface,
+        segments=(Segment(segment_id="s1", ordinal=0, text=surface),),
+        deadline_at=created_at + timedelta(seconds=10),
+    )
+
+    candidates = generate_semantic_candidates(normalize_request(context), snapshot)
+
+    assert [(item.semantic_id, item.match_kind) for item in _items_for(candidates, surface)] == [
+        (semantic_id, "group_alias")
+    ]

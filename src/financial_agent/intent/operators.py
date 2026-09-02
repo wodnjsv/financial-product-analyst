@@ -9,8 +9,8 @@ from financial_agent.contracts.base import ContractModel, Identifier
 
 from .literals import LiteralCandidate
 from .normalization import NormalizedRequest, NormalizedSegment
-from .query_contract_registry import OperatorArity
-from .query_contracts import QueryOperatorId
+from .query_contract_registry import EXPECTED_OPERATOR_DEFINITIONS, OperatorArity
+from .query_contracts import QueryOperatorId, SemanticValueKind
 
 
 _COMPARISON_CUES = {
@@ -24,6 +24,8 @@ _COMPARISON_RE = re.compile(
 )
 _EXCLUSION_RE = re.compile(r"제외")
 _RANGE_RE = re.compile(r"(?P<cue>사이|부터\s*.*?까지)")
+_HARD_CLAUSE_BOUNDARY_RE = re.compile(r"[;.!?]|그리고|및|또는|하지만")
+_COMMA_RE = re.compile(r",")
 
 
 class OperatorCandidate(ContractModel):
@@ -91,9 +93,6 @@ def _comparison_candidates(
 ) -> tuple[tuple[int, OperatorCandidate], ...]:
     candidates: list[tuple[int, OperatorCandidate]] = []
     for match in _COMPARISON_RE.finditer(segment.normalized_text):
-        values = _nearest_preceding_literals(literals, match.start(), count=1)
-        if not values:
-            continue
         operator_id = _COMPARISON_CUES[match.group("cue")]
         if match.group("negation"):
             operator_id = {
@@ -102,10 +101,28 @@ def _comparison_candidates(
                 QueryOperatorId.GTE: QueryOperatorId.LT,
                 QueryOperatorId.GT: QueryOperatorId.LTE,
             }[operator_id]
+        values = _compatible_values(
+            operator_id,
+            _nearest_preceding_literals(
+                literals,
+                match.start(),
+                clause_start=_clause_start(segment.normalized_text, match.start()),
+                count=1,
+            ),
+        )
+        if len(values) != 1:
+            continue
         candidates.append(
             (
                 match.start(),
-                _candidate(segment, match.start(), match.end(), operator_id, OperatorArity.ONE, values),
+                _candidate(
+                    segment,
+                    match.start(),
+                    match.end(),
+                    operator_id,
+                    _operator_arity(operator_id),
+                    values,
+                ),
             )
         )
     return tuple(candidates)
@@ -116,7 +133,22 @@ def _range_candidates(
 ) -> tuple[tuple[int, OperatorCandidate], ...]:
     candidates: list[tuple[int, OperatorCandidate]] = []
     for match in _RANGE_RE.finditer(segment.normalized_text):
-        values = _nearest_preceding_literals(literals, match.start(), count=2)
+        clause_start = _clause_start(segment.normalized_text, match.start())
+        if match.group("cue") == "사이":
+            values = _nearest_preceding_literals(
+                literals, match.start(), clause_start=clause_start, count=2
+            )
+        else:
+            lower = _nearest_preceding_literals(
+                literals, match.start(), clause_start=clause_start, count=1
+            )
+            upper = tuple(
+                item.literal
+                for item in literals
+                if match.start() <= item.normalized_start < match.end()
+            )[:1]
+            values = lower + upper
+        values = _compatible_values(QueryOperatorId.BETWEEN, values)
         if len(values) != 2:
             continue
         candidates.append(
@@ -127,7 +159,7 @@ def _range_candidates(
                     match.start(),
                     match.end(),
                     QueryOperatorId.BETWEEN,
-                    OperatorArity.TWO,
+                    _operator_arity(QueryOperatorId.BETWEEN),
                     values,
                 ),
             )
@@ -140,42 +172,75 @@ def _exclusion_candidates(
 ) -> tuple[tuple[int, OperatorCandidate], ...]:
     candidates: list[tuple[int, OperatorCandidate]] = []
     for match in _EXCLUSION_RE.finditer(segment.normalized_text):
-        preceding_cue = max(
-            (
-                cue.end()
-                for cue in _COMPARISON_RE.finditer(segment.normalized_text[: match.start()])
-            ),
-            default=0,
+        clause_start = _clause_start(
+            segment.normalized_text, match.start(), include_comma=False
         )
-        values = tuple(
+        values = _compatible_values(QueryOperatorId.NEQ, tuple(
             item.literal
             for item in literals
-            if preceding_cue <= item.normalized_start < match.start()
-        )
+            if clause_start <= item.normalized_start < match.start()
+        ))
         if not values:
             continue
         operator_id = QueryOperatorId.NEQ if len(values) == 1 else QueryOperatorId.NOT_IN
-        arity = OperatorArity.ONE if len(values) == 1 else OperatorArity.ONE_OR_MORE
         candidates.append(
             (
                 match.start(),
-                _candidate(segment, match.start(), match.end(), operator_id, arity, values),
+                _candidate(
+                    segment,
+                    match.start(),
+                    match.end(),
+                    operator_id,
+                    _operator_arity(operator_id),
+                    values,
+                ),
             )
         )
     return tuple(candidates)
 
 
 def _nearest_preceding_literals(
-    literals: tuple[_LocatedLiteral, ...], end: int, *, count: int
+    literals: tuple[_LocatedLiteral, ...], end: int, *, clause_start: int, count: int
 ) -> tuple[LiteralCandidate, ...]:
     return tuple(
         item.literal
         for item in sorted(
-            (item for item in literals if item.normalized_end <= end),
+            (
+                item
+                for item in literals
+                if clause_start <= item.normalized_start and item.normalized_end <= end
+            ),
             key=lambda item: item.normalized_end,
             reverse=True,
         )[:count][::-1]
     )
+
+
+def _clause_start(text: str, operator_start: int, *, include_comma: bool = True) -> int:
+    patterns = (_HARD_CLAUSE_BOUNDARY_RE, _COMPARISON_RE, _EXCLUSION_RE) + (
+        (_COMMA_RE,) if include_comma else ()
+    )
+    boundaries = [
+        match.end()
+        for pattern in patterns
+        for match in pattern.finditer(text[:operator_start])
+    ]
+    return max(boundaries, default=0)
+
+
+def _compatible_values(
+    operator_id: QueryOperatorId, values: tuple[LiteralCandidate, ...]
+) -> tuple[LiteralCandidate, ...]:
+    allowed_value_kinds = EXPECTED_OPERATOR_DEFINITIONS[operator_id.value][1]
+    return tuple(
+        value
+        for value in values
+        if SemanticValueKind(value.value_kind) in allowed_value_kinds
+    )
+
+
+def _operator_arity(operator_id: QueryOperatorId) -> OperatorArity:
+    return EXPECTED_OPERATOR_DEFINITIONS[operator_id.value][0]
 
 
 def _candidate(

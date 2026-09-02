@@ -65,6 +65,11 @@ class KoreanNluEntry(_StrictModel):
     negative_semantic_ids: tuple[str, ...]
 
 
+class KoreanLexicalCandidate(_StrictModel):
+    surface: str = Field(min_length=1)
+    semantic_ids: tuple[str, ...] = Field(min_length=1)
+
+
 class AxisLanguageDefinition(_StrictModel):
     axis_kind: Literal["product_family", "action"]
     axis_id: str = Field(min_length=1)
@@ -86,6 +91,7 @@ class PolicyCue(_StrictModel):
 class _OverlayPayload(_StrictModel):
     overlay_version: str = Field(min_length=1)
     entries: tuple[KoreanNluEntry, ...]
+    lexical_candidates: tuple[KoreanLexicalCandidate, ...] = ()
     axis_definitions: tuple[AxisLanguageDefinition, ...]
     policy_cues: tuple[PolicyCue, ...]
 
@@ -160,6 +166,7 @@ def compile_catalog(
     _validate_relations(concepts_by_id, tbox_graph, shacl_paths)
     alias_candidates, alias_kinds = _index_overlay(
         overlay.entries,
+        overlay.lexical_candidates,
         allowed_semantic_ids=(
             set(concepts_by_id)
             | set(catalog.product_family_ids)
@@ -438,7 +445,10 @@ def _class_id(node: object) -> str:
 
 
 def _index_overlay(
-    entries: tuple[KoreanNluEntry, ...], *, allowed_semantic_ids: set[str]
+    entries: tuple[KoreanNluEntry, ...],
+    lexical_candidates: tuple[KoreanLexicalCandidate, ...],
+    *,
+    allowed_semantic_ids: set[str],
 ) -> tuple[Mapping[str, tuple[str, ...]], Mapping[str, str]]:
     semantic_ids = [entry.semantic_id for entry in entries]
     if len(set(semantic_ids)) != len(semantic_ids):
@@ -458,6 +468,17 @@ def _index_overlay(
         for label in entry.aliases:
             labels.setdefault(label, set()).add(entry.semantic_id)
             kinds.setdefault(label, set()).add(entry.alias_kind)
+    lexical_surfaces = [candidate.surface for candidate in lexical_candidates]
+    if len(set(lexical_surfaces)) != len(lexical_surfaces):
+        raise ValueError("lexical candidate surfaces must be unique")
+    for candidate in lexical_candidates:
+        if (
+            not set(candidate.semantic_ids) <= allowed_semantic_ids
+            or len(set(candidate.semantic_ids)) != len(candidate.semantic_ids)
+        ):
+            raise ValueError("lexical candidate semantic IDs must be unique and cataloged")
+        labels.setdefault(candidate.surface, set()).update(candidate.semantic_ids)
+        kinds.setdefault(candidate.surface, set()).add("group")
     candidates: dict[str, tuple[str, ...]] = {}
     alias_kinds: dict[str, str] = {}
     for label, semantic_id_set in labels.items():
@@ -510,6 +531,13 @@ def _canonical_overlay_payload(overlay: _OverlayPayload) -> dict[str, object]:
                 overlay.entries,
                 key=lambda item: (item.semantic_id, item.preferred_label),
             )
+        ],
+        "lexical_candidates": [
+            {
+                **candidate.model_dump(mode="json"),
+                "semantic_ids": sorted(candidate.semantic_ids),
+            }
+            for candidate in sorted(overlay.lexical_candidates, key=lambda item: item.surface)
         ],
         "axis_definitions": [
             {

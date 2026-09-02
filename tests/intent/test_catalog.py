@@ -329,6 +329,12 @@ def test_v3_overlay_has_a_reviewable_bounded_direct_alias_surface() -> None:
     assert len(overlay["entries"]) == 14
     assert len(direct_aliases) == 13
     assert len(direct_aliases) == len(set(direct_aliases))
+    assert overlay["lexical_candidates"] == [
+        {"surface": "보수", "semantic_ids": ["fee_rate"]},
+        {"surface": "규모", "semantic_ids": ["aum"]},
+        {"surface": "좋은", "semantic_ids": ["rank"]},
+        {"surface": "낮은", "semantic_ids": ["rank"]},
+    ]
 
 
 def test_catalog_snapshot_mappings_are_immutable() -> None:

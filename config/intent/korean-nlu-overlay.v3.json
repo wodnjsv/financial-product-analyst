@@ -16,6 +16,12 @@
     {"semantic_id":"public_fund","preferred_label":"공모펀드 범위","aliases":["공모펀드"],"alias_kind":"direct","negative_semantic_ids":[]},
     {"semantic_id":"fee_rate","preferred_label":"총보수","aliases":["총보수"],"alias_kind":"direct","negative_semantic_ids":[]}
   ],
+  "lexical_candidates": [
+    {"surface":"보수","semantic_ids":["fee_rate"]},
+    {"surface":"규모","semantic_ids":["aum"]},
+    {"surface":"좋은","semantic_ids":["rank"]},
+    {"surface":"낮은","semantic_ids":["rank"]}
+  ],
   "axis_definitions": [
     {"axis_kind":"product_family","axis_id":"domestic_bond","preferred_label_ko":"국내채권","definition_ko":"국내에서 발행·유통되는 채권 상품 범위","surface_forms":["국내채권","채권"]},
     {"axis_kind":"product_family","axis_id":"domestic_etf","preferred_label_ko":"국내ETF","definition_ko":"국내 거래소에 상장된 ETF 상품 범위","surface_forms":["국내 ETF","국내 상장 ETF"]},

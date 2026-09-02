@@ -83,3 +83,54 @@ def test_each_operator_binds_only_literals_in_its_own_clause() -> None:
         ("lit-s1-4-6-percentage",),
         ("lit-s1-15-17-percentage",),
     ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "총보수 1% 이하, 수익률 이상",
+        "총보수 1% 이하 그리고 수익률 이상",
+        "총보수 1% 이하 수익률 이상",
+    ],
+)
+def test_comparison_without_a_local_literal_does_not_reuse_a_previous_clause(
+    text: str,
+) -> None:
+    """Catches a later predicate borrowing a percentage from an earlier clause."""
+    request = _normalized_request(text)
+
+    operators = extract_operator_candidates(request, extract_literals(request))
+
+    assert [(item.operator_id.value, item.compatible_value_candidate_ids) for item in operators] == [
+        ("lte", ("lit-s1-4-6-percentage",))
+    ]
+
+
+def test_each_exclusion_clause_uses_its_own_cardinality() -> None:
+    """Catches a later exclusion extending the preceding exclusion value set."""
+    request = _normalized_request("1% 제외, 2% 제외")
+
+    operators = extract_operator_candidates(request, extract_literals(request))
+
+    assert [(item.operator_id.value, item.compatible_value_candidate_ids) for item in operators] == [
+        ("neq", ("lit-s1-0-2-percentage",)),
+        ("neq", ("lit-s1-7-9-percentage",)),
+    ]
+
+
+def test_from_until_range_binds_literals_on_both_sides_of_the_range_cue() -> None:
+    """Catches a range parser that only searches before `부터` for both values."""
+    request = _normalized_request("1%부터 3%까지")
+
+    operators = extract_operator_candidates(request, extract_literals(request))
+
+    assert [(item.operator_id.value, item.compatible_value_candidate_ids) for item in operators] == [
+        ("between", ("lit-s1-0-2-percentage", "lit-s1-5-7-percentage"))
+    ]
+
+
+def test_ordered_operators_reject_an_incompatible_sort_direction_literal() -> None:
+    """Catches ordered operators accepting a string candidate outside the closed registry."""
+    request = _normalized_request("낮은 이하")
+
+    assert extract_operator_candidates(request, extract_literals(request)) == ()
