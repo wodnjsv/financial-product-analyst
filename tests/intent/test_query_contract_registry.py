@@ -11,6 +11,7 @@ from financial_agent.contracts.enums import IntentType
 from financial_agent.intent.query_contract_registry import (
     CONTRACT_VARIANT_ORDER,
     OPERATOR_ORDER,
+    assess_requirement_representability,
     find_representing_variant,
     load_query_contract_registry,
 )
@@ -86,6 +87,39 @@ def _mutate(tmp_path: Path, relative: Path, mutate) -> Path:
     return root
 
 
+def _canonical_hash(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _repin(root: Path) -> None:
+    contracts_path = root / REGISTRY_PATHS[0]
+    contracts = json.loads(contracts_path.read_text(encoding="utf-8"))
+    for relative, hash_key, version_key in (
+        (REGISTRY_PATHS[1], "operator_registry_hash", "operator_registry_version"),
+        (REGISTRY_PATHS[2], "policy_registry_hash", "policy_registry_version"),
+    ):
+        payload = json.loads((root / relative).read_text(encoding="utf-8"))
+        contracts[hash_key] = _canonical_hash(payload)
+        contracts[version_key] = payload["registry_version"]
+    contracts_path.write_text(
+        json.dumps(contracts, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+
+def _mutate_and_repin(tmp_path: Path, relative: Path, mutate) -> Path:
+    root = _mutate(tmp_path, relative, mutate)
+    _repin(root)
+    return root
+
+
 @pytest.mark.parametrize(
     ("relative", "mutate"),
     [
@@ -117,6 +151,93 @@ def test_registry_rejects_unknown_cross_references(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("relative", "mutate"),
+    [
+        (
+            REGISTRY_PATHS[0],
+            lambda payload: payload.update(
+                registry_version="query-contract-registry.v999"
+            ),
+        ),
+        (
+            REGISTRY_PATHS[1],
+            lambda payload: payload.update(
+                registry_version="query-operator-registry.v999"
+            ),
+        ),
+        (
+            REGISTRY_PATHS[2],
+            lambda payload: payload.update(
+                registry_version="query-policy-registry.v999"
+            ),
+        ),
+    ],
+)
+def test_registry_rejects_redefined_versions_even_when_repinned(
+    tmp_path: Path, relative: Path, mutate
+) -> None:
+    with pytest.raises(ValueError, match="unsupported query registry version"):
+        load_query_contract_registry(
+            _mutate_and_repin(tmp_path, relative, mutate)
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload["operators"][3].update(arity="zero"),
+        lambda payload: payload["operators"][3]["allowed_value_kinds"].append(
+            "decimal"
+        ),
+        lambda payload: payload["operators"][3]["allowed_value_kinds"].reverse(),
+    ],
+)
+def test_registry_rejects_redefined_operator_matrix_when_repinned(
+    tmp_path: Path, mutate
+) -> None:
+    with pytest.raises(ValueError, match="operator registry definition mismatch"):
+        load_query_contract_registry(
+            _mutate_and_repin(tmp_path, REGISTRY_PATHS[1], mutate)
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload["policies"][0].update(kind="coverage"),
+        lambda payload: payload["policies"].append(
+            {"id": "zzz-invented.v1", "kind": "default"}
+        ),
+    ],
+)
+def test_registry_rejects_redefined_policy_set_when_repinned(
+    tmp_path: Path, mutate
+) -> None:
+    with pytest.raises(ValueError, match="policy registry definition mismatch"):
+        load_query_contract_registry(
+            _mutate_and_repin(tmp_path, REGISTRY_PATHS[2], mutate)
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload["variants"][0]["required_components"].append(
+            "invented.component"
+        ),
+        lambda payload: payload["variants"][0].update(action_id="screen"),
+    ],
+)
+def test_registry_rejects_redefined_variant_schema(
+    tmp_path: Path, mutate
+) -> None:
+    with pytest.raises(ValueError, match="contract variant definition mismatch"):
+        load_query_contract_registry(
+            _mutate(tmp_path, REGISTRY_PATHS[0], mutate)
+        )
+
+
+@pytest.mark.parametrize(
     "relative,key",
     [
         (REGISTRY_PATHS[0], "variants"),
@@ -141,10 +262,8 @@ def test_every_supported_requirement_vector_is_v2_representable() -> None:
         ).read_text(encoding="utf-8")
     )
     supported: list[tuple[str, tuple[str, ...]]] = []
-    unsupported: list[dict[str, Any]] = []
     for requirement in snapshot["requirements"]:
         if requirement["support_status"] == "unsupported":
-            unsupported.append(requirement)
             continue
         if "action_id" in requirement:
             supported.append((requirement["action_id"], tuple(requirement["required_components"])))
@@ -158,11 +277,52 @@ def test_every_supported_requirement_vector_is_v2_representable() -> None:
         find_representing_variant(registry, action, components) is not None
         for action, components in supported
     )
-    assert all(
-        find_representing_variant(registry, None, ()) is None
-        and requirement["reason_code"]
-        for requirement in unsupported
-    )
+
+
+def test_every_unsupported_requirement_retains_its_adjudicated_reason() -> None:
+    registry = load_query_contract_registry(PROJECT_ROOT)
+    requirements = json.loads(
+        (
+            PROJECT_ROOT
+            / "tests/evaluation/query_contract/query_contract_requirements.v1.json"
+        ).read_text(encoding="utf-8")
+    )["requirements"]
+    adjudications = json.loads(
+        (
+            PROJECT_ROOT
+            / "tests/evaluation/query_contract/query_contract_adjudications.v1.json"
+        ).read_text(encoding="utf-8")
+    )["adjudications"]
+    adjudication_by_key = {
+        (item["source"], item["case_id"], item["frame_ordinal"]): item
+        for item in adjudications
+    }
+    unsupported = [
+        requirement
+        for requirement in requirements
+        if requirement["support_status"] == "unsupported"
+    ]
+
+    assert unsupported
+    for requirement in unsupported:
+        key = (
+            requirement["source"],
+            requirement["case_id"],
+            requirement["frame_ordinal"],
+        )
+        adjudication = adjudication_by_key[key]
+        assessment = assess_requirement_representability(
+            registry,
+            action_id=adjudication["adjudicated_action_id"],
+            components=tuple(requirement.get("required_components", ())),
+            nonrepresentable_reason=requirement["reason_code"],
+        )
+
+        assert adjudication["support_status"] == "unsupported"
+        assert requirement["reason_code"] == adjudication["reason_code"]
+        assert assessment.variant_id is None
+        assert assessment.reason_code == adjudication["reason_code"]
+        assert assessment.structural_variant_id is not None
 
 
 def test_registry_declares_the_action_specific_completeness_table() -> None:
@@ -176,7 +336,7 @@ def test_registry_declares_the_action_specific_completeness_table() -> None:
         "aggregation.population_grain", "aggregation.dedup_policy",
     )
     assert registry.variants_by_id["similar.policy.v2"].required_components == (
-        "similarity.anchor", "similarity.policy", "similarity.dimensions",
+        "scope", "similarity.anchor", "similarity.policy", "similarity.dimensions",
         "similarity.coverage_threshold", "limit",
     )
 

@@ -422,3 +422,80 @@ def test_readiness_values_are_closed() -> None:
     payload["axis_readiness"]["readiness"] = "invented"
     with pytest.raises(ValidationError):
         _validate(payload)
+
+
+def _aggregate_payload(
+    variant_id: str,
+    result_shape: str,
+    *,
+    group_by: list[str] | None = None,
+    bucket_policy_id: str | None = None,
+) -> dict[str, Any]:
+    payload = _payload("aggregate")
+    payload["contract_variant_id"] = variant_id
+    payload["result_shape"] = result_shape
+    payload["aggregation"].update(
+        function_id="distribution" if result_shape == "distribution" else "sum",
+        group_by_field_concept_ids=group_by or [],
+        bucket_policy_id=bucket_policy_id,
+    )
+    return payload
+
+
+def test_distribution_rejects_unregistered_bucket_policy() -> None:
+    payload = _aggregate_payload(
+        "aggregate.distribution.v2",
+        "distribution",
+        bucket_policy_id="invented.v1",
+    )
+
+    with pytest.raises(ValidationError):
+        _validate(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _aggregate_payload(
+            "aggregate.scalar.v2",
+            "single_value",
+            group_by=["currency"],
+        ),
+        _aggregate_payload(
+            "aggregate.scalar.v2",
+            "single_value",
+            bucket_policy_id="equal-width-10.v1",
+        ),
+        _aggregate_payload(
+            "aggregate.grouped.v2",
+            "grouped_table",
+            group_by=["currency"],
+            bucket_policy_id="equal-width-10.v1",
+        ),
+        _aggregate_payload(
+            "aggregate.distribution.v2",
+            "distribution",
+            group_by=["currency"],
+            bucket_policy_id="equal-width-10.v1",
+        ),
+    ],
+)
+def test_aggregate_variants_reject_contradictory_fields(payload: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        _validate(payload)
+
+
+def test_distribution_requires_exactly_grouping_or_registered_bucket_policy() -> None:
+    grouped = _aggregate_payload(
+        "aggregate.distribution.v2",
+        "distribution",
+        group_by=["currency"],
+    )
+    bucketed = _aggregate_payload(
+        "aggregate.distribution.v2",
+        "distribution",
+        bucket_policy_id="equal-width-10.v1",
+    )
+
+    _validate(grouped)
+    _validate(bucketed)

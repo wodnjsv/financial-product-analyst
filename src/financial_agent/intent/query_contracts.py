@@ -81,6 +81,10 @@ class AggregationFunction(str, Enum):
     DISTRIBUTION = "distribution"
 
 
+class AggregationBucketPolicyId(str, Enum):
+    EQUAL_WIDTH_10 = "equal-width-10.v1"
+
+
 class QueryResultShape(str, Enum):
     PRODUCT_LIST = "product_list"
     TOP_K = "top_k"
@@ -241,7 +245,7 @@ class AggregationSpecV2(_StrictContractModel):
     target_field_concept_id: Identifier | None = None
     count_population_id: Identifier | None = None
     group_by_field_concept_ids: tuple[Identifier, ...] = Field(default=(), max_length=8)
-    bucket_policy_id: Identifier | None = None
+    bucket_policy_id: AggregationBucketPolicyId | None = None
     population_grain_id: Identifier
     dedup_policy_id: Identifier
 
@@ -254,11 +258,6 @@ class AggregationSpecV2(_StrictContractModel):
             raise ValueError("COUNT_POPULATION_REQUIRED")
         if self.function_id is not AggregationFunction.COUNT and self.count_population_id:
             raise ValueError("AGGREGATION_TARGET_REQUIRED")
-        if (
-            self.function_id is AggregationFunction.DISTRIBUTION
-            and not (self.group_by_field_concept_ids or self.bucket_policy_id)
-        ):
-            raise ValueError("DISTRIBUTION_GROUP_OR_BUCKET_REQUIRED")
         return self
 
 
@@ -463,6 +462,16 @@ class _AggregateQueryContractCandidateV2(QueryContractSemanticBaseV2):
             and not self.aggregation.group_by_field_concept_ids
         ):
             raise ValueError("GROUPED_AGGREGATION_GROUP_REQUIRED")
+        if self.contract_variant_id == "aggregate.scalar.v2" and (
+            self.aggregation.group_by_field_concept_ids
+            or self.aggregation.bucket_policy_id
+        ):
+            raise ValueError("SCALAR_AGGREGATION_FIELDS_FORBIDDEN")
+        if (
+            self.contract_variant_id == "aggregate.grouped.v2"
+            and self.aggregation.bucket_policy_id
+        ):
+            raise ValueError("GROUPED_BUCKET_POLICY_FORBIDDEN")
         if (
             self.contract_variant_id == "aggregate.distribution.v2"
             and self.aggregation.function_id is not AggregationFunction.DISTRIBUTION
@@ -473,6 +482,11 @@ class _AggregateQueryContractCandidateV2(QueryContractSemanticBaseV2):
             and self.aggregation.function_id is AggregationFunction.DISTRIBUTION
         ):
             raise ValueError("DISTRIBUTION_VARIANT_REQUIRED")
+        if self.contract_variant_id == "aggregate.distribution.v2" and (
+            bool(self.aggregation.group_by_field_concept_ids)
+            == bool(self.aggregation.bucket_policy_id)
+        ):
+            raise ValueError("DISTRIBUTION_GROUP_OR_BUCKET_REQUIRED")
         if self.predicate is not None:
             _validate_predicate_bounds(self.predicate)
         return self

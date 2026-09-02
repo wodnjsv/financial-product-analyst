@@ -8,6 +8,7 @@
     {"id":"default-limit-5.v1","kind":"default"},
     {"id":"default-product-projection.v1","kind":"default"},
     {"id":"distinct-entity.v1","kind":"deduplication"},
+    {"id":"equal-width-10.v1","kind":"bucketing"},
     {"id":"exclude_missing.v1","kind":"missingness"},
     {"id":"minimum-dimension-coverage.v1","kind":"coverage"},
     {"id":"no-dedup.v1","kind":"deduplication"},
