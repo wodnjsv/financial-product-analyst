@@ -101,6 +101,9 @@ def test_compiled_request_is_strict_frozen_and_content_addressed() -> None:
         ("SELECT 1; SELECT 2", "SQL_MULTIPLE_STATEMENTS_FORBIDDEN"),
         ("DELETE FROM catalog.product", "SQL_READ_ONLY_STATEMENT_REQUIRED"),
         ("WITH changed AS (UPDATE x SET y=1 RETURNING *) SELECT * FROM changed", "SQL_MUTATION_FORBIDDEN"),
+        ("SELECT catalog.product.entity_id INTO stolen FROM catalog.product", "SQL_MUTATION_FORBIDDEN"),
+        ("SELECT catalog.product.entity_id FROM catalog.product FOR UPDATE", "SQL_MUTATION_FORBIDDEN"),
+        ("COPY catalog.product TO STDOUT", "SQL_READ_ONLY_STATEMENT_REQUIRED"),
         ("SELECT 1 -- hidden", "SQL_COMMENTS_FORBIDDEN"),
         ("SELECT /* hidden */ 1", "SQL_COMMENTS_FORBIDDEN"),
     ],
@@ -169,3 +172,31 @@ def test_evidence_and_lowering_kinds_are_closed() -> None:
 def test_compiled_request_rejects_unregistered_physical_identifier() -> None:
     with pytest.raises(ValidationError, match="SQL_IDENTIFIER_NOT_REGISTERED"):
         _request(statement="SELECT secret FROM private.user_table", parameters=())
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        'SELECT "private"."user_table"."secret" FROM "private"."user_table"',
+        "SELECT catalog.product.invented_column FROM catalog.product",
+        "SELECT pg_sleep(10) FROM catalog.product",
+        "SELECT catalog.product.entity_id AS invented_alias FROM catalog.product",
+        "SELECT catalog.product.entity_id FROM catalog.product WHERE catalog.product.entity_id = 1",
+    ),
+)
+def test_restore_rejects_every_unregistered_identifier_shape(statement: str) -> None:
+    with pytest.raises(ValidationError, match="SQL_IDENTIFIER_NOT_REGISTERED"):
+        _request(statement=statement, parameters=())
+
+
+def test_restore_accepts_quoted_registered_identifiers_and_nested_closed_ctes() -> None:
+    _request(
+        statement=(
+            'WITH "representative_product" AS '
+            '(SELECT "product"."entity_id" FROM "catalog"."product" AS "product"), '
+            '"distribution_values" AS '
+            '(SELECT "representative_product"."entity_id" FROM "representative_product") '
+            'SELECT "distribution_values"."entity_id" FROM "distribution_values"'
+        ),
+        parameters=(),
+    )

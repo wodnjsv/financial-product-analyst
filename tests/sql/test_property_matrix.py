@@ -12,6 +12,8 @@ from financial_agent.intent.query_contracts import (
     OrderingDirection,
     OrderingSpecV2,
     PredicateAtomV2,
+    PredicateAllOfV2,
+    PredicateNotV2,
     QueryOperatorId,
     QueryQualifiersV2,
     QueryResultShape,
@@ -170,3 +172,87 @@ def test_family_aggregate_matrix_is_request_or_one_rejection(binding_id, functio
     )
     outcome = COMPILER.compile_task(plan, plan.tasks[0].task_id)
     assert (outcome.request is None) != (outcome.rejection is None)
+
+
+@pytest.mark.parametrize("binding_id", tuple(BINDINGS.bindings_by_id))
+def test_family_aggregate_predicate_matrix_is_lossless_or_one_rejection(binding_id) -> None:
+    binding = BINDINGS.bindings_by_id[binding_id]
+    value = TypedSemanticValue(
+        kind=binding.semantic_value_kind,
+        **(
+            {"decimal": "1", "unit_id": "percent"}
+            if binding.semantic_value_kind.value == "decimal"
+            else {"string": "x"}
+        ),
+    )
+    atom = PredicateAtomV2(
+        field_concept_id=binding.semantic_concept_id,
+        operator_id=QueryOperatorId.EQ,
+        value=value,
+        null_policy_id="exclude_missing.v1",
+    )
+    predicate = PredicateAllOfV2(children=(atom, PredicateNotV2(child=atom)))
+    spec = AggregationSpecV2(
+        function_id=AggregationFunction.SUM,
+        target_field_concept_id=binding.semantic_concept_id,
+        population_grain_id="source-product.v1",
+        dedup_policy_id="no-dedup.v1",
+    )
+    policies = tuple(
+        dict.fromkeys(
+            item
+            for item in (
+                "source-product.v1",
+                "no-dedup.v1",
+                "exclude_missing.v1",
+                binding.unit_conversion_policy_id,
+            )
+            if item is not None
+        )
+    )
+    plan = make_plan(
+        LogicalAggregateOperationV2(aggregation=spec, predicate=predicate),
+        family=binding.product_family_id,
+        binding_ids=(binding.id,),
+        policy_ids=policies,
+        qualifiers=_qualifiers(binding),
+    )
+
+    outcome = COMPILER.compile_task(plan, plan.tasks[0].task_id)
+
+    assert (outcome.request is None) != (outcome.rejection is None)
+    if outcome.request is not None:
+        assert any(
+            item.semantic_path.startswith("operation.predicate.")
+            for item in outcome.request.lowering_records
+        )
+
+
+@pytest.mark.parametrize(
+    "qualifiers",
+    (
+        QueryQualifiersV2(period_id="one_year"),
+        QueryQualifiersV2(currency_id="KRW"),
+        QueryQualifiersV2(unit_id="percent"),
+        QueryQualifiersV2(as_of_date=date(2026, 8, 24)),
+    ),
+)
+def test_count_qualifier_matrix_is_one_stable_rejection(qualifiers) -> None:
+    plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="source-product.v1",
+                population_grain_id="source-product.v1",
+                dedup_policy_id="no-dedup.v1",
+            )
+        ),
+        binding_ids=(),
+        policy_ids=("source-product.v1", "no-dedup.v1"),
+        qualifiers=qualifiers,
+    )
+
+    outcome = COMPILER.compile_task(plan, plan.tasks[0].task_id)
+
+    assert outcome.request is None
+    assert outcome.rejection.code == "COUNT_QUALIFIER_BINDING_REQUIRED"

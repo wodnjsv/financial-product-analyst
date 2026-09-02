@@ -13,6 +13,7 @@ from financial_agent.intent.query_contracts import (
     OrderingSpecV2,
     OrderingDirection,
     PredicateAllOfV2,
+    PredicateAnyOfV2,
     PredicateAtomV2,
     PredicateNotV2,
     QueryQualifiersV2,
@@ -368,3 +369,123 @@ def test_cross_currency_normalization_stays_fail_closed() -> None:
     )
     result = COMPILER.compile_task(plan, plan.tasks[0].task_id)
     assert result.rejection.code == "CROSS_CURRENCY_NORMALIZATION_UNVERIFIED"
+
+
+def test_aggregate_predicate_is_lowered_with_values_and_losslessness_records() -> None:
+    lower = PredicateAtomV2(
+        field_concept_id="aum",
+        operator_id=QueryOperatorId.GTE,
+        value=TypedSemanticValue(kind="decimal", decimal="100"),
+        null_policy_id="exclude_missing.v1",
+    )
+    upper = PredicateAtomV2(
+        field_concept_id="aum",
+        operator_id=QueryOperatorId.LTE,
+        value=TypedSemanticValue(kind="decimal", decimal="500"),
+        null_policy_id="exclude_missing.v1",
+    )
+    predicate = PredicateAllOfV2(
+        children=(lower, PredicateNotV2(child=PredicateAnyOfV2(children=(upper,))))
+    )
+    plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.SUM,
+                target_field_concept_id="aum",
+                population_grain_id="source-product.v1",
+                dedup_policy_id="no-dedup.v1",
+            ),
+            predicate=predicate,
+        ),
+        policy_ids=("source-product.v1", "no-dedup.v1", "identity-unit.v1", "exclude_missing.v1"),
+    )
+
+    outcome = COMPILER.compile_task(plan, plan.tasks[0].task_id)
+
+    assert outcome.request is not None
+    values = {decode_contract_value(item.value) for item in outcome.request.parameters}
+    assert {Decimal("100"), Decimal("500")} <= values
+    assert any(
+        item.semantic_path == "operation.predicate.0"
+        and item.lowering_kind.value == "predicate"
+        for item in outcome.request.lowering_records
+    )
+
+
+def test_count_with_qualifiers_and_no_binding_rejects_instead_of_dropping_role() -> None:
+    plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="source-product.v1",
+                population_grain_id="source-product.v1",
+                dedup_policy_id="no-dedup.v1",
+            )
+        ),
+        binding_ids=(),
+        policy_ids=("source-product.v1", "no-dedup.v1"),
+        qualifiers=QueryQualifiersV2(as_of_date=date(2026, 8, 24)),
+    )
+
+    outcome = COMPILER.compile_task(plan, plan.tasks[0].task_id)
+
+    assert outcome.rejection.code == "COUNT_QUALIFIER_BINDING_REQUIRED"
+
+
+def test_compile_entry_revalidates_model_copy_tampering() -> None:
+    plan = _aum_lookup()
+    changed_operation = LogicalLookupOperationV2(
+        projections=ProjectionSpecV2(field_concept_ids=("fee_rate",))
+    )
+    stale_task = plan.tasks[0].model_copy(update={"operation": changed_operation})
+    tampered = plan.model_copy(update={"tasks": (stale_task,)})
+
+    outcome = COMPILER.compile_task(tampered, stale_task.task_id)
+
+    assert outcome.rejection.code == "LOGICAL_PLAN_REVALIDATION_FAILED"
+
+
+def test_evidence_uses_exact_observation_origin_bridge_and_source_owner() -> None:
+    plan = _aum_lookup()
+
+    outcome = COMPILER.compile_task(plan, plan.tasks[0].task_id)
+
+    assert outcome.request is not None
+    assert "evidence.evidence_observation_origin" in outcome.request.statement
+    assert "evidence.source_record" in outcome.request.statement
+    assert "observation_id" in outcome.request.statement
+    assert "evidence_0.subject_id" not in outcome.request.statement
+
+
+def test_public_fund_proof_restricts_relation_observation_evidence_and_source_rows() -> None:
+    aggregation = AggregationSpecV2(
+        function_id=AggregationFunction.SUM,
+        target_field_concept_id="aum",
+        population_grain_id="representative-product.v1",
+        dedup_policy_id="public-fund-representative-share.v1",
+    )
+    plan = make_plan(
+        LogicalAggregateOperationV2(aggregation=aggregation),
+        family=ProductFamily.PUBLIC_FUND,
+        binding_ids=("public-fund-aum.v1",),
+        policy_ids=(
+            "representative-product.v1",
+            "public-fund-representative-share.v1",
+            "identity-unit.v1",
+            "exclude_missing.v1",
+        ),
+        evidence=("metric_definition", "observation_record", "relation_record", "evidence_record", "source_record"),
+        qualifiers=QueryQualifiersV2(as_of_date=date(2026, 8, 24)),
+    )
+
+    outcome = COMPILER.compile_task(
+        plan, plan.tasks[0].task_id, readiness_facts=verified_public_fund_facts()
+    )
+
+    assert outcome.request is not None
+    values = {decode_contract_value(item.value) for item in outcome.request.parameters}
+    assert {
+        "relation-a", "relation-b", "observation-a", "evidence-a", "evidence-b",
+        "evidence-observation-a", "source-a", "source-b", "source-observation-a",
+    } <= values
+    assert "evidence.evidence_relation_origin" in outcome.request.statement

@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import sqlalchemy as sa
-from pydantic import ConfigDict, model_validator
+from pydantic import ConfigDict, ValidationError, model_validator
 from sqlalchemy.dialects import postgresql
 
 from financial_agent.contracts.base import ContractModel, Identifier
 from financial_agent.contracts.enums import ProductFamily
 from financial_agent.db.schema.catalog import entity, product
-from financial_agent.db.schema.evidence import evidence_record
+from financial_agent.contracts.canonical import canonical_json_bytes
+from financial_agent.db.schema.evidence import (
+    evidence_observation_origin,
+    evidence_record,
+    source_record,
+)
 from financial_agent.db.schema.observation import observation_record
 from financial_agent.intent.view import ActiveDatasetPin
 from financial_agent.intent.query_contracts import AggregationFunction, OrderingDirection
@@ -104,6 +109,11 @@ class SemanticSqlCompiler:
         readiness_facts: PhysicalReadinessFacts | None = None,
     ) -> SqlCompilationOutcome:
         try:
+            self._validate_registry_pins(plan)
+            try:
+                plan = LogicalQueryPlanV2.model_validate_json(canonical_json_bytes(plan))
+            except ValidationError as error:
+                raise SqlCompileRejection("LOGICAL_PLAN_REVALIDATION_FAILED") from error
             task = next((item for item in plan.tasks if item.task_id == task_id), None)
             if task is None:
                 raise SqlCompileRejection("SQL_TASK_NOT_FOUND")
@@ -168,6 +178,14 @@ class SemanticSqlCompiler:
                 compiled_request_id=compiled_sql_request_id(draft), **kwargs
             )
             return SqlCompilationOutcome(request=request)
+        except ValidationError:
+            return SqlCompilationOutcome(
+                rejection=SqlCompileRejectionRecord(
+                    code="COMPILED_SQL_VALIDATION_FAILED",
+                    logical_plan_id=plan.logical_plan_id,
+                    task_id=task_id,
+                )
+            )
         except SqlCompileRejection as error:
             return SqlCompilationOutcome(
                 rejection=SqlCompileRejectionRecord(
@@ -180,6 +198,31 @@ class SemanticSqlCompiler:
     def _validate_ownership(
         self, plan: LogicalQueryPlanV2, task: LogicalQueryTaskV2
     ) -> None:
+        self._validate_registry_pins(plan)
+        if any(item.execution_route.value != "semantic_sql" for item in task.execution_steps):
+            raise SqlCompileRejection("SQL_EXECUTION_ROUTE_REQUIRED")
+        if any(item not in self._bindings.bindings_by_id for item in task.binding_ids):
+            raise SqlCompileRejection("PHYSICAL_BINDING_NOT_REGISTERED")
+        for binding_id in task.binding_ids:
+            binding = self._bindings.bindings_by_id[binding_id]
+            if binding.availability is not PhysicalBindingAvailability.VERIFIED:
+                raise SqlCompileRejection("PHYSICAL_BINDING_UNAVAILABLE")
+            required = {
+                item
+                for item in (
+                    binding.unit_conversion_policy_id,
+                    binding.missingness_policy_id,
+                )
+                if item is not None
+            }
+            if not required <= set(task.policy_ids):
+                raise SqlCompileRejection("PHYSICAL_POLICY_OWNERSHIP_MISMATCH")
+        if any(item not in self._policies.policies_by_id for item in task.policy_ids):
+            raise SqlCompileRejection("SQL_POLICY_NOT_REGISTERED")
+        if any(not self._policies.policies_by_id[item].verified for item in task.policy_ids):
+            raise SqlCompileRejection("SQL_POLICY_UNVERIFIED")
+
+    def _validate_registry_pins(self, plan: LogicalQueryPlanV2) -> None:
         if (
             plan.binding_registry_version != self._bindings.registry_version
             or plan.binding_registry_hash != self._bindings.registry_hash
@@ -210,28 +253,6 @@ class SemanticSqlCompiler:
             or plan.dataset_pin != self._active_dataset_pin.manifest_hash
         ):
             raise SqlCompileRejection("DATASET_PROVENANCE_MISMATCH")
-        if any(item.execution_route.value != "semantic_sql" for item in task.execution_steps):
-            raise SqlCompileRejection("SQL_EXECUTION_ROUTE_REQUIRED")
-        if any(item not in self._bindings.bindings_by_id for item in task.binding_ids):
-            raise SqlCompileRejection("PHYSICAL_BINDING_NOT_REGISTERED")
-        for binding_id in task.binding_ids:
-            binding = self._bindings.bindings_by_id[binding_id]
-            if binding.availability is not PhysicalBindingAvailability.VERIFIED:
-                raise SqlCompileRejection("PHYSICAL_BINDING_UNAVAILABLE")
-            required = {
-                item
-                for item in (
-                    binding.unit_conversion_policy_id,
-                    binding.missingness_policy_id,
-                )
-                if item is not None
-            }
-            if not required <= set(task.policy_ids):
-                raise SqlCompileRejection("PHYSICAL_POLICY_OWNERSHIP_MISMATCH")
-        if any(item not in self._policies.policies_by_id for item in task.policy_ids):
-            raise SqlCompileRejection("SQL_POLICY_NOT_REGISTERED")
-        if any(not self._policies.policies_by_id[item].verified for item in task.policy_ids):
-            raise SqlCompileRejection("SQL_POLICY_UNVERIFIED")
 
 
 def _compile_statement(context: _Context):
@@ -287,8 +308,8 @@ def _compile_statement(context: _Context):
                     alias.c.unit.label(f"unit_{index}"),
                     alias.c.currency.label(f"currency_{index}"),
                     alias.c.applicable_date.label(f"applicable_date_{index}"),
-                    evidence_alias.c.evidence_id.label(f"evidence_id_{index}"),
-                    evidence_alias.c.source_id.label(f"source_id_{index}"),
+                    evidence_alias.c.evidence_ids.label(f"evidence_id_{index}"),
+                    evidence_alias.c.source_ids.label(f"source_id_{index}"),
                 )
             )
             _record(context, f"operation.projections.{index}", binding.id, PhysicalLoweringKind.PROJECTION, binding)
@@ -321,8 +342,8 @@ def _compile_statement(context: _Context):
                     alias.c.unit.label(f"unit_{index}"),
                     alias.c.currency.label(f"currency_{index}"),
                     alias.c.applicable_date.label(f"applicable_date_{index}"),
-                    evidence_alias.c.evidence_id.label(f"evidence_id_{index}"),
-                    evidence_alias.c.source_id.label(f"source_id_{index}"),
+                    evidence_alias.c.evidence_ids.label(f"evidence_id_{index}"),
+                    evidence_alias.c.source_ids.label(f"source_id_{index}"),
                 )
             )
         statement = sa.select(*selected).select_from(base).where(*where)
@@ -370,8 +391,8 @@ def _compile_statement(context: _Context):
                     alias.c.unit.label(f"unit_{index}"),
                     alias.c.currency.label(f"currency_{index}"),
                     alias.c.applicable_date.label(f"applicable_date_{index}"),
-                    evidence_alias.c.evidence_id.label(f"evidence_id_{index}"),
-                    evidence_alias.c.source_id.label(f"source_id_{index}"),
+                    evidence_alias.c.evidence_ids.label(f"evidence_id_{index}"),
+                    evidence_alias.c.source_ids.label(f"source_id_{index}"),
                 )
             )
         statement = sa.select(*selected).select_from(base).where(*where).order_by(*ordering).limit(context.params.bind(limit, prefix="limit"))
@@ -400,8 +421,8 @@ def _compile_statement(context: _Context):
                     alias.c.unit.label(f"unit_{index}"),
                     alias.c.currency.label(f"currency_{index}"),
                     alias.c.applicable_date.label(f"applicable_date_{index}"),
-                    evidence_alias.c.evidence_id.label(f"evidence_id_{index}"),
-                    evidence_alias.c.source_id.label(f"source_id_{index}"),
+                    evidence_alias.c.evidence_ids.label(f"evidence_id_{index}"),
+                    evidence_alias.c.source_ids.label(f"source_id_{index}"),
                 )
             )
         statement = sa.select(*selected).select_from(base).where(*where).order_by(product.c.entity_id.asc())
@@ -458,22 +479,75 @@ def _join_observation_with_evidence(context, base, alias, binding):
 
 
 def _join_evidence(context, base, alias, binding):
-    evidence_alias = evidence_record.alias(
-        f"evidence_{len(context.evidence_aliases)}"
+    index = len(context.evidence_aliases)
+    origin_alias = evidence_observation_origin.alias(f"evidence_origin_{index}")
+    record_alias = evidence_record.alias(f"evidence_{index}")
+    source_alias = source_record.alias(f"evidence_source_{index}")
+    lineage_filters = [
+        record_alias.c.evidence_kind
+        == context.params.bind("observation", prefix="evidence_kind")
+    ]
+    ownerships = _manifest_metric_ownerships(context, binding)
+    if ownerships:
+        lineage_filters.append(
+            sa.or_(
+                *(
+                    sa.and_(
+                        origin_alias.c.observation_id
+                        == context.params.bind(item.observation_id, prefix="owned_observation_id"),
+                        origin_alias.c.evidence_id
+                        == context.params.bind(item.evidence_id, prefix="owned_evidence_id"),
+                        record_alias.c.source_id
+                        == context.params.bind(item.source_id, prefix="owned_source_id"),
+                    )
+                    for item in ownerships
+                )
+            )
+        )
+    evidence_alias = (
+        sa.select(
+            origin_alias.c.dataset_version,
+            origin_alias.c.observation_id,
+            sa.func.array_agg(sa.distinct(record_alias.c.evidence_id)).label("evidence_ids"),
+            sa.func.array_agg(sa.distinct(source_alias.c.source_id)).label("source_ids"),
+        )
+        .select_from(
+            origin_alias.join(
+                record_alias,
+                sa.and_(
+                    record_alias.c.dataset_version == origin_alias.c.dataset_version,
+                    record_alias.c.evidence_id == origin_alias.c.evidence_id,
+                ),
+            ).join(
+                source_alias,
+                sa.and_(
+                    source_alias.c.dataset_version == record_alias.c.dataset_version,
+                    source_alias.c.source_id == record_alias.c.source_id,
+                ),
+            )
+        )
+        .where(*lineage_filters)
+        .group_by(origin_alias.c.dataset_version, origin_alias.c.observation_id)
+        .subquery(f"evidence_lineage_{index}")
     )
     context.evidence_aliases[binding.id] = evidence_alias
     return base.join(
         evidence_alias,
         sa.and_(
             evidence_alias.c.dataset_version == alias.c.dataset_version,
-            evidence_alias.c.subject_id == alias.c.entity_id,
-            evidence_alias.c.predicate_id == alias.c.metric_id,
-            evidence_alias.c.applicable_date.is_not_distinct_from(
-                alias.c.applicable_date
-            ),
-            evidence_alias.c.evidence_kind
-            == context.params.bind("observation", prefix="evidence_kind"),
+            evidence_alias.c.observation_id == alias.c.observation_id,
         ),
+    )
+
+
+def _manifest_metric_ownerships(context: _Context, binding):
+    if context.facts is None or context.facts.public_fund_manifest is None:
+        return ()
+    approved = set(binding.approved_metric_ids)
+    return tuple(
+        item
+        for item in context.facts.public_fund_manifest.population_metric_ownerships
+        if item.metric_id in approved
     )
 
 
@@ -492,7 +566,12 @@ def _aggregate(context, base, where, family, operation):
             metric_ids = binding.approved_metric_ids if binding is not None else ()
         if not verified_public_fund_proof(context.facts, dataset_pin=context.plan.dataset_pin, policies=context.policies, metric_ids=metric_ids):
             raise SqlCompileRejection("PUBLIC_FUND_VERIFIED_PROOF_REQUIRED")
-        representative = representative_product_cte(context.params)
+        assert context.facts is not None
+        representative = representative_product_cte(
+            context.params,
+            context.facts,
+            dataset_version=context.plan.dataset_version,
+        )
         base = representative.join(
             product,
             sa.and_(
@@ -524,6 +603,26 @@ def _aggregate(context, base, where, family, operation):
             alias.c.entity_id == join_target.c.entity_id,
             sa.or_(*(alias.c.metric_id == context.params.bind(metric, prefix="metric") for metric in binding.approved_metric_ids)),
         )
+        ownerships = _manifest_metric_ownerships(context, binding)
+        if is_public_representative:
+            if not ownerships:
+                raise SqlCompileRejection("PUBLIC_FUND_VERIFIED_PROOF_REQUIRED")
+            join_condition = sa.and_(
+                join_condition,
+                sa.or_(
+                    *(
+                        sa.and_(
+                            alias.c.entity_id
+                            == context.params.bind(item.owner_entity_id, prefix="owned_entity_id"),
+                            alias.c.metric_id
+                            == context.params.bind(item.metric_id, prefix="owned_metric_id"),
+                            alias.c.observation_id
+                            == context.params.bind(item.observation_id, prefix="owned_observation_id"),
+                        )
+                        for item in ownerships
+                    )
+                ),
+            )
         base = base.join(alias, join_condition)
         base = _join_evidence(context, base, alias, binding)
         joined_alias_names.add(alias.name)
@@ -559,10 +658,10 @@ def _aggregate(context, base, where, family, operation):
                 sa.func.array_agg(sa.distinct(alias.c.applicable_date)).label(
                     "applicable_dates"
                 ),
-                sa.func.array_agg(sa.distinct(evidence_alias.c.evidence_id)).label(
+                sa.func.array_agg(sa.distinct(evidence_alias.c.evidence_ids)).label(
                     "evidence_ids"
                 ),
-                sa.func.array_agg(sa.distinct(evidence_alias.c.source_id)).label(
+                sa.func.array_agg(sa.distinct(evidence_alias.c.source_ids)).label(
                     "source_ids"
                 ),
             )
@@ -581,6 +680,33 @@ def _aggregate(context, base, where, family, operation):
         selected.insert(index, group_expression.label(f"group_{index}"))
         groups.append(group_expression)
         _record(context, f"operation.aggregation.group_by.{index}", group_binding.id, PhysicalLoweringKind.GROUPING, group_binding)
+
+    if operation.predicate is not None:
+        predicate_concepts = _predicate_concepts(operation.predicate)
+        expressions = {}
+        for concept in predicate_concepts:
+            expression, binding, alias = _field(context, family, concept)
+            if alias.name not in joined_alias_names:
+                base = _join_observation_with_evidence(context, base, alias, binding)
+                joined_alias_names.add(alias.name)
+            expressions[concept] = (expression, binding, alias.c.value_status)
+        where.append(
+            lower_predicate(
+                operation.predicate,
+                expression_for=lambda concept: expressions[concept],
+                parameters=context.params,
+            )
+        )
+        for index, concept in enumerate(predicate_concepts):
+            binding = expressions[concept][1]
+            _record(
+                context,
+                f"operation.predicate.{index}",
+                binding.id,
+                PhysicalLoweringKind.PREDICATE,
+                binding,
+                (binding.missingness_policy_id,),
+            )
     statement = sa.select(*selected).select_from(base).where(*where)
     if groups:
         statement = statement.group_by(*groups).order_by(*groups)
@@ -597,6 +723,13 @@ def _apply_qualifiers(context: _Context, statement):
         SemanticQualifierId.AS_OF: qualifiers.as_of_date,
     }
     bindings = [context.bindings.bindings_by_id[item] for item in context.task.binding_ids]
+    if any(value is not None for value in requested.values()) and not bindings:
+        if (
+            isinstance(context.task.operation, LogicalAggregateOperationV2)
+            and context.task.operation.aggregation.function_id is AggregationFunction.COUNT
+        ):
+            raise SqlCompileRejection("COUNT_QUALIFIER_BINDING_REQUIRED")
+        raise SqlCompileRejection("QUALIFIER_BINDING_REQUIRED")
     for binding in bindings:
         supplied = {key for key, value in requested.items() if value is not None}
         if not set(binding.required_qualifier_ids) <= supplied:

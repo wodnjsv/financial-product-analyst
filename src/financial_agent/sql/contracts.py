@@ -22,8 +22,12 @@ from financial_agent.planning.physical_bindings import (
 COMPILER_VERSION = "semantic-sql-compiler.v1"
 _PLACEHOLDER = re.compile(r"(?<!:):([A-Za-z][A-Za-z0-9_]*)")
 _MUTATION = re.compile(
-    r"\b(?:INSERT|UPDATE|DELETE|MERGE|UPSERT|CREATE|ALTER|DROP|TRUNCATE|"
+    r"\b(?:INSERT|UPDATE|DELETE|MERGE|UPSERT|CREATE|ALTER|DROP|TRUNCATE|INTO|"
     r"GRANT|REVOKE|COPY|CALL|DO|VACUUM|ANALYZE|REFRESH|LOCK)\b",
+    re.IGNORECASE,
+)
+_LOCKING = re.compile(
+    r"\bFOR\s+(?:UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)\b",
     re.IGNORECASE,
 )
 _COMMENT = re.compile(r"--|/\*|\*/")
@@ -36,21 +40,36 @@ _SEMANTIC_PATH = re.compile(
     r"aggregation(?:\.target|\.population|\.group_by)?)(?:\.[0-9]+)?|"
     r"qualifiers\.(?:period|currency|unit|as_of)|evidence\.[0-9]+)$"
 )
-_TABLE_REFERENCE = re.compile(
-    r"\b(?:(?<!DISTINCT )FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_.]*)",
-    re.IGNORECASE,
+_SQL_TOKEN = re.compile(
+    r'\s+|:[A-Za-z][A-Za-z0-9_]*|"(?:[^"]|"")+"|'
+    r"[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|<=|>=|<>|!=|[-+*/=<>(),.]"
 )
-_SERVER_TABLES = frozenset(
+_SQL_KEYWORDS = frozenset(
+    "SELECT WITH AS FROM JOIN ON WHERE AND OR NOT IS DISTINCT NULL IN BETWEEN "
+    "LIKE ESCAPE ORDER BY ASC DESC NULLS FIRST LAST LIMIT GROUP HAVING UNION ALL"
+    .split()
+)
+_SQL_FUNCTIONS = frozenset({"sum", "avg", "min", "max", "count", "array_agg"})
+_SQL_IDENTIFIERS = frozenset(
     {
-        "catalog.product",
-        "catalog.entity",
-        "observation.observation_record",
-        "evidence.evidence_record",
-        "relation.relation_record",
-        "representative_product",
-        "distribution_values",
-        "distribution_stats",
+        "catalog", "observation", "evidence", "relation",
+        "product", "entity", "observation_record", "evidence_record",
+        "source_record", "evidence_observation_origin", "evidence_relation_origin",
+        "relation_record", "representative_product", "distribution_values",
+        "distribution_stats", "dataset_version", "entity_id", "product_family",
+        "canonical_name", "numeric_value", "text_value", "boolean_value",
+        "date_value", "value_status", "observation_id", "metric_id",
+        "metric_definition_version", "unit", "currency", "applicable_date",
+        "evidence_id", "source_id", "evidence_kind", "relation_id", "subject_id",
+        "predicate_id", "object_id", "evidence_ids", "source_ids", "product_id",
+        "product_name", "aggregate_value", "product_ids", "observation_ids", "metric_ids",
+        "metric_definition_versions", "units", "currencies", "applicable_dates",
     }
+)
+_GENERATED_IDENTIFIER = re.compile(
+    r"^(?:observation|evidence|evidence_origin|evidence_source|evidence_lineage|"
+    r"field|observation_id|metric_id|metric_definition_version|unit|currency|"
+    r"applicable_date|evidence_id|source_id|group)_[0-9]+$"
 )
 
 
@@ -185,7 +204,41 @@ def _validate_read_only_statement(statement: str) -> None:
         raise ValueError("SQL_COMMENTS_FORBIDDEN")
     if not re.match(r"^(?:SELECT|WITH)\b", stripped, flags=re.IGNORECASE):
         raise ValueError("SQL_READ_ONLY_STATEMENT_REQUIRED")
-    if _MUTATION.search(stripped):
+    if _MUTATION.search(stripped) or _LOCKING.search(stripped):
         raise ValueError("SQL_MUTATION_FORBIDDEN")
-    if not set(_TABLE_REFERENCE.findall(stripped)) <= _SERVER_TABLES:
+    _validate_closed_sql_tokens(stripped)
+
+
+def _validate_closed_sql_tokens(statement: str) -> None:
+    """Accept only the deliberately small SQLAlchemy-emitted SQL vocabulary."""
+
+    cursor = 0
+    tokens: list[str] = []
+    for match in _SQL_TOKEN.finditer(statement):
+        if match.start() != cursor:
+            raise ValueError("SQL_IDENTIFIER_NOT_REGISTERED")
+        cursor = match.end()
+        token = match.group(0)
+        if not token.isspace():
+            tokens.append(token)
+    if cursor != len(statement):
+        raise ValueError("SQL_IDENTIFIER_NOT_REGISTERED")
+
+    for index, token in enumerate(tokens):
+        if token[0].isdigit():
+            raise ValueError("SQL_IDENTIFIER_NOT_REGISTERED")
+        if token.startswith(":") or token in {
+            "-", "+", "*", "/", "=", "<", ">", "<=", ">=", "<>", "!=",
+            "(", ")", ",", ".",
+        }:
+            continue
+        identifier = token[1:-1].replace('""', '"') if token.startswith('"') else token
+        upper = identifier.upper()
+        if upper in _SQL_KEYWORDS:
+            continue
+        follows_call = index + 1 < len(tokens) and tokens[index + 1] == "("
+        if follows_call and identifier.lower() in _SQL_FUNCTIONS:
+            continue
+        if identifier in _SQL_IDENTIFIERS or _GENERATED_IDENTIFIER.fullmatch(identifier):
+            continue
         raise ValueError("SQL_IDENTIFIER_NOT_REGISTERED")

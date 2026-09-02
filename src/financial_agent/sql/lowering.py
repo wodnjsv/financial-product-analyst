@@ -10,6 +10,11 @@ import sqlalchemy as sa
 
 from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.values import encode_contract_value
+from financial_agent.db.schema.evidence import (
+    evidence_record,
+    evidence_relation_origin,
+    source_record,
+)
 from financial_agent.db.schema.observation import observation_record
 from financial_agent.db.schema.relation import relation_record
 from financial_agent.intent.query_contracts import (
@@ -189,14 +194,69 @@ def verified_public_fund_proof(
     )
 
 
-def representative_product_cte(parameters: ParameterBuilder):
-    predicate = parameters.bind("hasShareClass", prefix="relation_predicate")
+def representative_product_cte(
+    parameters: ParameterBuilder,
+    facts: PhysicalReadinessFacts,
+    *,
+    dataset_version: str,
+):
+    manifest = facts.public_fund_manifest
+    if manifest is None:
+        raise SqlCompileRejection("PUBLIC_FUND_VERIFIED_PROOF_REQUIRED")
+    exact_edges = tuple(
+        sa.and_(
+            relation_record.c.relation_id
+            == parameters.bind(edge.relation_id, prefix="relation_id"),
+            relation_record.c.subject_id
+            == parameters.bind(edge.representative_id, prefix="representative_id"),
+            relation_record.c.object_id
+            == parameters.bind(edge.share_class_id, prefix="share_class_id"),
+            relation_record.c.predicate_id
+            == parameters.bind(edge.predicate_id, prefix="relation_predicate"),
+            evidence_relation_origin.c.evidence_id
+            == parameters.bind(edge.evidence_id, prefix="relation_evidence_id"),
+            evidence_record.c.source_id
+            == parameters.bind(edge.source_id, prefix="relation_source_id"),
+        )
+        for edge in manifest.representative_share_edges
+    )
     return (
         sa.select(
             relation_record.c.dataset_version,
             relation_record.c.subject_id.label("entity_id"),
         )
-        .where(relation_record.c.predicate_id == predicate)
+        .select_from(
+            relation_record.join(
+                evidence_relation_origin,
+                sa.and_(
+                    evidence_relation_origin.c.dataset_version
+                    == relation_record.c.dataset_version,
+                    evidence_relation_origin.c.relation_id
+                    == relation_record.c.relation_id,
+                ),
+            )
+            .join(
+                evidence_record,
+                sa.and_(
+                    evidence_record.c.dataset_version
+                    == evidence_relation_origin.c.dataset_version,
+                    evidence_record.c.evidence_id
+                    == evidence_relation_origin.c.evidence_id,
+                ),
+            )
+            .join(
+                source_record,
+                sa.and_(
+                    source_record.c.dataset_version == evidence_record.c.dataset_version,
+                    source_record.c.source_id == evidence_record.c.source_id,
+                ),
+            )
+        )
+        .where(
+            relation_record.c.dataset_version
+            == parameters.bind(dataset_version, prefix="manifest_dataset"),
+            sa.or_(*exact_edges),
+        )
         .distinct()
         .cte("representative_product")
     )
