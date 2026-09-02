@@ -15,6 +15,7 @@ from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.config import ClovaResolverConfig
 from financial_agent.intent.errors import ModelInvocationError
 from financial_agent.intent.prompt import build_prompt
+from financial_agent.intent.query_contract_judge import QueryContractJudgePromptEnvelope
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
 from financial_agent.intent.view import (
     ActiveDatasetPin,
@@ -191,6 +192,35 @@ async def test_clova_adapter_sends_one_structured_request() -> None:
     assert 'tools' not in body
     assert result.content == valid_proposal_json()
     assert result.usage == {'promptTokens': 10, 'completionTokens': 20, 'totalTokens': 30}
+
+
+@pytest.mark.asyncio
+async def test_clova_adapter_reuses_transport_for_distinct_judge_envelope() -> None:
+    transport, calls = successful_transport('{"candidate_id":"candidate-a"}')
+    adapter = ClovaStructuredOutputAdapter(make_config(), transport=transport)
+    envelope = QueryContractJudgePromptEnvelope(
+        system_message="bounded contract judge",
+        user_message='{"question":"규모가 큰 ETF"}',
+        response_schema={
+            "type": "object",
+            "properties": {
+                "candidate_id": {"type": "string", "enum": ["candidate-a"]}
+            },
+            "required": ["candidate_id"],
+            "additionalProperties": False,
+        },
+    )
+
+    result = await adapter.invoke(envelope, timeout_seconds=4.0)
+
+    body = json.loads(calls[0].content)
+    assert len(calls) == 1
+    assert body["messages"] == [
+        {"role": "system", "content": "bounded contract judge"},
+        {"role": "user", "content": '{"question":"규모가 큰 ETF"}'},
+    ]
+    assert body["responseFormat"]["schema"] == envelope.response_schema
+    assert result.content == '{"candidate_id":"candidate-a"}'
 
 
 @pytest.mark.asyncio
