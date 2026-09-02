@@ -58,6 +58,7 @@ from .types import (
     ContextLinkType,
     EntitySemanticRole,
     ReferenceTargetKind,
+    ResolutionStatus,
     SlotKind,
 )
 from .view import ResolverView, ResolverViewConcept, ResolverViewLiteralCandidate
@@ -200,6 +201,20 @@ def _solve_frame(
     registry: QueryContractRegistry,
 ) -> QueryContractFrameCandidateSet:
     rejections: list[CandidateRejection] = []
+    if frame.frame_status is not ResolutionStatus.RESOLVED:
+        return _frame_result(
+            frame.frame_id,
+            (),
+            (
+                _rejection(
+                    frame,
+                    "unresolved.v2",
+                    "frame_status",
+                    (frame.frame_status.value,),
+                    "FRAME_NOT_RESOLVED",
+                ),
+            ),
+        )
     if (
         frame.action_choice.state is not ChoiceState.SELECTED
         or len(frame.action_choice.selected_ids) != 1

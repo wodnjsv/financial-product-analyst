@@ -718,6 +718,8 @@ def reconcile_exact_axis_locks(
         ):
             frames.append(frame)
             continue
+        if frame.product_family_choice.state is ChoiceState.SELECTED:
+            raise ResolverContractError("EXACT_LOCK_CONFLICT")
         old_choices[frame.frame_id] = frame.product_family_choice
         changed_frame_ids.append(frame.frame_id)
         frames.append(
@@ -742,19 +744,15 @@ def reconcile_exact_axis_locks(
     issues = tuple(
         issue
         for issue in resolution.issues
-        if not (
-            issue.code == "AMBIGUITY_UNRESOLVED"
-            and len(issue.related_ids) == 1
-            and issue.related_ids[0] in changed
-            and issue.evidence_span_ids
-            == old_choices[issue.related_ids[0]].evidence_span_ids
+        if not _is_reconciled_family_issue(
+            issue, changed, old_choices, resolution
         )
     )
     frames = [
         frame.model_copy(
             update={
                 "frame_status": _reconciled_frame_status(
-                    frame, issues, resolution
+                    frame, issues, resolution, view
                 )
             }
         )
@@ -807,31 +805,15 @@ def _reconciled_frame_status(
     frame: ValidatedIntentFrameV2,
     issues: tuple[ResolutionIssue, ...],
     resolution: ValidatedIntentResolutionV2,
+    view: ResolverView,
 ) -> ResolutionStatus:
-    frame_ids = {item.frame_id for item in resolution.canonical_frames}
-    link_frames = {
-        link.context_link_id: link.consumer_frame_id for link in resolution.context_links
-    }
-    reference_frames: dict[str, set[str]] = {}
-    for link in resolution.context_links:
-        reference_frames.setdefault(link.reference_id, set()).add(link.consumer_frame_id)
     codes: set[str] = set()
+    unowned_issue = False
     for issue in issues:
-        affected = set(issue.related_ids) & frame_ids
-        affected.update(
-            link_frames[related_id]
-            for related_id in issue.related_ids
-            if related_id in link_frames
-        )
-        for related_id in issue.related_ids:
-            affected.update(reference_frames.get(related_id, ()))
-        if issue.evidence_span_ids and set(issue.evidence_span_ids) & set(
-            frame.evidence_span_ids
-        ):
-            affected.add(frame.frame_id)
+        affected = _issue_owner_frame_ids(issue, resolution, view)
         if not affected:
-            affected = frame_ids
-        if frame.frame_id in affected:
+            unowned_issue = True
+        elif frame.frame_id in affected:
             codes.add(issue.code)
     if codes & {
         "SEMANTIC_CONCEPT_UNMAPPED",
@@ -844,7 +826,97 @@ def _reconciled_frame_status(
         return ResolutionStatus.CONTEXT_UNRESOLVED
     if codes:
         return ResolutionStatus.AMBIGUOUS
+    if unowned_issue and frame.frame_status is not ResolutionStatus.RESOLVED:
+        return frame.frame_status
     return ResolutionStatus.RESOLVED
+
+
+def _is_reconciled_family_issue(
+    issue: ResolutionIssue,
+    changed_frame_ids: set[str],
+    old_choices: dict[str, ProductFamilyChoice],
+    resolution: ValidatedIntentResolutionV2,
+) -> bool:
+    if len(issue.related_ids) != 1 or issue.related_ids[0] not in changed_frame_ids:
+        return False
+    frame_id = issue.related_ids[0]
+    old_choice = old_choices[frame_id]
+    expected_code = {
+        ChoiceState.AMBIGUOUS: "AMBIGUITY_UNRESOLVED",
+        ChoiceState.UNMAPPED: "SEMANTIC_CONCEPT_UNMAPPED",
+    }.get(old_choice.state)
+    if issue.code != expected_code or issue.evidence_span_ids != old_choice.evidence_span_ids:
+        return False
+    original = next(item for item in resolution.canonical_frames if item.frame_id == frame_id)
+    return not (
+        original.action_choice.state is old_choice.state
+        and original.action_choice.evidence_span_ids == issue.evidence_span_ids
+    )
+
+
+def _issue_owner_frame_ids(
+    issue: ResolutionIssue,
+    resolution: ValidatedIntentResolutionV2,
+    view: ResolverView,
+) -> set[str]:
+    frame_ids = {item.frame_id for item in resolution.canonical_frames}
+    link_frames = {
+        link.context_link_id: link.consumer_frame_id for link in resolution.context_links
+    }
+    reference_frames: dict[str, set[str]] = {}
+    for link in resolution.context_links:
+        reference_frames.setdefault(link.reference_id, set()).add(link.consumer_frame_id)
+    affected = set(issue.related_ids) & frame_ids
+    affected.update(
+        link_frames[related_id]
+        for related_id in issue.related_ids
+        if related_id in link_frames
+    )
+    for related_id in issue.related_ids:
+        affected.update(reference_frames.get(related_id, ()))
+
+    issue_evidence = set(issue.evidence_span_ids)
+    if issue_evidence:
+        affected.update(
+            frame.frame_id
+            for frame in resolution.canonical_frames
+            if issue_evidence & set(frame.evidence_span_ids)
+        )
+
+    references = {
+        item.reference_id: item
+        for item in view.reference_candidates
+        if item.reference_id in issue.related_ids
+    }
+    evidence_by_reference = {
+        reference_id: {
+            evidence.evidence_id
+            for evidence in view.evidence_candidates
+            if evidence.segment_id == reference.segment_id
+            and evidence.start_char == reference.start_char
+            and evidence.end_char == reference.end_char
+            and evidence.text == reference.text
+        }
+        for reference_id, reference in references.items()
+    }
+    for reference_id, reference in references.items():
+        evidence_ids = evidence_by_reference[reference_id]
+        evidence_owners = {
+            frame.frame_id
+            for frame in resolution.canonical_frames
+            if evidence_ids & set(frame.evidence_span_ids)
+        }
+        if evidence_owners:
+            affected.update(evidence_owners)
+            continue
+        segment_owners = {
+            frame.frame_id
+            for frame in resolution.canonical_frames
+            if reference.segment_id in frame.segment_ids
+        }
+        if len(segment_owners) == 1:
+            affected.update(segment_owners)
+    return affected
 
 
 def _resolution_status_from_frames(

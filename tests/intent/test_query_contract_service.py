@@ -15,6 +15,7 @@ from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.clova import ModelInvocationResult
 from financial_agent.intent.draft import ProductFamilyChoice
+from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
 from financial_agent.intent.errors import ResolverContractError
 from financial_agent.intent.query_contract_registry import load_query_contract_registry
 from financial_agent.intent.query_contract_solver import (
@@ -42,6 +43,7 @@ from financial_agent.intent.view import (
     PROMPT_VERSION,
     RESOLVER_SCHEMA_VERSION,
     ActiveDatasetPin,
+    ResolverViewReferenceCandidate,
     build_manifest,
 )
 from tests.planning.fixtures import resolution
@@ -279,6 +281,87 @@ async def test_exact_public_fund_family_replaces_an_hcx_family_omission() -> Non
 
 
 @pytest.mark.asyncio
+async def test_exact_family_lock_never_overwrites_conflicting_selected_family() -> None:
+    service = _service(_Adapter([_proposal()]))
+    prepared = await service.prepare(_context("공모펀드 순자산 알려줘"))
+    public_evidence = next(
+        item.evidence_id
+        for item in prepared.view.evidence_candidates
+        if item.text == "공모펀드"
+    )
+    source = resolution()
+    conflicting = source.canonical_frames[0].model_copy(
+        update={
+            "evidence_span_ids": (public_evidence,),
+            "product_family_choice": ProductFamilyChoice(
+                state=ChoiceState.SELECTED,
+                selected_ids=(ProductFamily.DOMESTIC_ETF,),
+                evidence_span_ids=(public_evidence,),
+                reason_code="explicit",
+            ),
+        }
+    )
+    source = source.model_copy(update={"canonical_frames": (conflicting,)})
+
+    with pytest.raises(ResolverContractError, match="EXACT_LOCK_CONFLICT"):
+        reconcile_exact_axis_locks(
+            source,
+            prepared.view.exact_semantic_locks,
+            prepared.semantic_candidates,
+            prepared.view,
+        )
+
+
+@pytest.mark.asyncio
+async def test_exact_family_lock_resolves_true_unmapped_family_omission() -> None:
+    service = _service(_Adapter([_proposal()]))
+    prepared = await service.prepare(_context("공모펀드 순자산 알려줘"))
+    public_evidence = next(
+        item.evidence_id
+        for item in prepared.view.evidence_candidates
+        if item.text == "공모펀드"
+    )
+    source = resolution()
+    source_frame = source.canonical_frames[0].model_copy(
+        update={
+            "frame_status": ResolutionStatus.UNMAPPED,
+            "evidence_span_ids": (public_evidence,),
+            "product_family_choice": ProductFamilyChoice(
+                state=ChoiceState.UNMAPPED,
+                selected_ids=(),
+                evidence_span_ids=(public_evidence,),
+                reason_code="lexical_ood",
+            ),
+        }
+    )
+    source = source.model_copy(
+        update={
+            "canonical_frames": (source_frame,),
+            "resolution_status": ResolutionStatus.UNMAPPED,
+            "issues": (
+                ResolutionIssue(
+                    issue_id="issue-family",
+                    code="SEMANTIC_CONCEPT_UNMAPPED",
+                    related_ids=(source_frame.frame_id,),
+                    evidence_span_ids=(public_evidence,),
+                ),
+            ),
+        }
+    )
+
+    reconciled = reconcile_exact_axis_locks(
+        source,
+        prepared.view.exact_semantic_locks,
+        prepared.semantic_candidates,
+        prepared.view,
+    )
+
+    assert reconciled.issues == ()
+    assert reconciled.canonical_frames[0].frame_status is ResolutionStatus.RESOLVED
+    assert reconciled.resolution_status is ResolutionStatus.RESOLVED
+
+
+@pytest.mark.asyncio
 async def test_same_segment_family_lock_changes_only_its_evidence_owned_frame() -> None:
     service = _service(_Adapter([_proposal()]))
     prepared = await service.prepare(_context("공모펀드와 국내 ETF를 각각 알려줘"))
@@ -413,6 +496,111 @@ async def test_family_reconciliation_preserves_unrelated_frame_ambiguity() -> No
     assert reconciled.canonical_frames[0].frame_status is ResolutionStatus.AMBIGUOUS
     assert reconciled.resolution_status is ResolutionStatus.AMBIGUOUS
     assert {item.code for item in reconciled.issues} == {"REFERENCE_AMBIGUOUS"}
+
+
+@pytest.mark.asyncio
+async def test_reference_id_issue_only_marks_its_evidence_owned_frame() -> None:
+    service = _service(_Adapter([_proposal()]))
+    prepared = await service.prepare(_context("공모펀드 순자산 알려줘"))
+    public_evidence = next(
+        item.evidence_id
+        for item in prepared.view.evidence_candidates
+        if item.text == "공모펀드"
+    )
+    reference_evidence = EvidenceCandidate(
+        evidence_id="evidence-reference-s2",
+        segment_id="s2",
+        start_char=0,
+        end_char=4,
+        text="그 상품",
+        source_kinds=(EvidenceSourceKind.REFERENCE,),
+        offered_semantic_ids=(),
+    )
+    resolver_view = prepared.view.model_copy(
+        update={
+            "reference_candidates": (
+                ResolverViewReferenceCandidate(
+                    reference_id="reference-real-2",
+                    segment_id="s2",
+                    text="그 상품",
+                    start_char=0,
+                    end_char=4,
+                ),
+            ),
+            "evidence_candidates": (
+                *prepared.view.evidence_candidates,
+                reference_evidence,
+            ),
+        }
+    )
+    source = resolution()
+    template = source.canonical_frames[0]
+    first = template.model_copy(
+        update={
+            "frame_id": "frame-family",
+            "ordinal": 0,
+            "segment_ids": ("s1",),
+            "evidence_span_ids": (public_evidence,),
+            "frame_status": ResolutionStatus.AMBIGUOUS,
+            "product_family_choice": ProductFamilyChoice(
+                state=ChoiceState.AMBIGUOUS,
+                selected_ids=(),
+                evidence_span_ids=(public_evidence,),
+                reason_code="ambiguous",
+            ),
+        }
+    )
+    second = template.model_copy(
+        update={
+            "frame_id": "frame-reference",
+            "ordinal": 1,
+            "segment_ids": ("s2",),
+            "evidence_span_ids": (reference_evidence.evidence_id,),
+            "frame_status": ResolutionStatus.AMBIGUOUS,
+        }
+    )
+    third = template.model_copy(
+        update={
+            "frame_id": "frame-unrelated",
+            "ordinal": 2,
+            "segment_ids": ("s3",),
+            "evidence_span_ids": (),
+            "frame_status": ResolutionStatus.RESOLVED,
+        }
+    )
+    source = source.model_copy(
+        update={
+            "canonical_frames": (first, second, third),
+            "resolution_status": ResolutionStatus.AMBIGUOUS,
+            "issues": (
+                ResolutionIssue(
+                    issue_id="issue-family",
+                    code="AMBIGUITY_UNRESOLVED",
+                    related_ids=(first.frame_id,),
+                    evidence_span_ids=(public_evidence,),
+                ),
+                ResolutionIssue(
+                    issue_id="issue-reference",
+                    code="REFERENCE_AMBIGUOUS",
+                    related_ids=("reference-real-2",),
+                    evidence_span_ids=(),
+                ),
+            ),
+        }
+    )
+
+    reconciled = reconcile_exact_axis_locks(
+        source,
+        resolver_view.exact_semantic_locks,
+        prepared.semantic_candidates,
+        resolver_view,
+    )
+
+    assert tuple(frame.frame_status for frame in reconciled.canonical_frames) == (
+        ResolutionStatus.RESOLVED,
+        ResolutionStatus.AMBIGUOUS,
+        ResolutionStatus.RESOLVED,
+    )
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,16 @@
 from pathlib import Path
 
+import pytest
+
 from financial_agent.intent.query_contract_registry import load_query_contract_registry
+from financial_agent.intent.query_contract_solver import (
+    QueryContractCandidateSet,
+    QueryContractFrameCandidateSet,
+)
+from financial_agent.intent.query_contracts import (
+    ContractReadiness,
+    ContractReadinessRecordV2,
+)
 from financial_agent.intent.view import (
     ResolverViewSemanticCandidate,
     ResolverViewSemanticCandidateGroup,
@@ -10,6 +20,7 @@ from tests.evaluation.query_contract.decoupled import (
     evaluate_decoupled_contract_resolution,
     evaluate_frozen_requirement_snapshot,
 )
+import tests.evaluation.query_contract.decoupled as decoupled_module
 from tests.planning.fixtures import resolution, view
 
 
@@ -25,10 +36,56 @@ def test_frozen_209_frame_snapshot_meets_decoupled_contract_gates() -> None:
     assert metrics.supported_frame_count == 199
     assert metrics.unsupported_frame_count == 10
     assert metrics.intentionally_blocked_frame_count == 5
+    assert metrics.candidate_recall_count == 194
+    assert metrics.exact_contract_count == 185
+    assert metrics.compile_eligible_count == 194
     assert metrics.candidate_recall >= 0.99
     assert metrics.exact_contract >= 0.95
     assert metrics.false_complete_count == 0
     assert metrics.compile_eligibility == 1.0
+
+
+def test_frozen_snapshot_gate_propagates_a_broken_solver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken_solver(**_kwargs):
+        raise RuntimeError("solver-broken")
+
+    monkeypatch.setattr(decoupled_module, "solve_query_contracts", broken_solver)
+
+    with pytest.raises(RuntimeError, match="solver-broken"):
+        evaluate_frozen_requirement_snapshot(
+            PROJECT_ROOT, load_query_contract_registry(PROJECT_ROOT)
+        )
+
+
+def test_frozen_snapshot_gate_cannot_pass_with_an_empty_solver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def empty_solver(**kwargs):
+        return QueryContractCandidateSet(
+            frames=tuple(
+                QueryContractFrameCandidateSet(
+                    frame_id=frame.frame_id,
+                    complete_candidates=(),
+                    rejections=(),
+                    contract_readiness=ContractReadinessRecordV2(
+                        readiness=ContractReadiness.BLOCKED,
+                        reason_codes=("REQUIRED_SEMANTIC_INPUT_MISSING",),
+                    ),
+                )
+                for frame in kwargs["resolution"].canonical_frames
+            )
+        )
+
+    monkeypatch.setattr(decoupled_module, "solve_query_contracts", empty_solver)
+
+    metrics = evaluate_frozen_requirement_snapshot(
+        PROJECT_ROOT, load_query_contract_registry(PROJECT_ROOT)
+    )
+
+    assert metrics.candidate_recall < 0.99
+    assert metrics.compile_eligibility < 1.0
 
 
 def _view_with_aum_candidate():

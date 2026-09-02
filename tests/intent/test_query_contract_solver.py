@@ -24,7 +24,7 @@ from financial_agent.intent.query_contracts import (
     ProvenanceSourceKind,
     QueryOperatorId,
 )
-from financial_agent.intent.types import EntitySemanticRole
+from financial_agent.intent.types import EntitySemanticRole, ResolutionStatus
 from financial_agent.intent.view import (
     ResolverViewConcept,
     ResolverViewLiteralCandidate,
@@ -169,6 +169,31 @@ def test_unique_rank_candidate_uses_exact_field_and_registered_defaults() -> Non
     assert contract.ordering[0].field_concept_id == "aum"
     assert contract.ordering[0].direction_policy_id == "default-direction-descending.v1"
     assert contract.limit == 5
+
+
+def test_unmapped_frame_never_produces_a_complete_default_lookup_contract() -> None:
+    unresolved = _axis(IntentType.LOOKUP).model_copy(
+        update={
+            "canonical_frames": (
+                _axis(IntentType.LOOKUP).canonical_frames[0].model_copy(
+                    update={"frame_status": ResolutionStatus.UNMAPPED}
+                ),
+            ),
+            "resolution_status": ResolutionStatus.UNMAPPED,
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=unresolved,
+        view=_semantic_view(),
+        exact_locks=(),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert {item.reason_code for item in result.frames[0].rejections} == {
+        "FRAME_NOT_RESOLVED"
+    }
 
 
 def test_ambiguous_rank_candidates_have_content_derived_ids_and_dedupe_equivalents() -> None:
