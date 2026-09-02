@@ -23,7 +23,7 @@ def test_executable_sql_routes_fast_or_compose(archetype, expected) -> None:
         contract_readiness=(ContractReadiness.COMPLETE,),
         plan_readiness=(PlanReadiness.EXECUTABLE,),
         matched_archetype_id=archetype,
-        primitive_ids=("sql-rank.v1",),
+        primitive_ids=("lookup-products", "rank-products"),
     )
 
     assert decision.route is expected
@@ -39,7 +39,7 @@ def test_non_executable_grounded_plan_routes_to_limitation(readiness) -> None:
         contract_readiness=(ContractReadiness.COMPLETE,),
         plan_readiness=(readiness,),
         matched_archetype_id=None,
-        primitive_ids=("sql-aggregate.v1",),
+        primitive_ids=("lookup-products", "aggregate-products"),
     )
 
     assert decision.route is CompilationRoute.EXPLORE
@@ -54,7 +54,7 @@ def test_unresolved_axis_abstains_and_non_sql_stage05_capabilities_do_not_execut
         contract_readiness=(ContractReadiness.COMPLETE,),
         plan_readiness=(PlanReadiness.EXECUTABLE,),
         matched_archetype_id=None,
-        primitive_ids=("sql-rank.v1",),
+        primitive_ids=("lookup-products", "rank-products"),
     )
     similarity = route_semantic_query(
         action_ids=(IntentType.SIMILAR,),
@@ -62,7 +62,7 @@ def test_unresolved_axis_abstains_and_non_sql_stage05_capabilities_do_not_execut
         contract_readiness=(ContractReadiness.COMPLETE,),
         plan_readiness=(PlanReadiness.EXECUTABLE,),
         matched_archetype_id=None,
-        primitive_ids=("similarity.v1",),
+        primitive_ids=("lookup-products", "similar-products"),
     )
 
     assert unresolved.route is CompilationRoute.ABSTAIN

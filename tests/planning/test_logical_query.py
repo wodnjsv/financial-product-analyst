@@ -26,6 +26,8 @@ from financial_agent.planning.logical_query import (
     ProducedResultBindingV2,
     SemanticLoweringRecordV2,
     logical_query_plan_id,
+    logical_resolved_contract_reference_id,
+    logical_task_id,
 )
 
 
@@ -33,12 +35,10 @@ PIN = "a" * 64
 
 
 def _task() -> LogicalQueryTaskV2:
-    return LogicalQueryTaskV2(
-        task_id="logical-task-frame-1",
+    kwargs = dict(
         frame_id="frame-1",
         candidate_id="query-contract-1",
         contract_hash="b" * 64,
-        resolved_contract_id="resolved-query-contract-1",
         contract_variant_id="lookup.projection.v2",
         action_id=IntentType.LOOKUP,
         capability=Capability.RDB_LOOKUP,
@@ -62,6 +62,18 @@ def _task() -> LogicalQueryTaskV2:
         evidence_requirements=("metric_definition", "observation_record"),
         prior_result_inputs=(),
         produced_result_bindings=(),
+    )
+    draft = LogicalQueryTaskV2.model_construct(
+        task_id="pending",
+        resolved_contract_id="pending",
+        **kwargs,
+    )
+    resolved_contract_id = logical_resolved_contract_reference_id(draft)
+    draft = draft.model_copy(update={"resolved_contract_id": resolved_contract_id})
+    return LogicalQueryTaskV2(
+        task_id=logical_task_id(draft),
+        resolved_contract_id=resolved_contract_id,
+        **kwargs,
     )
 
 
@@ -99,7 +111,7 @@ def _plan() -> LogicalQueryPlanV2:
             SemanticLoweringRecordV2(
                 frame_id="frame-1",
                 candidate_id="query-contract-1",
-                resolved_contract_id="resolved-query-contract-1",
+                resolved_contract_id=task.resolved_contract_id,
                 task_id=task.task_id,
                 preserved_semantic_paths=("scope", "projections"),
                 binding_ids=("domestic-etf-aum.v1",),
@@ -115,6 +127,13 @@ def _plan() -> LogicalQueryPlanV2:
         logical_plan_id=logical_query_plan_id(draft),
         **kwargs,
     )
+
+
+def _reseal_plan_payload(payload: dict) -> dict:
+    payload["logical_plan_id"] = "logical-query-plan-" + canonical_sha256(
+        {key: value for key, value in payload.items() if key != "logical_plan_id"}
+    )
+    return payload
 
 
 def test_logical_plan_is_strict_immutable_and_has_no_physical_sql_fields() -> None:
@@ -149,6 +168,14 @@ def test_logical_plan_validates_typed_prior_result_dependency() -> None:
             ),
             "produced_result_bindings": (),
         }
+    )
+    downstream = downstream.model_copy(
+        update={
+            "resolved_contract_id": logical_resolved_contract_reference_id(downstream),
+        }
+    )
+    downstream = downstream.model_copy(
+        update={"task_id": logical_task_id(downstream)}
     )
     upstream = upstream.model_copy(
         update={
@@ -229,3 +256,63 @@ def test_logical_task_rejects_action_capability_or_result_shape_drift() -> None:
         LogicalQueryTaskV2.model_validate(
             {**payload, "result_shape": QueryResultShape.TOP_K}
         )
+
+
+@pytest.mark.parametrize(
+    "step_update",
+    [
+        {
+            "primitive_id": "explore-catalog",
+            "capability": "rdb_lookup",
+            "operation_kind": "lookup",
+            "execution_route": "semantic_sql",
+        },
+        {"operation_kind": "rank"},
+        {"capability": "keyword_search", "execution_route": "search"},
+        {"capability": "graph_traversal", "execution_route": "graph"},
+    ],
+)
+def test_standalone_plan_rejects_relabelled_primitive_contract(step_update) -> None:
+    payload = json.loads(_plan().model_dump_json())
+    step = payload["tasks"][0]["execution_steps"][0]
+    step.update(step_update)
+    payload["tasks"][0]["capability"] = step["capability"]
+    payload["primitive_ids"] = [step["primitive_id"]]
+    _reseal_plan_payload(payload)
+
+    with pytest.raises(ValidationError, match="LOGICAL_PRIMITIVE_CONTRACT_MISMATCH"):
+        LogicalQueryPlanV2.model_validate_json(json.dumps(payload))
+
+
+@pytest.mark.parametrize(
+    ("forge_task", "forge_resolved", "expected"),
+    [
+        (True, False, "LOGICAL_TASK_ID_MISMATCH"),
+        (False, True, "LOGICAL_RESOLVED_CONTRACT_ID_MISMATCH"),
+        (
+            True,
+            True,
+            "LOGICAL_TASK_ID_MISMATCH|LOGICAL_RESOLVED_CONTRACT_ID_MISMATCH",
+        ),
+    ],
+)
+def test_standalone_plan_recomputes_task_and_resolved_contract_ids(
+    forge_task,
+    forge_resolved,
+    expected,
+) -> None:
+    payload = json.loads(_plan().model_dump_json())
+    if forge_task:
+        payload["tasks"][0]["task_id"] = "logical-task-forged"
+        payload["lowering_records"][0]["task_id"] = "logical-task-forged"
+    if forge_resolved:
+        payload["tasks"][0][
+            "resolved_contract_id"
+        ] = "resolved-query-contract-forged"
+        payload["lowering_records"][0][
+            "resolved_contract_id"
+        ] = "resolved-query-contract-forged"
+    _reseal_plan_payload(payload)
+
+    with pytest.raises(ValidationError, match=expected):
+        LogicalQueryPlanV2.model_validate_json(json.dumps(payload))

@@ -48,6 +48,22 @@ def test_registry_rejects_duplicate_ids(tmp_path: Path) -> None:
         load_planning_registry(tmp_path)
 
 
+def test_registry_rejects_canonical_primitive_declaration_drift(
+    tmp_path: Path,
+) -> None:
+    payload = json.loads(
+        (PROJECT_ROOT / "config/planning/query-plan-registry.v1.json").read_text()
+    )
+    rank = next(item for item in payload["primitives"] if item["id"] == "rank-products")
+    rank["capability"] = "keyword_search"
+    config_dir = tmp_path / "config" / "planning"
+    config_dir.mkdir(parents=True)
+    (config_dir / "query-plan-registry.v1.json").write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="EXECUTION_PRIMITIVE_DECLARATION_MISMATCH"):
+        load_planning_registry(tmp_path)
+
+
 def test_registry_rejects_invalid_result_type_and_incompatible_archetype(
     tmp_path: Path,
 ) -> None:

@@ -9,6 +9,7 @@ from financial_agent.contracts.enums import AnswerDisposition, IntentType
 from financial_agent.intent.query_contracts import AxisReadiness, ContractReadiness, PlanReadiness
 
 from .contracts import CompilationRoute
+from .primitive_contracts import CANONICAL_PRIMITIVES
 
 
 _STAGE05_ONLY = frozenset({IntentType.CALCULATE, IntentType.SIMILAR})
@@ -35,6 +36,8 @@ def route_semantic_query(
         len(action_ids) == len(axis_readiness) == len(contract_readiness) == len(plan_readiness)
     ):
         return _abstain("READINESS_CARDINALITY_MISMATCH")
+    if set(primitive_ids) - set(CANONICAL_PRIMITIVES):
+        return _abstain("EXECUTION_PRIMITIVE_NOT_REGISTERED")
     if any(item is not AxisReadiness.COMPLETE for item in axis_readiness):
         return _abstain("AXIS_NOT_COMPLETE")
     if any(item is not ContractReadiness.COMPLETE for item in contract_readiness):

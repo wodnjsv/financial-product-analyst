@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from enum import Enum
 from typing import Annotated, Literal, TypeAlias
 
 from pydantic import ConfigDict, Field, model_validator
@@ -35,6 +34,12 @@ from financial_agent.intent.query_contracts import (
 )
 
 from .contracts import CompilationRoute
+from .primitive_contracts import (
+    CanonicalPrimitiveRole,
+    LogicalExecutionRoute,
+    RELATION_CONCEPT_IDS,
+    validate_primitive_roles,
+)
 
 
 _ACTION_RESULT_SHAPES = {
@@ -131,13 +136,6 @@ class ProducedResultBindingV2(_StrictModel):
     cardinality: Cardinality = Field(strict=False)
 
 
-class LogicalExecutionRoute(str, Enum):
-    SEMANTIC_SQL = "semantic_sql"
-    GRAPH = "graph"
-    SEARCH = "search"
-    STAGE05 = "stage05"
-
-
 class LogicalPrimitiveStepV2(_StrictModel):
     primitive_id: Identifier
     action_id: IntentType = Field(strict=False)
@@ -172,6 +170,21 @@ class LogicalQueryTaskV2(_StrictModel):
             raise ValueError("LOGICAL_OPERATION_ACTION_MISMATCH")
         if any(item.action_id is not self.action_id for item in self.execution_steps):
             raise ValueError("LOGICAL_PRIMITIVE_ACTION_MISMATCH")
+        validate_primitive_roles(
+            tuple(
+                CanonicalPrimitiveRole(
+                    primitive_id=item.primitive_id,
+                    action_id=item.action_id,
+                    capability=item.capability,
+                    operation_kind=item.operation_kind,
+                    execution_route=item.execution_route,
+                )
+                for item in self.execution_steps
+            ),
+            action_id=self.action_id,
+            family_count=len(self.scope.product_family_ids),
+            relation_required=_logical_relation_required(self),
+        )
         if self.capability is not self.execution_steps[-1].capability:
             raise ValueError("LOGICAL_ACTION_CAPABILITY_MISMATCH")
         if self.result_shape not in _ACTION_RESULT_SHAPES[self.action_id]:
@@ -194,6 +207,11 @@ class LogicalQueryTaskV2(_StrictModel):
             (item.binding_id for item in self.produced_result_bindings),
             label="produced result bindings",
         )
+        expected_resolved_id = logical_resolved_contract_reference_id(self)
+        if self.resolved_contract_id != expected_resolved_id:
+            raise ValueError("LOGICAL_RESOLVED_CONTRACT_ID_MISMATCH")
+        if self.task_id != logical_task_id(self):
+            raise ValueError("LOGICAL_TASK_ID_MISMATCH")
         return self
 
 
@@ -259,20 +277,6 @@ class LogicalQueryPlanV2(RuntimeArtifact):
             step.primitive_id for task in self.tasks for step in task.execution_steps
         }:
             raise ValueError("LOGICAL_PRIMITIVE_OWNERSHIP_MISMATCH")
-        expected_routes = {
-            Capability.RDB_LOOKUP: LogicalExecutionRoute.SEMANTIC_SQL,
-            Capability.RANKING: LogicalExecutionRoute.SEMANTIC_SQL,
-            Capability.COMPARISON: LogicalExecutionRoute.SEMANTIC_SQL,
-            Capability.FINANCIAL_CALCULATION: LogicalExecutionRoute.SEMANTIC_SQL,
-            Capability.GRAPH_TRAVERSAL: LogicalExecutionRoute.GRAPH,
-            Capability.KEYWORD_SEARCH: LogicalExecutionRoute.SEARCH,
-        }
-        if any(
-            expected_routes.get(step.capability) is not step.execution_route
-            for task in self.tasks
-            for step in task.execution_steps
-        ):
-            raise ValueError("LOGICAL_PLAN_ROUTE_MISMATCH")
         require_known_ids(
             (edge.upstream_task_id for edge in self.dependencies), task_ids,
             label="logical dependency upstream tasks",
@@ -347,3 +351,65 @@ def logical_query_plan_id(plan: LogicalQueryPlanV2) -> str:
         plan,
         exclude_fields={"logical_plan_id"},
     )
+
+
+def logical_resolved_contract_reference_id(task: LogicalQueryTaskV2) -> str:
+    semantic_hash = _logical_task_semantic_hash(task)
+    return "resolved-query-contract-" + canonical_sha256(
+        {
+            "candidate_id": task.candidate_id,
+            "contract_hash": task.contract_hash,
+            "frame_id": task.frame_id,
+            "semantic_hash": semantic_hash,
+        }
+    )
+
+
+def logical_task_id(task: LogicalQueryTaskV2) -> str:
+    return "logical-task-" + canonical_sha256(
+        {
+            "candidate_id": task.candidate_id,
+            "frame_id": task.frame_id,
+            "resolved_contract_id": logical_resolved_contract_reference_id(task),
+            "semantic_hash": _logical_task_semantic_hash(task),
+        }
+    )
+
+
+def _logical_task_semantic_hash(task: LogicalQueryTaskV2) -> str:
+    return canonical_sha256(
+        {
+            "action_id": task.action_id.value,
+            "contract_variant_id": task.contract_variant_id,
+            "operation": task.operation.model_dump(mode="json"),
+            "qualifiers": task.qualifiers.model_dump(mode="json"),
+            "result_shape": task.result_shape.value,
+            "scope": task.scope.model_dump(mode="json"),
+        }
+    )
+
+
+def _logical_relation_required(task: LogicalQueryTaskV2) -> bool:
+    if task.action_id is IntentType.LOOKUP:
+        concept_ids = set(task.operation.projections.field_concept_ids)
+    elif task.action_id is IntentType.SCREEN:
+        concept_ids = _predicate_field_ids(task.operation.predicate)
+    elif task.action_id is IntentType.COMPARE:
+        concept_ids = set(task.operation.comparison.metric_concept_ids)
+    elif task.action_id is IntentType.EXPLAIN:
+        concept_ids = {task.operation.explanation.topic_concept_id}
+    else:
+        concept_ids = set()
+    return bool(RELATION_CONCEPT_IDS & concept_ids)
+
+
+def _predicate_field_ids(predicate: PredicateNodeV2) -> set[str]:
+    if predicate.node_type == "atom":
+        return {predicate.field_concept_id}
+    if predicate.node_type == "not":
+        return _predicate_field_ids(predicate.child)
+    return {
+        field_id
+        for child in predicate.children
+        for field_id in _predicate_field_ids(child)
+    }

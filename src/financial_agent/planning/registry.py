@@ -16,6 +16,8 @@ from financial_agent.contracts.enums import (
     ResultType,
 )
 
+from .primitive_contracts import CANONICAL_PRIMITIVES, validate_registry_primitive
+
 
 REGISTRY_PATH = Path("config/planning/query-plan-registry.v1.json")
 
@@ -71,6 +73,14 @@ def load_planning_registry(project_root: Path) -> PlanningRegistry:
     except (OSError, ValidationError) as error:
         raise ValueError("invalid planning registry") from error
     primitives = _unique_index(payload.primitives, "primitive")
+    if set(primitives) != set(CANONICAL_PRIMITIVES):
+        raise ValueError("planning primitive registry mismatch")
+    for primitive_id, primitive in primitives.items():
+        validate_registry_primitive(
+            primitive_id,
+            action_ids=primitive.action_ids,
+            capability=primitive.capability,
+        )
     archetypes = _unique_index(payload.archetypes, "archetype")
     primitive_ids = set(primitives)
     for archetype in archetypes.values():
