@@ -205,7 +205,10 @@ def write_report(report: dict[str, object], destination: Path) -> str:
 async def run_command(configuration: EmbeddingConfiguration) -> int:
     engine = create_database_engine(DatabaseConfig(url=configuration.database_url))
     repository = EmbeddingRepository(engine)
-    provider = NcpEmbeddingClient(configuration.api_key)
+    provider = NcpEmbeddingClient(
+        configuration.api_key,
+        minimum_interval_seconds=1.1,
+    )
     service = EmbeddingBuildService(
         repository,
         provider,

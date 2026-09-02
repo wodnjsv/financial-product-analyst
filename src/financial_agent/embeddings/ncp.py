@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable, Mapping
 from contextlib import closing
 from dataclasses import dataclass
 import json
+import math
+from time import monotonic as system_monotonic
 from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -150,11 +152,20 @@ class NcpEmbeddingClient:
         *,
         transport: EmbeddingHttpTransport | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        monotonic: Callable[[], float] = system_monotonic,
+        minimum_interval_seconds: float = 0.0,
         max_attempts: int = 4,
         timeout_seconds: float = 30.0,
     ) -> None:
         if not isinstance(api_key, str) or not api_key.strip():
             raise PermanentEmbeddingError("api_key_blank")
+        if (
+            isinstance(minimum_interval_seconds, bool)
+            or not isinstance(minimum_interval_seconds, (int, float))
+            or not math.isfinite(minimum_interval_seconds)
+            or minimum_interval_seconds < 0
+        ):
+            raise PermanentEmbeddingError("minimum_interval_invalid")
         if (
             isinstance(max_attempts, bool)
             or not isinstance(max_attempts, int)
@@ -170,6 +181,9 @@ class NcpEmbeddingClient:
         self._api_key = api_key.strip()
         self._transport = transport or UrllibEmbeddingTransport()
         self._sleep = sleep
+        self._monotonic = monotonic
+        self._minimum_interval_seconds = float(minimum_interval_seconds)
+        self._last_request_started_at: float | None = None
         self._max_attempts = max_attempts
         self._timeout_seconds = float(timeout_seconds)
 
@@ -183,6 +197,7 @@ class NcpEmbeddingClient:
         ).encode("utf-8")
         retries = 0
         for attempt in range(1, self._max_attempts + 1):
+            await self._pace_request()
             request = EmbeddingHttpRequest(
                 url=NCP_EMBEDDING_V2_ENDPOINT,
                 headers={
@@ -212,6 +227,18 @@ class NcpEmbeddingClient:
                 raise PermanentEmbeddingError("provider_http_permanent")
             return self._parse_response(response, retries)
         raise RetryableEmbeddingError("retry_exhausted")
+
+    async def _pace_request(self) -> None:
+        now = self._monotonic()
+        if self._last_request_started_at is not None:
+            remaining = (
+                self._minimum_interval_seconds
+                - (now - self._last_request_started_at)
+            )
+            if remaining > 0:
+                await self._sleep(remaining)
+                now = self._monotonic()
+        self._last_request_started_at = now
 
     @staticmethod
     def _parse_response(

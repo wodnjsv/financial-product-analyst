@@ -88,6 +88,35 @@ async def test_client_sends_exact_v2_request_and_returns_validated_result() -> N
 
 
 @pytest.mark.asyncio
+async def test_client_spaces_consecutive_requests_to_avoid_rate_bursts() -> None:
+    transport = ScriptedTransport(_success_response(), _success_response())
+    delays: list[float] = []
+    current_time = 0.0
+
+    def monotonic() -> float:
+        return current_time
+
+    async def sleep(delay: float) -> None:
+        nonlocal current_time
+        delays.append(delay)
+        current_time += delay
+
+    client = NcpEmbeddingClient(
+        "private-key",
+        transport=transport,
+        sleep=sleep,
+        monotonic=monotonic,
+        minimum_interval_seconds=1.1,
+    )
+
+    await client.embed("첫 번째 공식 문서")
+    await client.embed("두 번째 공식 문서")
+
+    assert delays == [1.1]
+    assert len(transport.requests) == 2
+
+
+@pytest.mark.asyncio
 async def test_client_retries_429_using_bounded_retry_after() -> None:
     transport = ScriptedTransport(
         EmbeddingHttpResponse(429, {"Retry-After": "1000"}, b"rate limited"),
