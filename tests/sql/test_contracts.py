@@ -6,6 +6,10 @@ import pytest
 from pydantic import ValidationError
 
 from financial_agent.contracts.values import decode_contract_value, encode_contract_value
+from financial_agent.intent.query_contracts import ProjectionSpecV2
+from financial_agent.planning.logical_query import LogicalLookupOperationV2
+from financial_agent.sql.compiler import SemanticSqlCompiler
+from financial_agent.sql.lowering import ParameterBuilder
 from financial_agent.sql.contracts import (
     CompiledSqlRequest,
     PhysicalLoweringRecord,
@@ -14,73 +18,25 @@ from financial_agent.sql.contracts import (
     physical_lowering_record_id,
     PhysicalLoweringKind,
 )
-from financial_agent.planning.physical_bindings import EvidenceLocator
+from .helpers import ACTIVE_DATASET, BINDINGS, PLANNING, POLICIES, make_plan
 
 
-PIN = "a" * 64
+COMPILER = SemanticSqlCompiler(BINDINGS, POLICIES, PLANNING, ACTIVE_DATASET)
 
 
 def _request(**updates) -> CompiledSqlRequest:
-    kwargs = dict(
-        logical_plan_id="logical-query-plan-1",
-        task_id="logical-task-1",
-        statement=(
-            "SELECT catalog.product.entity_id FROM catalog.product "
-            "WHERE catalog.product.dataset_version = :dataset_version"
-        ),
-        parameters=(
-            SqlParameter(
-                name="dataset_version",
-                value=encode_contract_value("dataset-v1"),
-                value_kind="string",
-            ),
-        ),
-        lowering_records=(),
-        applied_policy_ids=(),
-        evidence_projection_ids=(EvidenceLocator.SOURCE_RECORD,),
-        compiler_version="semantic-sql-compiler.v1",
-        binding_registry_version="semantic-sql-bindings.v1",
-        binding_registry_hash=PIN,
-        policy_registry_version="semantic-sql-policies.v1",
-        policy_registry_hash=PIN,
-        contract_registry_version="query-contract-registry.v2",
-        contract_registry_hash=PIN,
-        operator_registry_version="query-operator-registry.v1",
-        operator_registry_hash=PIN,
-        semantic_policy_registry_version="query-policy-registry.v1",
-        semantic_policy_registry_hash=PIN,
-        planning_registry_version="query-plan-registry.v1",
-        planning_registry_hash=PIN,
-        dataset_version="dataset-v1",
-        dataset_pin=PIN,
-        population_manifest_id=None,
-        population_manifest_hash=None,
-    )
-    kwargs.update(updates)
-    if "lowering_records" not in updates:
-        lowering_draft = PhysicalLoweringRecord.model_construct(
-            lowering_id="pending",
-            semantic_path="scope.product_family_ids",
-            binding_id="catalog-product-family.v1",
-            lowering_kind=PhysicalLoweringKind.SCOPE,
-            value_column=None,
-            policy_ids=(),
+    plan = make_plan(
+        LogicalLookupOperationV2(
+            projections=ProjectionSpecV2(field_concept_ids=("aum",))
         )
-        kwargs["lowering_records"] = (
-            PhysicalLoweringRecord(
-                lowering_id=physical_lowering_record_id(lowering_draft),
-                semantic_path="scope.product_family_ids",
-                binding_id="catalog-product-family.v1",
-                lowering_kind=PhysicalLoweringKind.SCOPE,
-                value_column=None,
-                policy_ids=(),
-            ),
-        )
-    draft = CompiledSqlRequest.model_construct(compiled_request_id="pending", **kwargs)
-    return CompiledSqlRequest(
-        compiled_request_id=compiled_sql_request_id(draft),
-        **kwargs,
     )
+    request = COMPILER.compile_task(plan, plan.tasks[0].task_id).request
+    assert request is not None
+    if not updates:
+        return request
+    payload = request.model_dump()
+    payload.update(updates)
+    return CompiledSqlRequest.model_validate(payload)
 
 
 def test_compiled_request_is_strict_frozen_and_content_addressed() -> None:
@@ -114,9 +70,9 @@ def test_compiled_request_rejects_unsafe_statement(statement: str, reason: str) 
 
 
 def test_compiled_request_requires_exact_named_placeholder_ownership() -> None:
-    with pytest.raises(ValidationError, match="SQL_PARAMETER_MISMATCH"):
+    with pytest.raises(ValidationError, match="SQL_MANIFEST_PARAMETER_MISMATCH"):
         _request(parameters=())
-    with pytest.raises(ValidationError, match="SQL_PARAMETER_MISMATCH"):
+    with pytest.raises(ValidationError, match="SQL_MANIFEST_PARAMETER_MISMATCH"):
         _request(
             parameters=(
                 SqlParameter(
@@ -139,19 +95,11 @@ def test_parameter_kind_must_match_tagged_value() -> None:
 
 def test_injection_payload_is_data_not_sql() -> None:
     injection = "1); DROP TABLE catalog.product; --"
-    request = _request(
-        statement="SELECT catalog.product.entity_id FROM catalog.product WHERE catalog.product.entity_id = :value_0",
-        parameters=(
-            SqlParameter(
-                name="value_0",
-                value=encode_contract_value(injection),
-                value_kind="string",
-            ),
-        ),
-    )
+    parameters = ParameterBuilder()
+    placeholder = parameters.bind(injection)
 
-    assert injection not in request.statement
-    assert decode_contract_value(request.parameters[0].value) == injection
+    assert injection not in str(placeholder)
+    assert decode_contract_value(parameters.parameters[0].value) == injection
 
 
 def test_evidence_and_lowering_kinds_are_closed() -> None:
@@ -163,14 +111,14 @@ def test_evidence_and_lowering_kinds_are_closed() -> None:
         CompiledSqlRequest.model_validate(
             {**_request().model_dump(), "evidence_projection_ids": ("invented",)}
         )
-    with pytest.raises(ValidationError, match="SQL_POLICY_NOT_REGISTERED"):
+    with pytest.raises(ValidationError, match="SQL_MANIFEST_POLICY_OWNERSHIP_MISMATCH"):
         CompiledSqlRequest.model_validate(
             {**_request().model_dump(), "applied_policy_ids": ("invented.v1",)}
         )
 
 
 def test_compiled_request_rejects_unregistered_physical_identifier() -> None:
-    with pytest.raises(ValidationError, match="SQL_IDENTIFIER_NOT_REGISTERED"):
+    with pytest.raises(ValidationError, match="SQL_MANIFEST_STATEMENT_MISMATCH"):
         _request(statement="SELECT secret FROM private.user_table", parameters=())
 
 
@@ -185,18 +133,19 @@ def test_compiled_request_rejects_unregistered_physical_identifier() -> None:
     ),
 )
 def test_restore_rejects_every_unregistered_identifier_shape(statement: str) -> None:
-    with pytest.raises(ValidationError, match="SQL_IDENTIFIER_NOT_REGISTERED"):
+    with pytest.raises(ValidationError, match="SQL_MANIFEST_STATEMENT_MISMATCH"):
         _request(statement=statement, parameters=())
 
 
-def test_restore_accepts_quoted_registered_identifiers_and_nested_closed_ctes() -> None:
-    _request(
-        statement=(
-            'WITH "representative_product" AS '
-            '(SELECT "product"."entity_id" FROM "catalog"."product" AS "product"), '
-            '"distribution_values" AS '
-            '(SELECT "representative_product"."entity_id" FROM "representative_product") '
-            'SELECT "distribution_values"."entity_id" FROM "distribution_values"'
-        ),
-        parameters=(),
-    )
+def test_restore_rejects_an_alternate_safe_looking_registered_cte() -> None:
+    with pytest.raises(ValidationError, match="SQL_MANIFEST_STATEMENT_MISMATCH"):
+        _request(
+            statement=(
+                'WITH "representative_product" AS '
+                '(SELECT "product"."entity_id" FROM "catalog"."product" AS "product"), '
+                '"distribution_values" AS '
+                '(SELECT "representative_product"."entity_id" FROM "representative_product") '
+                'SELECT "distribution_values"."entity_id" FROM "distribution_values"'
+            ),
+            parameters=(),
+        )

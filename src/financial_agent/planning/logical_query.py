@@ -354,7 +354,7 @@ def logical_query_plan_id(plan: LogicalQueryPlanV2) -> str:
 
 
 def logical_resolved_contract_reference_id(task: LogicalQueryTaskV2) -> str:
-    semantic_hash = _logical_task_semantic_hash(task)
+    semantic_hash = logical_task_semantic_hash(task)
     return "resolved-query-contract-" + canonical_sha256(
         {
             "candidate_id": task.candidate_id,
@@ -371,12 +371,14 @@ def logical_task_id(task: LogicalQueryTaskV2) -> str:
             "candidate_id": task.candidate_id,
             "frame_id": task.frame_id,
             "resolved_contract_id": logical_resolved_contract_reference_id(task),
-            "semantic_hash": _logical_task_semantic_hash(task),
+            "semantic_hash": logical_task_semantic_hash(task),
         }
     )
 
 
-def _logical_task_semantic_hash(task: LogicalQueryTaskV2) -> str:
+def logical_task_semantic_hash(task: LogicalQueryTaskV2) -> str:
+    """Hash only the executable semantic content of one validated task."""
+
     return canonical_sha256(
         {
             "action_id": task.action_id.value,

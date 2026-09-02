@@ -2,12 +2,16 @@
 
 from .contracts import (
     CompiledSqlRequest,
+    PhysicalSqlRenderManifest,
     PhysicalLoweringKind,
     PhysicalLoweringRecord,
+    SqlRenderTemplateId,
     SqlParameter,
     SqlValueKind,
     compiled_sql_request_id,
     physical_lowering_record_id,
+    physical_sql_render_manifest_id,
+    validate_compiled_request_ownership,
 )
 from .compiler import (
     SemanticSqlCompiler,
@@ -17,8 +21,10 @@ from .compiler import (
 
 __all__ = [
     "CompiledSqlRequest",
+    "PhysicalSqlRenderManifest",
     "PhysicalLoweringKind",
     "PhysicalLoweringRecord",
+    "SqlRenderTemplateId",
     "SqlParameter",
     "SqlValueKind",
     "SemanticSqlCompiler",
@@ -26,4 +32,6 @@ __all__ = [
     "SqlCompileRejectionRecord",
     "compiled_sql_request_id",
     "physical_lowering_record_id",
+    "physical_sql_render_manifest_id",
+    "validate_compiled_request_ownership",
 ]

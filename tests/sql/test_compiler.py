@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+import pytest
+from pydantic import ValidationError
+
 from financial_agent.contracts.canonical import canonical_json_bytes
 from financial_agent.contracts.enums import ProductFamily
 from financial_agent.contracts.values import decode_contract_value
@@ -30,6 +33,10 @@ from financial_agent.planning.logical_query import (
 )
 from financial_agent.intent.query_contracts import ProjectionSpecV2
 from financial_agent.sql.compiler import SemanticSqlCompiler
+from financial_agent.sql.contracts import (
+    CompiledSqlRequest,
+    validate_compiled_request_ownership,
+)
 
 from .helpers import (
     ACTIVE_DATASET,
@@ -489,3 +496,209 @@ def test_public_fund_proof_restricts_relation_observation_evidence_and_source_ro
         "evidence-observation-a", "source-a", "source-b", "source-observation-a",
     } <= values
     assert "evidence.evidence_relation_origin" in outcome.request.statement
+
+
+def test_restore_rerenders_the_closed_manifest_and_rejects_semantically_unowned_sql() -> None:
+    plan = _aum_lookup()
+    request = COMPILER.compile_task(plan, plan.tasks[0].task_id).request
+    assert request is not None
+
+    restored = CompiledSqlRequest.model_validate_json(request.model_dump_json())
+
+    assert restored.statement == request.statement
+    assert restored.parameters == request.parameters
+    assert restored.render_manifest.ordered_placeholder_names == tuple(
+        name
+        for name in (
+            "metric_2",
+            "evidence_kind_3",
+            "dataset_0",
+            "family_1",
+            "status_4",
+            "status_5",
+            "as_of_6",
+        )
+    )
+    assert restored.render_manifest.logical_task == plan.tasks[0]
+    assert restored.execution_ownership_required is True
+
+    for statement in (
+        request.statement
+        + " UNION ALL SELECT catalog.product.entity_id FROM catalog.product",
+        "SELECT evidence.evidence_record.evidence_id FROM evidence.evidence_record",
+        "SELECT sum(observation.observation_record.numeric_value) "
+        "FROM observation.observation_record",
+    ):
+        with pytest.raises(ValidationError, match="SQL_MANIFEST_STATEMENT_MISMATCH"):
+            CompiledSqlRequest.model_validate(
+                {**request.model_dump(), "statement": statement}
+            )
+
+
+def test_restore_rejects_parameter_evidence_and_registry_pin_drift_from_manifest() -> None:
+    plan = _aum_lookup()
+    request = COMPILER.compile_task(plan, plan.tasks[0].task_id).request
+    assert request is not None
+
+    reversed_parameters = tuple(reversed(request.parameters))
+    with pytest.raises(ValidationError, match="SQL_MANIFEST_PARAMETER_MISMATCH"):
+        CompiledSqlRequest.model_validate(
+            {**request.model_dump(), "parameters": reversed_parameters}
+        )
+    with pytest.raises(ValidationError, match="SQL_MANIFEST_EVIDENCE_MISMATCH"):
+        CompiledSqlRequest.model_validate(
+            {**request.model_dump(), "evidence_projection_ids": ()}
+        )
+    with pytest.raises(ValidationError, match="SQL_MANIFEST_REGISTRY_PIN_MISMATCH"):
+        CompiledSqlRequest.model_validate(
+            {**request.model_dump(), "binding_registry_hash": "f" * 64}
+        )
+
+
+def test_execution_ownership_requires_the_paired_validated_logical_plan() -> None:
+    plan = _aum_lookup()
+    request = COMPILER.compile_task(plan, plan.tasks[0].task_id).request
+    assert request is not None
+    validate_compiled_request_ownership(request, plan)
+    COMPILER.validate_request_for_execution(request, plan)
+
+    other_plan = make_plan(
+        LogicalLookupOperationV2(
+            projections=ProjectionSpecV2(field_concept_ids=("fee_rate",))
+        ),
+        binding_ids=("domestic-etf-fee-rate.v1",),
+        policy_ids=(
+            "exclude_missing.v1",
+            "semantic-percent-to-percentage-point.v1",
+        ),
+        qualifiers=QueryQualifiersV2(unit_id="percent"),
+    )
+    with pytest.raises(ValueError, match="COMPILED_SQL_LOGICAL_PLAN_OWNERSHIP_MISMATCH"):
+        validate_compiled_request_ownership(request, other_plan)
+
+
+def test_count_qualifier_rejects_an_unconsumed_binding_but_accepts_a_group_binding() -> None:
+    unused = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="source-product.v1",
+                population_grain_id="source-product.v1",
+                dedup_policy_id="no-dedup.v1",
+            )
+        ),
+        binding_ids=("domestic-etf-aum.v1",),
+        policy_ids=(
+            "source-product.v1",
+            "no-dedup.v1",
+            "identity-unit.v1",
+            "exclude_missing.v1",
+        ),
+        qualifiers=QueryQualifiersV2(as_of_date=date(2026, 8, 24)),
+    )
+    rejected = COMPILER.compile_task(unused, unused.tasks[0].task_id)
+    assert rejected.rejection.code == "COUNT_QUALIFIER_BINDING_REQUIRED"
+
+    grouped = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="source-product.v1",
+                group_by_field_concept_ids=("aum",),
+                population_grain_id="source-product.v1",
+                dedup_policy_id="no-dedup.v1",
+            )
+        ),
+        binding_ids=("domestic-etf-aum.v1",),
+        policy_ids=(
+            "source-product.v1",
+            "no-dedup.v1",
+            "identity-unit.v1",
+            "exclude_missing.v1",
+        ),
+        qualifiers=QueryQualifiersV2(as_of_date=date(2026, 8, 24)),
+        result_shape=QueryResultShape.GROUPED_TABLE,
+    )
+    compiled = COMPILER.compile_task(grouped, grouped.tasks[0].task_id)
+    assert compiled.request is not None, compiled.rejection
+    assert "applicable_date" in compiled.request.statement
+
+
+def test_not_keeps_comparison_missingness_guard_outside_the_boolean_core() -> None:
+    atom = PredicateAtomV2(
+        field_concept_id="aum",
+        operator_id=QueryOperatorId.GTE,
+        value=TypedSemanticValue(kind="decimal", decimal="100"),
+        null_policy_id="exclude_missing.v1",
+    )
+    plan = make_plan(LogicalScreenOperationV2(predicate=PredicateNotV2(child=atom)))
+
+    request = COMPILER.compile_task(plan, plan.tasks[0].task_id).request
+
+    assert request is not None
+    where = request.statement.rsplit("WHERE", maxsplit=1)[-1]
+    assert "NOT (observation_0.value_status IN" not in where
+    assert "observation_0.value_status IN" in where
+    assert (
+        "NOT (observation_0.numeric_value >=" in where
+        or "observation_0.numeric_value <" in where
+    )
+
+
+def test_explicit_missing_branch_remains_valid_in_nested_boolean_predicate() -> None:
+    missing = PredicateAtomV2(
+        field_concept_id="aum",
+        operator_id=QueryOperatorId.IS_MISSING,
+        null_policy_id="exclude_missing.v1",
+    )
+    high = PredicateAtomV2(
+        field_concept_id="aum",
+        operator_id=QueryOperatorId.GTE,
+        value=TypedSemanticValue(kind="decimal", decimal="100"),
+        null_policy_id="exclude_missing.v1",
+    )
+    plan = make_plan(
+        LogicalScreenOperationV2(
+            predicate=PredicateAnyOfV2(children=(missing, high))
+        )
+    )
+
+    request = COMPILER.compile_task(plan, plan.tasks[0].task_id).request
+
+    assert request is not None
+    values = [decode_contract_value(item.value) for item in request.parameters]
+    assert "missing" in values
+    assert "present" in values
+    assert " OR " in request.statement
+
+
+def test_aggregate_evidence_is_flattened_separately_from_numeric_aggregation() -> None:
+    plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.SUM,
+                target_field_concept_id="aum",
+                population_grain_id="source-product.v1",
+                dedup_policy_id="no-dedup.v1",
+            )
+        ),
+        policy_ids=(
+            "source-product.v1",
+            "no-dedup.v1",
+            "identity-unit.v1",
+            "exclude_missing.v1",
+        ),
+    )
+
+    request = COMPILER.compile_task(plan, plan.tasks[0].task_id).request
+
+    assert request is not None
+    assert "aggregate_values" in request.statement
+    assert "aggregate_evidence" in request.statement
+    assert "unnest(" in request.statement
+    assert "array_agg(DISTINCT evidence_lineage_0.evidence_ids)" not in request.statement
+    numeric_side = request.statement.split("FROM (SELECT", maxsplit=1)[1].split(
+        ") AS aggregate_values", maxsplit=1
+    )[0]
+    assert "sum(observation_0.numeric_value)" in numeric_side
+    assert "unnest(" not in numeric_side

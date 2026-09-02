@@ -90,20 +90,24 @@ def lower_predicate(
     parameters: ParameterBuilder,
 ) -> sa.ColumnElement:
     if isinstance(predicate, PredicateAtomV2):
-        expression, binding, status = expression_for(predicate.field_concept_id)
-        if predicate.operator_id not in binding.supported_operator_ids:
-            raise SqlCompileRejection("PHYSICAL_OPERATOR_UNSUPPORTED")
-        if predicate.null_policy_id != binding.missingness_policy_id:
-            raise SqlCompileRejection("MISSINGNESS_POLICY_MISMATCH")
-        return _lower_atom(predicate, expression, status, binding, parameters)
-    if isinstance(predicate, PredicateNotV2):
-        return sa.not_(
-            lower_predicate(
-                predicate.child,
-                expression_for=expression_for,
-                parameters=parameters,
-            )
+        return _lower_atom_with_guard(
+            predicate,
+            expression_for=expression_for,
+            parameters=parameters,
         )
+    if isinstance(predicate, PredicateNotV2):
+        core = _lower_boolean_core(
+            predicate.child,
+            expression_for=expression_for,
+            parameters=parameters,
+        )
+        guards = _comparison_presence_guards(
+            predicate.child,
+            expression_for=expression_for,
+            parameters=parameters,
+        )
+        negated = sa.not_(core)
+        return sa.and_(*guards, negated) if guards else negated
     children = tuple(
         lower_predicate(child, expression_for=expression_for, parameters=parameters)
         for child in predicate.children
@@ -113,6 +117,97 @@ def lower_predicate(
     if isinstance(predicate, PredicateAnyOfV2):
         return sa.or_(*children)
     raise SqlCompileRejection("PREDICATE_NODE_UNSUPPORTED")
+
+
+def _lower_boolean_core(
+    predicate: PredicateNodeV2,
+    *,
+    expression_for: Callable[
+        [str], tuple[sa.ColumnElement, PhysicalBindingDefinition, sa.ColumnElement]
+    ],
+    parameters: ParameterBuilder,
+) -> sa.ColumnElement:
+    if isinstance(predicate, PredicateAtomV2):
+        expression, binding, status = _validated_atom_parts(predicate, expression_for)
+        return _lower_atom_core(predicate, expression, status, binding, parameters)
+    if isinstance(predicate, PredicateNotV2):
+        return sa.not_(
+            _lower_boolean_core(
+                predicate.child,
+                expression_for=expression_for,
+                parameters=parameters,
+            )
+        )
+    children = tuple(
+        _lower_boolean_core(
+            child,
+            expression_for=expression_for,
+            parameters=parameters,
+        )
+        for child in predicate.children
+    )
+    if isinstance(predicate, PredicateAllOfV2):
+        return sa.and_(*children)
+    if isinstance(predicate, PredicateAnyOfV2):
+        return sa.or_(*children)
+    raise SqlCompileRejection("PREDICATE_NODE_UNSUPPORTED")
+
+
+def _comparison_presence_guards(
+    predicate: PredicateNodeV2,
+    *,
+    expression_for: Callable[
+        [str], tuple[sa.ColumnElement, PhysicalBindingDefinition, sa.ColumnElement]
+    ],
+    parameters: ParameterBuilder,
+) -> tuple[sa.ColumnElement, ...]:
+    if isinstance(predicate, PredicateAtomV2):
+        _, _, status = _validated_atom_parts(predicate, expression_for)
+        if predicate.operator_id in {
+            QueryOperatorId.IS_MISSING,
+            QueryOperatorId.IS_PRESENT,
+        }:
+            return ()
+        return (_present_status(status, parameters),)
+    if isinstance(predicate, PredicateNotV2):
+        return _comparison_presence_guards(
+            predicate.child,
+            expression_for=expression_for,
+            parameters=parameters,
+        )
+    return tuple(
+        guard
+        for child in predicate.children
+        for guard in _comparison_presence_guards(
+            child,
+            expression_for=expression_for,
+            parameters=parameters,
+        )
+    )
+
+
+def _lower_atom_with_guard(
+    atom: PredicateAtomV2,
+    *,
+    expression_for: Callable[
+        [str], tuple[sa.ColumnElement, PhysicalBindingDefinition, sa.ColumnElement]
+    ],
+    parameters: ParameterBuilder,
+) -> sa.ColumnElement:
+    expression, binding, status = _validated_atom_parts(atom, expression_for)
+    core = _lower_atom_core(atom, expression, status, binding, parameters)
+    if atom.operator_id in {QueryOperatorId.IS_MISSING, QueryOperatorId.IS_PRESENT}:
+        return core
+    return sa.and_(_present_status(status, parameters), core)
+
+
+def _validated_atom_parts(atom, expression_for):
+    expression, binding, status = expression_for(atom.field_concept_id)
+    if atom.operator_id not in binding.supported_operator_ids:
+        raise SqlCompileRejection("PHYSICAL_OPERATOR_UNSUPPORTED")
+    if atom.null_policy_id != binding.missingness_policy_id:
+        raise SqlCompileRejection("MISSINGNESS_POLICY_MISMATCH")
+    return expression, binding, status
 
 
 def lower_semantic_value(
@@ -262,7 +357,7 @@ def representative_product_cte(
     )
 
 
-def _lower_atom(
+def _lower_atom_core(
     atom: PredicateAtomV2,
     expression: sa.ColumnElement,
     status: sa.ColumnElement,
@@ -286,9 +381,6 @@ def _lower_atom(
         for item in ((atom.value,) if atom.value is not None else atom.values)
     )
     bound = tuple(parameters.bind(item) for item in values)
-    present = status.in_(
-        tuple(parameters.bind(item, prefix="status") for item in ("present", "zero"))
-    )
     if operator is QueryOperatorId.EQ:
         comparison = expression == bound[0]
     if operator is QueryOperatorId.NEQ:
@@ -316,4 +408,13 @@ def _lower_atom(
         QueryOperatorId.CONTAINS,
     }:
         raise SqlCompileRejection("PHYSICAL_OPERATOR_UNSUPPORTED")
-    return sa.and_(present, comparison)
+    return comparison
+
+
+def _present_status(
+    status: sa.ColumnElement,
+    parameters: ParameterBuilder,
+) -> sa.ColumnElement:
+    return status.in_(
+        tuple(parameters.bind(item, prefix="status") for item in ("present", "zero"))
+    )

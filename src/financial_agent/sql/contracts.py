@@ -2,17 +2,28 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from enum import Enum
 from typing import Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, ValidationError, model_validator
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
-from financial_agent.contracts.canonical import canonical_sha256
+from financial_agent.contracts.canonical import canonical_json_bytes, canonical_sha256
 from financial_agent.contracts.validation import require_unique_ids
 from financial_agent.contracts.values import ContractValue
-from financial_agent.planning.physical_bindings import EvidenceLocator, ObservationValueColumn
+from financial_agent.planning.logical_query import (
+    LogicalQueryPlanV2,
+    LogicalQueryTaskV2,
+    logical_task_semantic_hash,
+)
+from financial_agent.planning.physical_bindings import (
+    EvidenceLocator,
+    ObservationValueColumn,
+    PhysicalBindingDefinition,
+    PhysicalReadinessFacts,
+)
 from financial_agent.planning.physical_bindings import (
     EXPECTED_BINDING_DEFINITION_HASHES,
     EXPECTED_POLICY_IDS,
@@ -40,36 +51,11 @@ _SEMANTIC_PATH = re.compile(
     r"aggregation(?:\.target|\.population|\.group_by)?)(?:\.[0-9]+)?|"
     r"qualifiers\.(?:period|currency|unit|as_of)|evidence\.[0-9]+)$"
 )
-_SQL_TOKEN = re.compile(
-    r'\s+|:[A-Za-z][A-Za-z0-9_]*|"(?:[^"]|"")+"|'
-    r"[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|<=|>=|<>|!=|[-+*/=<>(),.]"
-)
-_SQL_KEYWORDS = frozenset(
-    "SELECT WITH AS FROM JOIN ON WHERE AND OR NOT IS DISTINCT NULL IN BETWEEN "
-    "LIKE ESCAPE ORDER BY ASC DESC NULLS FIRST LAST LIMIT GROUP HAVING UNION ALL"
-    .split()
-)
-_SQL_FUNCTIONS = frozenset({"sum", "avg", "min", "max", "count", "array_agg"})
-_SQL_IDENTIFIERS = frozenset(
-    {
-        "catalog", "observation", "evidence", "relation",
-        "product", "entity", "observation_record", "evidence_record",
-        "source_record", "evidence_observation_origin", "evidence_relation_origin",
-        "relation_record", "representative_product", "distribution_values",
-        "distribution_stats", "dataset_version", "entity_id", "product_family",
-        "canonical_name", "numeric_value", "text_value", "boolean_value",
-        "date_value", "value_status", "observation_id", "metric_id",
-        "metric_definition_version", "unit", "currency", "applicable_date",
-        "evidence_id", "source_id", "evidence_kind", "relation_id", "subject_id",
-        "predicate_id", "object_id", "evidence_ids", "source_ids", "product_id",
-        "product_name", "aggregate_value", "product_ids", "observation_ids", "metric_ids",
-        "metric_definition_versions", "units", "currencies", "applicable_dates",
-    }
-)
-_GENERATED_IDENTIFIER = re.compile(
-    r"^(?:observation|evidence|evidence_origin|evidence_source|evidence_lineage|"
-    r"field|observation_id|metric_id|metric_definition_version|unit|currency|"
-    r"applicable_date|evidence_id|source_id|group)_[0-9]+$"
+_IDENTIFIER_TOKEN = re.compile(r'(?<!:)(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*')
+_NON_IDENTIFIER_WORDS = frozenset(
+    "SELECT WITH AS FROM JOIN LATERAL ON WHERE AND OR NOT IS DISTINCT NULL IN "
+    "BETWEEN LIKE ESCAPE ORDER BY ASC DESC NULLS FIRST LAST LIMIT GROUP HAVING "
+    "TRUE SUM AVG MIN MAX COUNT ARRAY_AGG UNNEST".split()
 )
 
 
@@ -93,6 +79,15 @@ class PhysicalLoweringKind(str, Enum):
     GROUPING = "grouping"
     DEDUPLICATION = "deduplication"
     EVIDENCE = "evidence"
+
+
+class SqlRenderTemplateId(str, Enum):
+    LOOKUP = "lookup.observation.v1"
+    SCREEN = "screen.observation.v1"
+    RANK = "rank.observation.v1"
+    COMPARE = "compare.observation.v1"
+    AGGREGATE = "aggregate.observation.v1"
+    REPRESENTATIVE_AGGREGATE = "aggregate.representative.v1"
 
 
 class _StrictModel(ContractModel):
@@ -133,10 +128,82 @@ class PhysicalLoweringRecord(_StrictModel):
         return self
 
 
+class PhysicalSqlRenderManifest(_StrictModel):
+    """Closed, self-rendering physical IR for one validated logical task.
+
+    The manifest is sufficient to reproduce compiler output, but it is not an
+    authorization token. Execution must additionally pair it with the original
+    validated ``LogicalQueryPlanV2`` through
+    :func:`validate_compiled_request_ownership`.
+    """
+
+    manifest_id: Identifier
+    template_id: SqlRenderTemplateId = Field(strict=False)
+    logical_plan_id: Identifier
+    logical_task: LogicalQueryTaskV2
+    logical_task_semantic_hash: Sha256Hex
+    dataset_version: Identifier
+    dataset_pin: Sha256Hex
+    binding_definitions: tuple[PhysicalBindingDefinition, ...]
+    readiness_facts: PhysicalReadinessFacts | None = None
+    binding_registry_version: Identifier
+    binding_registry_hash: Sha256Hex
+    policy_registry_version: Identifier
+    policy_registry_hash: Sha256Hex
+    contract_registry_version: Identifier
+    contract_registry_hash: Sha256Hex
+    operator_registry_version: Identifier
+    operator_registry_hash: Sha256Hex
+    semantic_policy_registry_version: Identifier
+    semantic_policy_registry_hash: Sha256Hex
+    planning_registry_version: Identifier
+    planning_registry_hash: Sha256Hex
+    statement_sha256: Sha256Hex
+    ordered_placeholder_names: tuple[Identifier, ...]
+    identifier_occurrences: tuple[Identifier, ...]
+    lowering_record_ids: tuple[Identifier, ...]
+    evidence_projection_ids: tuple[EvidenceLocator, ...] = Field(strict=False)
+
+    @model_validator(mode="after")
+    def validate_manifest(self):
+        if self.logical_plan_id == self.logical_task.task_id:
+            raise ValueError("SQL_MANIFEST_PLAN_TASK_OWNERSHIP_MISMATCH")
+        if self.logical_task_semantic_hash != logical_task_semantic_hash(
+            self.logical_task
+        ):
+            raise ValueError("SQL_MANIFEST_LOGICAL_SEMANTIC_HASH_MISMATCH")
+        if self.template_id is not sql_render_template_id(self.logical_task):
+            raise ValueError("SQL_MANIFEST_TEMPLATE_MISMATCH")
+        binding_ids = tuple(item.id for item in self.binding_definitions)
+        require_unique_ids(binding_ids, label="manifest physical bindings")
+        if binding_ids != self.logical_task.binding_ids:
+            raise ValueError("SQL_MANIFEST_BINDING_OWNERSHIP_MISMATCH")
+        if any(
+            EXPECTED_BINDING_DEFINITION_HASHES.get(item.id)
+            != canonical_sha256(item)
+            for item in self.binding_definitions
+        ):
+            raise ValueError("SQL_MANIFEST_BINDING_DEFINITION_MISMATCH")
+        if (
+            self.template_id is SqlRenderTemplateId.REPRESENTATIVE_AGGREGATE
+        ) != (self.readiness_facts is not None):
+            raise ValueError("SQL_MANIFEST_READINESS_PROOF_MISMATCH")
+        require_unique_ids(self.lowering_record_ids, label="manifest lowering records")
+        require_unique_ids(
+            self.evidence_projection_ids, label="manifest evidence projections"
+        )
+        if self.manifest_id != physical_sql_render_manifest_id(self):
+            raise ValueError("SQL_RENDER_MANIFEST_ID_MISMATCH")
+        return self
+
+
 class CompiledSqlRequest(_StrictModel):
     compiled_request_id: Identifier
     logical_plan_id: Identifier
     task_id: Identifier
+    logical_task_semantic_hash: Sha256Hex
+    render_manifest: PhysicalSqlRenderManifest
+    execution_ownership_required: Literal[True] = True
     statement: str = Field(min_length=1)
     parameters: tuple[SqlParameter, ...]
     lowering_records: tuple[PhysicalLoweringRecord, ...] = Field(min_length=1)
@@ -163,6 +230,58 @@ class CompiledSqlRequest(_StrictModel):
     @model_validator(mode="after")
     def validate_request(self):
         _validate_read_only_statement(self.statement)
+        manifest = self.render_manifest
+        if (
+            self.logical_plan_id != manifest.logical_plan_id
+            or self.task_id != manifest.logical_task.task_id
+            or self.logical_task_semantic_hash != manifest.logical_task_semantic_hash
+        ):
+            raise ValueError("SQL_MANIFEST_LOGICAL_OWNERSHIP_MISMATCH")
+        request_pins = _request_registry_pins(self)
+        manifest_pins = _manifest_registry_pins(manifest)
+        if request_pins != manifest_pins:
+            raise ValueError("SQL_MANIFEST_REGISTRY_PIN_MISMATCH")
+        if (
+            self.dataset_version != manifest.dataset_version
+            or self.dataset_pin != manifest.dataset_pin
+        ):
+            raise ValueError("SQL_MANIFEST_DATASET_PIN_MISMATCH")
+
+        # Import lazily so the contracts remain importable by the renderer.
+        from .compiler import render_physical_sql_manifest
+
+        rendered = render_physical_sql_manifest(manifest)
+        if self.statement != rendered.statement:
+            raise ValueError("SQL_MANIFEST_STATEMENT_MISMATCH")
+        if self.parameters != rendered.parameters:
+            raise ValueError("SQL_MANIFEST_PARAMETER_MISMATCH")
+        if self.lowering_records != rendered.lowering_records:
+            raise ValueError("SQL_MANIFEST_LOWERING_MISMATCH")
+        if self.evidence_projection_ids != rendered.evidence_projection_ids:
+            raise ValueError("SQL_MANIFEST_EVIDENCE_MISMATCH")
+        if self.applied_policy_ids != manifest.logical_task.policy_ids:
+            raise ValueError("SQL_MANIFEST_POLICY_OWNERSHIP_MISMATCH")
+        if self.population_manifest_id != rendered.population_manifest_id or (
+            self.population_manifest_hash != rendered.population_manifest_hash
+        ):
+            raise ValueError("SQL_MANIFEST_POPULATION_PROOF_MISMATCH")
+        if manifest.statement_sha256 != statement_sha256(rendered.statement):
+            raise ValueError("SQL_MANIFEST_STATEMENT_HASH_MISMATCH")
+        if manifest.ordered_placeholder_names != placeholder_occurrences(
+            rendered.statement
+        ):
+            raise ValueError("SQL_MANIFEST_PLACEHOLDER_ORDER_MISMATCH")
+        if manifest.identifier_occurrences != identifier_occurrences(
+            rendered.statement
+        ):
+            raise ValueError("SQL_MANIFEST_IDENTIFIER_MISMATCH")
+        if manifest.lowering_record_ids != tuple(
+            item.lowering_id for item in rendered.lowering_records
+        ):
+            raise ValueError("SQL_MANIFEST_LOWERING_ID_MISMATCH")
+        if manifest.evidence_projection_ids != rendered.evidence_projection_ids:
+            raise ValueError("SQL_MANIFEST_EVIDENCE_MISMATCH")
+
         parameter_names = tuple(item.name for item in self.parameters)
         require_unique_ids(parameter_names, label="SQL parameters")
         if set(_PLACEHOLDER.findall(self.statement)) != set(parameter_names):
@@ -196,6 +315,75 @@ def compiled_sql_request_id(request: CompiledSqlRequest) -> str:
     )
 
 
+def physical_sql_render_manifest_id(manifest: PhysicalSqlRenderManifest) -> str:
+    return "physical-sql-manifest-" + canonical_sha256(
+        manifest,
+        exclude_fields={"manifest_id"},
+    )
+
+
+def statement_sha256(statement: str) -> str:
+    return hashlib.sha256(statement.encode("utf-8")).hexdigest()
+
+
+def placeholder_occurrences(statement: str) -> tuple[str, ...]:
+    return tuple(_PLACEHOLDER.findall(statement))
+
+
+def identifier_occurrences(statement: str) -> tuple[str, ...]:
+    return tuple(
+        token
+        for token in _IDENTIFIER_TOKEN.findall(statement)
+        if token.upper() not in _NON_IDENTIFIER_WORDS
+    )
+
+
+def validate_compiled_request_ownership(
+    request: CompiledSqlRequest,
+    logical_plan: LogicalQueryPlanV2,
+) -> None:
+    """Bind a restored request to its authoritative validated logical plan.
+
+    Content-addressed IDs detect drift; they do not authorize caller-provided
+    content. Task 9's runner must call this before opening a transaction.
+    """
+
+    try:
+        plan = LogicalQueryPlanV2.model_validate_json(canonical_json_bytes(logical_plan))
+    except ValidationError as error:
+        raise ValueError("COMPILED_SQL_LOGICAL_PLAN_REVALIDATION_FAILED") from error
+    if request.logical_plan_id != plan.logical_plan_id:
+        raise ValueError("COMPILED_SQL_LOGICAL_PLAN_OWNERSHIP_MISMATCH")
+    task = next((item for item in plan.tasks if item.task_id == request.task_id), None)
+    if task is None:
+        raise ValueError("COMPILED_SQL_LOGICAL_TASK_OWNERSHIP_MISMATCH")
+    if (
+        request.render_manifest.logical_task != task
+        or request.logical_task_semantic_hash != logical_task_semantic_hash(task)
+    ):
+        raise ValueError("COMPILED_SQL_LOGICAL_TASK_OWNERSHIP_MISMATCH")
+    if _request_registry_pins(request) != {
+        "binding_registry_version": plan.binding_registry_version,
+        "binding_registry_hash": plan.binding_registry_hash,
+        "policy_registry_version": plan.physical_policy_registry_version,
+        "policy_registry_hash": plan.physical_policy_registry_hash,
+        "contract_registry_version": plan.contract_registry_version,
+        "contract_registry_hash": plan.contract_registry_hash,
+        "operator_registry_version": plan.operator_registry_version,
+        "operator_registry_hash": plan.operator_registry_hash,
+        "semantic_policy_registry_version": plan.semantic_policy_registry_version,
+        "semantic_policy_registry_hash": plan.semantic_policy_registry_hash,
+        "planning_registry_version": plan.planning_registry_version,
+        "planning_registry_hash": plan.planning_registry_hash,
+    }:
+        raise ValueError("COMPILED_SQL_LOGICAL_PLAN_PIN_MISMATCH")
+    if (
+        request.dataset_version != plan.dataset_version
+        or request.dataset_pin != plan.dataset_pin
+    ):
+        raise ValueError("COMPILED_SQL_LOGICAL_PLAN_PIN_MISMATCH")
+
+
 def _validate_read_only_statement(statement: str) -> None:
     stripped = statement.strip()
     if ";" in stripped:
@@ -206,39 +394,53 @@ def _validate_read_only_statement(statement: str) -> None:
         raise ValueError("SQL_READ_ONLY_STATEMENT_REQUIRED")
     if _MUTATION.search(stripped) or _LOCKING.search(stripped):
         raise ValueError("SQL_MUTATION_FORBIDDEN")
-    _validate_closed_sql_tokens(stripped)
 
 
-def _validate_closed_sql_tokens(statement: str) -> None:
-    """Accept only the deliberately small SQLAlchemy-emitted SQL vocabulary."""
+def sql_render_template_id(task: LogicalQueryTaskV2) -> SqlRenderTemplateId:
+    if task.operation.operation_type == "lookup":
+        return SqlRenderTemplateId.LOOKUP
+    if task.operation.operation_type == "screen":
+        return SqlRenderTemplateId.SCREEN
+    if task.operation.operation_type == "rank":
+        return SqlRenderTemplateId.RANK
+    if task.operation.operation_type == "compare":
+        return SqlRenderTemplateId.COMPARE
+    if task.operation.operation_type == "aggregate":
+        if task.operation.aggregation.population_grain_id == "representative-product.v1":
+            return SqlRenderTemplateId.REPRESENTATIVE_AGGREGATE
+        return SqlRenderTemplateId.AGGREGATE
+    raise ValueError("SQL_RENDER_TEMPLATE_NOT_REGISTERED")
 
-    cursor = 0
-    tokens: list[str] = []
-    for match in _SQL_TOKEN.finditer(statement):
-        if match.start() != cursor:
-            raise ValueError("SQL_IDENTIFIER_NOT_REGISTERED")
-        cursor = match.end()
-        token = match.group(0)
-        if not token.isspace():
-            tokens.append(token)
-    if cursor != len(statement):
-        raise ValueError("SQL_IDENTIFIER_NOT_REGISTERED")
 
-    for index, token in enumerate(tokens):
-        if token[0].isdigit():
-            raise ValueError("SQL_IDENTIFIER_NOT_REGISTERED")
-        if token.startswith(":") or token in {
-            "-", "+", "*", "/", "=", "<", ">", "<=", ">=", "<>", "!=",
-            "(", ")", ",", ".",
-        }:
-            continue
-        identifier = token[1:-1].replace('""', '"') if token.startswith('"') else token
-        upper = identifier.upper()
-        if upper in _SQL_KEYWORDS:
-            continue
-        follows_call = index + 1 < len(tokens) and tokens[index + 1] == "("
-        if follows_call and identifier.lower() in _SQL_FUNCTIONS:
-            continue
-        if identifier in _SQL_IDENTIFIERS or _GENERATED_IDENTIFIER.fullmatch(identifier):
-            continue
-        raise ValueError("SQL_IDENTIFIER_NOT_REGISTERED")
+def _request_registry_pins(request: CompiledSqlRequest) -> dict[str, str]:
+    return {
+        "binding_registry_version": request.binding_registry_version,
+        "binding_registry_hash": request.binding_registry_hash,
+        "policy_registry_version": request.policy_registry_version,
+        "policy_registry_hash": request.policy_registry_hash,
+        "contract_registry_version": request.contract_registry_version,
+        "contract_registry_hash": request.contract_registry_hash,
+        "operator_registry_version": request.operator_registry_version,
+        "operator_registry_hash": request.operator_registry_hash,
+        "semantic_policy_registry_version": request.semantic_policy_registry_version,
+        "semantic_policy_registry_hash": request.semantic_policy_registry_hash,
+        "planning_registry_version": request.planning_registry_version,
+        "planning_registry_hash": request.planning_registry_hash,
+    }
+
+
+def _manifest_registry_pins(manifest: PhysicalSqlRenderManifest) -> dict[str, str]:
+    return {
+        "binding_registry_version": manifest.binding_registry_version,
+        "binding_registry_hash": manifest.binding_registry_hash,
+        "policy_registry_version": manifest.policy_registry_version,
+        "policy_registry_hash": manifest.policy_registry_hash,
+        "contract_registry_version": manifest.contract_registry_version,
+        "contract_registry_hash": manifest.contract_registry_hash,
+        "operator_registry_version": manifest.operator_registry_version,
+        "operator_registry_hash": manifest.operator_registry_hash,
+        "semantic_policy_registry_version": manifest.semantic_policy_registry_version,
+        "semantic_policy_registry_hash": manifest.semantic_policy_registry_hash,
+        "planning_registry_version": manifest.planning_registry_version,
+        "planning_registry_hash": manifest.planning_registry_hash,
+    }
