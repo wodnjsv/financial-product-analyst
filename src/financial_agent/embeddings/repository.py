@@ -19,7 +19,13 @@ from financial_agent.db.schema.document import (
     document_source_artifact,
 )
 from financial_agent.db.schema.evidence import source_record
-from financial_agent.db.schema.operations import dataset_version
+from financial_agent.db.schema.evidence import evidence_record
+from financial_agent.db.schema.operations import (
+    active_dataset,
+    dataset_readiness,
+    dataset_version,
+)
+from financial_agent.db.schema.relation import relation_record
 from financial_agent.db.schema.search import document_embedding, embedding_model
 from financial_agent.embeddings.contracts import (
     EmbeddingChunk,
@@ -70,6 +76,14 @@ class SampleCandidate:
     entity_id: str
     strategy_chunk_count: int
     risk_chunk_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectedCounts:
+    evidence_count: int
+    relation_count: int
+    readiness_count: int
+    active_dataset_count: int
 
 
 def _same_document(left: sa.FromClause, right: sa.FromClause) -> sa.ColumnElement[bool]:
@@ -418,6 +432,7 @@ class EmbeddingRepository:
                 document_title=row["document_title"],
                 section_path=row["section_path"],
                 exact_text=row["exact_text"],
+                section_type=row["section_type"],
             )
             for row in rows
         )
@@ -470,6 +485,85 @@ class EmbeddingRepository:
             inserted = (await connection.execute(statement)).scalars().all()
             await connection.execute(sa.text("SET CONSTRAINTS ALL IMMEDIATE"))
         return len(inserted)
+
+    async def has_exact_embedding(
+        self,
+        model: EmbeddingModelContract,
+        chunk: EmbeddingChunk,
+    ) -> bool:
+        statement = sa.select(sa.func.count()).select_from(document_embedding).where(
+            document_embedding.c.dataset_version == chunk.dataset_version,
+            document_embedding.c.embedding_id == embedding_id(model, chunk),
+            document_embedding.c.document_id == chunk.document_id,
+            document_embedding.c.chunk_id == chunk.chunk_id,
+            document_embedding.c.chunk_content_hash == chunk.content_hash,
+            document_embedding.c.model_id == model.model_id,
+            document_embedding.c.model_version == model.model_version,
+            document_embedding.c.dimension == model.dimension,
+            sa.func.cdb_admin.vector_dims(document_embedding.c.embedding)
+            == model.dimension,
+        )
+        async with self._engine.connect() as connection:
+            return int(await connection.scalar(statement) or 0) == 1
+
+    async def embedded_section_types(
+        self,
+        dataset: str,
+        model: EmbeddingModelContract,
+        *,
+        entity_id: str,
+    ) -> frozenset[str]:
+        eligible = self.eligible_statement(dataset).subquery("eligible_chunks")
+        statement = (
+            sa.select(eligible.c.section_type)
+            .select_from(
+                eligible.join(
+                    document_entity_binding,
+                    sa.and_(
+                        document_entity_binding.c.dataset_version
+                        == eligible.c.dataset_version,
+                        document_entity_binding.c.document_id
+                        == eligible.c.document_id,
+                        document_entity_binding.c.entity_id == entity_id,
+                        document_entity_binding.c.binding_role == "subject_product",
+                    ),
+                ).join(
+                    document_embedding,
+                    _exact_embedding_match(eligible, model),
+                )
+            )
+            .distinct()
+        )
+        async with self._engine.connect() as connection:
+            values = (await connection.execute(statement)).scalars().all()
+        return frozenset(str(value) for value in values)
+
+    async def snapshot_protected_counts(
+        self,
+        dataset: str,
+    ) -> ProtectedCounts:
+        async with self._engine.connect() as connection:
+            counts = []
+            for table in (evidence_record, relation_record, dataset_readiness):
+                counts.append(
+                    int(
+                        await connection.scalar(
+                            sa.select(sa.func.count())
+                            .select_from(table)
+                            .where(table.c.dataset_version == dataset)
+                        )
+                        or 0
+                    )
+                )
+            active_count = int(
+                await connection.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(active_dataset)
+                    .where(active_dataset.c.dataset_version == dataset)
+                )
+                or 0
+            )
+        return ProtectedCounts(*counts, active_count)
 
     async def reconcile(
         self,

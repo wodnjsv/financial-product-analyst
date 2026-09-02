@@ -371,6 +371,14 @@ async def test_preflight_counts_only_exact_current_dart_chunks(
     assert result.stale_embedding_count == 0
     assert result.orphan_embedding_count == 0
 
+    protected = await EmbeddingRepository(
+        embedding_engine
+    ).snapshot_protected_counts(dataset_version)
+    assert protected.evidence_count == 0
+    assert protected.relation_count == 0
+    assert protected.readiness_count == 0
+    assert protected.active_dataset_count == 0
+
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
@@ -411,6 +419,19 @@ async def test_append_then_resume_skips_the_exact_embedding(
     )
 
     assert await repository.append_embeddings(APPROVED_MODEL, (pending,)) == 1
+    assert await repository.embedded_section_types(
+        dataset_version,
+        APPROVED_MODEL,
+        entity_id=await repository.resolve_product(dataset_version, "KODEX 200"),
+    ) == frozenset({chunk.section_type})
+    assert await repository.has_exact_embedding(APPROVED_MODEL, chunk) is True
+    assert (
+        await repository.has_exact_embedding(
+            APPROVED_MODEL,
+            replace(chunk, content_hash="f" * 64),
+        )
+        is False
+    )
     assert await repository.append_embeddings(APPROVED_MODEL, (pending,)) == 0
     remaining = await repository.missing_chunks(
         dataset_version,

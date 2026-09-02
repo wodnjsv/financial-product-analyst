@@ -74,6 +74,7 @@ class EmbeddingChunk:
     document_title: str
     section_path: str
     exact_text: str
+    section_type: str = ""
 
 
 @dataclass(frozen=True, slots=True)
