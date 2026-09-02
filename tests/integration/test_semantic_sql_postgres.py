@@ -43,6 +43,7 @@ from tests.fixtures.db.synthetic_dataset import (
     insert_numeric_metric_definition,
     insert_numeric_observation_with_evidence,
     insert_product,
+    insert_relation_with_evidence,
     insert_source,
 )
 from tests.sql.helpers import (
@@ -94,9 +95,11 @@ async def semantic_sql_runner(semantic_sql_database_url: str):
 def _seed_semantic_dataset(url: str) -> None:
     with psycopg.connect(normalize_psycopg_url(url)) as connection:
         for statement in (
+            "DELETE FROM evidence.evidence_relation_origin WHERE dataset_version = %s",
             "DELETE FROM evidence.evidence_observation_origin WHERE dataset_version = %s",
             "DELETE FROM evidence.evidence_record WHERE dataset_version = %s",
             "DELETE FROM observation.observation_record WHERE dataset_version = %s",
+            "DELETE FROM relation.relation_record WHERE dataset_version = %s",
             "DELETE FROM evidence.source_record WHERE dataset_version = %s",
             "DELETE FROM catalog.product WHERE dataset_version = %s",
             "DELETE FROM catalog.institution WHERE dataset_version = %s",
@@ -106,7 +109,12 @@ def _seed_semantic_dataset(url: str) -> None:
             connection.execute(statement, (DATASET_VERSION,))
         insert_building_dataset(connection, DATASET_VERSION, manifest_hash=DATASET_PIN)
         insert_institution(connection, dataset_version=DATASET_VERSION)
-        for source_id in ("source-one", "source-observation-a"):
+        for source_id in (
+            "source-one",
+            "source-a",
+            "source-b",
+            "source-observation-a",
+        ):
             insert_source(connection, dataset_version=DATASET_VERSION, source_id=source_id)
         for metric_id, unit in (
             ("organizer.pref01n001.aum", "source_defined_amount"),
@@ -202,6 +210,40 @@ def _seed_semantic_dataset(url: str) -> None:
             source_id="source-observation-a",
             definition_version="semantic-sql.v1",
         )
+        for share_id, relation_id, evidence_id, source_id in (
+            ("share-a", "relation-a", "evidence-a", "source-a"),
+            ("share-b", "relation-b", "evidence-b", "source-b"),
+        ):
+            insert_product(
+                connection,
+                dataset_version=DATASET_VERSION,
+                entity_id=share_id,
+                product_family="public_fund",
+                canonical_name=f"Share class {share_id}",
+                primary_currency="KRW",
+            )
+            insert_relation_with_evidence(
+                connection,
+                dataset_version=DATASET_VERSION,
+                relation_id=relation_id,
+                subject_id="representative-a",
+                predicate_id="hasShareClass",
+                object_id=share_id,
+                evidence_id=evidence_id,
+                source_id=source_id,
+            )
+            insert_numeric_observation_with_evidence(
+                connection,
+                dataset_version=DATASET_VERSION,
+                entity_id=share_id,
+                observation_id=f"observation-{share_id}-aum",
+                metric_id="organizer.prfd01n001.net_assets",
+                value=Decimal("999"),
+                unit="source_defined_amount",
+                currency="KRW",
+                applicable_date=date(2026, 8, 24),
+                definition_version="semantic-sql.v1",
+            )
 
 
 async def _execute(runner, plan, *, facts=None):
@@ -217,8 +259,19 @@ async def test_lookup_screen_rank_compare_and_lineage(semantic_sql_runner) -> No
     )
     lookup_result = await _execute(semantic_sql_runner, lookup)
     assert {row.entity_ids[0] for row in lookup_result.result_rows} == {
-        "etf-a", "etf-b", "etf-c", "etf-zero", "etf-injection"
+        "etf-a", "etf-b", "etf-c", "etf-zero", "etf-missing", "etf-injection"
     }
+    missing = next(
+        row for row in lookup_result.result_rows if row.entity_ids == ("etf-missing",)
+    )
+    zero = next(
+        row for row in lookup_result.result_rows if row.entity_ids == ("etf-zero",)
+    )
+    assert all(field.field_id != "aum" for field in missing.fields)
+    assert any(item.subject_id == "etf-missing" for item in lookup_result.exclusions)
+    assert next(
+        field for field in zero.fields if field.field_id == "aum"
+    ).value.value == 0
     assert lookup_result.evidence_refs
 
     screen = make_plan(
@@ -316,7 +369,56 @@ async def test_aggregates_grouping_date_unit_and_split_families(semantic_sql_run
 
 
 @pytest.mark.asyncio
-async def test_public_fund_representative_population_is_not_duplicated(semantic_sql_runner) -> None:
+async def test_public_fund_representative_population_is_not_duplicated(
+    semantic_sql_runner, semantic_sql_database_url
+) -> None:
+    with psycopg.connect(normalize_psycopg_url(semantic_sql_database_url)) as connection:
+        edges = connection.execute(
+            """
+            SELECT relation.relation_record.relation_id,
+                   relation.relation_record.subject_id,
+                   relation.relation_record.object_id,
+                   evidence.evidence_relation_origin.evidence_id,
+                   evidence.evidence_record.source_id
+              FROM relation.relation_record
+              JOIN evidence.evidence_relation_origin
+                USING (dataset_version, relation_id)
+              JOIN evidence.evidence_record
+                USING (dataset_version, evidence_id)
+             WHERE relation.relation_record.dataset_version = %s
+               AND relation.relation_record.predicate_id = 'hasShareClass'
+             ORDER BY relation.relation_record.relation_id
+            """,
+            (DATASET_VERSION,),
+        ).fetchall()
+        ownership = connection.execute(
+            """
+            SELECT observation.observation_record.entity_id,
+                   observation.observation_record.observation_id,
+                   evidence.evidence_observation_origin.evidence_id,
+                   evidence.evidence_record.source_id
+              FROM observation.observation_record
+              JOIN evidence.evidence_observation_origin
+                USING (dataset_version, observation_id)
+              JOIN evidence.evidence_record
+                USING (dataset_version, evidence_id)
+             WHERE observation.observation_record.dataset_version = %s
+               AND observation.observation_record.observation_id = 'observation-a'
+            """,
+            (DATASET_VERSION,),
+        ).fetchall()
+    assert edges == [
+        ("relation-a", "representative-a", "share-a", "evidence-a", "source-a"),
+        ("relation-b", "representative-a", "share-b", "evidence-b", "source-b"),
+    ]
+    assert ownership == [
+        (
+            "representative-a",
+            "observation-a",
+            "evidence-observation-a",
+            "source-observation-a",
+        )
+    ]
     facts = verified_public_fund_facts()
     plan = make_plan(
         LogicalAggregateOperationV2(

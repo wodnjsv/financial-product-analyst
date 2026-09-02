@@ -14,7 +14,7 @@ from financial_agent.planning.physical_bindings import PhysicalReadinessFacts
 
 from .compiler import SemanticSqlCompiler
 from .contracts import CompiledSqlRequest
-from .result_mapping import MappedSqlResult, map_sql_rows
+from .result_mapping import MAX_RETURNED_ROWS, MappedSqlResult, map_sql_rows
 
 
 _READ_ONLY = re.compile(r"^(?:SELECT|WITH)\b", re.IGNORECASE)
@@ -42,10 +42,18 @@ class ReadOnlySqlRunner:
         compiler: SemanticSqlCompiler,
         *,
         default_timeout_ms: int = _MAX_TIMEOUT_MS,
+        max_rows: int = MAX_RETURNED_ROWS,
     ) -> None:
         self._engine = engine
         self._compiler = compiler
         self._default_timeout_ms = _validate_timeout(default_timeout_ms)
+        if (
+            isinstance(max_rows, bool)
+            or not isinstance(max_rows, int)
+            or not 1 <= max_rows <= MAX_RETURNED_ROWS
+        ):
+            raise SqlExecutionError("SQL_RESULT_ROW_LIMIT_OUT_OF_RANGE")
+        self._max_rows = max_rows
 
     async def execute(
         self,
@@ -86,10 +94,12 @@ class ReadOnlySqlRunner:
                     raw_result = await connection.execute(
                         sa.text(request.statement), parameters
                     )
-                    rows = raw_result.mappings().all()
+                    rows = raw_result.mappings().fetchmany(self._max_rows + 1)
         except Exception as error:
             raise SqlExecutionError("SQL_EXECUTION_FAILED") from error
 
+        if len(rows) > self._max_rows:
+            raise SqlExecutionError("SQL_RESULT_ROW_LIMIT_EXCEEDED")
         if canonical_json_bytes(request) != request_before:
             raise SqlExecutionError("COMPILED_REQUEST_MUTATED")
         return map_sql_rows(request, rows)

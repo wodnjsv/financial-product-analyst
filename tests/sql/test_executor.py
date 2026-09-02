@@ -29,17 +29,23 @@ COMPILER = SemanticSqlCompiler(BINDINGS, POLICIES, PLANNING, ACTIVE_DATASET)
 class _Mappings:
     def __init__(self, rows):
         self._rows = rows
+        self.fetch_sizes = []
+
+    def fetchmany(self, size):
+        self.fetch_sizes.append(size)
+        return self._rows[:size]
 
     def all(self):
-        return self._rows
+        raise AssertionError("unbounded all() is forbidden")
 
 
 class _Result:
     def __init__(self, rows):
         self._rows = rows
+        self.mapping_result = _Mappings(rows)
 
     def mappings(self):
-        return _Mappings(self._rows)
+        return self.mapping_result
 
 
 class _Context:
@@ -66,10 +72,11 @@ class FakeConnection:
         self.driver_sql.append(statement)
 
     async def execute(self, statement, parameters):
-        self.executions.append((str(statement), parameters))
+        result = _Result([] if str(statement).startswith("SELECT set_config") else self.rows)
+        self.executions.append((str(statement), parameters, result))
         if str(statement).startswith("SELECT set_config"):
-            return _Result([])
-        return _Result(self.rows)
+            return result
+        return result
 
 
 class FakeEngine:
@@ -108,6 +115,7 @@ async def test_runner_revalidates_then_sets_read_only_timeout_and_executes_once(
     assert engine.connection.executions[0][0].startswith("SELECT set_config")
     assert engine.connection.executions[0][1] == {"statement_timeout": "4321ms"}
     assert engine.connection.executions[1][0] == request.statement
+    assert engine.connection.executions[1][2].mapping_result.fetch_sizes == [10_001]
     assert request.model_dump_json() == before
 
 
@@ -166,6 +174,36 @@ async def test_timeout_is_bounded_before_database_access() -> None:
     with pytest.raises(SqlExecutionError, match="SQL_TIMEOUT_OUT_OF_RANGE"):
         await runner.execute(request, plan, timeout_ms=55_001)
     assert engine.connect_count == 0
+
+
+@pytest.mark.asyncio
+async def test_runner_fetches_only_cap_plus_one_and_rejects_overflow() -> None:
+    plan, request = _plan_and_request()
+    rows = []
+    for ordinal in range(3):
+        rows.append(
+            {
+                **_lookup_row(Decimal(str(ordinal))),
+                "product_id": f"product-{ordinal}",
+                "observation_id_0": f"observation-{ordinal}",
+                "evidence_id_0": [f"evidence-{ordinal}"],
+                "source_id_0": [f"source-{ordinal}"],
+            }
+        )
+    engine = FakeEngine(rows)
+    runner = ReadOnlySqlRunner(engine, COMPILER, max_rows=2)
+    with pytest.raises(SqlExecutionError, match="SQL_RESULT_ROW_LIMIT_EXCEEDED"):
+        await runner.execute(request, plan)
+    business_result = engine.connection.executions[1][2]
+    assert business_result.mapping_result.fetch_sizes == [3]
+    assert len(engine.connection.executions) == 2
+
+
+def test_lookup_sql_preserves_missing_status_for_result_exclusions() -> None:
+    plan, request = _plan_and_request()
+    assert "value_status_0" in request.statement
+    assert "reason_code_0" in request.statement
+    assert "value_status IN" not in request.statement
 
 
 def test_period_is_fail_closed_until_binding_and_lowering_are_registered() -> None:

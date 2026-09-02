@@ -185,6 +185,71 @@ def insert_numeric_observation_with_evidence(
     )
 
 
+def insert_relation_with_evidence(
+    connection: psycopg.Connection,
+    *,
+    dataset_version: str,
+    relation_id: str,
+    subject_id: str,
+    predicate_id: str,
+    object_id: str,
+    evidence_id: str,
+    source_id: str,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO relation.relation_record (
+            dataset_version, relation_id, subject_id, predicate_id, object_id,
+            valid_from, record_hash, created_at
+        ) VALUES (%s, %s, %s, %s, %s, DATE '2026-08-24', %s, %s)
+        """,
+        (
+            dataset_version,
+            relation_id,
+            subject_id,
+            predicate_id,
+            object_id,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+    tagged = {"type": "string", "value": object_id}
+    connection.execute(
+        """
+        INSERT INTO evidence.evidence_record (
+            dataset_version, evidence_id, evidence_kind, source_id,
+            subject_id, predicate_id, value_or_object_id, normalized_value,
+            applicable_date, valid_from, locator_type,
+            locator_uri_or_object_key, parser_version, mapping_version,
+            cutoff_status, record_hash, created_at
+        ) VALUES (%s, %s, 'relation', %s, %s, %s, %s, %s,
+                  DATE '2026-08-24', DATE '2026-08-24', 'tabular', %s,
+                  'synthetic-parser.v1', 'synthetic-mapping.v1', 'eligible',
+                  %s, %s)
+        """,
+        (
+            dataset_version,
+            evidence_id,
+            source_id,
+            subject_id,
+            predicate_id,
+            Jsonb(tagged),
+            Jsonb(tagged),
+            f"synthetic://semantic-sql/{relation_id}",
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+    connection.execute(
+        """
+        INSERT INTO evidence.evidence_relation_origin (
+            dataset_version, evidence_id, relation_id
+        ) VALUES (%s, %s, %s)
+        """,
+        (dataset_version, evidence_id, relation_id),
+    )
+
+
 def insert_institution(
     connection: psycopg.Connection,
     *,

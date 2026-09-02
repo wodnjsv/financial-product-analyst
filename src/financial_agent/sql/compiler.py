@@ -471,11 +471,12 @@ def _compile_statement(context: _Context):
         for index, concept_id in enumerate(fields):
             expression, binding, alias = _field(context, family, concept_id)
             base = _join_observation_with_evidence(context, base, alias, binding)
-            where.append(_present(context, alias.c.value_status))
             evidence_alias = context.evidence_aliases[binding.id]
             selected.extend(
                 (
                     expression.label(f"field_{index}"),
+                    alias.c.value_status.label(f"value_status_{index}"),
+                    alias.c.reason_code.label(f"reason_code_{index}"),
                     alias.c.observation_id.label(f"observation_id_{index}"),
                     alias.c.metric_id.label(f"metric_id_{index}"),
                     alias.c.metric_definition_version.label(
@@ -839,6 +840,7 @@ def _aggregate(context, base, where, family, operation):
         _record(context, "operation.aggregation.target", binding.id, PhysicalLoweringKind.AGGREGATION, binding, (spec.population_grain_id, spec.dedup_policy_id))
 
     groups = []
+    group_observation_aliases = []
     for index, concept in enumerate(spec.group_by_field_concept_ids):
         group_expression, group_binding, group_alias = _field(context, family, concept)
         if group_alias.name not in joined_alias_names:
@@ -849,6 +851,7 @@ def _aggregate(context, base, where, family, operation):
         where.append(_present(context, group_alias.c.value_status))
         selected.insert(index, group_expression.label(f"group_{index}"))
         groups.append(group_expression)
+        group_observation_aliases.append(group_alias)
         _record(context, f"operation.aggregation.group_by.{index}", group_binding.id, PhysicalLoweringKind.GROUPING, group_binding)
 
     if operation.predicate is not None:
@@ -887,6 +890,11 @@ def _aggregate(context, base, where, family, operation):
         where=where,
         groups=groups,
         evidence_aliases=tuple(context.evidence_aliases.values()),
+        observation_aliases=(
+            tuple(group_observation_aliases)
+            if spec.function_id is AggregationFunction.COUNT
+            else ()
+        ),
     )
     _record(context, "operation.aggregation.population", "catalog-product-family.v1", PhysicalLoweringKind.DEDUPLICATION, policy_ids=(spec.population_grain_id, spec.dedup_policy_id))
     return statement
@@ -899,6 +907,7 @@ def _attach_flat_aggregate_evidence(
     where,
     groups,
     evidence_aliases,
+    observation_aliases=(),
 ):
     """Aggregate lineage on a separate branch so it cannot multiply values."""
 
@@ -933,6 +942,18 @@ def _attach_flat_aggregate_evidence(
         source_item, sa.true()
     )
 
+    observation_item = None
+    if observation_aliases:
+        combined_observations = sa.dialects.postgresql.array(
+            tuple(alias.c.observation_id for alias in observation_aliases)
+        )
+        observation_item = (
+            sa.func.unnest(combined_observations)
+            .table_valued("observation_id")
+            .lateral("aggregate_observation_item")
+        )
+        evidence_base = evidence_base.join(observation_item, sa.true())
+
     evidence_columns = [
         expression.label(f"group_{index}")
         for index, expression in enumerate(groups)
@@ -947,6 +968,12 @@ def _attach_flat_aggregate_evidence(
             ),
         )
     )
+    if observation_item is not None:
+        evidence_columns.append(
+            sa.func.array_agg(
+                sa.distinct(observation_item.c.observation_id)
+            ).label("observation_ids")
+        )
     evidence_statement = (
         sa.select(*evidence_columns).select_from(evidence_base).where(*where)
     )
@@ -964,6 +991,11 @@ def _attach_flat_aggregate_evidence(
         )
     statement = sa.select(
         *numeric.c,
+        *(
+            (evidence.c.observation_ids,)
+            if "observation_ids" in evidence.c
+            else ()
+        ),
         evidence.c.evidence_ids,
         evidence.c.source_ids,
     ).select_from(numeric.join(evidence, join_condition))

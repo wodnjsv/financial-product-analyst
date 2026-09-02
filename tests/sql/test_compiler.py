@@ -514,9 +514,7 @@ def test_restore_rerenders_the_closed_manifest_and_rejects_semantically_unowned_
             "evidence_kind_3",
             "dataset_0",
             "family_1",
-            "status_4",
-            "status_5",
-            "as_of_6",
+            "as_of_4",
         )
     )
     assert restored.render_manifest.logical_task == plan.tasks[0]
@@ -622,6 +620,7 @@ def test_count_qualifier_rejects_an_unconsumed_binding_but_accepts_a_group_bindi
     compiled = COMPILER.compile_task(grouped, grouped.tasks[0].task_id)
     assert compiled.request is not None, compiled.rejection
     assert "applicable_date" in compiled.request.statement
+    assert "observation_ids" in compiled.request.statement
 
 
 def test_not_keeps_comparison_missingness_guard_outside_the_boolean_core() -> None:
