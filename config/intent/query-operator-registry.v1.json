@@ -1,0 +1,17 @@
+{
+  "registry_version": "query-operator-registry.v1",
+  "operators": [
+    {"id":"eq","allowed_value_kinds":["string","integer","decimal","boolean","date","datetime","identifier"],"arity":"one"},
+    {"id":"neq","allowed_value_kinds":["string","integer","decimal","boolean","date","datetime","identifier"],"arity":"one"},
+    {"id":"lt","allowed_value_kinds":["integer","decimal","date","datetime"],"arity":"one"},
+    {"id":"lte","allowed_value_kinds":["integer","decimal","date","datetime"],"arity":"one"},
+    {"id":"gt","allowed_value_kinds":["integer","decimal","date","datetime"],"arity":"one"},
+    {"id":"gte","allowed_value_kinds":["integer","decimal","date","datetime"],"arity":"one"},
+    {"id":"between","allowed_value_kinds":["integer","decimal","date","datetime"],"arity":"two"},
+    {"id":"in","allowed_value_kinds":["string","integer","decimal","boolean","date","datetime","identifier"],"arity":"one_or_more"},
+    {"id":"not_in","allowed_value_kinds":["string","integer","decimal","boolean","date","datetime","identifier"],"arity":"one_or_more"},
+    {"id":"contains","allowed_value_kinds":["string"],"arity":"one"},
+    {"id":"is_missing","allowed_value_kinds":[],"arity":"zero"},
+    {"id":"is_present","allowed_value_kinds":[],"arity":"zero"}
+  ]
+}

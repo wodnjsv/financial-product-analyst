@@ -1,0 +1,20 @@
+{
+  "registry_version": "query-policy-registry.v1",
+  "policies": [
+    {"id":"approved-cross-family.v1","kind":"normalization"},
+    {"id":"cosine-complete-dimensions.v1","kind":"similarity"},
+    {"id":"default-direction-descending.v1","kind":"default"},
+    {"id":"default-explanation-profile.v1","kind":"default"},
+    {"id":"default-limit-5.v1","kind":"default"},
+    {"id":"default-product-projection.v1","kind":"default"},
+    {"id":"distinct-entity.v1","kind":"deduplication"},
+    {"id":"exclude_missing.v1","kind":"missingness"},
+    {"id":"minimum-dimension-coverage.v1","kind":"coverage"},
+    {"id":"no-dedup.v1","kind":"deduplication"},
+    {"id":"public-fund-representative-share.v1","kind":"deduplication"},
+    {"id":"representative-product.v1","kind":"population_grain"},
+    {"id":"same-definition-period-unit.v1","kind":"comparison"},
+    {"id":"source-product.v1","kind":"population_grain"},
+    {"id":"stable-product-id.v1","kind":"stable_tie"}
+  ]
+}
