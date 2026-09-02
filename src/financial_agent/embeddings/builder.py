@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, fields
 from datetime import date
 from typing import Protocol
@@ -32,6 +34,9 @@ class EmbeddingBuildError(RuntimeError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+_FULL_BUILD_RECOVERY_DELAYS = (60.0, 300.0, 1_800.0, 3_600.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +118,7 @@ class EmbeddingBuildService:
         provider: EmbeddingProvider,
         *,
         batch_size: int = 25,
+        recovery_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         if (
             isinstance(batch_size, bool)
@@ -123,6 +129,7 @@ class EmbeddingBuildService:
         self._repository = repository
         self._provider = provider
         self._batch_size = batch_size
+        self._recovery_sleep = recovery_sleep
 
     @staticmethod
     def report_field_names() -> tuple[str, ...]:
@@ -249,6 +256,7 @@ class EmbeddingBuildService:
         inserted = 0
         input_tokens = 0
         retries = 0
+        recovery_index = 0
         while True:
             chunks = await self._repository.missing_chunks(
                 dataset_version,
@@ -257,11 +265,22 @@ class EmbeddingBuildService:
             )
             if not chunks:
                 break
-            batch_inserted, batch_tokens, batch_retries = await self._embed_batch(
-                chunks
-            )
+            try:
+                batch_inserted, batch_tokens, batch_retries = (
+                    await self._embed_batch(chunks)
+                )
+            except EmbeddingBuildError as error:
+                if error.code != "retry_exhausted":
+                    raise
+                delay = _FULL_BUILD_RECOVERY_DELAYS[
+                    min(recovery_index, len(_FULL_BUILD_RECOVERY_DELAYS) - 1)
+                ]
+                recovery_index += 1
+                await self._recovery_sleep(delay)
+                continue
             if batch_inserted == 0:
                 raise EmbeddingBuildError("build_made_no_progress")
+            recovery_index = 0
             requested += len(chunks)
             inserted += batch_inserted
             input_tokens += batch_tokens

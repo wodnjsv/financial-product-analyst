@@ -17,7 +17,10 @@ from financial_agent.embeddings.contracts import (
     EmbeddingResult,
     embedding_id,
 )
-from financial_agent.embeddings.ncp import RetryableEmbeddingError
+from financial_agent.embeddings.ncp import (
+    PermanentEmbeddingError,
+    RetryableEmbeddingError,
+)
 from financial_agent.embeddings.repository import (
     EmbeddingPreflight,
     EmbeddingReconciliation,
@@ -155,6 +158,30 @@ class FakeProvider:
         )
 
 
+class ScriptedProvider:
+    def __init__(
+        self,
+        outcomes: tuple[EmbeddingResult | Exception, ...],
+    ) -> None:
+        self.outcomes = iter(outcomes)
+        self.calls: list[str] = []
+
+    async def embed(self, text: str) -> EmbeddingResult:
+        self.calls.append(text)
+        outcome = next(self.outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+def _embedding_result(request_id: str) -> EmbeddingResult:
+    return EmbeddingResult(
+        vector=(0.1,) * 1024,
+        input_tokens=12,
+        request_id=request_id,
+    )
+
+
 def _hit(section_type: SectionType, *, vector: bool) -> DocumentCandidateHit:
     return DocumentCandidateHit(
         dataset_version=DATASET_VERSION,
@@ -234,25 +261,79 @@ async def test_full_build_stops_before_provider_when_count_differs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_interrupted_build_keeps_committed_batches_for_resume() -> None:
-    repository = FakeEmbeddingRepository(tuple(_chunk(i) for i in range(5)))
-    first = EmbeddingBuildService(
-        repository,
-        FakeProvider(fail_after=2),
-        batch_size=2,
+async def test_full_build_backs_off_until_rate_limit_recovers_and_resets_after_commit(
+) -> None:
+    repository = FakeEmbeddingRepository((_chunk(1), _chunk(2)))
+    provider = ScriptedProvider(
+        (
+            RetryableEmbeddingError("retry_exhausted"),
+            RetryableEmbeddingError("retry_exhausted"),
+            _embedding_result("request-1"),
+            RetryableEmbeddingError("retry_exhausted"),
+            _embedding_result("request-2"),
+        )
     )
+    delays: list[float] = []
 
-    with pytest.raises(EmbeddingBuildError, match="retry_exhausted"):
-        await first.embed_all(DATASET_VERSION, expected_chunk_count=5)
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    report = await EmbeddingBuildService(
+        repository,
+        provider,
+        batch_size=1,
+        recovery_sleep=sleep,
+    ).embed_all(DATASET_VERSION, expected_chunk_count=2)
+
+    assert delays == [60.0, 300.0, 60.0]
+    assert report.inserted_count == 2
     assert len(repository.persisted) == 2
 
-    second = EmbeddingBuildService(repository, FakeProvider(), batch_size=2)
-    report = await second.embed_all(DATASET_VERSION, expected_chunk_count=5)
 
-    assert report.skipped_existing_count == 2
-    assert report.inserted_count == 3
-    assert report.retry_count == 1
-    assert len(repository.persisted) == 5
+@pytest.mark.asyncio
+async def test_full_build_does_not_auto_resume_permanent_provider_failure() -> None:
+    repository = FakeEmbeddingRepository((_chunk(1),))
+    provider = ScriptedProvider(
+        (PermanentEmbeddingError("provider_http_permanent"),)
+    )
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    with pytest.raises(EmbeddingBuildError, match="provider_http_permanent"):
+        await EmbeddingBuildService(
+            repository,
+            provider,
+            recovery_sleep=sleep,
+        ).embed_all(DATASET_VERSION, expected_chunk_count=1)
+
+    assert delays == []
+    assert repository.persisted == {}
+
+
+@pytest.mark.asyncio
+async def test_full_build_caps_repeated_rate_limit_waits_at_one_hour() -> None:
+    repository = FakeEmbeddingRepository((_chunk(1),))
+    provider = ScriptedProvider(
+        (
+            *(RetryableEmbeddingError("retry_exhausted") for _ in range(5)),
+            _embedding_result("request-1"),
+        )
+    )
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    report = await EmbeddingBuildService(
+        repository,
+        provider,
+        recovery_sleep=sleep,
+    ).embed_all(DATASET_VERSION, expected_chunk_count=1)
+
+    assert delays == [60.0, 300.0, 1_800.0, 3_600.0, 3_600.0]
+    assert report.inserted_count == 1
 
 
 @pytest.mark.asyncio

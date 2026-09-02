@@ -1004,7 +1004,15 @@ FINANCIAL_AGENT_EMBEDDING_REPORT=/private/tmp/dart-embedding-full.json \
   --expected-chunks 37629 --batch-size 25
 ```
 
-Expected: every missing exact identity is processed; 429, timeout, and retryable 5xx use bounded retry; committed batches remain valid after interruption. On an interrupted run, execute the identical command again. Do not delete the successful canary/sample rows.
+Expected: every missing exact identity is processed; 429, timeout, and
+retryable 5xx first use the four-attempt request retry. If that retry budget is
+exhausted, the full build alone waits for 1 minute, 5 minutes, 30 minutes, and
+then at most 1 hour between recovery probes until the provider succeeds or the
+operator cancels the process. One committed batch resets the long-wait
+sequence. Permanent provider, database, and reconciliation failures remain
+terminal. Committed batches remain valid after interruption; do not delete the
+successful canary/sample rows. See
+[ADR-0032](../decisions/ADR-0032-auto-resume-ncp-embedding-rate-limits.md).
 
 - [ ] **Step 6: Reconcile the final local state**
 
