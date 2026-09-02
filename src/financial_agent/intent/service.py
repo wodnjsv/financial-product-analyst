@@ -66,6 +66,7 @@ from .query_contracts import (
     ProvenanceSourceKind,
 )
 from .resolution import (
+    ResolutionIssue,
     ResolverBuildManifest,
     ValidatedIntentFrameV2,
     ValidatedIntentResolutionV2,
@@ -402,9 +403,11 @@ class IntentResolverService:
         repair_used = False
 
         validation_started = self._timer()
+        validation_ms = 0
         try:
             resolution = self.validate_axis_response(prepared, first_result.content)
         except ResolverContractError as failure:
+            validation_ms += _duration_ms(validation_started, self._timer())
             if failure.code not in _REPAIR_INSTRUCTIONS:
                 raise
             repair_envelope = build_repair_envelope(prepared, failure)
@@ -414,7 +417,9 @@ class IntentResolverService:
                 timeout_seconds=self._remaining_model_seconds(context),
             )
             axis_model_ms += _duration_ms(repair_started, self._timer())
+            validation_started = self._timer()
             resolution = self.validate_axis_response(prepared, repaired_result.content)
+            validation_ms += _duration_ms(validation_started, self._timer())
             resolution = resolution.model_copy(
                 update={
                     "repair_used": True,
@@ -432,14 +437,14 @@ class IntentResolverService:
             )
             usage = _merge_usage(usage, repaired_result.usage)
             repair_used = True
-        validation_ms = _duration_ms(validation_started, self._timer())
+        else:
+            validation_ms += _duration_ms(validation_started, self._timer())
 
         reconciliation_started = self._timer()
         resolution = reconcile_exact_axis_locks(
             resolution,
             prepared.view.exact_semantic_locks,
             prepared.semantic_candidates,
-            prepared.literals,
             prepared.view,
         )
         exact_lock_reconciliation_ms = _duration_ms(
@@ -632,16 +637,10 @@ def reconcile_exact_axis_locks(
     resolution: ValidatedIntentResolutionV2,
     locks: tuple[ExactSemanticLock, ...],
     semantic_candidates: SemanticCandidateSet,
-    literals: tuple[LiteralCandidate, ...],
     view: ResolverView,
 ) -> ValidatedIntentResolutionV2:
     """Make exact family evidence authoritative after model semantic validation."""
 
-    source_segments = {
-        group.mention.mention_id: group.mention.segment_id
-        for group in semantic_candidates.by_mention
-    }
-    source_segments.update({item.literal_id: item.segment_id for item in literals})
     mentions_by_id = {
         group.mention.mention_id: group.mention
         for group in semantic_candidates.by_mention
@@ -650,20 +649,51 @@ def reconcile_exact_axis_locks(
     if not family_locks:
         return resolution
 
+    exact_evidence_by_lock = {
+        lock.lock_id: tuple(
+            sorted(
+                {
+                    evidence.evidence_id
+                    for source_ref in lock.evidence_span_ids
+                    if (mention := mentions_by_id.get(source_ref)) is not None
+                    for evidence in view.evidence_candidates
+                    if evidence.segment_id == mention.segment_id
+                    and evidence.start_char == mention.start_char
+                    and evidence.end_char == mention.end_char
+                    and lock.canonical_id in evidence.offered_semantic_ids
+                }
+            )
+        )
+        for lock in family_locks
+    }
+    locks_by_frame: dict[str, list[ExactSemanticLock]] = {
+        frame.frame_id: [] for frame in resolution.canonical_frames
+    }
+    for lock in family_locks:
+        exact_evidence = set(exact_evidence_by_lock[lock.lock_id])
+        owners = tuple(
+            frame
+            for frame in resolution.canonical_frames
+            if exact_evidence
+            & set(frame.product_family_choice.evidence_span_ids)
+        )
+        if len(owners) != 1:
+            owners = tuple(
+                frame
+                for frame in resolution.canonical_frames
+                if exact_evidence & set(frame.evidence_span_ids)
+            )
+        if len(owners) != 1 and len(resolution.canonical_frames) == 1:
+            owners = resolution.canonical_frames
+        if len(owners) != 1:
+            raise ResolverContractError("EXACT_FAMILY_LOCK_UNATTRIBUTED")
+        locks_by_frame[owners[0].frame_id].append(lock)
+
     changed_frame_ids: list[str] = []
     old_choices: dict[str, ProductFamilyChoice] = {}
     frames: list[ValidatedIntentFrameV2] = []
-    single_frame = len(resolution.canonical_frames) == 1
     for frame in resolution.canonical_frames:
-        applicable = tuple(
-            item
-            for item in family_locks
-            if single_frame
-            or any(
-                source_segments.get(source_ref) in frame.segment_ids
-                for source_ref in item.evidence_span_ids
-            )
-        )
+        applicable = tuple(locks_by_frame[frame.frame_id])
         if not applicable:
             frames.append(frame)
             continue
@@ -676,15 +706,9 @@ def reconcile_exact_axis_locks(
         exact_evidence_ids = tuple(
             sorted(
                 {
-                    evidence.evidence_id
+                    evidence_id
                     for lock in applicable
-                    for source_ref in lock.evidence_span_ids
-                    if (mention := mentions_by_id.get(source_ref)) is not None
-                    for evidence in view.evidence_candidates
-                    if evidence.segment_id == mention.segment_id
-                    and evidence.start_char == mention.start_char
-                    and evidence.end_char == mention.end_char
-                    and lock.canonical_id in evidence.offered_semantic_ids
+                    for evidence_id in exact_evidence_by_lock[lock.lock_id]
                 }
             )
         )
@@ -708,11 +732,6 @@ def reconcile_exact_axis_locks(
                         ),
                         reason_code="exact_lock",
                     ),
-                    "frame_status": (
-                        ResolutionStatus.RESOLVED
-                        if frame.frame_status is ResolutionStatus.AMBIGUOUS
-                        else frame.frame_status
-                    ),
                 }
             )
         )
@@ -731,6 +750,16 @@ def reconcile_exact_axis_locks(
             == old_choices[issue.related_ids[0]].evidence_span_ids
         )
     )
+    frames = [
+        frame.model_copy(
+            update={
+                "frame_status": _reconciled_frame_status(
+                    frame, issues, resolution
+                )
+            }
+        )
+        for frame in frames
+    ]
     events = (
         *resolution.validation_events,
         *(
@@ -743,13 +772,7 @@ def reconcile_exact_axis_locks(
             for frame_id in sorted(changed)
         ),
     )
-    resolution_status = (
-        ResolutionStatus.RESOLVED
-        if not issues and all(
-            frame.frame_status is ResolutionStatus.RESOLVED for frame in frames
-        )
-        else resolution.resolution_status
-    )
+    resolution_status = _resolution_status_from_frames(frames)
     selected_families = {
         family
         for frame in frames
@@ -778,6 +801,65 @@ def reconcile_exact_axis_locks(
             "final_tags": tuple(sorted(final_tags, key=lambda item: item.value)),
         }
     )
+
+
+def _reconciled_frame_status(
+    frame: ValidatedIntentFrameV2,
+    issues: tuple[ResolutionIssue, ...],
+    resolution: ValidatedIntentResolutionV2,
+) -> ResolutionStatus:
+    frame_ids = {item.frame_id for item in resolution.canonical_frames}
+    link_frames = {
+        link.context_link_id: link.consumer_frame_id for link in resolution.context_links
+    }
+    reference_frames: dict[str, set[str]] = {}
+    for link in resolution.context_links:
+        reference_frames.setdefault(link.reference_id, set()).add(link.consumer_frame_id)
+    codes: set[str] = set()
+    for issue in issues:
+        affected = set(issue.related_ids) & frame_ids
+        affected.update(
+            link_frames[related_id]
+            for related_id in issue.related_ids
+            if related_id in link_frames
+        )
+        for related_id in issue.related_ids:
+            affected.update(reference_frames.get(related_id, ()))
+        if issue.evidence_span_ids and set(issue.evidence_span_ids) & set(
+            frame.evidence_span_ids
+        ):
+            affected.add(frame.frame_id)
+        if not affected:
+            affected = frame_ids
+        if frame.frame_id in affected:
+            codes.add(issue.code)
+    if codes & {
+        "SEMANTIC_CONCEPT_UNMAPPED",
+        "SEMANTIC_DOMAIN_UNMAPPED",
+        "SEMANTIC_OPERATION_UNSUPPORTED",
+        "SEMANTIC_CRITICAL_SLOT_MISSING",
+    }:
+        return ResolutionStatus.UNMAPPED
+    if codes & {"REFERENCE_UNRESOLVED", "CONTEXT_UNRESOLVED"}:
+        return ResolutionStatus.CONTEXT_UNRESOLVED
+    if codes:
+        return ResolutionStatus.AMBIGUOUS
+    return ResolutionStatus.RESOLVED
+
+
+def _resolution_status_from_frames(
+    frames: Sequence[ValidatedIntentFrameV2],
+) -> ResolutionStatus:
+    active = {frame.frame_status for frame in frames}
+    for status in (
+        ResolutionStatus.UNMAPPED,
+        ResolutionStatus.CONTEXT_UNRESOLVED,
+        ResolutionStatus.AMBIGUOUS,
+        ResolutionStatus.RESOLVED,
+    ):
+        if status in active:
+            return status
+    return ResolutionStatus.AMBIGUOUS
 
 
 def _apply_deterministic_tie_break(

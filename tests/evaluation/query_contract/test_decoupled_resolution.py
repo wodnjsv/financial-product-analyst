@@ -8,11 +8,27 @@ from financial_agent.intent.view import (
 from tests.evaluation.query_contract.decoupled import (
     DecoupledContractCase,
     evaluate_decoupled_contract_resolution,
+    evaluate_frozen_requirement_snapshot,
 )
 from tests.planning.fixtures import resolution, view
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_frozen_209_frame_snapshot_meets_decoupled_contract_gates() -> None:
+    metrics = evaluate_frozen_requirement_snapshot(
+        PROJECT_ROOT, load_query_contract_registry(PROJECT_ROOT)
+    )
+
+    assert metrics.total_frame_count == 209
+    assert metrics.supported_frame_count == 199
+    assert metrics.unsupported_frame_count == 10
+    assert metrics.intentionally_blocked_frame_count == 5
+    assert metrics.candidate_recall >= 0.99
+    assert metrics.exact_contract >= 0.95
+    assert metrics.false_complete_count == 0
+    assert metrics.compile_eligibility == 1.0
 
 
 def _view_with_aum_candidate():
