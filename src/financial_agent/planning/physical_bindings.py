@@ -8,7 +8,13 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 
-from pydantic import ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_serializer,
+    model_validator,
+)
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
 from financial_agent.contracts.canonical import canonical_sha256
@@ -457,6 +463,20 @@ class PopulationMetricOwnership(_StrictModel):
     source_id: Identifier
 
 
+def representative_share_edge_lineage_ref(edge: RepresentativeShareEdge) -> str:
+    """Content-address one complete relation provenance tuple."""
+
+    return "relation-lineage-" + canonical_sha256(edge)
+
+
+def population_metric_ownership_lineage_ref(
+    ownership: PopulationMetricOwnership,
+) -> str:
+    """Content-address one complete observation provenance tuple."""
+
+    return "observation-lineage-" + canonical_sha256(ownership)
+
+
 class DatasetSourceRecord(_StrictModel):
     dataset_pin: Sha256Hex
     source_id: Identifier
@@ -504,6 +524,15 @@ class PhysicalReadinessFacts(_StrictModel):
     known_value_ref_ids: frozenset[Identifier] = frozenset()
     public_fund_manifest: PublicFundDatasetManifest | None = None
     public_fund_manifest_hash: Sha256Hex | None = None
+
+    @field_serializer(
+        "known_entity_ids",
+        "known_group_basis_ids",
+        "known_prior_result_binding_ids",
+        "known_value_ref_ids",
+    )
+    def serialize_known_ids(self, values: frozenset[str]) -> tuple[str, ...]:
+        return tuple(sorted(values))
 
     @model_validator(mode="after")
     def validate_manifest_pair(self):

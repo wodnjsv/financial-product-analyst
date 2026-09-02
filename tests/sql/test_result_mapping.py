@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from financial_agent.contracts.canonical import canonical_json_bytes
+from financial_agent.contracts.canonical import canonical_json_bytes, canonical_sha256
 from financial_agent.contracts.enums import ProductFamily
 from financial_agent.intent.query_contracts import (
     AggregationFunction,
@@ -40,29 +40,40 @@ from .helpers import (
 COMPILER = SemanticSqlCompiler(BINDINGS, POLICIES, PLANNING, ACTIVE_DATASET)
 
 
-def _representative_count_request():
+def _representative_count_request(*, grouped: bool = False):
     plan = make_plan(
         LogicalAggregateOperationV2(
             aggregation=AggregationSpecV2(
                 function_id=AggregationFunction.COUNT,
                 count_population_id="representative-product.v1",
+                group_by_field_concept_ids=("aum",) if grouped else (),
                 population_grain_id="representative-product.v1",
                 dedup_policy_id="public-fund-representative-share.v1",
             )
         ),
         family=ProductFamily.PUBLIC_FUND,
-        binding_ids=(),
+        binding_ids=("public-fund-aum.v1",) if grouped else (),
         policy_ids=(
             "representative-product.v1",
             "public-fund-representative-share.v1",
+            *(("identity-unit.v1", "exclude_missing.v1") if grouped else ()),
         ),
-        qualifiers=QueryQualifiersV2(),
+        qualifiers=(
+            QueryQualifiersV2(as_of_date=date(2026, 8, 24))
+            if grouped
+            else QueryQualifiersV2()
+        ),
         evidence=(
             "metric_definition",
             "observation_record",
             "relation_record",
             "evidence_record",
             "source_record",
+        ),
+        result_shape=(
+            QueryResultShape.GROUPED_TABLE
+            if grouped
+            else QueryResultShape.SINGLE_VALUE
         ),
     )
     outcome = COMPILER.compile_task(
@@ -72,6 +83,45 @@ def _representative_count_request():
     )
     assert outcome.request is not None, outcome.rejection
     return outcome.request
+
+
+def _representative_lineage_refs():
+    manifest = verified_public_fund_facts().public_fund_manifest
+    assert manifest is not None
+    return (
+        [
+            "observation-lineage-" + canonical_sha256(item)
+            for item in manifest.population_metric_ownerships
+        ],
+        [
+            "relation-lineage-" + canonical_sha256(item)
+            for item in manifest.representative_share_edges
+        ],
+    )
+
+
+def _representative_count_row(*, grouped: bool = False) -> dict[str, object]:
+    observation_refs, relation_refs = _representative_lineage_refs()
+    row: dict[str, object] = {
+        "aggregate_value": 1,
+        "product_ids": ["representative-a"],
+        "metric_definition_refs": [
+            "organizer.prfd01n001.net_assets:2",
+        ],
+        "observation_ids": ["observation-a"],
+        "observation_lineage_refs": observation_refs,
+        "relation_ids": ["relation-a", "relation-b"],
+        "relation_lineage_refs": relation_refs,
+        "evidence_ids": [
+            "evidence-a",
+            "evidence-b",
+            "evidence-observation-a",
+        ],
+        "source_ids": ["source-a", "source-b", "source-observation-a"],
+    }
+    if grouped:
+        row["group_0"] = Decimal("330")
+    return row
 
 
 def _lookup_request():
@@ -480,21 +530,7 @@ def test_count_lineage_categories_are_exactly_the_declared_projection_set() -> N
 
 def test_representative_count_accepts_only_the_exact_manifest_population_lineage() -> None:
     request = _representative_count_request()
-    row = {
-        "aggregate_value": 1,
-        "product_ids": ["representative-a"],
-        "metric_definition_refs": [
-            "organizer.prfd01n001.net_assets:2",
-        ],
-        "observation_ids": ["observation-a"],
-        "relation_ids": ["relation-a", "relation-b"],
-        "evidence_ids": [
-            "evidence-a",
-            "evidence-b",
-            "evidence-observation-a",
-        ],
-        "source_ids": ["source-a", "source-b", "source-observation-a"],
-    }
+    row = _representative_count_row()
 
     mapped = map_sql_rows(request, [row])
 
@@ -540,6 +576,11 @@ def test_representative_count_accepts_only_the_exact_manifest_population_lineage
             ["organizer.prfd01n001.net_assets:fake-version"],
             "RETURNED_METRIC_DEFINITION_OWNERSHIP_MISMATCH",
         ),
+        (
+            "observation_lineage_refs",
+            ["observation-lineage-" + "f" * 64],
+            "RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH",
+        ),
     ],
 )
 def test_representative_count_rejects_unowned_or_fake_lineage(
@@ -547,21 +588,7 @@ def test_representative_count_rejects_unowned_or_fake_lineage(
     value: list[str],
     reason: str,
 ) -> None:
-    row = {
-        "aggregate_value": 1,
-        "product_ids": ["representative-a"],
-        "metric_definition_refs": [
-            "organizer.prfd01n001.net_assets:2",
-        ],
-        "observation_ids": ["observation-a"],
-        "relation_ids": ["relation-a", "relation-b"],
-        "evidence_ids": [
-            "evidence-a",
-            "evidence-b",
-            "evidence-observation-a",
-        ],
-        "source_ids": ["source-a", "source-b", "source-observation-a"],
-    }
+    row = _representative_count_row()
 
     with pytest.raises(SqlResultMappingError, match=reason):
         map_sql_rows(_representative_count_request(), [{**row, column: value}])
@@ -574,7 +601,9 @@ def test_zero_count_rejects_every_nonempty_lineage_category() -> None:
         "product_ids": None,
         "metric_definition_refs": None,
         "observation_ids": None,
+        "observation_lineage_refs": None,
         "relation_ids": None,
+        "relation_lineage_refs": None,
         "evidence_ids": None,
         "source_ids": None,
     }
@@ -583,7 +612,9 @@ def test_zero_count_rejects_every_nonempty_lineage_category() -> None:
     for column in (
         "metric_definition_refs",
         "observation_ids",
+        "observation_lineage_refs",
         "relation_ids",
+        "relation_lineage_refs",
         "evidence_ids",
         "source_ids",
     ):
@@ -592,6 +623,91 @@ def test_zero_count_rejects_every_nonempty_lineage_category() -> None:
             match="RETURNED_ZERO_COUNT_LINEAGE_NOT_EMPTY",
         ):
             map_sql_rows(request, [{**empty, column: ["invented-lineage"]}])
+
+
+def test_representative_count_rejects_swapped_edge_ownership_with_equal_flat_sets() -> None:
+    facts = verified_public_fund_facts()
+    manifest = facts.public_fund_manifest
+    assert manifest is not None
+    left, right = manifest.representative_share_edges
+    swapped = (
+        left.model_copy(
+            update={"evidence_id": right.evidence_id, "source_id": right.source_id}
+        ),
+        right.model_copy(
+            update={"evidence_id": left.evidence_id, "source_id": left.source_id}
+        ),
+    )
+    row = {
+        **_representative_count_row(),
+        "relation_lineage_refs": [
+            "relation-lineage-" + canonical_sha256(item) for item in swapped
+        ],
+    }
+
+    with pytest.raises(
+        SqlResultMappingError, match="RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH"
+    ):
+        map_sql_rows(_representative_count_request(), [row])
+
+
+def test_representative_count_rejects_swapped_observation_ownership_tuple() -> None:
+    facts = verified_public_fund_facts()
+    manifest = facts.public_fund_manifest
+    assert manifest is not None
+    ownership = manifest.population_metric_ownerships[0]
+    relation_edge = manifest.representative_share_edges[0]
+    swapped = ownership.model_copy(
+        update={
+            "evidence_id": relation_edge.evidence_id,
+            "source_id": relation_edge.source_id,
+        }
+    )
+    row = {
+        **_representative_count_row(),
+        "observation_lineage_refs": [
+            "observation-lineage-" + canonical_sha256(swapped)
+        ],
+    }
+
+    with pytest.raises(
+        SqlResultMappingError, match="RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH"
+    ):
+        map_sql_rows(_representative_count_request(), [row])
+
+
+def test_grouped_representative_count_maps_the_exact_flat_and_tuple_lineage() -> None:
+    request = _representative_count_request(grouped=True)
+    assert "relation_ids" in request.statement
+    assert "relation_lineage_refs" in request.statement
+    assert "observation_lineage_refs" in request.statement
+
+    mapped = map_sql_rows(request, [_representative_count_row(grouped=True)])
+
+    assert mapped.result_rows[0].fields[0].field_id == "group:aum"
+    assert set(mapped.evidence_refs) == {
+        "metric-definition:organizer.prfd01n001.net_assets:2",
+        "observation:observation-a",
+        "relation:relation-a",
+        "relation:relation-b",
+        "evidence:evidence-a",
+        "evidence:evidence-b",
+        "evidence:evidence-observation-a",
+        "source:source-a",
+        "source:source-b",
+        "source:source-observation-a",
+    }
+    with pytest.raises(SqlResultMappingError, match="RETURNED_COLUMN_SET_MISMATCH"):
+        map_sql_rows(
+            request,
+            [
+                {
+                    key: value
+                    for key, value in _representative_count_row(grouped=True).items()
+                    if key != "relation_ids"
+                }
+            ],
+        )
 
 
 def test_rank_preserves_compiler_order_and_enforces_limit_with_ties() -> None:

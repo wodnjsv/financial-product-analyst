@@ -310,3 +310,77 @@ Verification:
 The three PostgreSQL cases remain explicitly **unmeasured** because
 `FINANCIAL_AGENT_TEST_DATABASE_URL` is not configured. No SQLite substitute
 was used. Python compilation and `git diff --check` passed.
+
+## Review fix round 5
+
+Base: `5e597f70d417576735fd83b2140da26f5a4dc170`.
+
+Assumptions and boundary:
+
+- A flat set of relation, Evidence, and Source IDs is insufficient to prove
+  which Evidence and Source belong to which representative/share relation.
+- The existing public result remains flat for compatibility. Two additional
+  compiler-owned internal columns carry content-addressed complete relation
+  and observation provenance tuples, and the mapper consumes them only for
+  validation.
+- No schema, registry, public API, V1 behavior, or non-COUNT aggregate behavior
+  changes in this fix.
+
+RED:
+
+```text
+.venv/bin/python -m pytest tests/sql/test_result_mapping.py tests/sql/test_compiler.py -q
+11 failed, 37 passed
+```
+
+The failures reproduced both review findings: grouped representative COUNT SQL
+did not project relation lineage at all, and the mapper rejected the proposed
+tuple columns as an unknown shape rather than validating relation-to-Evidence
+ownership.
+
+Changes:
+
+- Each verified `RepresentativeShareEdge` and
+  `PopulationMetricOwnership` now has a deterministic content-addressed
+  lineage reference over its complete dataset-pinned tuple.
+- Representative COUNT relation SQL now uses one conjunction per manifest
+  edge containing relation ID, representative ID, share-class ID, predicate,
+  relation Evidence ID, Evidence-owned Source ID, and the joined SourceRecord
+  ID. Observation ownership likewise keeps entity, metric, definition version,
+  observation, Evidence, and SourceRecord in one conjunction.
+- Both scalar and grouped representative COUNT return the exact tuple-reference
+  arrays in addition to the declared flat metric, observation, relation,
+  Evidence, and Source arrays. The mapper verifies the exact tuple set for the
+  returned representative IDs, so swapping relation A onto Evidence/Source B
+  is rejected even when every flat global set is unchanged.
+- Grouped representative COUNT uses a separate group-keyed lineage aggregate
+  joined to the already-computed numeric COUNT. Relation and Evidence joins can
+  therefore never multiply the count. Group observation rows are also limited
+  to the exact manifest-owned observation identity before grouping.
+- Canonical manifest rerender is covered for the new grouped shape. PostgreSQL
+  conformance now includes scalar and grouped representative COUNT when the
+  approved test database is available.
+- The restore check exposed that strict `frozenset` readiness fields serialized
+  in hash-table iteration order. Their JSON representation is now sorted, so
+  a manifest keeps the same content ID after canonical JSON restore regardless
+  of preceding test or process state.
+
+GREEN and verification:
+
+```text
+.venv/bin/python -m pytest tests/sql/test_result_mapping.py tests/sql/test_compiler.py -q
+50 passed
+
+.venv/bin/python -m pytest tests/sql tests/planning/test_physical_bindings.py tests/planning/test_plan_readiness.py tests/planning/test_logical_query.py tests/planning/test_semantic_router.py tests/planning/test_semantic_compiler.py -q
+331 passed
+
+.venv/bin/python -m pytest -m postgres tests/integration/test_semantic_sql_postgres.py -q
+3 skipped
+
+.venv/bin/python -m pytest -m "not postgres and not ncp_integration and not performance and not organizer_data and not object_storage and not official_data and not jena_integration and not clova_integration" -q
+2158 passed, 1 skipped, 451 deselected
+```
+
+PostgreSQL remains explicitly **unmeasured** because
+`FINANCIAL_AGENT_TEST_DATABASE_URL` is not configured. No SQLite substitute was
+used. Scoped Python compilation and `git diff --check` passed.

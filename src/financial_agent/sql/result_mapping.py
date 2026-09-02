@@ -21,7 +21,11 @@ from financial_agent.planning.logical_query import (
     LogicalRankOperationV2,
     LogicalScreenOperationV2,
 )
-from financial_agent.planning.physical_bindings import EvidenceLocator
+from financial_agent.planning.physical_bindings import (
+    EvidenceLocator,
+    population_metric_ownership_lineage_ref,
+    representative_share_edge_lineage_ref,
+)
 
 from .contracts import CompiledSqlRequest
 
@@ -274,6 +278,15 @@ def _expected_columns(
             columns.add("evidence_ids")
         if EvidenceLocator.SOURCE_RECORD in requested:
             columns.add("source_ids")
+        facts = request.render_manifest.readiness_facts
+        if (
+            facts is not None
+            and facts.public_fund_manifest is not None
+            and requested
+        ):
+            columns.update(
+                {"observation_lineage_refs", "relation_lineage_refs"}
+            )
     else:
         if operation.aggregation.function_id is not AggregationFunction.DISTRIBUTION:
             columns.add("aggregate_value")
@@ -545,6 +558,9 @@ def _validate_count_lineage(
             value = row[column]
             if value not in (None, (), []):
                 raise SqlResultMappingError("RETURNED_ZERO_COUNT_LINEAGE_NOT_EMPTY")
+        for column in ("observation_lineage_refs", "relation_lineage_refs"):
+            if column in row and row[column] not in (None, (), []):
+                raise SqlResultMappingError("RETURNED_ZERO_COUNT_LINEAGE_NOT_EMPTY")
         return
 
     facts = request.render_manifest.readiness_facts
@@ -597,6 +613,24 @@ def _validate_count_lineage(
                 else "RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH"
             )
             raise SqlResultMappingError(code)
+    expected_tuple_refs = {
+        "observation_lineage_refs": {
+            population_metric_ownership_lineage_ref(item) for item in ownerships
+        },
+        "relation_lineage_refs": {
+            representative_share_edge_lineage_ref(item) for item in edges
+        },
+    }
+    for column, expected_refs in expected_tuple_refs.items():
+        if column not in row:
+            raise SqlResultMappingError("RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH")
+        actual_refs = set(
+            _identifier_array(
+                row[column], f"RETURNED_{column.upper()}_MALFORMED"
+            )
+        )
+        if actual_refs != expected_refs:
+            raise SqlResultMappingError("RETURNED_REPRESENTATIVE_LINEAGE_MISMATCH")
 
 
 def _validate_evidence_categories(request, rows, lineage: set[str]) -> None:

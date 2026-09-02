@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.planning.physical_bindings import (
     ObservationValueColumn,
     PhysicalBindingAvailability,
@@ -72,6 +73,19 @@ def _payload(*bindings: dict[str, object]) -> dict[str, object]:
     )
     payload["bindings"] = list(bindings)
     return payload
+
+
+def test_readiness_fact_identifier_sets_serialize_canonically() -> None:
+    facts = PhysicalReadinessFacts(
+        known_entity_ids=frozenset({"entity-c", "entity-a", "entity-b"}),
+        known_group_basis_ids=frozenset({"group-b", "group-a"}),
+    )
+    payload = facts.model_dump(mode="json")
+
+    assert payload["known_entity_ids"] == ["entity-a", "entity-b", "entity-c"]
+    assert payload["known_group_basis_ids"] == ["group-a", "group-b"]
+    restored = PhysicalReadinessFacts.model_validate_json(json.dumps(payload))
+    assert canonical_sha256(restored) == canonical_sha256(facts)
 
 
 def test_loader_returns_closed_immutable_verified_repository_bindings() -> None:

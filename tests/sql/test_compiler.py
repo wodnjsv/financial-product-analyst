@@ -536,12 +536,62 @@ def test_public_fund_representative_count_lineage_is_manifest_owned() -> None:
         "organizer.prfd01n001.net_assets:2",
     )
     assert "relation_ids" in outcome.request.statement
+    assert "relation_lineage_refs" in outcome.request.statement
+    assert "observation_lineage_refs" in outcome.request.statement
     values = {decode_contract_value(item.value) for item in outcome.request.parameters}
     assert {
         "observation-a",
         "evidence-observation-a",
         "source-observation-a",
     } <= values
+
+
+def test_grouped_public_fund_representative_count_has_group_keyed_lineage() -> None:
+    plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="representative-product.v1",
+                group_by_field_concept_ids=("aum",),
+                population_grain_id="representative-product.v1",
+                dedup_policy_id="public-fund-representative-share.v1",
+            )
+        ),
+        family=ProductFamily.PUBLIC_FUND,
+        binding_ids=("public-fund-aum.v1",),
+        policy_ids=(
+            "representative-product.v1",
+            "public-fund-representative-share.v1",
+            "identity-unit.v1",
+            "exclude_missing.v1",
+        ),
+        evidence=(
+            "metric_definition",
+            "observation_record",
+            "relation_record",
+            "evidence_record",
+            "source_record",
+        ),
+        qualifiers=QueryQualifiersV2(as_of_date=date(2026, 8, 24)),
+        result_shape=QueryResultShape.GROUPED_TABLE,
+    )
+
+    outcome = COMPILER.compile_task(
+        plan, plan.tasks[0].task_id, readiness_facts=verified_public_fund_facts()
+    )
+
+    assert outcome.request is not None, outcome.rejection
+    statement = outcome.request.statement
+    assert "count_values.aggregate_value" in statement
+    assert "count_population_lineage.group_0" in statement
+    assert "relation_ids" in statement
+    assert "relation_lineage_refs" in statement
+    assert "observation_lineage_refs" in statement
+    restored = CompiledSqlRequest.model_validate_json(
+        outcome.request.model_dump_json()
+    )
+    assert restored.statement == statement
+    assert restored.parameters == outcome.request.parameters
 
 
 def test_restore_rerenders_the_closed_manifest_and_rejects_semantically_unowned_sql() -> None:

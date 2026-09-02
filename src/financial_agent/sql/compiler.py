@@ -40,6 +40,8 @@ from financial_agent.planning.physical_bindings import (
     SemanticQualifierId,
     SemanticSqlPolicyRegistry,
     PhysicalBindingDefinition,
+    population_metric_ownership_lineage_ref,
+    representative_share_edge_lineage_ref,
 )
 from financial_agent.planning.registry import PlanningRegistry
 
@@ -798,7 +800,10 @@ def _aggregate(context, base, where, family, operation):
             sa.or_(*(alias.c.metric_id == context.params.bind(metric, prefix="metric") for metric in binding.approved_metric_ids)),
         )
         ownerships = _manifest_metric_ownerships(context, binding)
-        if is_public_representative:
+        if (
+            is_public_representative
+            and spec.function_id is AggregationFunction.COUNT
+        ):
             if not ownerships:
                 raise SqlCompileRejection("PUBLIC_FUND_VERIFIED_PROOF_REQUIRED")
             join_condition = sa.and_(
@@ -864,6 +869,38 @@ def _aggregate(context, base, where, family, operation):
                 context, base, group_alias, group_binding
             )
             joined_alias_names.add(group_alias.name)
+        if is_public_representative:
+            group_ownerships = _manifest_metric_ownerships(context, group_binding)
+            if not group_ownerships:
+                raise SqlCompileRejection("PUBLIC_FUND_VERIFIED_PROOF_REQUIRED")
+            where.append(
+                sa.or_(
+                    *(
+                        sa.and_(
+                            group_alias.c.entity_id
+                            == context.params.bind(
+                                item.owner_entity_id,
+                                prefix="group_owned_entity_id",
+                            ),
+                            group_alias.c.metric_id
+                            == context.params.bind(
+                                item.metric_id, prefix="group_owned_metric_id"
+                            ),
+                            group_alias.c.metric_definition_version
+                            == context.params.bind(
+                                item.metric_definition_version,
+                                prefix="group_owned_metric_definition_version",
+                            ),
+                            group_alias.c.observation_id
+                            == context.params.bind(
+                                item.observation_id,
+                                prefix="group_owned_observation_id",
+                            ),
+                        )
+                        for item in group_ownerships
+                    )
+                )
+            )
         where.append(_present(context, group_alias.c.value_status))
         selected.insert(index, group_expression.label(f"group_{index}"))
         groups.append(group_expression)
@@ -900,8 +937,16 @@ def _aggregate(context, base, where, family, operation):
     statement = sa.select(*selected).select_from(base).where(*where)
     if groups:
         statement = statement.group_by(*groups)
-    if spec.function_id is AggregationFunction.COUNT and not groups:
-        statement = _attach_count_population_lineage(context, statement, base, where)
+    if spec.function_id is AggregationFunction.COUNT and (
+        not groups or is_public_representative
+    ):
+        statement = _attach_count_population_lineage(
+            context,
+            statement,
+            base,
+            where,
+            groups=tuple(groups),
+        )
     else:
         statement = _attach_flat_aggregate_evidence(
             context,
@@ -920,7 +965,14 @@ def _aggregate(context, base, where, family, operation):
     return statement
 
 
-def _attach_count_population_lineage(context, numeric_statement, base, where):
+def _attach_count_population_lineage(
+    context,
+    numeric_statement,
+    base,
+    where,
+    *,
+    groups=(),
+):
     """Attach whole-population lineage without joining it into COUNT itself."""
 
     numeric = numeric_statement.subquery("count_values")
@@ -943,6 +995,7 @@ def _attach_count_population_lineage(context, numeric_statement, base, where):
     ]
     operation = context.task.operation
     ownerships = ()
+    ownership_conditions = ()
     if (
         isinstance(operation, LogicalAggregateOperationV2)
         and operation.aggregation.population_grain_id
@@ -952,40 +1005,41 @@ def _attach_count_population_lineage(context, numeric_statement, base, where):
     ):
         ownerships = context.facts.public_fund_manifest.population_metric_ownerships
     if ownerships:
-        lineage_filters.append(
-            sa.or_(
-                *(
-                    sa.and_(
-                        observation_alias.c.entity_id
-                        == context.params.bind(
-                            item.owner_entity_id, prefix="count_owned_entity_id"
-                        ),
-                        observation_alias.c.metric_id
-                        == context.params.bind(
-                            item.metric_id, prefix="count_owned_metric_id"
-                        ),
-                        observation_alias.c.metric_definition_version
-                        == context.params.bind(
-                            item.metric_definition_version,
-                            prefix="count_owned_metric_definition_version",
-                        ),
-                        observation_alias.c.observation_id
-                        == context.params.bind(
-                            item.observation_id, prefix="count_owned_observation_id"
-                        ),
-                        origin_alias.c.evidence_id
-                        == context.params.bind(
-                            item.evidence_id, prefix="count_owned_evidence_id"
-                        ),
-                        evidence_alias.c.source_id
-                        == context.params.bind(
-                            item.source_id, prefix="count_owned_source_id"
-                        ),
-                    )
-                    for item in ownerships
-                )
+        ownership_conditions = tuple(
+            sa.and_(
+                observation_alias.c.entity_id
+                == context.params.bind(
+                    item.owner_entity_id, prefix="count_owned_entity_id"
+                ),
+                observation_alias.c.metric_id
+                == context.params.bind(
+                    item.metric_id, prefix="count_owned_metric_id"
+                ),
+                observation_alias.c.metric_definition_version
+                == context.params.bind(
+                    item.metric_definition_version,
+                    prefix="count_owned_metric_definition_version",
+                ),
+                observation_alias.c.observation_id
+                == context.params.bind(
+                    item.observation_id, prefix="count_owned_observation_id"
+                ),
+                origin_alias.c.evidence_id
+                == context.params.bind(
+                    item.evidence_id, prefix="count_owned_evidence_id"
+                ),
+                evidence_alias.c.source_id
+                == context.params.bind(
+                    item.source_id, prefix="count_owned_source_id"
+                ),
+                source_alias.c.source_id
+                == context.params.bind(
+                    item.source_id, prefix="count_owned_source_record_id"
+                ),
             )
+            for item in ownerships
         )
+        lineage_filters.append(sa.or_(*ownership_conditions))
         approved_refs = tuple(
             dict.fromkeys(
                 f"{item.metric_id}:{item.metric_definition_version}"
@@ -1045,6 +1099,7 @@ def _attach_count_population_lineage(context, numeric_statement, base, where):
         )
     )
     relation_lineage = None
+    relation_conditions = ()
     representative_edges = (
         context.facts.public_fund_manifest.representative_share_edges
         if ownerships
@@ -1070,33 +1125,6 @@ def _attach_count_population_lineage(context, numeric_statement, base, where):
                 sa.and_(
                     relation_alias.c.dataset_version == product.c.dataset_version,
                     relation_alias.c.subject_id == product.c.entity_id,
-                    sa.or_(
-                        *(
-                            sa.and_(
-                                relation_alias.c.relation_id
-                                == context.params.bind(
-                                    edge.relation_id,
-                                    prefix="count_owned_relation_id",
-                                ),
-                                relation_alias.c.subject_id
-                                == context.params.bind(
-                                    edge.representative_id,
-                                    prefix="count_owned_representative_id",
-                                ),
-                                relation_alias.c.object_id
-                                == context.params.bind(
-                                    edge.share_class_id,
-                                    prefix="count_owned_share_class_id",
-                                ),
-                                relation_alias.c.predicate_id
-                                == context.params.bind(
-                                    edge.predicate_id,
-                                    prefix="count_owned_relation_predicate",
-                                ),
-                            )
-                            for edge in representative_edges
-                        )
-                    ),
                 ),
             )
             .join(
@@ -1127,26 +1155,51 @@ def _attach_count_population_lineage(context, numeric_statement, base, where):
                 ),
             )
         )
-        lineage_filters.append(
-            sa.or_(
-                *(
-                    sa.and_(
-                        relation_origin_alias.c.evidence_id
-                        == context.params.bind(
-                            edge.evidence_id,
-                            prefix="count_owned_relation_evidence_id",
-                        ),
-                        relation_evidence_alias.c.source_id
-                        == context.params.bind(
-                            edge.source_id,
-                            prefix="count_owned_relation_source_id",
-                        ),
-                    )
-                    for edge in representative_edges
-                )
+        relation_conditions = tuple(
+            sa.and_(
+                relation_alias.c.relation_id
+                == context.params.bind(
+                    edge.relation_id,
+                    prefix="count_owned_relation_id",
+                ),
+                relation_alias.c.subject_id
+                == context.params.bind(
+                    edge.representative_id,
+                    prefix="count_owned_representative_id",
+                ),
+                relation_alias.c.object_id
+                == context.params.bind(
+                    edge.share_class_id,
+                    prefix="count_owned_share_class_id",
+                ),
+                relation_alias.c.predicate_id
+                == context.params.bind(
+                    edge.predicate_id,
+                    prefix="count_owned_relation_predicate",
+                ),
+                relation_origin_alias.c.evidence_id
+                == context.params.bind(
+                    edge.evidence_id,
+                    prefix="count_owned_relation_evidence_id",
+                ),
+                relation_evidence_alias.c.source_id
+                == context.params.bind(
+                    edge.source_id,
+                    prefix="count_owned_relation_source_id",
+                ),
+                relation_source_alias.c.source_id
+                == context.params.bind(
+                    edge.source_id,
+                    prefix="count_owned_relation_source_record_id",
+                ),
             )
+            for edge in representative_edges
         )
-    lineage_columns = []
+        lineage_filters.append(sa.or_(*relation_conditions))
+    lineage_columns = [
+        expression.label(f"group_{index}")
+        for index, expression in enumerate(groups)
+    ]
     if EvidenceLocator.METRIC_DEFINITION in requested:
         separator = context.params.bind(":", prefix="metric_definition_separator")
         lineage_columns.append(
@@ -1166,12 +1219,52 @@ def _attach_count_population_lineage(context, numeric_statement, base, where):
                 "observation_ids"
             )
         )
+    if ownership_conditions:
+        observation_lineage_ref = sa.case(
+            *(
+                (
+                    condition,
+                    context.params.bind(
+                        population_metric_ownership_lineage_ref(item),
+                        prefix="observation_lineage_ref",
+                    ),
+                )
+                for item, condition in zip(ownerships, ownership_conditions, strict=True)
+            ),
+            else_=None,
+        )
+        lineage_columns.append(
+            sa.func.array_agg(sa.distinct(observation_lineage_ref)).label(
+                "observation_lineage_refs"
+            )
+        )
     if EvidenceLocator.RELATION_RECORD in requested:
         if relation_lineage is None:
             raise SqlCompileRejection("COUNT_RELATION_LINEAGE_NOT_OWNED")
         lineage_columns.append(
             sa.func.array_agg(sa.distinct(relation_lineage[0].c.relation_id)).label(
                 "relation_ids"
+            )
+        )
+    if relation_conditions:
+        relation_lineage_ref = sa.case(
+            *(
+                (
+                    condition,
+                    context.params.bind(
+                        representative_share_edge_lineage_ref(edge),
+                        prefix="relation_lineage_ref",
+                    ),
+                )
+                for edge, condition in zip(
+                    representative_edges, relation_conditions, strict=True
+                )
+            ),
+            else_=None,
+        )
+        lineage_columns.append(
+            sa.func.array_agg(sa.distinct(relation_lineage_ref)).label(
+                "relation_lineage_refs"
             )
         )
     if EvidenceLocator.EVIDENCE_RECORD in requested:
@@ -1198,15 +1291,35 @@ def _attach_count_population_lineage(context, numeric_statement, base, where):
             else observation_sources
         )
         lineage_columns.append(source_values.label("source_ids"))
-    lineage = (
+    lineage_statement = (
         sa.select(*lineage_columns)
         .select_from(lineage_base)
         .where(*where, *lineage_filters)
-        .subquery("count_population_lineage")
     )
-    return sa.select(*numeric.c, *lineage.c).select_from(
-        numeric.join(lineage, sa.true())
+    if groups:
+        lineage_statement = lineage_statement.group_by(*groups)
+    lineage = lineage_statement.subquery("count_population_lineage")
+    join_condition = sa.true()
+    if groups:
+        join_condition = sa.and_(
+            *(
+                numeric.c[f"group_{index}"] == lineage.c[f"group_{index}"]
+                for index in range(len(groups))
+            )
+        )
+    lineage_outputs = tuple(
+        column
+        for column in lineage.c
+        if not column.key.startswith("group_")
     )
+    statement = sa.select(*numeric.c, *lineage_outputs).select_from(
+        numeric.join(lineage, join_condition)
+    )
+    if groups:
+        statement = statement.order_by(
+            *(numeric.c[f"group_{index}"] for index in range(len(groups)))
+        )
+    return statement
 
 
 def _count_lineage_metric_definition_refs(task, bindings, facts) -> tuple[str, ...]:

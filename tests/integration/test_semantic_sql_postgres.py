@@ -458,3 +458,80 @@ async def test_public_fund_representative_population_is_not_duplicated(
     result = await _execute(semantic_sql_runner, plan, facts=facts)
     assert result.result_rows[0].fields[0].value.value == Decimal("330")
     assert "observation:observation-a" in result.evidence_refs
+
+    count = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="representative-product.v1",
+                population_grain_id="representative-product.v1",
+                dedup_policy_id="public-fund-representative-share.v1",
+            )
+        ),
+        family=ProductFamily.PUBLIC_FUND,
+        binding_ids=(),
+        policy_ids=(
+            "representative-product.v1",
+            "public-fund-representative-share.v1",
+        ),
+        qualifiers=QueryQualifiersV2(),
+        evidence=(
+            "metric_definition",
+            "observation_record",
+            "relation_record",
+            "evidence_record",
+            "source_record",
+        ),
+    )
+    count_result = await _execute(semantic_sql_runner, count, facts=facts)
+    assert count_result.result_rows[0].fields[0].value.value == 1
+    assert {
+        "relation:relation-a",
+        "relation:relation-b",
+        "evidence:evidence-a",
+        "evidence:evidence-b",
+        "source:source-a",
+        "source:source-b",
+    } <= set(count_result.evidence_refs)
+
+    grouped_count = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="representative-product.v1",
+                group_by_field_concept_ids=("aum",),
+                population_grain_id="representative-product.v1",
+                dedup_policy_id="public-fund-representative-share.v1",
+            )
+        ),
+        family=ProductFamily.PUBLIC_FUND,
+        binding_ids=("public-fund-aum.v1",),
+        policy_ids=(
+            "representative-product.v1",
+            "public-fund-representative-share.v1",
+            "identity-unit.v1",
+            "exclude_missing.v1",
+        ),
+        qualifiers=QueryQualifiersV2(as_of_date=date(2026, 8, 24)),
+        evidence=(
+            "metric_definition",
+            "observation_record",
+            "relation_record",
+            "evidence_record",
+            "source_record",
+        ),
+        result_shape=QueryResultShape.GROUPED_TABLE,
+    )
+    grouped_result = await _execute(
+        semantic_sql_runner, grouped_count, facts=facts
+    )
+    assert len(grouped_result.result_rows) == 1
+    assert [field.value.value for field in grouped_result.result_rows[0].fields] == [
+        Decimal("330"),
+        1,
+    ]
+    assert {
+        "relation:relation-a",
+        "relation:relation-b",
+        "observation:observation-a",
+    } <= set(grouped_result.evidence_refs)
