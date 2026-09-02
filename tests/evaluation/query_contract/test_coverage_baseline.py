@@ -102,6 +102,28 @@ def test_partial_heldout_frames_have_explicit_unsupported_reasons() -> None:
         }
 
 
+def test_snapshot_preserves_every_composite_core_semantic_stage() -> None:
+    snapshot = json.loads(
+        (PROJECT_ROOT / "tests/evaluation/query_contract/query_contract_requirements.v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    requirements = {
+        item["case_id"]: item
+        for item in snapshot["requirements"]
+        if item["source"] == "core"
+    }
+
+    expected_stages = {
+        "CMP-AUM-001": ["compare", "rank"],
+        "CALC-DETF-001": ["calculate", "compare"],
+        "MIS-BOND-001": ["lookup", "similar"],
+        "REL-CORP-001": ["screen", "rank", "explain"],
+    }
+    for case_id, action_ids in expected_stages.items():
+        assert [stage["action_id"] for stage in requirements[case_id]["semantic_stages"]] == action_ids
+
+
 @pytest.mark.parametrize(
     ("adjudications", "heldout", "match"),
     [
@@ -168,6 +190,38 @@ def test_partial_heldout_frames_have_explicit_unsupported_reasons() -> None:
             None,
             "invalid query contract adjudication key",
         ),
+        (
+            [],
+            {
+                "cases": [
+                    {
+                        "case_id": "HKO-001",
+                        "expected_frames": [
+                            {"ordinal": 0, "action_ids": ["unknown"], "slots": []}
+                        ],
+                    }
+                ]
+            },
+            "unknown held-out action ID",
+        ),
+        (
+            [],
+            {
+                "cases": [
+                    {
+                        "case_id": "HKO-001",
+                        "expected_frames": [
+                            {
+                                "ordinal": 0,
+                                "action_ids": ["rank", "compare"],
+                                "slots": [],
+                            }
+                        ],
+                    }
+                ]
+            },
+            "expected exactly one held-out action ID",
+        ),
     ],
 )
 def test_generator_rejects_invalid_adjudication_or_frame_keys(
@@ -203,6 +257,125 @@ def test_generator_rejects_invalid_adjudication_or_frame_keys(
     )
     adjudications_path.write_text(
         json.dumps({"adjudications": adjudications}), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=match):
+        build_snapshot(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("core", "heldout", "adjudication", "match"),
+    [
+        (
+            {"cases": []},
+            {
+                "cases": [
+                    {
+                        "case_id": "HKO-001",
+                        "expected_frames": [
+                            {
+                                "ordinal": 0,
+                                "action_ids": ["rank"],
+                                "slots": [],
+                                "semantic_coverage": {"state": "covered", "reason": "none"},
+                            }
+                        ],
+                    }
+                ]
+            },
+            {
+                "source": "heldout",
+                "case_id": "HKO-001",
+                "frame_ordinal": 0,
+                "original_action_id": "screen",
+                "adjudicated_action_id": "rank",
+                "support_status": "supported",
+                "reason_code": "REVIEWED",
+                "semantic_overrides": {
+                    "ordering": {
+                        "field": "fee_rate",
+                        "direction": "asc",
+                        "limit_policy": "default-limit-5.v1",
+                    }
+                },
+            },
+            "adjudication original action mismatch",
+        ),
+        (
+            {"cases": []},
+            {
+                "cases": [
+                    {
+                        "case_id": "HKO-001",
+                        "expected_frames": [
+                            {
+                                "ordinal": 0,
+                                "action_ids": ["rank"],
+                                "slots": [],
+                                "semantic_coverage": {"state": "covered", "reason": "none"},
+                            }
+                        ],
+                    }
+                ]
+            },
+            {
+                "source": "heldout",
+                "case_id": "HKO-001",
+                "frame_ordinal": 0,
+                "original_action_id": "rank",
+                "adjudicated_action_id": "rank",
+                "support_status": "supported",
+                "reason_code": "REVIEWED",
+                "semantic_overrides": {"predicate": {"field": "fee_rate"}},
+            },
+            "invalid rank semantic overrides",
+        ),
+        (
+            {
+                "cases": [
+                    {"id": "CORE-001", "intent": "lookup", "support_level": "supported"}
+                ]
+            },
+            {"cases": []},
+            {
+                "source": "core",
+                "case_id": "CORE-001",
+                "frame_ordinal": 0,
+                "original_action_id": "rank",
+                "adjudicated_action_id": "rank",
+                "support_status": "supported",
+                "reason_code": "REVIEWED",
+                "semantic_overrides": {
+                    "ordering": {
+                        "field": "fee_rate",
+                        "direction": "asc",
+                        "limit_policy": "default-limit-5.v1",
+                    }
+                },
+            },
+            "adjudication original action mismatch",
+        ),
+    ],
+)
+def test_generator_rejects_stale_adjudication_semantics(
+    tmp_path: Path,
+    core: dict[str, object],
+    heldout: dict[str, object],
+    adjudication: dict[str, object],
+    match: str,
+) -> None:
+    core_path = tmp_path / "tests/gold/core_questions.json"
+    heldout_path = tmp_path / "tests/evaluation/intent/intent_resolution_heldout_ko_v3.json"
+    adjudications_path = (
+        tmp_path / "tests/evaluation/query_contract/query_contract_adjudications.v1.json"
+    )
+    core_path.parent.mkdir(parents=True)
+    heldout_path.parent.mkdir(parents=True)
+    adjudications_path.parent.mkdir(parents=True)
+    core_path.write_text(json.dumps(core), encoding="utf-8")
+    heldout_path.write_text(json.dumps(heldout), encoding="utf-8")
+    adjudications_path.write_text(
+        json.dumps({"adjudications": [adjudication]}), encoding="utf-8"
     )
 
     with pytest.raises(ValueError, match=match):

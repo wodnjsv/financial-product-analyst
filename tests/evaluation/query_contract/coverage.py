@@ -146,8 +146,12 @@ def _action_frames(cases: list[dict[str, Any]]) -> list[tuple[str, int, dict[str
             if not isinstance(frame, dict):
                 raise ValueError("invalid held-out frame")
             action_ids = _expect_list(frame, "action_ids")
-            if len(action_ids) != 1 or action_ids[0] not in ACTION_IDS:
+            if not action_ids:
                 continue
+            if len(action_ids) != 1:
+                raise ValueError("expected exactly one held-out action ID")
+            if action_ids[0] not in ACTION_IDS:
+                raise ValueError("unknown held-out action ID")
             frames.append((case_id, _expect_int(frame, "ordinal"), frame))
     return frames
 

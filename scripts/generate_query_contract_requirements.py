@@ -49,37 +49,43 @@ COMPONENTS = {
     "explain": ["scope", "explanation.topic_or_profile"],
 }
 
-CORE_ACTIONS = {
-    "lookup": "lookup",
-    "filter": "screen",
-    "rank": "rank",
-    "calculate": "calculate",
-    "aggregate": "aggregate",
-    "compare": "compare",
-    "compare_and_rank": "rank",
-    "relationship_filter_and_rank": "rank",
-    "relationship_lookup_and_rank": "rank",
-    "relationship_similarity": "similar",
-    "relationship_aggregate_filter_and_rank": "aggregate",
-    "dependent_multi_step": "rank",
-    "family_specific_similarity": "similar",
-    "relationship_lookup_and_compare": "compare",
-    "relationship_rank_and_expand": "rank",
-    "compare_then_followup": "compare",
-    "cross_family_dependent_lookup": "rank",
-    "lookup_and_similarity": "lookup",
-    "similarity_search": "similar",
-    "forecast_and_recommend": "rank",
-    "personalized_recommendation": "rank",
-    "real_time_lookup": "lookup",
-    "order_execution": "lookup",
-    "document_grounded_product_explanation": "explain",
-    "multi_hop_holding_filter": "screen",
-    "temporal_relationship_search": "lookup",
-    "relationship_filter_rank_then_document_explanation": "rank",
-    "invalid_ontology_value_lookup": "lookup",
-    "unsupported_entity_relationship_search": "lookup",
-    "absent_exact_product_lookup": "lookup",
+CORE_STAGE_ACTIONS = {
+    "lookup": ("lookup",),
+    "filter": ("screen",),
+    "rank": ("rank",),
+    "calculate": ("calculate",),
+    "aggregate": ("aggregate",),
+    "compare": ("compare",),
+    "compare_and_rank": ("compare", "rank"),
+    "relationship_filter_and_rank": ("screen", "rank"),
+    "relationship_lookup_and_rank": ("lookup", "rank"),
+    "relationship_similarity": ("similar", "explain"),
+    "relationship_aggregate_filter_and_rank": ("screen", "aggregate", "rank"),
+    "family_specific_similarity": ("similar", "explain"),
+    "relationship_lookup_and_compare": ("lookup", "compare"),
+    "relationship_rank_and_expand": ("rank", "lookup"),
+    "compare_then_followup": ("compare", "lookup"),
+    "cross_family_dependent_lookup": ("rank", "rank"),
+    "lookup_and_similarity": ("lookup", "similar"),
+    "similarity_search": ("similar",),
+    "forecast_and_recommend": ("rank",),
+    "personalized_recommendation": ("rank",),
+    "real_time_lookup": ("lookup",),
+    "order_execution": ("lookup",),
+    "document_grounded_product_explanation": ("explain",),
+    "multi_hop_holding_filter": ("screen",),
+    "temporal_relationship_search": ("lookup",),
+    "relationship_filter_rank_then_document_explanation": ("screen", "rank", "explain"),
+    "invalid_ontology_value_lookup": ("lookup",),
+    "unsupported_entity_relationship_search": ("lookup",),
+    "absent_exact_product_lookup": ("lookup",),
+}
+
+CORE_CASE_STAGE_ACTIONS = {
+    "CALC-DETF-001": ("calculate", "compare"),
+    "REL-MGR-001": ("rank", "similar"),
+    "CTX-DETF-001": ("rank", "lookup"),
+    "CTX-DETF-002": ("rank", "screen"),
 }
 
 
@@ -106,7 +112,11 @@ def build_snapshot(project_root: Path) -> dict[str, Any]:
     frame_keys = [(case_id, ordinal) for case_id, ordinal, _ in frames]
     if len(frame_keys) != len(set(frame_keys)):
         raise ValueError("duplicate query contract frame key")
-    adjudications = _load_adjudications(root, core, frames)
+    source_actions = {
+        *(('core', _expect_string(case, 'id'), 0, _core_stage_actions(case)[0]) for case in core),
+        *(('heldout', case_id, ordinal, _expect_list(frame, 'action_ids')[0]) for case_id, ordinal, frame in frames),
+    }
+    adjudications = _load_adjudications(root, source_actions)
     requirements = [
         _core_requirement(case, adjudications.get(("core", case["id"], 0)))
         for case in core
@@ -132,14 +142,13 @@ def build_snapshot(project_root: Path) -> dict[str, Any]:
 
 def _load_adjudications(
     root: Path,
-    core: list[dict[str, Any]],
-    frames: list[tuple[str, int, dict[str, Any]]],
+    source_actions: set[tuple[str, str, int, str]],
 ) -> dict[tuple[str, str, int], dict[str, Any]]:
     payload = _load_json(root / ADJUDICATIONS_PATH)
     entries = _expect_list(payload, "adjudications")
-    real_keys = {
-        *(('core', _expect_string(case, 'id'), 0) for case in core),
-        *(('heldout', case_id, ordinal) for case_id, ordinal, _ in frames),
+    actions_by_key = {
+        (source, case_id, ordinal): action
+        for source, case_id, ordinal, action in source_actions
     }
     result: dict[tuple[str, str, int], dict[str, Any]] = {}
     for entry in entries:
@@ -151,15 +160,18 @@ def _load_adjudications(
         adjudicated = _expect_string(entry, "adjudicated_action_id")
         status = _expect_string(entry, "support_status")
         reason = _expect_string(entry, "reason_code")
-        if key not in real_keys or key in result:
+        if key not in actions_by_key or key in result:
             raise ValueError("invalid query contract adjudication key")
         if original not in ACTION_IDS or adjudicated not in ACTION_IDS:
             raise ValueError("unknown query contract action ID")
+        if original != actions_by_key[key]:
+            raise ValueError("adjudication original action mismatch")
         if status not in {"supported", "unsupported"}:
             raise ValueError("invalid query contract support status")
         if status == "unsupported" and not reason:
             raise ValueError("missing unsupported reason")
         overrides = _expect_mapping(entry, "semantic_overrides")
+        _validate_semantic_overrides(adjudicated, status, overrides)
         result[key] = {
             "action_id": adjudicated,
             "support_status": status,
@@ -171,15 +183,18 @@ def _load_adjudications(
 
 def _core_requirement(case: dict[str, Any], adjudication: dict[str, Any] | None) -> dict[str, Any]:
     case_id = _expect_string(case, "id")
-    action = CORE_ACTIONS.get(_expect_string(case, "intent"))
-    if action is None:
-        raise ValueError(f"unmapped core intent: {case['intent']}")
+    actions = _core_stage_actions(case)
     requirement = {"source": "core", "case_id": case_id, "frame_ordinal": 0}
     if adjudication is not None:
         return requirement | _adjudicated_body(adjudication)
     if _expect_string(case, "support_level") == "unsupported":
         raise ValueError(f"unsupported core case requires adjudication: {case_id}")
-    return requirement | _supported_body(action, {})
+    if len(actions) == 1:
+        return requirement | _supported_body(actions[0], {})
+    return requirement | {
+        "support_status": "supported",
+        "semantic_stages": [_supported_body(action, {}) for action in actions],
+    }
 
 
 def _heldout_requirement(
@@ -213,6 +228,62 @@ def _adjudicated_body(adjudication: dict[str, Any]) -> dict[str, Any]:
     return _supported_body(
         adjudication["action_id"], {"semantic_overrides": adjudication["semantic_overrides"]}
     )
+
+
+def _core_stage_actions(case: dict[str, Any]) -> tuple[str, ...]:
+    case_id = _expect_string(case, "id")
+    if case_id in CORE_CASE_STAGE_ACTIONS:
+        return CORE_CASE_STAGE_ACTIONS[case_id]
+    intent = _expect_string(case, "intent")
+    actions = CORE_STAGE_ACTIONS.get(intent)
+    if actions is None:
+        raise ValueError(f"unmapped core intent: {intent}")
+    return actions
+
+
+def _validate_semantic_overrides(
+    action: str, support_status: str, overrides: dict[str, Any]
+) -> None:
+    if support_status == "unsupported":
+        if overrides:
+            raise ValueError("unsupported adjudication cannot contain semantic overrides")
+        return
+    if action == "rank":
+        ordering = overrides.get("ordering")
+        if set(overrides) != {"ordering"} or not isinstance(ordering, dict):
+            raise ValueError("invalid rank semantic overrides")
+        if set(ordering) != {"field", "direction", "limit_policy"}:
+            raise ValueError("invalid rank semantic overrides")
+        if (
+            not isinstance(ordering["field"], str)
+            or not ordering["field"]
+            or ordering["direction"] not in {"asc", "desc"}
+            or not isinstance(ordering["limit_policy"], str)
+            or not ordering["limit_policy"]
+        ):
+            raise ValueError("invalid rank semantic overrides")
+        return
+    if action == "screen":
+        predicate = overrides.get("predicate")
+        if set(overrides) != {"predicate"} or not isinstance(predicate, dict):
+            raise ValueError("invalid screen semantic overrides")
+        value = predicate.get("value")
+        if (
+            set(predicate) != {"field", "operator", "value"}
+            or not isinstance(predicate["field"], str)
+            or not predicate["field"]
+            or predicate["operator"] not in {"eq", "neq", "lt", "lte", "gt", "gte"}
+            or not isinstance(value, dict)
+            or set(value) != {"kind", "decimal", "unit"}
+            or value.get("kind") != "decimal"
+            or not isinstance(value.get("decimal"), str)
+            or not value["decimal"]
+            or not isinstance(value.get("unit"), str)
+            or not value["unit"]
+        ):
+            raise ValueError("invalid screen semantic overrides")
+        return
+    raise ValueError(f"invalid {action} semantic overrides")
 
 
 def _supported_body(action: str, details: dict[str, Any]) -> dict[str, Any]:
