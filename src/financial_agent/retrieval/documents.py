@@ -23,6 +23,7 @@ from financial_agent.db.schema.operations import dataset_version
 from financial_agent.db.schema.search import document_embedding, embedding_model
 from financial_agent.documents import (
     DocumentRole,
+    PublisherRole,
     SEARCHABLE_SECTION_TYPES,
     SectionType,
     binding_roles_for_document_role,
@@ -618,14 +619,32 @@ def _claim_authority_predicate(
             publisher_roles = publisher_roles_for_document_role(
                 rule.required_role, binding_role
             )
+            publisher_authority = document_profile.c.publisher_role.in_(
+                tuple(sorted(role.value for role in publisher_roles))
+            )
+            if rule.required_role in {
+                DocumentRole.PRODUCT_SUMMARY,
+                DocumentRole.PRODUCT_FULL,
+            }:
+                publisher_authority = sa.or_(
+                    publisher_authority,
+                    sa.and_(
+                        document_profile.c.publisher_role
+                        == PublisherRole.ASSET_MANAGER.value,
+                        source_record.c.publisher_type == "regulator",
+                        source_record.c.source_type == "filing",
+                        source_record.c.authority_tier == "official_primary",
+                        source_record.c.source_locator_root.like(
+                            "https://dart.fss.or.kr/%"
+                        ),
+                    ),
+                )
             branches.append(
                 sa.and_(
                     document_record.c.document_type.in_(
                         tuple(sorted(document_types_for_role(rule.required_role)))
                     ),
-                    document_profile.c.publisher_role.in_(
-                        tuple(sorted(role.value for role in publisher_roles))
-                    ),
+                    publisher_authority,
                     sa.exists(
                         sa.select(1).select_from(binding_match).where(
                             binding_match.c.dataset_version
