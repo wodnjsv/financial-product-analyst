@@ -11,9 +11,12 @@ from financial_agent.intent.query_contracts import (
     AggregationSpecV2,
     OrderingDirection,
     OrderingSpecV2,
+    PredicateAtomV2,
     ProjectionSpecV2,
+    QueryOperatorId,
     QueryQualifiersV2,
     QueryResultShape,
+    TypedSemanticValue,
 )
 from financial_agent.planning.logical_query import (
     LogicalAggregateOperationV2,
@@ -77,6 +80,7 @@ def test_maps_business_value_and_flat_lineage_without_losing_zero() -> None:
     assert aum.applicable_date == date(2026, 8, 24)
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
+        "metric-definition:organizer.pref01n001.aum:metric.v1",
         "observation:observation-a",
         "source:source-a",
     )
@@ -196,6 +200,7 @@ def test_scalar_aggregate_preserves_flat_arrays_and_rejects_mixed_units() -> Non
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
         "evidence:evidence-b",
+        "metric-definition:organizer.pref01n001.aum:metric.v1",
         "observation:observation-a",
         "observation:observation-b",
         "source:source-a",
@@ -229,6 +234,12 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
         binding_ids=(),
         policy_ids=("source-product.v1", "no-dedup.v1"),
         qualifiers=QueryQualifiersV2(),
+        evidence=(
+            "metric_definition",
+            "observation_record",
+            "evidence_record",
+            "source_record",
+        ),
     )
     outcome = COMPILER.compile_task(plan, plan.tasks[0].task_id)
     assert outcome.request is not None
@@ -238,6 +249,9 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
             {
                 "aggregate_value": 2,
                 "product_ids": ["product-a", "product-b"],
+                "metric_definition_refs": [
+                    "organizer.pref01n001.aum:metric.v1",
+                ],
                 "observation_ids": ["observation-a", "observation-b"],
                 "evidence_ids": ["evidence-a", "evidence-b"],
                 "source_ids": ["source-a"],
@@ -248,6 +262,7 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
         "evidence:evidence-b",
+        "metric-definition:organizer.pref01n001.aum:metric.v1",
         "observation:observation-a",
         "observation:observation-b",
         "source:source-a",
@@ -259,6 +274,9 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
                 {
                     "aggregate_value": 1,
                     "product_ids": ["product-a", "product-b"],
+                    "metric_definition_refs": [
+                        "organizer.pref01n001.aum:metric.v1",
+                    ],
                     "observation_ids": ["observation-a", "observation-b"],
                     "evidence_ids": ["evidence-a", "evidence-b"],
                     "source_ids": ["source-a"],
@@ -272,6 +290,7 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
             {
                 "aggregate_value": 0,
                 "product_ids": None,
+                "metric_definition_refs": None,
                 "observation_ids": None,
                 "evidence_ids": None,
                 "source_ids": None,
@@ -287,6 +306,9 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
                 {
                     "aggregate_value": 1,
                     "product_ids": None,
+                    "metric_definition_refs": [
+                        "organizer.pref01n001.aum:metric.v1",
+                    ],
                     "observation_ids": ["observation-a"],
                     "evidence_ids": ["evidence-a"],
                     "source_ids": ["source-a"],
@@ -300,6 +322,9 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
                 {
                     "aggregate_value": 1,
                     "product_ids": ["product-a"],
+                    "metric_definition_refs": [
+                        "organizer.pref01n001.aum:metric.v1",
+                    ],
                     "observation_ids": ["observation-a"],
                     "evidence_ids": ["evidence-a"],
                 }
@@ -309,6 +334,87 @@ def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
     row = _lookup_row()
     row["product_name"] = "ETF'); DROP TABLE catalog.product; --"
     assert map_sql_rows(_lookup_request(), [row]).result_rows[0].fields[0].value.value == row["product_name"]
+
+
+def test_filtered_count_maps_one_canonical_exact_lineage_shape() -> None:
+    plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="source-product.v1",
+                population_grain_id="source-product.v1",
+                dedup_policy_id="no-dedup.v1",
+            ),
+            predicate=PredicateAtomV2(
+                field_concept_id="aum",
+                operator_id=QueryOperatorId.GTE,
+                value=TypedSemanticValue(kind="decimal", decimal="100"),
+                null_policy_id="exclude_missing.v1",
+            ),
+        ),
+        policy_ids=(
+            "source-product.v1",
+            "no-dedup.v1",
+            "identity-unit.v1",
+            "exclude_missing.v1",
+        ),
+    )
+    outcome = COMPILER.compile_task(plan, plan.tasks[0].task_id)
+    assert outcome.request is not None, outcome.rejection
+    assert "evidence_ids_1" not in outcome.request.statement
+    assert "source_ids_1" not in outcome.request.statement
+    row = {
+        "aggregate_value": 1,
+        "product_ids": ["product-a"],
+        "metric_definition_refs": ["organizer.pref01n001.aum:metric.v1"],
+        "observation_ids": ["observation-a"],
+        "evidence_ids": ["evidence-a"],
+        "source_ids": ["source-a"],
+    }
+
+    mapped = map_sql_rows(outcome.request, [row])
+
+    assert mapped.result_rows[0].fields[0].value.value == 1
+    assert mapped.evidence_refs == (
+        "evidence:evidence-a",
+        "metric-definition:organizer.pref01n001.aum:metric.v1",
+        "observation:observation-a",
+        "source:source-a",
+    )
+
+
+def test_count_lineage_categories_are_exactly_the_declared_projection_set() -> None:
+    plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT,
+                count_population_id="source-product.v1",
+                population_grain_id="source-product.v1",
+                dedup_policy_id="no-dedup.v1",
+            )
+        ),
+        binding_ids=(),
+        policy_ids=("source-product.v1", "no-dedup.v1"),
+        qualifiers=QueryQualifiersV2(),
+        evidence=("observation_record", "source_record"),
+    )
+    outcome = COMPILER.compile_task(plan, plan.tasks[0].task_id)
+    assert outcome.request is not None, outcome.rejection
+    row = {
+        "aggregate_value": 1,
+        "product_ids": ["product-a"],
+        "observation_ids": ["observation-a"],
+        "source_ids": ["source-a"],
+    }
+
+    mapped = map_sql_rows(outcome.request, [row])
+
+    assert mapped.evidence_refs == (
+        "observation:observation-a",
+        "source:source-a",
+    )
+    with pytest.raises(SqlResultMappingError, match="RETURNED_COLUMN_SET_MISMATCH"):
+        map_sql_rows(outcome.request, [{**row, "evidence_ids": ["evidence-a"]}])
 
 
 def test_rank_preserves_compiler_order_and_enforces_limit_with_ties() -> None:
@@ -400,6 +506,7 @@ def test_grouped_aggregate_maps_group_and_target_without_nested_evidence() -> No
     assert mapped.result_rows[0].fields[0].applicable_date == date(2026, 8, 24)
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
+        "metric-definition:organizer.pref01n001.aum:metric.v1",
         "observation:observation-a",
         "source:source-a",
     )
@@ -431,6 +538,7 @@ def test_grouped_count_requires_flat_observation_evidence_and_source_lineage() -
         "group_0": Decimal("100"),
         "aggregate_value": 1,
         "product_ids": ["product-a"],
+        "metric_definition_refs": ["organizer.pref01n001.aum:metric.v1"],
         "observation_ids": ["observation-a"],
         "evidence_ids": ["evidence-a"],
         "source_ids": ["source-a"],
@@ -438,6 +546,7 @@ def test_grouped_count_requires_flat_observation_evidence_and_source_lineage() -
     mapped = map_sql_rows(outcome.request, [row])
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
+        "metric-definition:organizer.pref01n001.aum:metric.v1",
         "observation:observation-a",
         "source:source-a",
     )

@@ -21,6 +21,7 @@ from financial_agent.planning.logical_query import (
     LogicalRankOperationV2,
     LogicalScreenOperationV2,
 )
+from financial_agent.planning.physical_bindings import EvidenceLocator
 
 from .contracts import CompiledSqlRequest
 
@@ -112,7 +113,9 @@ def map_sql_rows(
                 f"{prefix}_{index}" if prefix in {"field", "group"} else prefix
             )
             value = row[value_column]
-            _collect_field_lineage(row, prefix=prefix, index=index, target=lineage)
+            _collect_field_lineage(
+                request, row, prefix=prefix, index=index, target=lineage
+            )
             missing_reason = _missing_reason(row, prefix=prefix, index=index, value=value)
             if missing_reason is not None:
                 exclusions.append(
@@ -146,6 +149,7 @@ def map_sql_rows(
             )
 
         _collect_aggregate_lineage(
+            request,
             row,
             lineage,
             empty_count=(
@@ -167,6 +171,8 @@ def map_sql_rows(
             )
         )
 
+    _collect_manifest_relation_lineage(request, lineage)
+    _validate_evidence_categories(request, rows, lineage)
     _validate_cardinality(request, result_rows)
     if not isinstance(operation, LogicalRankOperationV2):
         result_rows.sort(key=lambda item: (item.entity_ids, item.row_id))
@@ -255,15 +261,16 @@ def _expected_columns(
     group_count = len(operation.aggregation.group_by_field_concept_ids)
     columns = {f"group_{index}" for index in range(group_count)}
     if operation.aggregation.function_id is AggregationFunction.COUNT:
-        columns.update(
-            {
-                "aggregate_value",
-                "product_ids",
-                "observation_ids",
-                "evidence_ids",
-                "source_ids",
-            }
-        )
+        columns.update({"aggregate_value", "product_ids"})
+        requested = set(request.evidence_projection_ids)
+        if EvidenceLocator.METRIC_DEFINITION in requested:
+            columns.add("metric_definition_refs")
+        if EvidenceLocator.OBSERVATION_RECORD in requested:
+            columns.add("observation_ids")
+        if EvidenceLocator.EVIDENCE_RECORD in requested:
+            columns.add("evidence_ids")
+        if EvidenceLocator.SOURCE_RECORD in requested:
+            columns.add("source_ids")
     else:
         if operation.aggregation.function_id is not AggregationFunction.DISTRIBUTION:
             columns.add("aggregate_value")
@@ -399,25 +406,43 @@ def _validate_physical_metadata(request, row, descriptors) -> None:
         raise SqlResultMappingError("RETURNED_SOURCE_IDS_MALFORMED")
 
 
-def _collect_field_lineage(row, *, prefix: str, index: int, target: set[str]) -> None:
+def _collect_field_lineage(
+    request, row, *, prefix: str, index: int, target: set[str]
+) -> None:
     if prefix != "field":
         return
-    target.add("observation:" + _identifier(row[f"observation_id_{index}"]))
-    for item in _identifier_array(row[f"evidence_id_{index}"], "RETURNED_EVIDENCE_IDS_MALFORMED"):
-        target.add("evidence:" + item)
-    for item in _identifier_array(row[f"source_id_{index}"], "RETURNED_SOURCE_IDS_MALFORMED"):
-        target.add("source:" + item)
+    requested = set(request.evidence_projection_ids)
+    if EvidenceLocator.METRIC_DEFINITION in requested:
+        metric = _identifier(row[f"metric_id_{index}"])
+        version = _identifier(row[f"metric_definition_version_{index}"])
+        target.add(f"metric-definition:{metric}:{version}")
+    if EvidenceLocator.OBSERVATION_RECORD in requested:
+        target.add("observation:" + _identifier(row[f"observation_id_{index}"]))
+    if EvidenceLocator.EVIDENCE_RECORD in requested:
+        for item in _identifier_array(row[f"evidence_id_{index}"], "RETURNED_EVIDENCE_IDS_MALFORMED"):
+            target.add("evidence:" + item)
+    if EvidenceLocator.SOURCE_RECORD in requested:
+        for item in _identifier_array(row[f"source_id_{index}"], "RETURNED_SOURCE_IDS_MALFORMED"):
+            target.add("source:" + item)
 
 
 def _collect_aggregate_lineage(
-    row: Mapping[str, object], target: set[str], *, empty_count: bool
+    request,
+    row: Mapping[str, object],
+    target: set[str],
+    *,
+    empty_count: bool,
 ) -> None:
     count_value = row.get("aggregate_value")
-    for column, prefix in (
-        ("observation_ids", "observation:"),
-        ("evidence_ids", "evidence:"),
-        ("source_ids", "source:"),
-    ):
+    requested = set(request.evidence_projection_ids)
+    columns = []
+    if EvidenceLocator.OBSERVATION_RECORD in requested:
+        columns.append(("observation_ids", "observation:"))
+    if EvidenceLocator.EVIDENCE_RECORD in requested:
+        columns.append(("evidence_ids", "evidence:"))
+    if EvidenceLocator.SOURCE_RECORD in requested:
+        columns.append(("source_ids", "source:"))
+    for column, prefix in columns:
         if column not in row:
             continue
         value = row[column]
@@ -431,6 +456,86 @@ def _collect_aggregate_lineage(
                 raise SqlResultMappingError(f"RETURNED_{column.upper()}_MALFORMED")
         for item in values:
             target.add(prefix + item)
+    if EvidenceLocator.METRIC_DEFINITION in requested:
+        if "metric_definition_refs" in row:
+            value = row["metric_definition_refs"]
+            if value is None and empty_count:
+                refs = ()
+            else:
+                refs = _identifier_array(
+                    value, "RETURNED_METRIC_DEFINITION_REFS_MALFORMED"
+                )
+                if count_value is not None and count_value != 0 and not refs:
+                    raise SqlResultMappingError(
+                        "RETURNED_METRIC_DEFINITION_REFS_MALFORMED"
+                    )
+            allowed = set(request.render_manifest.count_lineage_metric_ids)
+            for binding in request.render_manifest.binding_definitions:
+                allowed.update(binding.approved_metric_ids)
+            for ref in refs:
+                metric, separator, version = ref.rpartition(":")
+                if not separator or metric not in allowed:
+                    raise SqlResultMappingError(
+                        "RETURNED_METRIC_DEFINITION_OWNERSHIP_MISMATCH"
+                    )
+                _identifier(version)
+                target.add("metric-definition:" + ref)
+        elif "metric_ids" in row:
+            metrics = _identifier_array(
+                row["metric_ids"], "RETURNED_METRIC_IDS_MALFORMED"
+            )
+            versions = _identifier_array(
+                row["metric_definition_versions"],
+                "RETURNED_METRIC_DEFINITION_VERSIONS_MALFORMED",
+            )
+            if len(versions) != 1:
+                raise SqlResultMappingError(
+                    "RETURNED_METRIC_DEFINITION_VERSIONS_MALFORMED"
+                )
+            for metric in metrics:
+                target.add(f"metric-definition:{metric}:{versions[0]}")
+
+
+def _collect_manifest_relation_lineage(request, target: set[str]) -> None:
+    requested = set(request.evidence_projection_ids)
+    facts = request.render_manifest.readiness_facts
+    if facts is None or facts.public_fund_manifest is None:
+        return
+    for edge in facts.public_fund_manifest.representative_share_edges:
+        if EvidenceLocator.RELATION_RECORD in requested:
+            target.add("relation:" + edge.relation_id)
+        if EvidenceLocator.EVIDENCE_RECORD in requested:
+            target.add("evidence:" + edge.evidence_id)
+        if EvidenceLocator.SOURCE_RECORD in requested:
+            target.add("source:" + edge.source_id)
+
+
+def _validate_evidence_categories(request, rows, lineage: set[str]) -> None:
+    if not rows:
+        return
+    operation = request.render_manifest.logical_task.operation
+    if (
+        isinstance(operation, LogicalAggregateOperationV2)
+        and operation.aggregation.function_id is AggregationFunction.COUNT
+        and len(rows) == 1
+        and rows[0].get("aggregate_value") == 0
+    ):
+        return
+    prefix_by_locator = {
+        EvidenceLocator.METRIC_DEFINITION: "metric-definition:",
+        EvidenceLocator.OBSERVATION_RECORD: "observation:",
+        EvidenceLocator.RELATION_RECORD: "relation:",
+        EvidenceLocator.EVIDENCE_RECORD: "evidence:",
+        EvidenceLocator.SOURCE_RECORD: "source:",
+    }
+    requested = set(request.evidence_projection_ids)
+    actual = {
+        locator
+        for locator, prefix in prefix_by_locator.items()
+        if any(item.startswith(prefix) for item in lineage)
+    }
+    if actual != requested:
+        raise SqlResultMappingError("RETURNED_EVIDENCE_PROJECTION_MISMATCH")
 
 
 def _row_key(operation, row, descriptors):

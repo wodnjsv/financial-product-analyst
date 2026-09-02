@@ -97,6 +97,7 @@ class _Context:
     records: list[PhysicalLoweringRecord]
     observation_aliases: dict[str, sa.Alias]
     evidence_aliases: dict[str, sa.Alias]
+    count_lineage_metric_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +108,7 @@ class RenderedPhysicalSql:
     evidence_projection_ids: tuple[EvidenceLocator, ...]
     population_manifest_id: str | None
     population_manifest_hash: str | None
+    count_lineage_metric_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +175,9 @@ class SemanticSqlCompiler:
                 records=[],
                 observation_aliases={},
                 evidence_aliases={},
+                count_lineage_metric_ids=_count_lineage_metric_ids(
+                    task, self._bindings, readiness_facts
+                ),
             )
             rendered = _render_context(context)
             manifest_facts = (
@@ -208,6 +213,7 @@ class SemanticSqlCompiler:
                     item.lowering_id for item in rendered.lowering_records
                 ),
                 evidence_projection_ids=rendered.evidence_projection_ids,
+                count_lineage_metric_ids=rendered.count_lineage_metric_ids,
             )
             manifest_draft = PhysicalSqlRenderManifest.model_construct(
                 manifest_id="pending", **manifest_kwargs
@@ -377,6 +383,7 @@ def render_physical_sql_manifest(
         records=[],
         observation_aliases={},
         evidence_aliases={},
+        count_lineage_metric_ids=manifest.count_lineage_metric_ids,
     )
     try:
         return _render_context(context)
@@ -428,6 +435,7 @@ def _render_context(context: _Context) -> RenderedPhysicalSql:
             if representative and facts is not None
             else None
         ),
+        count_lineage_metric_ids=context.count_lineage_metric_ids,
     )
 
 
@@ -884,20 +892,22 @@ def _aggregate(context, base, where, family, operation):
     statement = sa.select(*selected).select_from(base).where(*where)
     if groups:
         statement = statement.group_by(*groups)
-    statement = _attach_flat_aggregate_evidence(
-        statement,
-        base=base,
-        where=where,
-        groups=groups,
-        evidence_aliases=tuple(context.evidence_aliases.values()),
-        observation_aliases=(
-            tuple(group_observation_aliases)
-            if spec.function_id is AggregationFunction.COUNT
-            else ()
-        ),
-    )
     if spec.function_id is AggregationFunction.COUNT and not groups:
         statement = _attach_count_population_lineage(context, statement, base, where)
+    else:
+        statement = _attach_flat_aggregate_evidence(
+            context,
+            statement,
+            base=base,
+            where=where,
+            groups=groups,
+            evidence_aliases=tuple(context.evidence_aliases.values()),
+            observation_aliases=(
+                tuple(group_observation_aliases)
+                if spec.function_id is AggregationFunction.COUNT
+                else ()
+            ),
+        )
     _record(context, "operation.aggregation.population", "catalog-product-family.v1", PhysicalLoweringKind.DEDUPLICATION, policy_ids=(spec.population_grain_id, spec.dedup_policy_id))
     return statement
 
@@ -910,6 +920,14 @@ def _attach_count_population_lineage(context, numeric_statement, base, where):
     origin_alias = evidence_observation_origin.alias("count_evidence_origin")
     evidence_alias = evidence_record.alias("count_evidence")
     source_alias = source_record.alias("count_source")
+    requested = set(_requested_evidence_ids(context))
+    if not requested & {
+        EvidenceLocator.METRIC_DEFINITION,
+        EvidenceLocator.OBSERVATION_RECORD,
+        EvidenceLocator.EVIDENCE_RECORD,
+        EvidenceLocator.SOURCE_RECORD,
+    }:
+        return numeric_statement
     lineage_filters = [
         evidence_alias.c.evidence_kind
         == context.params.bind("observation", prefix="count_evidence_kind")
@@ -954,6 +972,19 @@ def _attach_count_population_lineage(context, numeric_statement, base, where):
                 )
             )
         )
+        approved_metrics = tuple(dict.fromkeys(item.metric_id for item in ownerships))
+    else:
+        approved_metrics = context.count_lineage_metric_ids
+    if not approved_metrics:
+        raise SqlCompileRejection("COUNT_LINEAGE_METRIC_OWNERSHIP_REQUIRED")
+    lineage_filters.append(
+        observation_alias.c.metric_id.in_(
+            tuple(
+                context.params.bind(metric, prefix="count_metric")
+                for metric in approved_metrics
+            )
+        )
+    )
     lineage_base = (
         base.join(
             observation_alias,
@@ -984,31 +1015,86 @@ def _attach_count_population_lineage(context, numeric_statement, base, where):
             ),
         )
     )
-    lineage = (
-        sa.select(
+    lineage_columns = []
+    if EvidenceLocator.METRIC_DEFINITION in requested:
+        separator = context.params.bind(":", prefix="metric_definition_separator")
+        lineage_columns.append(
+            sa.func.array_agg(
+                sa.distinct(
+                    sa.func.concat(
+                        observation_alias.c.metric_id,
+                        separator,
+                        observation_alias.c.metric_definition_version,
+                    )
+                )
+            ).label("metric_definition_refs")
+        )
+    if EvidenceLocator.OBSERVATION_RECORD in requested:
+        lineage_columns.append(
             sa.func.array_agg(sa.distinct(observation_alias.c.observation_id)).label(
                 "observation_ids"
-            ),
+            )
+        )
+    if EvidenceLocator.EVIDENCE_RECORD in requested:
+        lineage_columns.append(
             sa.func.array_agg(sa.distinct(evidence_alias.c.evidence_id)).label(
                 "evidence_ids"
-            ),
+            )
+        )
+    if EvidenceLocator.SOURCE_RECORD in requested:
+        lineage_columns.append(
             sa.func.array_agg(sa.distinct(source_alias.c.source_id)).label(
                 "source_ids"
-            ),
+            )
         )
+    lineage = (
+        sa.select(*lineage_columns)
         .select_from(lineage_base)
         .where(*where, *lineage_filters)
         .subquery("count_population_lineage")
     )
-    return sa.select(
-        *numeric.c,
-        lineage.c.observation_ids,
-        lineage.c.evidence_ids,
-        lineage.c.source_ids,
-    ).select_from(numeric.join(lineage, sa.true()))
+    return sa.select(*numeric.c, *lineage.c).select_from(
+        numeric.join(lineage, sa.true())
+    )
+
+
+def _count_lineage_metric_ids(task, bindings, facts) -> tuple[str, ...]:
+    operation = task.operation
+    if (
+        not isinstance(operation, LogicalAggregateOperationV2)
+        or operation.aggregation.function_id is not AggregationFunction.COUNT
+        or operation.aggregation.group_by_field_concept_ids
+    ):
+        return ()
+    if (
+        operation.aggregation.population_grain_id == "representative-product.v1"
+        and facts is not None
+        and facts.public_fund_manifest is not None
+    ):
+        return tuple(
+            dict.fromkeys(
+                item.metric_id
+                for item in facts.public_fund_manifest.population_metric_ownerships
+            )
+        )
+    family = task.scope.product_family_ids[0]
+    binding_ids = task.binding_ids or tuple(
+        item.id
+        for item in bindings.bindings_by_id.values()
+        if item.product_family_id is family
+        and item.availability is PhysicalBindingAvailability.VERIFIED
+    )
+    return tuple(
+        dict.fromkeys(
+            metric
+            for binding_id in binding_ids
+            for metric in bindings.bindings_by_id[binding_id].approved_metric_ids
+        )
+    )
 
 
 def _attach_flat_aggregate_evidence(
+    context,
     numeric_statement,
     *,
     base,
@@ -1051,6 +1137,7 @@ def _attach_flat_aggregate_evidence(
     )
 
     observation_item = None
+    metric_definition_item = None
     if observation_aliases:
         combined_observations = sa.dialects.postgresql.array(
             tuple(alias.c.observation_id for alias in observation_aliases)
@@ -1061,6 +1148,28 @@ def _attach_flat_aggregate_evidence(
             .lateral("aggregate_observation_item")
         )
         evidence_base = evidence_base.join(observation_item, sa.true())
+        if EvidenceLocator.METRIC_DEFINITION in set(
+            _requested_evidence_ids(context)
+        ):
+            separator = context.params.bind(
+                ":", prefix="metric_definition_separator"
+            )
+            combined_metric_definitions = sa.dialects.postgresql.array(
+                tuple(
+                    sa.func.concat(
+                        alias.c.metric_id,
+                        separator,
+                        alias.c.metric_definition_version,
+                    )
+                    for alias in observation_aliases
+                )
+            )
+            metric_definition_item = (
+                sa.func.unnest(combined_metric_definitions)
+                .table_valued("metric_definition_ref")
+                .lateral("aggregate_metric_definition_item")
+            )
+            evidence_base = evidence_base.join(metric_definition_item, sa.true())
 
     evidence_columns = [
         expression.label(f"group_{index}")
@@ -1082,6 +1191,12 @@ def _attach_flat_aggregate_evidence(
                 sa.distinct(observation_item.c.observation_id)
             ).label("observation_ids")
         )
+    if metric_definition_item is not None:
+        evidence_columns.append(
+            sa.func.array_agg(
+                sa.distinct(metric_definition_item.c.metric_definition_ref)
+            ).label("metric_definition_refs")
+        )
     evidence_statement = (
         sa.select(*evidence_columns).select_from(evidence_base).where(*where)
     )
@@ -1102,6 +1217,11 @@ def _attach_flat_aggregate_evidence(
         *(
             (evidence.c.observation_ids,)
             if "observation_ids" in evidence.c
+            else ()
+        ),
+        *(
+            (evidence.c.metric_definition_refs,)
+            if "metric_definition_refs" in evidence.c
             else ()
         ),
         evidence.c.evidence_ids,
@@ -1176,14 +1296,19 @@ def _qualifier_filters(context: _Context):
 
 
 def _evidence_ids(context):
+    requested = _requested_evidence_ids(context)
+    for index, evidence_id in enumerate(requested):
+        _record(context, f"evidence.{index}", f"evidence-{evidence_id.value}.v1", PhysicalLoweringKind.EVIDENCE)
+    return requested
+
+
+def _requested_evidence_ids(context):
     allowed = {item.value: item for item in EvidenceLocator}
     requested = set(context.task.evidence_requirements)
     for binding_id in context.task.binding_ids:
         requested.update(item.value for item in context.bindings.bindings_by_id[binding_id].required_evidence_locators)
     if not requested <= set(allowed):
         raise SqlCompileRejection("EVIDENCE_PROJECTION_NOT_REGISTERED")
-    for index, evidence_id in enumerate(sorted(requested)):
-        _record(context, f"evidence.{index}", f"evidence-{evidence_id}.v1", PhysicalLoweringKind.EVIDENCE)
     return tuple(allowed[item] for item in sorted(requested))
 
 

@@ -250,9 +250,10 @@ def test_count_grouping_and_comparison_lowerings() -> None:
     count = COMPILER.compile_task(count_plan, count_plan.tasks[0].task_id)
     assert count.request is not None
     assert "count(DISTINCT catalog.product.entity_id)" in count.request.statement
+    assert "metric_definition_refs" in count.request.statement
     assert "observation_ids" in count.request.statement
-    assert "evidence_ids" in count.request.statement
     assert "source_ids" in count.request.statement
+    assert "evidence_ids" not in count.request.statement
 
     grouped_plan = make_plan(
         LogicalAggregateOperationV2(

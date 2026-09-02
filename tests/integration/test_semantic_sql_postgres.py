@@ -342,12 +342,34 @@ async def test_aggregates_grouping_date_unit_and_split_families(semantic_sql_run
         binding_ids=(),
         policy_ids=("source-product.v1", "no-dedup.v1"),
         qualifiers=QueryQualifiersV2(),
+        evidence=(
+            "metric_definition",
+            "observation_record",
+            "evidence_record",
+            "source_record",
+        ),
     )
     count_result = await _execute(semantic_sql_runner, count_plan)
     assert count_result.result_rows[0].fields[0].value.value == 6
-    assert any(item.startswith("observation:") for item in count_result.evidence_refs)
-    assert any(item.startswith("evidence:") for item in count_result.evidence_refs)
-    assert "source:source-one" in count_result.evidence_refs
+    domestic_ids = {
+        "etf-a",
+        "etf-b",
+        "etf-c",
+        "etf-zero",
+        "etf-missing",
+        "etf-injection",
+    }
+    expected_count_refs = {
+        "metric-definition:organizer.pref01n001.aum:semantic-sql.v1",
+        "metric-definition:organizer.pref01n001.total_fee_rate:semantic-sql.v1",
+        "source:source-one",
+    }
+    for entity_id in domestic_ids:
+        for metric_name in ("aum", "fee"):
+            observation_id = f"observation-{entity_id}-{metric_name}"
+            expected_count_refs.add(f"observation:{observation_id}")
+            expected_count_refs.add(f"evidence:evidence-{observation_id}")
+    assert set(count_result.evidence_refs) == expected_count_refs
 
     grouped = make_plan(
         LogicalAggregateOperationV2(

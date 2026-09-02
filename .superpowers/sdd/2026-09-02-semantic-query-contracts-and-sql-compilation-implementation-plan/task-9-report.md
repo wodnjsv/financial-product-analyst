@@ -204,3 +204,53 @@ Round 2 verification:
 
 PostgreSQL remains explicitly **unmeasured** because the approved URL is not
 configured. No SQLite substitute was used.
+
+## Review fix round 3
+
+Base: `32bd352cd90f55734a16a4bf617e4eb5d382970a`.
+
+RED reproduced three focused failures: filtered COUNT emitted suffixed duplicate
+lineage labels, all COUNT shapes expected undeclared evidence columns, and
+metric-definition identity was absent from the result contract.
+
+Changes:
+
+- Ungrouped COUNT now bypasses the ordinary aggregate-lineage projector. Its
+  predicate joins only constrain the numeric population; the separate
+  whole-population lineage branch is the sole owner of final lineage labels.
+  Generated filtered COUNT SQL has no `evidence_ids_1` or `source_ids_1`, and
+  the exact synthetic returned shape maps successfully.
+- The closed SQL render manifest now pins the active COUNT-lineage metric IDs.
+  This preserves deterministic rerendering for unbound source-product COUNT
+  while preventing returned metric definitions outside active family bindings.
+- COUNT lineage SQL projects only the categories listed in
+  `evidence_projection_ids`. Metric definitions are flat exact
+  `metric_id:definition_version` identities; observation, evidence, and source
+  arrays appear only when declared.
+- Result mapping emits namespaced references only for declared categories,
+  rejects missing/extra columns and unowned metric-definition identities, and
+  verifies that every nonempty result supplies exactly the requested evidence
+  categories. Representative population relation/evidence/source proof is
+  sourced only from its pinned manifest.
+- The PostgreSQL COUNT assertion now specifies and checks the exact two metric
+  definitions, twelve observation IDs, twelve evidence IDs, and one source ID
+  for the six-product synthetic population.
+
+Round 3 verification:
+
+```text
+.venv/bin/pytest -q tests/sql/test_result_mapping.py tests/sql/test_executor.py tests/sql/test_compiler.py tests/sql/test_property_matrix.py tests/sql/test_contracts.py
+198 passed
+
+.venv/bin/pytest -q tests/sql tests/planning/test_semantic_compiler.py tests/planning/test_logical_query.py tests/planning/test_plan_readiness.py tests/planning/test_physical_bindings.py
+311 passed
+
+.venv/bin/pytest -q -m "not postgres and not ncp_integration and not performance and not organizer_data and not object_storage and not official_data and not jena_integration and not clova_integration"
+2144 passed, 1 skipped, 451 deselected
+
+.venv/bin/pytest -q tests/integration/test_semantic_sql_postgres.py
+3 skipped
+```
+
+PostgreSQL remains explicitly **unmeasured** because the approved URL is not
+configured. No SQLite substitute was used.
