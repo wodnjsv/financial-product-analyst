@@ -8,10 +8,11 @@ from typing import Mapping
 from pydantic import model_validator
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex, UtcDateTime
-from financial_agent.contracts.canonical import canonical_sha256
+from financial_agent.contracts.canonical import canonical_json_bytes, canonical_sha256
 from financial_agent.contracts.enums import Capability, ToolStatus
 from financial_agent.contracts.execution import (
     BindingValue,
+    BindingTypeInput,
     ExecutionTask,
     Exclusion,
     ResultRow,
@@ -19,11 +20,12 @@ from financial_agent.contracts.execution import (
     ToolResult,
 )
 from financial_agent.contracts.query import QueryPlan
+from financial_agent.contracts.values import encode_contract_value
 
-
-class BindingTypeInput(ContractModel):
-    binding_name: Identifier
-    value_type: Identifier
+from .semantic_execution import (
+    SemanticExecutorRequest,
+    SemanticSqlTaskExecutionInput,
+)
 
 
 class TaskExecutionInput(ContractModel):
@@ -97,9 +99,12 @@ class TaskExecutionInput(ContractModel):
         raise KeyError(binding_name)
 
 
+ExecutorRequest = TaskExecutionInput | SemanticExecutorRequest
+
+
 class CapabilityExecutor(ABC):
     @abstractmethod
-    async def execute(self, request: TaskExecutionInput) -> ToolResult:
+    async def execute(self, request: ExecutorRequest) -> ToolResult:
         raise NotImplementedError
 
 
@@ -129,7 +134,7 @@ class ExecutorRegistry:
 
 
 def build_tool_result(
-    request: TaskExecutionInput,
+    request: ExecutorRequest,
     *,
     status: ToolStatus,
     result_rows: tuple[ResultRow, ...] = (),
@@ -169,7 +174,7 @@ def expected_result_hash(result: ToolResult) -> str:
 
 def _result_payload(
     *,
-    request: TaskExecutionInput,
+    request: ExecutorRequest,
     status: ToolStatus,
     result_rows,
     binding_values,
@@ -194,3 +199,63 @@ def _result_payload(
         "warnings": warnings,
         "latency_ms": latency_ms,
     }
+
+
+class SqlCapabilityExecutor(CapabilityExecutor):
+    """The only adapter authorized to cross from orchestration into SQL."""
+
+    def __init__(self, runner) -> None:
+        self._runner = runner
+
+    async def execute(self, request: ExecutorRequest) -> ToolResult:
+        if not isinstance(request, SemanticSqlTaskExecutionInput):
+            raise ValueError("SEMANTIC_SQL_REQUEST_REQUIRED")
+        request = SemanticSqlTaskExecutionInput.model_validate_json(
+            canonical_json_bytes(request)
+        )
+        mapped = await self._runner.execute(
+            request.compiled_request,
+            request.logical_query_plan,
+            readiness_facts=request.compiled_request.render_manifest.readiness_facts,
+        )
+        status = ToolStatus.SUCCESS if mapped.result_rows else ToolStatus.EMPTY
+        binding_values: tuple[BindingValue, ...] = ()
+        if status is ToolStatus.SUCCESS and request.task.produces_bindings:
+            entity_ids = tuple(
+                dict.fromkeys(
+                    entity_id
+                    for row in mapped.result_rows
+                    for entity_id in row.entity_ids
+                )
+            )
+            values = []
+            for binding_name in request.task.produces_bindings:
+                logical_binding = next(
+                    item
+                    for item in request.logical_task().produced_result_bindings
+                    if item.binding_id == binding_name
+                )
+                if logical_binding.cardinality.value == "one":
+                    if len(entity_ids) != 1:
+                        raise ValueError("SEMANTIC_BINDING_CARDINALITY_MISMATCH")
+                    value = entity_ids[0]
+                else:
+                    value = entity_ids
+                values.append(
+                    BindingValue(
+                        binding_name=binding_name,
+                        value_type=request.binding_type(binding_name),
+                        value=encode_contract_value(value),
+                    )
+                )
+            binding_values = tuple(values)
+        return build_tool_result(
+            request,
+            status=status,
+            result_rows=mapped.result_rows if status is ToolStatus.SUCCESS else (),
+            binding_values=binding_values,
+            evidence_refs=mapped.evidence_refs,
+            exclusions=mapped.exclusions,
+            warnings=mapped.warnings,
+            latency_ms=0,
+        )

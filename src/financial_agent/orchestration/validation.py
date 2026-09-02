@@ -1,7 +1,7 @@
 from financial_agent.contracts.enums import ToolStatus
 from financial_agent.contracts.execution import ToolResult
 
-from .executors import TaskExecutionInput, expected_result_hash
+from .executors import ExecutorRequest, expected_result_hash
 
 
 class ToolResultContractError(ValueError):
@@ -9,7 +9,7 @@ class ToolResultContractError(ValueError):
 
 
 def validate_tool_result(
-    request: TaskExecutionInput,
+    request: ExecutorRequest,
     result: ToolResult,
 ) -> ToolResult:
     if result.task_id != request.task.task_id:

@@ -2,21 +2,33 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from financial_agent.contracts.enums import ExecutionOutcome, SubtaskImportance, ToolStatus
+from financial_agent.contracts.enums import (
+    Capability,
+    ExecutionOutcome,
+    SubtaskImportance,
+    ToolStatus,
+)
 from financial_agent.contracts.execution import BindingValue, ExecutionTask, ToolResult
 from financial_agent.planning.contracts import QueryPlanCompilation
+from financial_agent.planning.semantic_compiler import SemanticQueryPlanCompilation
 
 from .contracts import ExecutionAttempt, ExecutionFailure, OrchestrationResult
 from .executors import (
     BindingTypeInput,
+    ExecutorRequest,
     ExecutorRegistry,
     TaskExecutionInput,
     build_tool_result,
 )
 from .graph import ExecutionGraphCompiler
+from .semantic_execution import (
+    SemanticSqlTaskExecutionInput,
+    SemanticToolTaskExecutionInput,
+)
+from .semantic_graph import SemanticExecutionGraphCompiler
 from .validation import ToolResultContractError, validate_tool_result
 
 
@@ -49,6 +61,7 @@ class Orchestrator:
         self,
         *,
         graph_compiler: ExecutionGraphCompiler,
+        semantic_graph_compiler: SemanticExecutionGraphCompiler | None = None,
         executors: ExecutorRegistry,
         hard_deadline_ms: int = 55_000,
         max_concurrency: int = 4,
@@ -59,6 +72,7 @@ class Orchestrator:
         if max_concurrency <= 0:
             raise ValueError("max concurrency must be positive")
         self._graph_compiler = graph_compiler
+        self._semantic_graph_compiler = semantic_graph_compiler
         self._executors = executors
         self._hard_deadline_ms = hard_deadline_ms
         self._semaphore = asyncio.Semaphore(max_concurrency)
@@ -69,11 +83,78 @@ class Orchestrator:
         compilation: QueryPlanCompilation,
     ) -> OrchestrationResult:
         graph = self._graph_compiler.compile(compilation)
-        self._executors.require({item.capability for item in graph.tasks})
         assert compilation.query_plan is not None
         importance_by_subtask = {
             item.subtask_id: item.importance for item in compilation.query_plan.subtasks
         }
+
+        def request_factory(task, final_results, binding_types):
+            return TaskExecutionInput(
+                request_key=graph.request_key,
+                run_id=graph.run_id,
+                dataset_version=graph.dataset_version,
+                cutoff_date=graph.cutoff_date,
+                created_at=graph.created_at,
+                task=task,
+                query_plan=compilation.query_plan,
+                dependency_results=tuple(
+                    final_results[item] for item in task.depends_on
+                ),
+                binding_values=_binding_values(task, final_results),
+                binding_types=binding_types,
+            )
+
+        return await self._schedule(graph, importance_by_subtask, request_factory)
+
+    async def execute_semantic(
+        self,
+        compilation: SemanticQueryPlanCompilation,
+    ) -> OrchestrationResult:
+        if self._semantic_graph_compiler is None:
+            raise ValueError("SEMANTIC_GRAPH_COMPILER_REQUIRED")
+        graph_compilation = self._semantic_graph_compiler.compile(compilation)
+        graph = graph_compilation.graph
+        plan = graph_compilation.logical_query_plan
+        importance_by_subtask = {
+            task.frame_id: SubtaskImportance.CRITICAL for task in plan.tasks
+        }
+
+        def request_factory(task, final_results, binding_types):
+            common = dict(
+                request_key=graph.request_key,
+                run_id=graph.run_id,
+                dataset_version=graph.dataset_version,
+                cutoff_date=graph.cutoff_date,
+                created_at=graph.created_at,
+                task=task,
+                logical_query_plan=plan,
+                dependency_results=tuple(
+                    final_results[item] for item in task.depends_on
+                ),
+                binding_values=_binding_values(task, final_results),
+                binding_types=binding_types,
+            )
+            if task.capability is Capability.RDB_LOOKUP:
+                return SemanticSqlTaskExecutionInput(
+                    **common,
+                    compiled_request=graph_compilation.compiled_request_for(
+                        task.task_id
+                    ),
+                )
+            return SemanticToolTaskExecutionInput(**common)
+
+        return await self._schedule(graph, importance_by_subtask, request_factory)
+
+    async def _schedule(
+        self,
+        graph,
+        importance_by_subtask: Mapping[str, SubtaskImportance],
+        request_factory: Callable[
+            [ExecutionTask, Mapping[str, ToolResult], tuple[BindingTypeInput, ...]],
+            ExecutorRequest,
+        ],
+    ) -> OrchestrationResult:
+        self._executors.require({item.capability for item in graph.tasks})
         binding_types = tuple(
             BindingTypeInput(
                 binding_name=item.binding_name,
@@ -132,10 +213,7 @@ class Orchestrator:
                 *(
                     self._run_task(
                         task,
-                        graph,
-                        compilation.query_plan,
-                        final_results,
-                        binding_types,
+                        request_factory(task, final_results, binding_types),
                         deadline,
                         retry_budget,
                     )
@@ -194,28 +272,10 @@ class Orchestrator:
     async def _run_task(
         self,
         task,
-        graph,
-        query_plan,
-        final_results,
-        binding_types,
+        request,
         deadline,
         retry_budget,
     ) -> _TaskOutcome:
-        binding_values = _binding_values(task, final_results)
-        request = TaskExecutionInput(
-            request_key=graph.request_key,
-            run_id=graph.run_id,
-            dataset_version=graph.dataset_version,
-            cutoff_date=graph.cutoff_date,
-            created_at=graph.created_at,
-            task=task,
-            query_plan=query_plan,
-            dependency_results=tuple(
-                final_results[item] for item in task.depends_on
-            ),
-            binding_values=binding_values,
-            binding_types=binding_types,
-        )
         attempt_records: list[ExecutionAttempt] = []
         for attempt_number in (1, 2):
             attempt_started = self._clock()

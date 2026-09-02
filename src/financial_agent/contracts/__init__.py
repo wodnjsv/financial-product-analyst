@@ -32,6 +32,7 @@ from .compatibility import (
     validate_tool_result_compatibility,
 )
 from .execution import (
+    BindingTypeInput,
     BindingValue,
     Exclusion,
     ExecutionGraph,
@@ -188,6 +189,7 @@ __all__ = [
     "validate_execution_graph_compatibility",
     "validate_tool_result_compatibility",
     "BindingValue",
+    "BindingTypeInput",
     "Exclusion",
     "ExecutionGraph",
     "ExecutionTask",

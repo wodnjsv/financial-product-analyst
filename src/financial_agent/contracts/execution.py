@@ -14,6 +14,11 @@ class NamedValue(ContractModel):
     value: ContractValue
 
 
+class BindingTypeInput(ContractModel):
+    binding_name: Identifier
+    value_type: Identifier
+
+
 class ExecutionTask(ContractModel):
     task_id: Identifier
     subtask_id: Identifier
