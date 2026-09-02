@@ -23,6 +23,7 @@ from .candidates import (
     SemanticCandidate,
     SemanticCandidateSet,
 )
+from .axis_locks import ExactSemanticLock
 from .catalog import SemanticCatalogSnapshot
 from .evidence import EvidenceCandidate, build_evidence_candidates
 from .literals import LiteralCandidate
@@ -180,6 +181,7 @@ class ResolverView(ContractModel):
     axis_definitions: tuple[AxisDefinition, ...]
     evidence_candidates: tuple[EvidenceCandidate, ...]
     reference_candidates: tuple[ResolverViewReferenceCandidate, ...]
+    exact_semantic_locks: tuple[ExactSemanticLock, ...] = ()
 
     @model_validator(mode="after")
     def validate_entity_candidate_bounds(self) -> "ResolverView":
@@ -247,6 +249,7 @@ def build_resolver_view(
     manifest: ResolverBuildManifest,
     active_dataset_pin: ActiveDatasetPin,
     catalog: SemanticCatalogSnapshot,
+    exact_semantic_locks: Sequence[ExactSemanticLock] = (),
 ) -> ResolverView:
     """Build the model-safe projection of one dataset-pinned resolver request."""
     validate_resolver_pins(catalog, context, normalized, manifest, active_dataset_pin)
@@ -317,6 +320,7 @@ def build_resolver_view(
             )
             for reference in normalized.reference_candidates
         ),
+        exact_semantic_locks=tuple(exact_semantic_locks),
     )
 
 

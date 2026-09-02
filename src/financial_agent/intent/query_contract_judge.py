@@ -41,6 +41,7 @@ class QueryContractJudgeResult(ContractModel):
     candidate_id: Identifier | None = None
     contract_readiness: ContractReadinessRecordV2
     usage: dict[str, int]
+    model_call_used: bool
 
 
 def build_query_contract_judge_envelope(
@@ -68,7 +69,10 @@ def build_query_contract_judge_envelope(
                     "segment_ids": list(frame.segment_ids),
                     "evidence_span_ids": list(frame.evidence_span_ids),
                     "action_label": frame.action_choice.selected_ids[0].value,
-                    "family_labels": [item.value for item in frame.product_family_choice.selected_ids],
+                    "family_labels": [
+                        item.value
+                        for item in frame.product_family_choice.selected_ids
+                    ],
                     "evidence": [
                         {
                             "segment_id": item.segment_id,
@@ -153,7 +157,9 @@ class QueryContractJudge:
         try:
             invocation = await self._adapter.invoke(envelope, timeout_seconds)
         except ModelInvocationError as error:
-            return _result(None, ContractReadiness.AMBIGUOUS, error.code)
+            return _result(
+                None, ContractReadiness.AMBIGUOUS, error.code, model_call_used=True
+            )
 
         offered = {item.candidate_id for item in candidates}
         try:
@@ -165,6 +171,7 @@ class QueryContractJudge:
                 ContractReadiness.AMBIGUOUS,
                 "JUDGE_SCHEMA_INVALID",
                 invocation,
+                model_call_used=True,
             )
         if response.candidate_id not in offered:
             return _result(
@@ -172,11 +179,13 @@ class QueryContractJudge:
                 ContractReadiness.AMBIGUOUS,
                 "JUDGE_UNKNOWN_CANDIDATE_ID",
                 invocation,
+                model_call_used=True,
             )
         return _result(
             response.candidate_id,
             ContractReadiness.COMPLETE,
             invocation=invocation,
+            model_call_used=True,
         )
 
 
@@ -220,6 +229,7 @@ def _result(
     readiness: ContractReadiness,
     reason_code: str | None = None,
     invocation: ModelInvocationResult | None = None,
+    model_call_used: bool = False,
 ) -> QueryContractJudgeResult:
     return QueryContractJudgeResult(
         candidate_id=candidate_id,
@@ -228,6 +238,7 @@ def _result(
             reason_codes=(reason_code,) if reason_code else (),
         ),
         usage=dict(invocation.usage) if invocation else {},
+        model_call_used=model_call_used,
     )
 
 

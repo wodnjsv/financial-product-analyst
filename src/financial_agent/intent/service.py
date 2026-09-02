@@ -9,10 +9,11 @@ import json
 from time import perf_counter
 from typing import Protocol
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, model_validator
 
 from financial_agent.contracts.base import ContractModel
 from financial_agent.contracts.canonical import canonical_sha256
+from financial_agent.contracts.enums import ProductFamily
 from financial_agent.contracts.request import RequestContext
 
 from .candidates import (
@@ -23,6 +24,7 @@ from .candidates import (
     generate_semantic_candidates,
 )
 from .assembler import assemble_proposal
+from .axis_locks import ExactSemanticLock, build_exact_semantic_locks
 from .catalog import SemanticCatalogSnapshot
 from .clova import ModelInvocationResult
 from .context import (
@@ -30,6 +32,7 @@ from .context import (
     finalize_resolution,
     validate_context_graph,
 )
+from .draft import ProductFamilyChoice
 from .errors import (
     MODEL_INVALID_FRAME_REFERENCE,
     MODEL_INVALID_SEMANTIC_COVERAGE,
@@ -49,9 +52,24 @@ from .normalization import (
 )
 from .prompt import ResolverPromptEnvelope, build_prompt
 from .proposal import IntentResolutionProposalV2
+from .query_contract_judge import QueryContractJudge, QueryContractJudgeResult
+from .query_contract_registry import QueryContractRegistry
+from .query_contract_solver import (
+    QueryContractCandidate,
+    QueryContractCandidateSet,
+    QueryContractFrameCandidateSet,
+    solve_query_contracts,
+)
+from .query_contracts import (
+    ContractReadiness,
+    ContractReadinessRecordV2,
+    ProvenanceSourceKind,
+)
 from .resolution import (
     ResolverBuildManifest,
+    ValidatedIntentFrameV2,
     ValidatedIntentResolutionV2,
+    ValidationEvent,
 )
 from .slot_resolution import resolve_ambiguous_slots
 from .task_binding import (
@@ -61,6 +79,7 @@ from .task_binding import (
     bind_task_slots,
 )
 from .task_contracts import TaskContractRegistry
+from .types import ChoiceState, ResolutionStatus, SemanticTag
 from .validation import validate_semantics
 from .view import (
     ActiveDatasetPin,
@@ -72,6 +91,7 @@ from .view import (
 
 _SUCCESS_CODE = "RESOLUTION_VALIDATED"
 _TASK_SUCCESS_CODE = "TASK_RESOLUTION_VALIDATED"
+_QUERY_CONTRACT_SUCCESS_CODE = "QUERY_CONTRACT_RESOLUTION_VALIDATED"
 _REPAIR_INSTRUCTIONS = {
     MODEL_PROPOSAL_SCHEMA_INVALID: (
         "Return a ProposalV2 with the exact schema shape. Select only offered "
@@ -125,6 +145,35 @@ class TaskBoundResolutionTelemetry(ResolutionTelemetry):
     conditional_slot_call_used: bool
 
 
+class QueryContractResolutionTelemetry(ContractModel):
+    normalization_ms: int = Field(ge=0)
+    candidate_ms: int = Field(ge=0)
+    axis_model_ms: int = Field(ge=0)
+    validation_ms: int = Field(ge=0)
+    exact_lock_reconciliation_ms: int = Field(ge=0)
+    candidate_solve_ms: int = Field(ge=0)
+    tie_break_ms: int = Field(ge=0)
+    candidate_judge_ms: int = Field(ge=0)
+    model_call_count: int = Field(ge=1, le=2)
+    repair_used: bool
+    candidate_judge_used: bool
+    offered_candidate_count: int = Field(ge=0)
+    complete_candidate_count: int = Field(ge=0)
+    rejection_count: int = Field(ge=0)
+    frame_count: int = Field(ge=1, le=16)
+    usage: ModelUsageTelemetry
+    stable_code: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_model_allowance(self) -> "QueryContractResolutionTelemetry":
+        if self.repair_used and self.candidate_judge_used:
+            raise ValueError("MODEL_CALL_ALLOWANCE_CONFLICT")
+        expected_calls = 1 + int(self.repair_used or self.candidate_judge_used)
+        if self.model_call_count != expected_calls:
+            raise ValueError("MODEL_CALL_COUNT_MISMATCH")
+        return self
+
+
 @dataclass(frozen=True, slots=True)
 class _PreparationTelemetry:
     normalization_ms: int
@@ -157,6 +206,13 @@ class TaskBoundResolutionAttempt:
     telemetry: TaskBoundResolutionTelemetry
 
 
+@dataclass(frozen=True, slots=True)
+class QueryContractResolutionAttempt:
+    resolution: ValidatedIntentResolutionV2
+    candidates: QueryContractCandidateSet
+    telemetry: QueryContractResolutionTelemetry
+
+
 class IntentResolverService:
     def __init__(
         self,
@@ -167,6 +223,7 @@ class IntentResolverService:
         manifest: ResolverBuildManifest,
         active_dataset_pin: ActiveDatasetPin,
         task_contract_registry: TaskContractRegistry | None = None,
+        query_contract_registry: QueryContractRegistry | None = None,
         utcnow: Callable[[], datetime] | None = None,
         timer: Callable[[], float] | None = None,
     ) -> None:
@@ -176,6 +233,7 @@ class IntentResolverService:
         self._manifest = manifest
         self._active_dataset_pin = active_dataset_pin
         self._task_contract_registry = task_contract_registry
+        self._query_contract_registry = query_contract_registry
         self._utcnow = utcnow or (lambda: datetime.now(UTC))
         self._timer = timer or perf_counter
 
@@ -203,6 +261,12 @@ class IntentResolverService:
             context.dataset_version,
             entity_mentions,
         )
+        exact_semantic_locks = build_exact_semantic_locks(
+            normalized,
+            self._catalog,
+            semantic_candidates=semantic_candidates,
+            literals=literals,
+        )
         view = build_resolver_view(
             context=context,
             normalized=normalized,
@@ -212,6 +276,7 @@ class IntentResolverService:
             manifest=self._manifest,
             active_dataset_pin=self._active_dataset_pin,
             catalog=self._catalog,
+            exact_semantic_locks=exact_semantic_locks,
         )
         prompt = build_prompt(context, view, self._catalog)
         candidate_ms = _duration_ms(candidates_started, self._timer())
@@ -318,6 +383,140 @@ class IntentResolverService:
         )
         return TaskBoundResolutionAttempt(resolution=bound, telemetry=telemetry)
 
+    async def resolve_query_contract_candidates(
+        self, context: RequestContext
+    ) -> QueryContractResolutionAttempt:
+        """Resolve axes and bounded V2 contracts under one shared extra-call allowance."""
+
+        if self._query_contract_registry is None:
+            raise ResolverContractError("QUERY_CONTRACT_REGISTRY_MISSING")
+        prepared = await self.prepare(context)
+
+        axis_started = self._timer()
+        first_result = await self._adapter.invoke(
+            prepared.prompt,
+            timeout_seconds=self._remaining_model_seconds(context),
+        )
+        axis_model_ms = _duration_ms(axis_started, self._timer())
+        usage = dict(first_result.usage)
+        repair_used = False
+
+        validation_started = self._timer()
+        try:
+            resolution = self.validate_axis_response(prepared, first_result.content)
+        except ResolverContractError as failure:
+            if failure.code not in _REPAIR_INSTRUCTIONS:
+                raise
+            repair_envelope = build_repair_envelope(prepared, failure)
+            repair_started = self._timer()
+            repaired_result = await self._adapter.invoke(
+                repair_envelope,
+                timeout_seconds=self._remaining_model_seconds(context),
+            )
+            axis_model_ms += _duration_ms(repair_started, self._timer())
+            resolution = self.validate_axis_response(prepared, repaired_result.content)
+            resolution = resolution.model_copy(
+                update={
+                    "repair_used": True,
+                    "invalid_attempt_hashes": tuple(
+                        sorted(
+                            {
+                                *resolution.invalid_attempt_hashes,
+                                canonical_sha256(
+                                    {"invalid_model_content": first_result.content}
+                                ),
+                            }
+                        )
+                    ),
+                }
+            )
+            usage = _merge_usage(usage, repaired_result.usage)
+            repair_used = True
+        validation_ms = _duration_ms(validation_started, self._timer())
+
+        reconciliation_started = self._timer()
+        resolution = reconcile_exact_axis_locks(
+            resolution,
+            prepared.view.exact_semantic_locks,
+            prepared.semantic_candidates,
+            prepared.literals,
+            prepared.view,
+        )
+        exact_lock_reconciliation_ms = _duration_ms(
+            reconciliation_started, self._timer()
+        )
+
+        solve_started = self._timer()
+        candidates = solve_query_contracts(
+            resolution=resolution,
+            view=prepared.view,
+            exact_locks=prepared.view.exact_semantic_locks,
+            registry=self._query_contract_registry,
+        )
+        candidate_solve_ms = _duration_ms(solve_started, self._timer())
+        offered_candidate_count = len(candidates.complete_candidates)
+
+        tie_break_started = self._timer()
+        candidates = _apply_deterministic_tie_break(candidates)
+        tie_break_ms = _duration_ms(tie_break_started, self._timer())
+
+        judge_ms = 0
+        judge_used = False
+        ambiguous_frames = tuple(
+            frame
+            for frame in candidates.frames
+            if len(frame.complete_candidates) > 1
+            and "CANDIDATE_BOUND_REACHED"
+            not in frame.contract_readiness.reason_codes
+        )
+        if not repair_used and len(ambiguous_frames) == 1:
+            ambiguous = ambiguous_frames[0]
+            frame = next(
+                item
+                for item in resolution.canonical_frames
+                if item.frame_id == ambiguous.frame_id
+            )
+            judge_started = self._timer()
+            judged = await QueryContractJudge(self._adapter).select_offered_id(
+                question=context.question,
+                frame=frame,
+                view=prepared.view,
+                candidates=ambiguous.complete_candidates,
+                timeout_seconds=max(
+                    0.0, (context.deadline_at - self._utcnow()).total_seconds()
+                ),
+            )
+            judge_ms = _duration_ms(judge_started, self._timer())
+            judge_used = judged.model_call_used
+            if judged.usage:
+                usage = _merge_usage(usage, judged.usage)
+            candidates = _apply_judge_result(candidates, ambiguous.frame_id, judged)
+
+        telemetry = QueryContractResolutionTelemetry(
+            normalization_ms=prepared.telemetry.normalization_ms,
+            candidate_ms=prepared.telemetry.candidate_ms,
+            axis_model_ms=axis_model_ms,
+            validation_ms=validation_ms,
+            exact_lock_reconciliation_ms=exact_lock_reconciliation_ms,
+            candidate_solve_ms=candidate_solve_ms,
+            tie_break_ms=tie_break_ms,
+            candidate_judge_ms=judge_ms,
+            model_call_count=1 + int(repair_used or judge_used),
+            repair_used=repair_used,
+            candidate_judge_used=judge_used,
+            offered_candidate_count=offered_candidate_count,
+            complete_candidate_count=len(candidates.complete_candidates),
+            rejection_count=len(candidates.rejections),
+            frame_count=len(resolution.canonical_frames),
+            usage=_usage_telemetry(usage),
+            stable_code=_QUERY_CONTRACT_SUCCESS_CODE,
+        )
+        return QueryContractResolutionAttempt(
+            resolution=resolution,
+            candidates=candidates,
+            telemetry=telemetry,
+        )
+
     def validate_axis_response(
         self,
         prepared: PreparedResolutionRequest,
@@ -414,7 +613,9 @@ def build_repair_envelope(
         user_message=json.dumps(
             {
                 "context": prepared.context.model_dump(mode="json"),
-                "view": prepared.view.model_dump(mode="json"),
+                "view": prepared.view.model_dump(
+                    mode="json", exclude={"exact_semantic_locks"}
+                ),
                 "original_prompt_hash": original_prompt_hash,
                 "failure_code": failure.code,
                 "correction_instruction": instruction,
@@ -425,6 +626,228 @@ def build_repair_envelope(
         ),
         response_schema=prepared.prompt.response_schema,
     )
+
+
+def reconcile_exact_axis_locks(
+    resolution: ValidatedIntentResolutionV2,
+    locks: tuple[ExactSemanticLock, ...],
+    semantic_candidates: SemanticCandidateSet,
+    literals: tuple[LiteralCandidate, ...],
+    view: ResolverView,
+) -> ValidatedIntentResolutionV2:
+    """Make exact family evidence authoritative after model semantic validation."""
+
+    source_segments = {
+        group.mention.mention_id: group.mention.segment_id
+        for group in semantic_candidates.by_mention
+    }
+    source_segments.update({item.literal_id: item.segment_id for item in literals})
+    mentions_by_id = {
+        group.mention.mention_id: group.mention
+        for group in semantic_candidates.by_mention
+    }
+    family_locks = tuple(item for item in locks if item.role == "product_family")
+    if not family_locks:
+        return resolution
+
+    changed_frame_ids: list[str] = []
+    old_choices: dict[str, ProductFamilyChoice] = {}
+    frames: list[ValidatedIntentFrameV2] = []
+    single_frame = len(resolution.canonical_frames) == 1
+    for frame in resolution.canonical_frames:
+        applicable = tuple(
+            item
+            for item in family_locks
+            if single_frame
+            or any(
+                source_segments.get(source_ref) in frame.segment_ids
+                for source_ref in item.evidence_span_ids
+            )
+        )
+        if not applicable:
+            frames.append(frame)
+            continue
+        locked_families = tuple(
+            sorted(
+                {ProductFamily(item.canonical_id) for item in applicable},
+                key=lambda item: item.value,
+            )
+        )
+        exact_evidence_ids = tuple(
+            sorted(
+                {
+                    evidence.evidence_id
+                    for lock in applicable
+                    for source_ref in lock.evidence_span_ids
+                    if (mention := mentions_by_id.get(source_ref)) is not None
+                    for evidence in view.evidence_candidates
+                    if evidence.segment_id == mention.segment_id
+                    and evidence.start_char == mention.start_char
+                    and evidence.end_char == mention.end_char
+                    and lock.canonical_id in evidence.offered_semantic_ids
+                }
+            )
+        )
+        if (
+            frame.product_family_choice.state is ChoiceState.SELECTED
+            and frame.product_family_choice.selected_ids == locked_families
+        ):
+            frames.append(frame)
+            continue
+        old_choices[frame.frame_id] = frame.product_family_choice
+        changed_frame_ids.append(frame.frame_id)
+        frames.append(
+            frame.model_copy(
+                update={
+                    "product_family_choice": ProductFamilyChoice(
+                        state=ChoiceState.SELECTED,
+                        selected_ids=locked_families,
+                        evidence_span_ids=(
+                            exact_evidence_ids
+                            or frame.product_family_choice.evidence_span_ids
+                        ),
+                        reason_code="exact_lock",
+                    ),
+                    "frame_status": (
+                        ResolutionStatus.RESOLVED
+                        if frame.frame_status is ResolutionStatus.AMBIGUOUS
+                        else frame.frame_status
+                    ),
+                }
+            )
+        )
+    if not changed_frame_ids:
+        return resolution
+
+    changed = set(changed_frame_ids)
+    issues = tuple(
+        issue
+        for issue in resolution.issues
+        if not (
+            issue.code == "AMBIGUITY_UNRESOLVED"
+            and len(issue.related_ids) == 1
+            and issue.related_ids[0] in changed
+            and issue.evidence_span_ids
+            == old_choices[issue.related_ids[0]].evidence_span_ids
+        )
+    )
+    events = (
+        *resolution.validation_events,
+        *(
+            ValidationEvent(
+                event_id=f"event-exact-family-{frame_id}",
+                stage="exact-lock-reconciliation",
+                code="EXACT_FAMILY_LOCK_APPLIED",
+                related_ids=(frame_id,),
+            )
+            for frame_id in sorted(changed)
+        ),
+    )
+    resolution_status = (
+        ResolutionStatus.RESOLVED
+        if not issues and all(
+            frame.frame_status is ResolutionStatus.RESOLVED for frame in frames
+        )
+        else resolution.resolution_status
+    )
+    selected_families = {
+        family
+        for frame in frames
+        for family in frame.product_family_choice.selected_ids
+    }
+    final_tags = set(resolution.final_tags)
+    if len(selected_families) > 1:
+        final_tags.add(SemanticTag.CROSS_FAMILY)
+    else:
+        final_tags.discard(SemanticTag.CROSS_FAMILY)
+    reconciliation_hash = canonical_sha256(
+        {
+            "prior_resolution_id": resolution.resolution_id,
+            "frames": [item.model_dump(mode="json") for item in frames],
+            "events": [item.model_dump(mode="json") for item in events],
+        }
+    )
+    resolution_id = f"resolution-{reconciliation_hash}"
+    return resolution.model_copy(
+        update={
+            "resolution_id": resolution_id,
+            "canonical_frames": tuple(frames),
+            "issues": issues,
+            "validation_events": events,
+            "resolution_status": resolution_status,
+            "final_tags": tuple(sorted(final_tags, key=lambda item: item.value)),
+        }
+    )
+
+
+def _apply_deterministic_tie_break(
+    candidates: QueryContractCandidateSet,
+) -> QueryContractCandidateSet:
+    frames = tuple(_tie_break_frame(frame) for frame in candidates.frames)
+    return candidates.model_copy(update={"frames": frames})
+
+
+def _tie_break_frame(
+    frame: QueryContractFrameCandidateSet,
+) -> QueryContractFrameCandidateSet:
+    if (
+        len(frame.complete_candidates) < 2
+        or "CANDIDATE_BOUND_REACHED" in frame.contract_readiness.reason_codes
+    ):
+        return frame
+    ranked: dict[tuple[int, int, int, int], list[QueryContractCandidate]] = {}
+    for candidate in frame.complete_candidates:
+        counts = {
+            kind: sum(
+                item.source_kind is kind for item in candidate.contract.provenance
+            )
+            for kind in ProvenanceSourceKind
+        }
+        quality = (
+            -counts[ProvenanceSourceKind.EXACT_LOCK],
+            -counts[ProvenanceSourceKind.PRIOR_RESULT],
+            -counts[ProvenanceSourceKind.AXIS_RESOLUTION],
+            counts[ProvenanceSourceKind.REGISTRY_DEFAULT],
+        )
+        ranked.setdefault(quality, []).append(candidate)
+    best = ranked[min(ranked)]
+    if len(best) != 1:
+        return frame
+    return frame.model_copy(
+        update={
+            "complete_candidates": (best[0],),
+            "contract_readiness": ContractReadinessRecordV2(
+                readiness=ContractReadiness.COMPLETE,
+                reason_codes=(),
+            ),
+        }
+    )
+
+
+def _apply_judge_result(
+    candidates: QueryContractCandidateSet,
+    frame_id: str,
+    judged: QueryContractJudgeResult,
+) -> QueryContractCandidateSet:
+    frames: list[QueryContractFrameCandidateSet] = []
+    for frame in candidates.frames:
+        if frame.frame_id != frame_id:
+            frames.append(frame)
+            continue
+        selected = tuple(
+            item
+            for item in frame.complete_candidates
+            if item.candidate_id == judged.candidate_id
+        )
+        frames.append(
+            frame.model_copy(
+                update={
+                    "complete_candidates": selected or frame.complete_candidates,
+                    "contract_readiness": judged.contract_readiness,
+                }
+            )
+        )
+    return candidates.model_copy(update={"frames": tuple(frames)})
 
 
 def _entity_mentions(

@@ -66,7 +66,7 @@ def build_prompt(
         user_message=json.dumps(
             {
                 "context": context.model_dump(mode="json"),
-                "view": view.model_dump(mode="json"),
+                "view": view.model_dump(mode="json", exclude={"exact_semantic_locks"}),
             },
             ensure_ascii=False,
             separators=(",", ":"),

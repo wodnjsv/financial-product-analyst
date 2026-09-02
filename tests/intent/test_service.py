@@ -660,7 +660,10 @@ async def test_repair_builder_reuses_view_and_schema_without_calling_model(
         "correction_instruction",
     }
     assert payload["context"] == prepared.context.model_dump(mode="json")
-    assert payload["view"] == prepared.view.model_dump(mode="json")
+    assert payload["view"] == prepared.view.model_dump(
+        mode="json", exclude={"exact_semantic_locks"}
+    )
+    assert "exact_semantic_locks" not in payload["view"]
     assert payload["failure_code"] == failure_code
     assert len(payload["original_prompt_hash"]) == 64
     assert "offered" in payload["correction_instruction"]

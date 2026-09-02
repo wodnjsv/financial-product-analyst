@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Literal
 
 from financial_agent.contracts.base import ContractModel, Identifier
 
-from .candidates import SemanticCandidate, generate_semantic_candidates
+from .candidates import (
+    SemanticCandidate,
+    SemanticCandidateSet,
+    generate_semantic_candidates,
+)
 from .catalog import SemanticCatalogSnapshot
-from .literals import extract_literals
+from .literals import LiteralCandidate, extract_literals
 from .normalization import NormalizedRequest
 from .operators import extract_operator_candidates
 
@@ -23,13 +27,23 @@ class ExactSemanticLock(ContractModel):
 
 
 def build_exact_semantic_locks(
-    request: NormalizedRequest, catalog: SemanticCatalogSnapshot
+    request: NormalizedRequest,
+    catalog: SemanticCatalogSnapshot,
+    *,
+    semantic_candidates: SemanticCandidateSet | None = None,
+    literals: Sequence[LiteralCandidate] | None = None,
 ) -> tuple[ExactSemanticLock, ...]:
     """Build locks only from unique canonical, direct-alias, and literal evidence."""
 
-    candidates = generate_semantic_candidates(request, catalog)
-    literals = extract_literals(request)
-    operators = extract_operator_candidates(request, literals)
+    candidates = (
+        semantic_candidates
+        if semantic_candidates is not None
+        else generate_semantic_candidates(request, catalog)
+    )
+    resolved_literals = (
+        tuple(literals) if literals is not None else extract_literals(request)
+    )
+    operators = extract_operator_candidates(request, resolved_literals)
     locks: list[ExactSemanticLock] = []
     for group in candidates.by_mention:
         for candidate in group.items:
@@ -59,7 +73,7 @@ def build_exact_semantic_locks(
             evidence_span_ids=(literal.literal_id,),
             source="literal",
         )
-        for literal in literals
+        for literal in resolved_literals
     )
     locks.extend(
         ExactSemanticLock(
