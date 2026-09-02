@@ -249,7 +249,15 @@ def validation_inputs() -> ValidationInputs:
             ResolverViewRelationDefinition(
                 relation_id="managedBy",
                 definition_ko="상품을 운용하는 기관",
+                allowed_product_families=("domestic_bond", "domestic_etf", "overseas_etf", "public_fund"),
                 subject_ontology_types=("FinancialProduct",),
+                compatible_subject_ontology_types=(
+                    "Bond", "DomesticBond", "DomesticETF", "DomesticETN", "ETF",
+                    "ETN", "ExchangeTradedProduct", "FinancialProduct",
+                    "FixedRateBond", "FloatingRateBond", "FundShareClass",
+                    "OverseasETF", "OverseasETN", "PublicFund",
+                    "PublicOfferingFund", "RepresentativeFund",
+                ),
                 object_ontology_types=("AssetManager",),
                 required_qualifiers=(),
             ),
@@ -1179,7 +1187,12 @@ def test_entity_transitive_subclass_satisfies_an_intermediate_type(
                 ResolverViewRelationDefinition(
                     relation_id="tracksIndex",
                     definition_ko="상품이 추종하는 지수",
-                    subject_ontology_types=("ETF",),
+                    allowed_product_families=("domestic_etf", "overseas_etf", "public_fund"),
+                    subject_ontology_types=("ETF", "PublicFund"),
+                    compatible_subject_ontology_types=(
+                        "DomesticETF", "ETF", "FundShareClass", "OverseasETF",
+                        "PublicFund", "PublicOfferingFund", "RepresentativeFund",
+                    ),
                     object_ontology_types=("Index",),
                     required_qualifiers=(),
                 ),

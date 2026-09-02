@@ -169,7 +169,15 @@ def test_relationship_tag_requires_and_binds_unique_exact_relation() -> None:
                 ResolverViewRelationDefinition(
                     relation_id="managedBy",
                     definition_ko="상품을 운용하는 기관",
+                    allowed_product_families=("domestic_bond", "domestic_etf", "overseas_etf", "public_fund"),
                     subject_ontology_types=("FinancialProduct",),
+                    compatible_subject_ontology_types=(
+                        "Bond", "DomesticBond", "DomesticETF", "DomesticETN", "ETF",
+                        "ETN", "ExchangeTradedProduct", "FinancialProduct",
+                        "FixedRateBond", "FloatingRateBond", "FundShareClass",
+                        "OverseasETF", "OverseasETN", "PublicFund",
+                        "PublicOfferingFund", "RepresentativeFund",
+                    ),
                     object_ontology_types=("AssetManager",),
                     required_qualifiers=(),
                 ),

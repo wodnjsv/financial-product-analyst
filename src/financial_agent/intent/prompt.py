@@ -66,7 +66,15 @@ def build_prompt(
         user_message=json.dumps(
             {
                 "context": context.model_dump(mode="json"),
-                "view": view.model_dump(mode="json", exclude={"exact_semantic_locks"}),
+                "view": view.model_dump(
+                    mode="json",
+                    exclude={
+                        "exact_semantic_locks": True,
+                        "relation_definitions": {
+                            "__all__": {"compatible_subject_ontology_types": True}
+                        },
+                    },
+                ),
             },
             ensure_ascii=False,
             separators=(",", ":"),

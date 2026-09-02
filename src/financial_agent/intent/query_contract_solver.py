@@ -59,6 +59,7 @@ from .types import (
     EntitySemanticRole,
     ReferenceTargetKind,
     ResolutionStatus,
+    SemanticCoverageState,
     SlotKind,
 )
 from .view import ResolverView, ResolverViewConcept, ResolverViewLiteralCandidate
@@ -215,6 +216,20 @@ def _solve_frame(
                 ),
             ),
         )
+    if frame.semantic_coverage[0].state is not SemanticCoverageState.COVERED:
+        return _frame_result(
+            frame.frame_id,
+            (),
+            (
+                _rejection(
+                    frame,
+                    "unresolved.v2",
+                    "semantic_requirement",
+                    frame.semantic_coverage[0].evidence_ids,
+                    "UNRESOLVED_SEMANTIC_REQUIREMENT",
+                ),
+            ),
+        )
     if (
         frame.action_choice.state is not ChoiceState.SELECTED
         or len(frame.action_choice.selected_ids) != 1
@@ -317,6 +332,8 @@ def _solve_frame(
             (*rejections, _rejection(frame, variants[0].id, "field", (), "CANDIDATE_BOUND_REACHED")),
             bound=True,
         )
+    if any(lock.role == "field" for lock in exact_locks) and not fields:
+        return _frame_result(frame.frame_id, (), tuple(rejections))
     fields = _fields_with_complete_qualifiers(
         frame, variants[0].id, fields, qualifier_states, rejections
     )
@@ -573,8 +590,10 @@ def _field_offers(
         relation = relations.get(offer.concept.concept_id)
         relation_subject_compatible = (
             relation is None
-            or "FinancialProduct" in relation.subject_ontology_types
-            or bool(set(frame.entity_type_ids) & set(relation.subject_ontology_types))
+            or bool(
+                set(frame.entity_type_ids)
+                & set(relation.compatible_subject_ontology_types)
+            )
         )
         if not relation_subject_compatible:
             rejections.append(
@@ -1727,15 +1746,8 @@ def _offered_concepts(view: ResolverView) -> dict[str, ResolverViewConcept]:
             kind="relation",
             definition_ko=relation.definition_ko,
             value_kind="relation",
-            allowed_product_families=view.product_family_ids,
-            allowed_ontology_types=tuple(
-                sorted(
-                    {
-                        *relation.subject_ontology_types,
-                        *relation.object_ontology_types,
-                    }
-                )
-            ),
+            allowed_product_families=relation.allowed_product_families,
+            allowed_ontology_types=relation.compatible_subject_ontology_types,
             required_qualifiers=relation.required_qualifiers,
             allowed_operators=("traverse",),
             missingness_sensitive=True,

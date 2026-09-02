@@ -256,7 +256,15 @@ def test_view_preserves_relation_direction_and_excludes_untrusted_source_materia
     payload = canonical_json_bytes(view).decode("utf-8")
 
     relation = next(item for item in view.relation_definitions if item.relation_id == "managedBy")
+    assert relation.allowed_product_families == (
+        "domestic_bond",
+        "domestic_etf",
+        "overseas_etf",
+        "public_fund",
+    )
     assert relation.subject_ontology_types == ("FinancialProduct",)
+    assert "AssetManager" not in relation.compatible_subject_ontology_types
+    assert "ETF" in relation.compatible_subject_ontology_types
     assert relation.object_ontology_types == ("AssetManager",)
     assert "@prefix fp:" not in payload
     assert "sh:NodeShape" not in payload

@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from financial_agent.contracts.enums import IntentType, ProductFamily
+from financial_agent.graph.contract import APPROVED_RDF_TYPES
 from financial_agent.intent.axis_locks import ExactSemanticLock
 from financial_agent.intent.catalog import SemanticCatalogSnapshot, load_catalog
 from financial_agent.intent.draft import (
@@ -67,7 +68,7 @@ class DecoupledContractMetrics:
         return (
             self.candidate_recall_count / self.supported_frame_count
             if self.supported_frame_count
-            else 1.0
+            else 0.0
         )
 
     @property
@@ -75,7 +76,7 @@ class DecoupledContractMetrics:
         return (
             self.exact_contract_count / self.supported_frame_count
             if self.supported_frame_count
-            else 1.0
+            else 0.0
         )
 
     @property
@@ -83,7 +84,7 @@ class DecoupledContractMetrics:
         return (
             self.compile_eligible_count / self.supported_frame_count
             if self.supported_frame_count
-            else 1.0
+            else 0.0
         )
 
 
@@ -100,26 +101,52 @@ class FrozenSnapshotContractMetrics:
     exact_contract_count: int
     false_complete_count: int
     compile_eligible_count: int
+    unsupported_proof_count: int
+    unsupported_rejection_reason_counts: tuple[tuple[str, int], ...]
 
     @property
     def candidate_recall(self) -> float:
         denominator = self.measured_frame_count
-        return self.candidate_recall_count / denominator if denominator else 1.0
+        return self.candidate_recall_count / denominator if denominator else 0.0
 
     @property
     def exact_contract(self) -> float:
         denominator = self.measured_frame_count
-        return self.exact_contract_count / denominator if denominator else 1.0
+        return self.exact_contract_count / denominator if denominator else 0.0
 
     @property
     def compile_eligibility(self) -> float:
         denominator = self.measured_frame_count
-        return self.compile_eligible_count / denominator if denominator else 1.0
+        return self.compile_eligible_count / denominator if denominator else 0.0
+
+    @property
+    def required_supported_coverage_count(self) -> int:
+        return self.supported_frame_count
+
+    @property
+    def measured_supported_coverage_count(self) -> int:
+        return self.measured_frame_count + self.intentionally_blocked_frame_count
+
+    @property
+    def gate_reason_codes(self) -> tuple[str, ...]:
+        reasons: list[str] = []
+        if self.measured_supported_coverage_count < self.required_supported_coverage_count:
+            reasons.append("SUPPORTED_GOLD_COVERAGE_INCOMPLETE")
+        if self.unsupported_proof_count < self.unsupported_frame_count:
+            reasons.append("UNSUPPORTED_REJECTION_PROOF_INCOMPLETE")
+        if self.measured_frame_count == 0:
+            reasons.append("NO_MEASURED_SUPPORTED_FRAMES")
+        return tuple(reasons)
+
+    @property
+    def gate_status(self) -> str:
+        return "passed" if self.passes_required_gates else "deferred"
 
     @property
     def passes_required_gates(self) -> bool:
         return (
-            self.candidate_recall >= REQUIRED_CANDIDATE_RECALL
+            not self.gate_reason_codes
+            and self.candidate_recall >= REQUIRED_CANDIDATE_RECALL
             and self.exact_contract >= REQUIRED_EXACT_CONTRACT
             and self.false_complete_count == 0
             and self.compile_eligibility >= REQUIRED_COMPILE_ELIGIBILITY
@@ -201,6 +228,8 @@ def evaluate_frozen_requirement_snapshot(
     }
     catalog = load_catalog(root)
     supported = unsupported = blocked = recall = exact = false_complete = eligible = 0
+    unsupported_proof = 0
+    unsupported_rejections: Counter[str] = Counter()
     measured = 0
     unmeasured: Counter[str] = Counter()
     for requirement in heldout:
@@ -245,6 +274,13 @@ def evaluate_frozen_requirement_snapshot(
             ):
                 raise ValueError("DECOUPLED_UNSUPPORTED_SEMANTICS_MISSING")
             false_complete += int(bool(actual.complete_candidates))
+            rejection_codes = {item.reason_code for item in actual.rejections}
+            unsupported_rejections.update(rejection_codes)
+            if (
+                not actual.complete_candidates
+                and rejection_codes == {"UNRESOLVED_SEMANTIC_REQUIREMENT"}
+            ):
+                unsupported_proof += 1
             continue
 
         rejection_codes = {item.reason_code for item in actual.rejections}
@@ -291,6 +327,8 @@ def evaluate_frozen_requirement_snapshot(
         exact_contract_count=exact,
         false_complete_count=false_complete,
         compile_eligible_count=eligible,
+        unsupported_proof_count=unsupported_proof,
+        unsupported_rejection_reason_counts=tuple(sorted(unsupported_rejections.items())),
     )
 
 
@@ -356,14 +394,12 @@ def _gold_expectation(
         values = tuple(slots.get("filter_value", ()))
         if not values:
             return None, "GOLD_PREDICATE_VALUE_MISSING"
-        roles["predicate.field"] = tuple(sorted(fields))
-        roles["predicate.operator"] = tuple(
-            sorted(_OPERATOR_IDS.get(item, item) for item in operators)
+        atoms, atom_reason = _gold_predicate_atom_signatures(
+            requirement, catalog=catalog
         )
-        value_kind = _semantic_value_kind(catalog.concepts_by_id[fields[0]].value_kind)
-        roles["predicate.value"] = tuple(
-            sorted(f"{value_kind}:{value}" for value in values)
-        )
+        if atom_reason is not None:
+            return None, atom_reason
+        roles["predicate.atom"] = atoms
     elif action == "rank":
         ordering = overrides.get("ordering", {}) if isinstance(overrides, dict) else {}
         if not fields:
@@ -460,16 +496,10 @@ def _available_gold_roles(
     fields = _explicit_fields(requirement)
     _add_gold_qualifiers(roles, slots)
     if action == "screen":
-        if not slots.get("filter_value"):
-            return (), "GOLD_PREDICATE_VALUE_MISSING"
-        roles["predicate.field"] = tuple(sorted(fields))
-        roles["predicate.operator"] = tuple(
-            sorted(
-                _OPERATOR_IDS.get(item, item)
-                for item in slots.get("filter_operator", ())
-            )
-        )
-        roles["predicate.value"] = tuple(sorted(slots["filter_value"]))
+        atoms, reason = _gold_predicate_atom_signatures(requirement, catalog=None)
+        if reason is not None:
+            return (), reason
+        roles["predicate.atom"] = atoms
     elif action == "compare":
         roles["comparison.field"] = tuple(sorted(fields))
     elif action == "rank":
@@ -492,10 +522,23 @@ def _explicit_fields(requirement: dict[str, object]) -> tuple[str, ...]:
     slots = requirement.get("source_slot_values", {})
     overrides = requirement.get("semantic_overrides", {})
     ordering = overrides.get("ordering", {}) if isinstance(overrides, dict) else {}
+    predicate = overrides.get("predicate", {}) if isinstance(overrides, dict) else {}
+    predicate_fields: tuple[str, ...] = ()
+    if isinstance(predicate, dict):
+        atoms = predicate.get("atoms")
+        if isinstance(atoms, list):
+            predicate_fields = tuple(
+                str(item["field"])
+                for item in atoms
+                if isinstance(item, dict) and item.get("field")
+            )
+        elif predicate.get("field"):
+            predicate_fields = (str(predicate["field"]),)
     return tuple(
         dict.fromkeys(
             (
                 *((ordering.get("field"),) if ordering.get("field") else ()),
+                *predicate_fields,
                 *slots.get("sort_key", ()),
                 *slots.get("metric", ()),
                 *slots.get("comparison_basis", ()),
@@ -567,6 +610,11 @@ def _candidate_projection(
         roles,
         "predicate.field",
         (item.get("field_concept_id") for item in atoms),
+    )
+    _put_many(
+        roles,
+        "predicate.atom",
+        (_candidate_predicate_atom_signature(item) for item in atoms),
     )
     _put_many(
         roles,
@@ -687,8 +735,118 @@ def _typed_predicate_values(atom: dict[str, object]) -> tuple[str, ...]:
         kind = value.get("kind")
         typed = value.get(str(kind)) if kind is not None else value.get("value")
         if typed is not None:
-            values.append(f"{kind}:{typed}" if kind is not None else str(typed))
+            unit = value.get("unit_id")
+            values.append(
+                json.dumps(
+                    {"kind": kind, "value": str(typed), "unit": unit},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
     return tuple(values)
+
+
+def _candidate_predicate_atom_signature(atom: dict[str, object]) -> str:
+    return _predicate_atom_signature(
+        str(atom.get("field_concept_id")),
+        str(atom.get("operator_id")),
+        _typed_predicate_values(atom),
+    )
+
+
+def _predicate_atom_signature(
+    field_id: str, operator_id: str, typed_values: tuple[str, ...]
+) -> str:
+    return json.dumps(
+        {
+            "field": field_id,
+            "operator": operator_id,
+            "values": tuple(sorted(typed_values)),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _gold_predicate_atom_signatures(
+    requirement: dict[str, object],
+    *,
+    catalog: SemanticCatalogSnapshot | None,
+) -> tuple[tuple[str, ...], str | None]:
+    overrides = requirement.get("semantic_overrides", {})
+    predicate = overrides.get("predicate", {}) if isinstance(overrides, dict) else {}
+    if isinstance(predicate, dict) and predicate:
+        raw_atoms = predicate.get("atoms")
+        atoms = raw_atoms if isinstance(raw_atoms, list) else [predicate]
+        signatures: list[str] = []
+        for atom in atoms:
+            if not isinstance(atom, dict) or not all(
+                atom.get(key) for key in ("field", "operator", "value")
+            ):
+                return (), "GOLD_PREDICATE_ATOM_INCOMPLETE"
+            value = atom["value"]
+            if not isinstance(value, dict) or not value.get("kind"):
+                return (), "GOLD_PREDICATE_ATOM_INCOMPLETE"
+            kind = str(value["kind"])
+            canonical = value.get(kind)
+            if canonical is None:
+                return (), "GOLD_PREDICATE_ATOM_INCOMPLETE"
+            typed = json.dumps(
+                {
+                    "kind": kind,
+                    "value": str(canonical),
+                    "unit": value.get("unit"),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            signatures.append(
+                _predicate_atom_signature(
+                    str(atom["field"]), str(atom["operator"]), (typed,)
+                )
+            )
+        return tuple(sorted(signatures)), None
+
+    slots = requirement.get("source_slot_values", {})
+    fields = _explicit_fields(requirement)
+    operators = tuple(
+        _OPERATOR_IDS.get(str(item), str(item))
+        for item in slots.get("filter_operator", ())
+    )
+    values = tuple(str(item) for item in slots.get("filter_value", ()))
+    if not fields:
+        return (), "GOLD_PREDICATE_FIELD_MISSING"
+    if not operators:
+        return (), "GOLD_PREDICATE_OPERATOR_MISSING"
+    if not values:
+        return (), "GOLD_PREDICATE_VALUE_MISSING"
+    if not (len(fields) == len(operators) == len(values)):
+        return (), "GOLD_PREDICATE_ATOM_ASSOCIATION_MISSING"
+    units = tuple(str(item) for item in slots.get("unit", ()))
+    if len(units) > 1 and len(units) != len(values):
+        return (), "GOLD_PREDICATE_ATOM_UNIT_AMBIGUOUS"
+    signatures = []
+    for index, (field_id, operator_id, value) in enumerate(
+        zip(fields, operators, values, strict=True)
+    ):
+        if catalog is None or field_id not in catalog.concepts_by_id:
+            kind = "string"
+        else:
+            kind = _semantic_value_kind(
+                catalog.concepts_by_id[field_id].value_kind
+            )
+        unit = units[index] if len(units) == len(values) else units[0] if units else None
+        typed = json.dumps(
+            {"kind": kind, "value": value, "unit": unit},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        signatures.append(_predicate_atom_signature(field_id, operator_id, (typed,)))
+    return tuple(sorted(signatures)), None
 
 
 def _semantic_value_kind(value_kind: str) -> str:
@@ -804,7 +962,7 @@ def _adjudicated_solver_input(
             "frame_id": f"{requirement['case_id']}-f{requirement['frame_ordinal']}",
             "ordinal": 0,
             "frame_status": (
-                ResolutionStatus.RESOLVED if supported else ResolutionStatus.UNMAPPED
+                ResolutionStatus.RESOLVED
             ),
             "segment_ids": ("s1",),
             "evidence_span_ids": (),
@@ -835,7 +993,11 @@ def _adjudicated_solver_input(
                         if supported
                         else SemanticCoverageReason.LEXICAL_OOD
                     ),
-                    evidence_ids=(() if supported else ("evidence-ood",)),
+                    evidence_ids=(
+                        ()
+                        if supported
+                        else (f"unsupported-requirement-{requirement['case_id']}",)
+                    ),
                 ),
             ),
         }
@@ -844,7 +1006,7 @@ def _adjudicated_solver_input(
         update={
             "canonical_frames": (frame,),
             "entity_hints": (),
-            "resolution_status": frame.frame_status,
+            "resolution_status": ResolutionStatus.RESOLVED,
         }
     )
     base_view = fixture_view()
@@ -874,7 +1036,19 @@ def _adjudicated_solver_input(
                 ResolverViewRelationDefinition(
                     relation_id=item.id,
                     definition_ko=item.definition_ko,
+                    allowed_product_families=item.allowed_product_families,
                     subject_ontology_types=item.subject_ontology_types,
+                    compatible_subject_ontology_types=tuple(
+                        sorted(
+                            type_id
+                            for type_id in APPROVED_RDF_TYPES
+                            if type_id in set(item.subject_ontology_types)
+                            or bool(
+                                set(catalog.class_ancestor_ids.get(type_id, ()))
+                                & set(item.subject_ontology_types)
+                            )
+                        )
+                    ),
                     object_ontology_types=item.object_ontology_types,
                     required_qualifiers=item.required_qualifiers,
                 )

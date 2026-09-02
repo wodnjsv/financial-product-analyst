@@ -109,7 +109,15 @@ def make_view() -> ResolverView:
             ResolverViewRelationDefinition(
                 relation_id='managedBy',
                 definition_ko='상품을 운용하는 기관',
+                allowed_product_families=('domestic_bond', 'domestic_etf', 'overseas_etf', 'public_fund'),
                 subject_ontology_types=('FinancialProduct',),
+                compatible_subject_ontology_types=(
+                    'Bond', 'DomesticBond', 'DomesticETF', 'DomesticETN', 'ETF',
+                    'ETN', 'ExchangeTradedProduct', 'FinancialProduct',
+                    'FixedRateBond', 'FloatingRateBond', 'FundShareClass',
+                    'OverseasETF', 'OverseasETN', 'PublicFund',
+                    'PublicOfferingFund', 'RepresentativeFund',
+                ),
                 object_ontology_types=('AssetManager',),
                 required_qualifiers=(),
             ),
@@ -214,6 +222,10 @@ def test_prompt_keeps_untrusted_request_data_out_of_system_message() -> None:
     assert context.question not in envelope.system_message
     assert user_data['context']['question'] == context.question
     assert user_data['view']['concept_definitions'][0]['definition_ko'] == '운용자산 규모'
+    assert 'compatible_subject_ontology_types' not in user_data['view']['relation_definitions'][0]
+    assert user_data['view']['relation_definitions'][0]['allowed_product_families'] == [
+        'domestic_bond', 'domestic_etf', 'overseas_etf', 'public_fund'
+    ]
 
 
 def test_prompt_explains_subject_and_relation_object_type_roles() -> None:

@@ -126,9 +126,38 @@ class ResolverViewConcept(ContractModel):
 class ResolverViewRelationDefinition(ContractModel):
     relation_id: Identifier
     definition_ko: str = Field(min_length=1)
+    allowed_product_families: tuple[Identifier, ...]
     subject_ontology_types: tuple[Identifier, ...]
+    compatible_subject_ontology_types: tuple[Identifier, ...]
     object_ontology_types: tuple[Identifier, ...]
     required_qualifiers: tuple[Identifier, ...]
+
+    @model_validator(mode="after")
+    def validate_relation_projection(self) -> "ResolverViewRelationDefinition":
+        family_ids = {item.value for item in ProductFamily}
+        if (
+            not self.allowed_product_families
+            or self.allowed_product_families
+            != tuple(sorted(set(self.allowed_product_families)))
+            or not set(self.allowed_product_families) <= family_ids
+        ):
+            raise ValueError("relation product families must be unique, sorted, and registered")
+        for values in (
+            self.subject_ontology_types,
+            self.compatible_subject_ontology_types,
+            self.object_ontology_types,
+        ):
+            if (
+                not values
+                or values != tuple(sorted(set(values)))
+                or not set(values) <= APPROVED_RDF_TYPES
+            ):
+                raise ValueError("relation ontology types must be unique, sorted, and approved")
+        if not set(self.subject_ontology_types) <= set(
+            self.compatible_subject_ontology_types
+        ):
+            raise ValueError("relation compatible subjects must include its domain")
+        return self
 
 
 class ResolverViewLiteralCandidate(ContractModel):
@@ -281,7 +310,7 @@ def build_resolver_view(
             if concept_id in semantic_ids and concept.kind != "relation"
         ),
         relation_definitions=tuple(
-            _relation_projection(concept)
+            _relation_projection(concept, catalog)
             for concept_id, concept in sorted(catalog.concepts_by_id.items())
             if concept_id in semantic_ids and concept.kind == "relation"
         ),
@@ -361,6 +390,24 @@ def validate_resolver_view_catalog(
     """Require a restored view to retain the exact catalog type projection."""
     if view.entity_type_ids != tuple(sorted(catalog.entity_type_ids)):
         raise ResolverInvariantError("CATALOG_ENTITY_TYPE_MISMATCH")
+    for relation in view.relation_definitions:
+        concept = catalog.concepts_by_id.get(relation.relation_id)
+        if concept is None or concept.kind != "relation":
+            raise ResolverInvariantError("CATALOG_RELATION_MISMATCH")
+        expected_compatible_subjects = _compatible_relation_subject_types(
+            concept, catalog
+        )
+        if (
+            relation.allowed_product_families
+            != tuple(sorted(concept.allowed_product_families))
+            or relation.subject_ontology_types
+            != tuple(sorted(concept.subject_ontology_types))
+            or relation.compatible_subject_ontology_types
+            != expected_compatible_subjects
+            or relation.object_ontology_types
+            != tuple(sorted(concept.object_ontology_types))
+        ):
+            raise ResolverInvariantError("CATALOG_RELATION_MISMATCH")
 
 
 def _select_semantic_candidates(
@@ -433,13 +480,33 @@ def _concept_projection(concept: object) -> ResolverViewConcept:
     )
 
 
-def _relation_projection(concept: object) -> ResolverViewRelationDefinition:
+def _relation_projection(
+    concept: object, catalog: SemanticCatalogSnapshot
+) -> ResolverViewRelationDefinition:
     return ResolverViewRelationDefinition(
         relation_id=concept.id,
         definition_ko=concept.definition_ko,
+        allowed_product_families=tuple(sorted(concept.allowed_product_families)),
         subject_ontology_types=tuple(sorted(concept.subject_ontology_types)),
+        compatible_subject_ontology_types=_compatible_relation_subject_types(
+            concept, catalog
+        ),
         object_ontology_types=tuple(sorted(concept.object_ontology_types)),
         required_qualifiers=tuple(sorted(concept.required_qualifiers)),
+    )
+
+
+def _compatible_relation_subject_types(
+    concept: object, catalog: SemanticCatalogSnapshot
+) -> tuple[str, ...]:
+    domain = set(concept.subject_ontology_types)
+    return tuple(
+        sorted(
+            type_id
+            for type_id in APPROVED_RDF_TYPES
+            if type_id in domain
+            or bool(set(catalog.class_ancestor_ids.get(type_id, ())) & domain)
+        )
     )
 
 

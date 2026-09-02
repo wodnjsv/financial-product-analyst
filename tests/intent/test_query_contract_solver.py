@@ -9,6 +9,7 @@ import pytest
 from financial_agent.contracts.enums import IntentType, ProductFamily
 from financial_agent.intent.axis_locks import ExactSemanticLock
 from financial_agent.intent.draft import EntityHintV2
+from financial_agent.intent.proposal import FrameSemanticCoverage
 from financial_agent.intent.query_contract_registry import (
     PolicyKind,
     load_query_contract_registry,
@@ -24,7 +25,12 @@ from financial_agent.intent.query_contracts import (
     ProvenanceSourceKind,
     QueryOperatorId,
 )
-from financial_agent.intent.types import EntitySemanticRole, ResolutionStatus
+from financial_agent.intent.types import (
+    EntitySemanticRole,
+    ResolutionStatus,
+    SemanticCoverageReason,
+    SemanticCoverageState,
+)
 from financial_agent.intent.view import (
     ResolverViewConcept,
     ResolverViewLiteralCandidate,
@@ -227,7 +233,24 @@ def test_lookup_projects_an_explicit_relation_instead_of_default_product_profile
                 ResolverViewRelationDefinition(
                     relation_id=relation_id,
                     definition_ko=relation_id,
+                    allowed_product_families=(
+                        ("domestic_etf", "overseas_etf", "public_fund")
+                        if relation_id == "tracksIndex"
+                        else (
+                            "domestic_bond",
+                            "domestic_etf",
+                            "overseas_etf",
+                            "public_fund",
+                        )
+                    ),
                     subject_ontology_types=subject_types,
+                    compatible_subject_ontology_types=(
+                        "ETF",
+                        "FinancialProduct",
+                        "FundShareClass",
+                        "PublicFund",
+                        "RepresentativeFund",
+                    ),
                     object_ontology_types=object_types,
                     required_qualifiers=(),
                 ),
@@ -246,6 +269,107 @@ def test_lookup_projects_an_explicit_relation_instead_of_default_product_profile
     projection = result.frames[0].complete_candidates[0].contract.projections
     assert projection.field_concept_ids == (relation_id,)
     assert projection.default_profile_id is None
+
+
+def test_lookup_with_unresolved_semantic_requirement_never_uses_default_projection() -> None:
+    source = _axis(IntentType.LOOKUP)
+    source_frame = source.canonical_frames[0].model_copy(
+        update={
+            "semantic_coverage": (
+                FrameSemanticCoverage(
+                    state=SemanticCoverageState.PARTIAL,
+                    reason=SemanticCoverageReason.LEXICAL_OOD,
+                    evidence_ids=("unknown-semantic-requirement",),
+                ),
+            )
+        }
+    )
+    unresolved_semantics = source.model_copy(
+        update={"canonical_frames": (source_frame,)}
+    )
+
+    result = solve_query_contracts(
+        resolution=unresolved_semantics,
+        view=_semantic_view(),
+        exact_locks=(),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert {item.reason_code for item in result.frames[0].rejections} == {
+        "UNRESOLVED_SEMANTIC_REQUIREMENT"
+    }
+
+
+@pytest.mark.parametrize(
+    ("relation_id", "family", "subject_type", "reason"),
+    (
+        ("managedBy", ProductFamily.DOMESTIC_ETF, "AssetManager", "RELATION_SUBJECT_TYPE_MISMATCH"),
+        ("tracksIndex", ProductFamily.DOMESTIC_BOND, "FinancialProduct", "FIELD_NOT_APPLICABLE_TO_FAMILY"),
+    ),
+)
+def test_relation_projection_rejects_wrong_subject_or_product_family(
+    relation_id: str,
+    family: ProductFamily,
+    subject_type: str,
+    reason: str,
+) -> None:
+    subject_types = ("FinancialProduct",) if relation_id == "managedBy" else ("ETF", "PublicFund")
+    object_types = ("AssetManager",) if relation_id == "managedBy" else ("Index",)
+    allowed_families = (
+        ("domestic_bond", "domestic_etf", "overseas_etf", "public_fund")
+        if relation_id == "managedBy"
+        else ("domestic_etf", "overseas_etf", "public_fund")
+    )
+    resolver_view = _semantic_view().model_copy(
+        update={
+            "relation_definitions": (
+                ResolverViewRelationDefinition(
+                    relation_id=relation_id,
+                    definition_ko=relation_id,
+                    allowed_product_families=allowed_families,
+                    subject_ontology_types=subject_types,
+                    compatible_subject_ontology_types=(
+                        "ETF",
+                        "FinancialProduct",
+                        "FundShareClass",
+                        "PublicFund",
+                        "RepresentativeFund",
+                    ),
+                    object_ontology_types=object_types,
+                    required_qualifiers=(),
+                ),
+            )
+        }
+    )
+    axis = _axis(IntentType.LOOKUP, family=family)
+    axis_frame = axis.canonical_frames[0].model_copy(
+        update={"entity_type_ids": (subject_type,)}
+    )
+
+    result = solve_query_contracts(
+        resolution=axis.model_copy(update={"canonical_frames": (axis_frame,)}),
+        view=resolver_view,
+        exact_locks=(_lock("field", relation_id),),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert reason in {item.reason_code for item in result.frames[0].rejections}
+
+
+def test_unknown_relation_exact_lock_fails_closed() -> None:
+    result = solve_query_contracts(
+        resolution=_axis(IntentType.LOOKUP),
+        view=_semantic_view(),
+        exact_locks=(_lock("field", "unknownRelation"),),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert {item.reason_code for item in result.frames[0].rejections} == {
+        "EXACT_LOCK_NOT_OFFERED"
+    }
 
 
 def test_ambiguous_rank_candidates_have_content_derived_ids_and_dedupe_equivalents() -> None:
