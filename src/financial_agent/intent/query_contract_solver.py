@@ -522,7 +522,8 @@ def _field_offers(
     rejections: list[CandidateRejection],
     variant_id: str,
 ) -> tuple[tuple[_FieldOffer, ...], bool]:
-    concepts = {item.concept_id: item for item in view.concept_definitions}
+    concepts = _offered_concepts(view)
+    relations = {item.relation_id: item for item in view.relation_definitions}
     locked = tuple(lock for lock in locks if lock.role == "field")
     offers: dict[str, _FieldOffer] = {}
     if locked:
@@ -550,7 +551,12 @@ def _field_offers(
                 ),
             ):
                 concept = concepts.get(candidate.semantic_id)
-                if concept is None or concept.kind not in {"metric", "attribute", "document_topic"}:
+                if concept is None or concept.kind not in {
+                    "metric",
+                    "attribute",
+                    "document_topic",
+                    "relation",
+                }:
                     continue
                 offers.setdefault(
                     concept.concept_id,
@@ -564,7 +570,23 @@ def _field_offers(
     families = {item.value for item in scope.product_family_ids}
     applicable: list[_FieldOffer] = []
     for offer in offers.values():
-        if families and not families <= set(offer.concept.allowed_product_families):
+        relation = relations.get(offer.concept.concept_id)
+        relation_subject_compatible = (
+            relation is None
+            or "FinancialProduct" in relation.subject_ontology_types
+            or bool(set(frame.entity_type_ids) & set(relation.subject_ontology_types))
+        )
+        if not relation_subject_compatible:
+            rejections.append(
+                _rejection(
+                    frame,
+                    variant_id,
+                    "field",
+                    (offer.concept.concept_id,),
+                    "RELATION_SUBJECT_TYPE_MISMATCH",
+                )
+            )
+        elif families and not families <= set(offer.concept.allowed_product_families):
             rejections.append(
                 _rejection(
                     frame, variant_id, "field", (offer.concept.concept_id,),
@@ -1688,13 +1710,38 @@ def _unknown_exact_locks(
 ) -> tuple[ExactSemanticLock, ...]:
     offered = {
         "product_family": set(view.product_family_ids),
-        "field": {item.concept_id for item in view.concept_definitions},
+        "field": set(_offered_concepts(view)),
         "operator": set(registry.operators_by_id),
         "literal": {item.literal_id for item in view.literal_candidates},
     }
     return tuple(
         lock for lock in locks if lock.canonical_id not in offered[lock.role]
     )
+
+
+def _offered_concepts(view: ResolverView) -> dict[str, ResolverViewConcept]:
+    concepts = {item.concept_id: item for item in view.concept_definitions}
+    for relation in view.relation_definitions:
+        concepts[relation.relation_id] = ResolverViewConcept(
+            concept_id=relation.relation_id,
+            kind="relation",
+            definition_ko=relation.definition_ko,
+            value_kind="relation",
+            allowed_product_families=view.product_family_ids,
+            allowed_ontology_types=tuple(
+                sorted(
+                    {
+                        *relation.subject_ontology_types,
+                        *relation.object_ontology_types,
+                    }
+                )
+            ),
+            required_qualifiers=relation.required_qualifiers,
+            allowed_operators=("traverse",),
+            missingness_sensitive=True,
+            normalization_rule="none",
+        )
+    return concepts
 
 
 def _source_segment(source_ref: str, view: ResolverView) -> str | None:

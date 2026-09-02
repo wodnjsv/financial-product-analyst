@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -17,6 +18,10 @@ from financial_agent.intent.view import (
 )
 from tests.evaluation.query_contract.decoupled import (
     DecoupledContractCase,
+    REQUIRED_CANDIDATE_RECALL,
+    REQUIRED_COMPILE_ELIGIBILITY,
+    REQUIRED_EXACT_CONTRACT,
+    _candidate_matches_adjudication,
     evaluate_decoupled_contract_resolution,
     evaluate_frozen_requirement_snapshot,
 )
@@ -27,7 +32,117 @@ from tests.planning.fixtures import resolution, view
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_frozen_209_frame_snapshot_meets_decoupled_contract_gates() -> None:
+class _ContractPayload:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+    def model_dump(self, *, mode: str) -> dict[str, object]:
+        assert mode == "json"
+        return self.payload
+
+
+def _frozen_requirement(case_id: str, ordinal: int = 0) -> dict[str, object]:
+    payload = json.loads(
+        (
+            PROJECT_ROOT
+            / "tests/evaluation/query_contract/query_contract_requirements.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    return next(
+        item
+        for item in payload["requirements"]
+        if item.get("case_id") == case_id and item.get("frame_ordinal") == ordinal
+    )
+
+
+def test_hko_cmp_019_missing_value_cannot_accept_invented_is_present() -> None:
+    requirement = _frozen_requirement("HKO-CMP-019")
+    invented = _ContractPayload(
+        {
+            "action_id": "screen",
+            "predicate": {
+                "field_concept_id": "product_risk_grade",
+                "operator_id": "is_present",
+                "value": None,
+                "values": [],
+            },
+        }
+    )
+
+    assert not _candidate_matches_adjudication(invented, requirement)
+
+
+def test_hko_par_021_compare_requires_both_adjudicated_fields() -> None:
+    requirement = _frozen_requirement("HKO-PAR-021")
+    one_field = _ContractPayload(
+        {
+            "action_id": "compare",
+            "comparison": {
+                "subject_refs": ["alpha", "beta"],
+                "metric_concept_ids": ["aum"],
+                "basis_policy_id": "same-definition-period-unit.v1",
+            },
+            "qualifiers": {"period_id": "P1Y"},
+        }
+    )
+
+    assert not _candidate_matches_adjudication(one_field, requirement)
+
+
+@pytest.mark.parametrize(
+    ("requirement", "payload"),
+    (
+        (
+            {
+                "action_id": "screen",
+                "required_components": [],
+                "source_slot_values": {
+                    "metric": ["fee_rate"],
+                    "filter_operator": ["less_than"],
+                    "filter_value": ["1"],
+                },
+            },
+            {
+                "action_id": "screen",
+                "predicate": {
+                    "field_concept_id": "fee_rate",
+                    "operator_id": "gt",
+                    "value": {"value": "2"},
+                    "values": [],
+                },
+            },
+        ),
+        (
+            {
+                "action_id": "rank",
+                "required_components": [],
+                "source_slot_values": {
+                    "sort_key": ["aum"],
+                    "sort_direction": ["desc"],
+                    "result_limit": ["5"],
+                    "period": ["P1Y"],
+                },
+            },
+            {
+                "action_id": "rank",
+                "ordering": [
+                    {"field_concept_id": "aum", "direction": "desc"}
+                ],
+                "limit": 1,
+                "qualifiers": {"period_id": "P6M"},
+            },
+        ),
+    ),
+)
+def test_role_mismatches_never_count_as_exact(
+    requirement: dict[str, object], payload: dict[str, object]
+) -> None:
+    assert not _candidate_matches_adjudication(
+        _ContractPayload(payload), requirement
+    )
+
+
+def test_frozen_209_frame_snapshot_reports_strict_role_aware_gates() -> None:
     metrics = evaluate_frozen_requirement_snapshot(
         PROJECT_ROOT, load_query_contract_registry(PROJECT_ROOT)
     )
@@ -36,13 +151,27 @@ def test_frozen_209_frame_snapshot_meets_decoupled_contract_gates() -> None:
     assert metrics.supported_frame_count == 199
     assert metrics.unsupported_frame_count == 10
     assert metrics.intentionally_blocked_frame_count == 5
-    assert metrics.candidate_recall_count == 194
-    assert metrics.exact_contract_count == 185
-    assert metrics.compile_eligible_count == 194
-    assert metrics.candidate_recall >= 0.99
-    assert metrics.exact_contract >= 0.95
+    assert metrics.measured_frame_count == 43
+    assert metrics.evaluation_unmeasured_frame_count == 151
+    assert (
+        metrics.measured_frame_count
+        + metrics.evaluation_unmeasured_frame_count
+        + metrics.intentionally_blocked_frame_count
+        == metrics.supported_frame_count
+    )
+    assert metrics.candidate_recall_count == 43
+    assert metrics.exact_contract_count == 43
+    assert metrics.compile_eligible_count == 43
+    assert REQUIRED_CANDIDATE_RECALL == 0.99
+    assert REQUIRED_EXACT_CONTRACT == 0.95
+    assert REQUIRED_COMPILE_ELIGIBILITY == 1.0
     assert metrics.false_complete_count == 0
-    assert metrics.compile_eligibility == 1.0
+    assert metrics.passes_required_gates is True
+    reasons = dict(metrics.unmeasured_reason_counts)
+    assert reasons["GOLD_PREDICATE_VALUE_MISSING"] == 3
+    assert reasons["GOLD_COMPARISON_SUBJECTS_MISSING"] == 28
+    assert reasons["GOLD_ORDERING_DIRECTION_MISSING"] == 52
+    assert reasons["GOLD_RELATION_TARGET_MISSING"] == 21
 
 
 def test_frozen_snapshot_gate_propagates_a_broken_solver(

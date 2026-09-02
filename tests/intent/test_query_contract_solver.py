@@ -28,6 +28,7 @@ from financial_agent.intent.types import EntitySemanticRole, ResolutionStatus
 from financial_agent.intent.view import (
     ResolverViewConcept,
     ResolverViewLiteralCandidate,
+    ResolverViewRelationDefinition,
     ResolverViewSemanticCandidate,
     ResolverViewSemanticCandidateGroup,
 )
@@ -194,6 +195,57 @@ def test_unmapped_frame_never_produces_a_complete_default_lookup_contract() -> N
     assert {item.reason_code for item in result.frames[0].rejections} == {
         "FRAME_NOT_RESOLVED"
     }
+
+
+@pytest.mark.parametrize(
+    ("relation_id", "subject_types", "object_types"),
+    (
+        ("managedBy", ("FinancialProduct",), ("AssetManager",)),
+        ("tracksIndex", ("ETF", "PublicFund"), ("Index",)),
+    ),
+)
+def test_lookup_projects_an_explicit_relation_instead_of_default_product_profile(
+    relation_id: str,
+    subject_types: tuple[str, ...],
+    object_types: tuple[str, ...],
+) -> None:
+    resolver_view = _semantic_view().model_copy(
+        update={
+            "semantic_candidates": (
+                ResolverViewSemanticCandidateGroup(
+                    mention_id="mention-s1-0-1",
+                    items=(
+                        ResolverViewSemanticCandidate(
+                            semantic_id=relation_id,
+                            match_kind="direct_alias",
+                            score=1_000_000,
+                        ),
+                    ),
+                ),
+            ),
+            "relation_definitions": (
+                ResolverViewRelationDefinition(
+                    relation_id=relation_id,
+                    definition_ko=relation_id,
+                    subject_ontology_types=subject_types,
+                    object_ontology_types=object_types,
+                    required_qualifiers=(),
+                ),
+            ),
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=_axis(IntentType.LOOKUP),
+        view=resolver_view,
+        exact_locks=(_lock("field", relation_id),),
+        registry=REGISTRY,
+    )
+
+    assert len(result.frames[0].complete_candidates) == 1
+    projection = result.frames[0].complete_candidates[0].contract.projections
+    assert projection.field_concept_ids == (relation_id,)
+    assert projection.default_profile_id is None
 
 
 def test_ambiguous_rank_candidates_have_content_derived_ids_and_dedupe_equivalents() -> None:
