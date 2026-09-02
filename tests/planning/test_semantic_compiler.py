@@ -8,7 +8,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from financial_agent.contracts.canonical import canonical_json_bytes, canonical_sha256
-from financial_agent.contracts.enums import Capability, IntentType
+from financial_agent.contracts.enums import Capability, IntentType, ProductFamily
 from financial_agent.intent.query_contract_registry import load_query_contract_registry
 from financial_agent.intent.query_contract_solver import QueryContractCandidate
 from financial_agent.intent.query_contracts import (
@@ -19,8 +19,13 @@ from financial_agent.intent.query_contracts import (
     PlanReadiness,
     SolvedQueryContractCandidateV2,
 )
+from financial_agent.intent.view import ActiveDatasetPin
 from financial_agent.planning.contracts import CompilationRoute
-from financial_agent.planning.logical_query import LogicalQueryTaskV2
+from financial_agent.planning.logical_query import (
+    LogicalExecutionRoute,
+    LogicalPrimitiveStepV2,
+    LogicalQueryTaskV2,
+)
 from financial_agent.planning.physical_bindings import (
     load_physical_binding_registry,
     load_semantic_sql_policy_registry,
@@ -44,6 +49,10 @@ SEMANTIC = load_query_contract_registry(PROJECT_ROOT)
 BINDINGS = load_physical_binding_registry(PROJECT_ROOT)
 POLICIES = load_semantic_sql_policy_registry(PROJECT_ROOT)
 PLANNING = load_planning_registry(PROJECT_ROOT)
+ACTIVE_DATASET_PIN = ActiveDatasetPin(
+    dataset_version="dataset-v1",
+    manifest_hash=DATASET_PIN,
+)
 
 
 def _base(action: str, frame_id: str = "frame-1", family: str = "domestic_etf"):
@@ -196,7 +205,12 @@ def _semantic_contract(action: str):
 
 
 def _assessment(candidate: QueryContractCandidate, *, readiness=PlanReadiness.EXECUTABLE):
-    assessed = assess_plan_readiness(candidate.contract, BINDINGS, POLICIES)
+    assessed = assess_plan_readiness(
+        candidate.contract,
+        BINDINGS,
+        POLICIES,
+        active_dataset_pin=ACTIVE_DATASET_PIN,
+    )
     plan = assessed.model_copy(
         update={
             "readiness": readiness,
@@ -216,8 +230,6 @@ def _assessment(candidate: QueryContractCandidate, *, readiness=PlanReadiness.EX
         binding_registry_hash=BINDINGS.registry_hash,
         physical_policy_registry_version=POLICIES.registry_version,
         physical_policy_registry_hash=POLICIES.registry_hash,
-        dataset_version="dataset-v1",
-        dataset_pin=DATASET_PIN,
         axis=AxisReadinessRecordV2(readiness=AxisReadiness.COMPLETE, reason_codes=()),
         contract=ContractReadinessRecordV2(readiness=ContractReadiness.COMPLETE, reason_codes=()),
         plan=plan,
@@ -225,7 +237,9 @@ def _assessment(candidate: QueryContractCandidate, *, readiness=PlanReadiness.EX
 
 
 def _compile(candidates, assessments, **kwargs):
-    primitive_ids = kwargs.pop("primitive_ids", ("rank-products",))
+    primitive_ids = kwargs.pop(
+        "primitive_ids", ("lookup-products", "rank-products")
+    )
     return SemanticPlanningCompiler(BINDINGS, POLICIES, PLANNING).compile(
         request_key=REQUEST_KEY,
         run_id="run-1",
@@ -269,10 +283,18 @@ def test_compile_is_deterministic_lossless_and_independent_of_global_promotion()
     with pytest.raises(ValueError, match="EXECUTABLE_READINESS_MISMATCH"):
         type(first).model_validate(payload)
 
-    lossy_payload = first.model_dump()
+    lossy_payload = json.loads(first.model_dump_json())
     lossy_payload["logical_query_plan"]["tasks"][0]["operation"]["limit"] = 6
+    logical_payload = lossy_payload["logical_query_plan"]
+    logical_payload["logical_plan_id"] = "logical-query-plan-" + canonical_sha256(
+        {
+            key: value
+            for key, value in logical_payload.items()
+            if key != "logical_plan_id"
+        }
+    )
     with pytest.raises(ValueError, match="LOSSY_COMPILATION_ARTIFACT"):
-        type(first).model_validate(lossy_payload)
+        type(first).model_validate_json(json.dumps(lossy_payload))
 
 
 def test_compose_requires_registered_action_compatible_primitives() -> None:
@@ -283,6 +305,79 @@ def test_compose_requires_registered_action_compatible_primitives() -> None:
         _compile((candidate,), (assessment,), primitive_ids=("invented-sql.v1",))
     with pytest.raises(ValueError, match="EXECUTION_PRIMITIVE_ACTION_MISMATCH"):
         _compile((candidate,), (assessment,), primitive_ids=("screen-products",))
+    with pytest.raises(ValueError, match="EXECUTION_PRIMITIVE_BUNDLE_MISMATCH"):
+        _compile((candidate,), (assessment,), primitive_ids=("rank-products",))
+    with pytest.raises(ValueError, match="EXECUTION_PRIMITIVE_BUNDLE_MISMATCH"):
+        _compile((candidate,), (assessment,), primitive_ids=("explore-catalog",))
+
+
+def test_cross_family_rank_requires_comparison_and_normalization_roles() -> None:
+    original = _rank()
+    contract = original.contract.model_copy(
+        update={
+            "scope": original.contract.scope.model_copy(
+                update={
+                    "product_family_ids": (
+                        ProductFamily.DOMESTIC_ETF,
+                        ProductFamily.OVERSEAS_ETF,
+                    )
+                }
+            )
+        }
+    )
+    candidate = original.model_copy(update={"contract": contract})
+    assessment = _assessment(candidate)
+
+    with pytest.raises(ValueError, match="EXECUTION_PRIMITIVE_BUNDLE_MISMATCH"):
+        _compile((candidate,), (assessment,))
+
+    compilation = _compile(
+        (candidate,),
+        (assessment,),
+        primitive_ids=(
+            "lookup-products",
+            "check-comparability",
+            "normalize-values",
+            "rank-products",
+        ),
+    )
+    assert compilation.logical_query_plan is not None
+    assert tuple(
+        step.operation_kind
+        for step in compilation.logical_query_plan.tasks[0].execution_steps
+    ) == ("lookup", "check_comparability", "normalize_values", "rank")
+
+
+def test_relation_and_explanation_roles_keep_graph_and_search_routes() -> None:
+    lookup_contract = _semantic_contract("lookup")
+    lookup_candidate = QueryContractCandidate(
+        candidate_id="candidate-lookup",
+        contract=lookup_contract,
+    )
+    lookup_compilation = _compile(
+        (lookup_candidate,),
+        (_assessment(lookup_candidate),),
+        primitive_ids=("lookup-products", "traverse-relations"),
+    )
+    assert lookup_compilation.logical_query_plan is not None
+    assert lookup_compilation.logical_query_plan.tasks[0].execution_steps[-1].execution_route is (
+        LogicalExecutionRoute.GRAPH
+    )
+
+    explain_contract = _semantic_contract("explain")
+    explain_candidate = QueryContractCandidate(
+        candidate_id="candidate-explain",
+        contract=explain_contract,
+    )
+    explain_compilation = _compile(
+        (explain_candidate,),
+        (_assessment(explain_candidate),),
+        primitive_ids=("lookup-products", "search-documents"),
+    )
+    assert explain_compilation.logical_query_plan is not None
+    assert explain_compilation.logical_query_plan.tasks[0].execution_steps[-1].execution_route is (
+        LogicalExecutionRoute.SEARCH
+    )
 
 
 def test_fast_requires_an_exact_registered_archetype_and_its_primitive_set() -> None:
@@ -299,13 +394,135 @@ def test_fast_requires_an_exact_registered_archetype_and_its_primitive_set() -> 
     assert compilation.logical_query_plan is not None
     assert compilation.logical_query_plan.planning_registry_hash == PLANNING.registry_hash
 
-    with pytest.raises(ValueError, match="ARCHETYPE_PRIMITIVE_MISMATCH"):
+    with pytest.raises(
+        ValueError,
+        match="EXECUTION_PRIMITIVE_BUNDLE_MISMATCH|ARCHETYPE_PRIMITIVE_MISMATCH",
+    ):
         _compile(
             (candidate,),
             (assessment,),
             primitive_ids=("rank-products",),
             matched_archetype_id="rank.single-family.v1",
         )
+
+
+def test_semantic_candidate_id_may_repeat_across_distinct_frames() -> None:
+    first = _rank("frame-1")
+    second_original = _rank("frame-2")
+    second = second_original.model_copy(update={"candidate_id": first.candidate_id})
+
+    compilation = _compile(
+        (first, second),
+        (_assessment(first), _assessment(second)),
+    )
+
+    plan = compilation.logical_query_plan
+    assert plan is not None
+    assert len(plan.tasks) == 2
+    assert plan.tasks[0].candidate_id == plan.tasks[1].candidate_id
+    assert plan.tasks[0].task_id != plan.tasks[1].task_id
+    assert plan.tasks[0].resolved_contract_id != plan.tasks[1].resolved_contract_id
+
+    duplicate_frame = second.model_copy(
+        update={"contract": second.contract.model_copy(update={"frame_id": "frame-1"})}
+    )
+    with pytest.raises(ValueError, match="DUPLICATE_SELECTED_FRAME"):
+        _compile(
+            (first, duplicate_frame),
+            (_assessment(first), _assessment(duplicate_frame)),
+        )
+
+
+def test_restoration_recomputes_bundle_plan_and_compilation_identities() -> None:
+    candidate = _rank()
+    compilation = _compile((candidate,), (_assessment(candidate),))
+
+    compilation_payload = compilation.model_dump()
+    compilation_payload["compilation_id"] = "forged-compilation-id"
+    with pytest.raises(ValueError, match="COMPILATION_ID_MISMATCH"):
+        type(compilation).model_validate(compilation_payload)
+
+    plan_payload = compilation.logical_query_plan.model_dump()
+    plan_payload["producer"] = "forged-producer"
+    with pytest.raises(ValueError, match="LOGICAL_PLAN_ID_MISMATCH"):
+        type(compilation.logical_query_plan).model_validate(plan_payload)
+
+    bundle_payload = compilation.model_dump()
+    bundle_payload["logical_query_plan"]["query_contract_id"] = "forged-bundle-id"
+    with pytest.raises(
+        ValueError,
+        match="QUERY_CONTRACT_BUNDLE_ID_MISMATCH|LOGICAL_PLAN_ID_MISMATCH",
+    ):
+        type(compilation).model_validate(bundle_payload)
+
+    disposition_payload = compilation.model_dump()
+    disposition_payload["recommended_answer_disposition"] = "limitation"
+    with pytest.raises(ValueError, match="SEMANTIC_ROUTE_DECISION_MISMATCH"):
+        type(compilation).model_validate(disposition_payload)
+
+
+def test_restoration_rejects_semantic_and_physical_provenance_relabelling() -> None:
+    candidate = _rank()
+    compilation = _compile((candidate,), (_assessment(candidate),))
+
+    semantic_payload = compilation.model_dump()
+    semantic_payload["readiness_assessments"][0]["semantic_registry_pins"][
+        "contract_registry_hash"
+    ] = "f" * 64
+    with pytest.raises(ValueError, match="COMPILATION_READINESS_OWNERSHIP_MISMATCH"):
+        type(compilation).model_validate(semantic_payload)
+
+    physical_payload = compilation.model_dump()
+    physical_payload["readiness_assessments"][0]["plan"][
+        "binding_registry_hash"
+    ] = "f" * 64
+    with pytest.raises(ValueError, match="COMPILATION_READINESS_OWNERSHIP_MISMATCH"):
+        type(compilation).model_validate(physical_payload)
+
+    dataset_payload = compilation.model_dump()
+    dataset_payload["readiness_assessments"][0]["plan"]["dataset_pin"] = "f" * 64
+    with pytest.raises(ValueError, match="LOGICAL_PLAN_COMPILATION_PIN_MISMATCH"):
+        type(compilation).model_validate(dataset_payload)
+
+
+def test_restoration_rejects_forged_execution_step_role() -> None:
+    candidate = _rank()
+    compilation = _compile((candidate,), (_assessment(candidate),))
+    payload = json.loads(compilation.model_dump_json())
+    logical_payload = payload["logical_query_plan"]
+    logical_payload["tasks"][0]["execution_steps"][1]["operation_kind"] = "lookup"
+    logical_payload["logical_plan_id"] = "logical-query-plan-" + canonical_sha256(
+        {
+            key: value
+            for key, value in logical_payload.items()
+            if key != "logical_plan_id"
+        }
+    )
+
+    with pytest.raises(ValueError, match="LOSSY_COMPILATION_ARTIFACT"):
+        type(compilation).model_validate_json(json.dumps(payload))
+
+
+def test_abstain_with_no_primitive_has_no_executable_plan() -> None:
+    candidate = _rank()
+    assessment = _assessment(candidate).model_copy(
+        update={
+            "axis": AxisReadinessRecordV2(
+                readiness=AxisReadiness.AMBIGUOUS,
+                reason_codes=("AXIS_AMBIGUOUS",),
+            )
+        }
+    )
+
+    compilation = _compile(
+        (candidate,),
+        (assessment,),
+        primitive_ids=(),
+    )
+
+    assert compilation.route is CompilationRoute.ABSTAIN
+    assert compilation.primitive_ids == ()
+    assert compilation.logical_query_plan is None
 
 
 @pytest.mark.parametrize("action", [item.value for item in IntentType])
@@ -316,6 +533,7 @@ def test_every_action_specific_semantic_body_has_an_exact_logical_representation
         frame_id=contract.frame_id,
         candidate_id=f"candidate-{action}",
         contract_hash=canonical_sha256(contract),
+        resolved_contract_id=f"resolved-{action}",
         contract_variant_id=contract.contract_variant_id,
         action_id=contract.action_id,
         capability=(
@@ -324,6 +542,25 @@ def test_every_action_specific_semantic_body_has_an_exact_logical_representation
             else Capability.SIMILARITY
             if contract.action_id is IntentType.SIMILAR
             else Capability.RDB_LOOKUP
+        ),
+        execution_steps=(
+            LogicalPrimitiveStepV2(
+                primitive_id=f"primitive-{action}",
+                action_id=contract.action_id,
+                capability=(
+                    Capability.FINANCIAL_CALCULATION
+                    if contract.action_id is IntentType.CALCULATE
+                    else Capability.SIMILARITY
+                    if contract.action_id is IntentType.SIMILAR
+                    else Capability.RDB_LOOKUP
+                ),
+                operation_kind=action,
+                execution_route=(
+                    LogicalExecutionRoute.STAGE05
+                    if contract.action_id in {IntentType.CALCULATE, IntentType.SIMILAR}
+                    else LogicalExecutionRoute.SEMANTIC_SQL
+                ),
+            ),
         ),
         scope=contract.scope,
         qualifiers=contract.qualifiers,
@@ -345,8 +582,6 @@ def test_every_action_specific_semantic_body_has_an_exact_logical_representation
         {"frame_id": "frame-other"},
         {"candidate_id": "candidate-other"},
         {"contract_hash": "f" * 64},
-        {"dataset_version": "dataset-other"},
-        {"dataset_pin": "f" * 64},
         {"binding_registry_hash": "f" * 64},
         {"physical_policy_registry_hash": "f" * 64},
     ],

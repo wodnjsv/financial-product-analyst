@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Annotated, Literal, TypeAlias
 
 from pydantic import ConfigDict, Field, model_validator
@@ -12,6 +13,7 @@ from financial_agent.contracts.base import (
     RuntimeArtifact,
     Sha256Hex,
 )
+from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.enums import Capability, Cardinality, IntentType
 from financial_agent.contracts.validation import (
     require_acyclic_edges,
@@ -35,16 +37,6 @@ from financial_agent.intent.query_contracts import (
 from .contracts import CompilationRoute
 
 
-_ACTION_CAPABILITIES = {
-    IntentType.LOOKUP: Capability.RDB_LOOKUP,
-    IntentType.SCREEN: Capability.RDB_LOOKUP,
-    IntentType.RANK: Capability.RDB_LOOKUP,
-    IntentType.COMPARE: Capability.RDB_LOOKUP,
-    IntentType.AGGREGATE: Capability.RDB_LOOKUP,
-    IntentType.CALCULATE: Capability.FINANCIAL_CALCULATION,
-    IntentType.SIMILAR: Capability.SIMILARITY,
-    IntentType.EXPLAIN: Capability.RDB_LOOKUP,
-}
 _ACTION_RESULT_SHAPES = {
     IntentType.LOOKUP: {QueryResultShape.PRODUCT_LIST},
     IntentType.SCREEN: {QueryResultShape.PRODUCT_LIST},
@@ -139,14 +131,31 @@ class ProducedResultBindingV2(_StrictModel):
     cardinality: Cardinality = Field(strict=False)
 
 
+class LogicalExecutionRoute(str, Enum):
+    SEMANTIC_SQL = "semantic_sql"
+    GRAPH = "graph"
+    SEARCH = "search"
+    STAGE05 = "stage05"
+
+
+class LogicalPrimitiveStepV2(_StrictModel):
+    primitive_id: Identifier
+    action_id: IntentType = Field(strict=False)
+    capability: Capability = Field(strict=False)
+    operation_kind: Identifier
+    execution_route: LogicalExecutionRoute = Field(strict=False)
+
+
 class LogicalQueryTaskV2(_StrictModel):
     task_id: Identifier
     frame_id: Identifier
     candidate_id: Identifier
     contract_hash: Sha256Hex
+    resolved_contract_id: Identifier
     contract_variant_id: Identifier
     action_id: IntentType = Field(strict=False)
     capability: Capability = Field(strict=False)
+    execution_steps: tuple[LogicalPrimitiveStepV2, ...] = Field(min_length=1)
     scope: QueryScopeV2
     qualifiers: QueryQualifiersV2
     result_shape: QueryResultShape = Field(strict=False)
@@ -161,7 +170,9 @@ class LogicalQueryTaskV2(_StrictModel):
     def validate_task(self):
         if self.operation.operation_type != self.action_id.value:
             raise ValueError("LOGICAL_OPERATION_ACTION_MISMATCH")
-        if self.capability is not _ACTION_CAPABILITIES[self.action_id]:
+        if any(item.action_id is not self.action_id for item in self.execution_steps):
+            raise ValueError("LOGICAL_PRIMITIVE_ACTION_MISMATCH")
+        if self.capability is not self.execution_steps[-1].capability:
             raise ValueError("LOGICAL_ACTION_CAPABILITY_MISMATCH")
         if self.result_shape not in _ACTION_RESULT_SHAPES[self.action_id]:
             raise ValueError("LOGICAL_ACTION_RESULT_SHAPE_MISMATCH")
@@ -173,6 +184,10 @@ class LogicalQueryTaskV2(_StrictModel):
         ):
             raise ValueError("PRIOR_RESULT_INPUT_MISMATCH")
         require_unique_ids(self.binding_ids, label="logical binding IDs")
+        require_unique_ids(
+            (item.primitive_id for item in self.execution_steps),
+            label="logical primitive IDs",
+        )
         require_unique_ids(self.policy_ids, label="logical policy IDs")
         require_unique_ids(self.evidence_requirements, label="evidence requirements")
         require_unique_ids(
@@ -189,7 +204,9 @@ class LogicalDependencyV2(_StrictModel):
 
 
 class SemanticLoweringRecordV2(_StrictModel):
+    frame_id: Identifier
     candidate_id: Identifier
+    resolved_contract_id: Identifier
     task_id: Identifier
     preserved_semantic_paths: tuple[Identifier, ...]
     binding_ids: tuple[Identifier, ...]
@@ -212,12 +229,17 @@ class LogicalQueryPlanV2(RuntimeArtifact):
     tasks: tuple[LogicalQueryTaskV2, ...] = Field(min_length=1, max_length=16)
     dependencies: tuple[LogicalDependencyV2, ...]
     applied_policy_ids: tuple[Identifier, ...]
+    primitive_ids: tuple[Identifier, ...]
     binding_registry_version: Identifier
     binding_registry_hash: Sha256Hex
     physical_policy_registry_version: Identifier
     physical_policy_registry_hash: Sha256Hex
     contract_registry_version: Identifier
     contract_registry_hash: Sha256Hex
+    operator_registry_version: Identifier
+    operator_registry_hash: Sha256Hex
+    semantic_policy_registry_version: Identifier
+    semantic_policy_registry_hash: Sha256Hex
     planning_registry_version: Identifier
     planning_registry_hash: Sha256Hex
     dataset_pin: Sha256Hex
@@ -228,10 +250,29 @@ class LogicalQueryPlanV2(RuntimeArtifact):
         if self.route not in {CompilationRoute.FAST, CompilationRoute.COMPOSE}:
             raise ValueError("LOGICAL_PLAN_REQUIRES_EXECUTABLE_ROUTE")
         task_ids = tuple(item.task_id for item in self.tasks)
-        candidate_ids = tuple(item.candidate_id for item in self.tasks)
+        frame_ids = tuple(item.frame_id for item in self.tasks)
         require_unique_ids(task_ids, label="logical tasks")
-        require_unique_ids(candidate_ids, label="logical candidates")
+        require_unique_ids(frame_ids, label="logical frames")
         require_unique_ids(self.applied_policy_ids, label="applied policy IDs")
+        require_unique_ids(self.primitive_ids, label="logical primitive IDs")
+        if set(self.primitive_ids) != {
+            step.primitive_id for task in self.tasks for step in task.execution_steps
+        }:
+            raise ValueError("LOGICAL_PRIMITIVE_OWNERSHIP_MISMATCH")
+        expected_routes = {
+            Capability.RDB_LOOKUP: LogicalExecutionRoute.SEMANTIC_SQL,
+            Capability.RANKING: LogicalExecutionRoute.SEMANTIC_SQL,
+            Capability.COMPARISON: LogicalExecutionRoute.SEMANTIC_SQL,
+            Capability.FINANCIAL_CALCULATION: LogicalExecutionRoute.SEMANTIC_SQL,
+            Capability.GRAPH_TRAVERSAL: LogicalExecutionRoute.GRAPH,
+            Capability.KEYWORD_SEARCH: LogicalExecutionRoute.SEARCH,
+        }
+        if any(
+            expected_routes.get(step.capability) is not step.execution_route
+            for task in self.tasks
+            for step in task.execution_steps
+        ):
+            raise ValueError("LOGICAL_PLAN_ROUTE_MISMATCH")
         require_known_ids(
             (edge.upstream_task_id for edge in self.dependencies), task_ids,
             label="logical dependency upstream tasks",
@@ -271,20 +312,38 @@ class LogicalQueryPlanV2(RuntimeArtifact):
             policy_id for task in self.tasks for policy_id in task.policy_ids
         }:
             raise ValueError("APPLIED_POLICY_OWNERSHIP_MISMATCH")
-        records_by_candidate = {item.candidate_id: item for item in self.lowering_records}
+        records_by_owner = {
+            (item.frame_id, item.candidate_id): item for item in self.lowering_records
+        }
+        task_owners = {(item.frame_id, item.candidate_id) for item in self.tasks}
         if (
-            len(records_by_candidate) != len(self.lowering_records)
-            or set(records_by_candidate) != set(candidate_ids)
+            len(records_by_owner) != len(self.lowering_records)
+            or set(records_by_owner) != task_owners
             or any(
-                records_by_candidate[task.candidate_id].task_id != task.task_id
+                records_by_owner[(task.frame_id, task.candidate_id)].task_id
+                != task.task_id
                 for task in self.tasks
             )
         ):
             raise ValueError("LOWERING_RECORD_OWNERSHIP_MISMATCH")
         if any(
-            records_by_candidate[task.candidate_id].binding_ids != task.binding_ids
-            or records_by_candidate[task.candidate_id].policy_ids != task.policy_ids
+            records_by_owner[(task.frame_id, task.candidate_id)].resolved_contract_id
+            != task.resolved_contract_id
+            or records_by_owner[(task.frame_id, task.candidate_id)].binding_ids
+            != task.binding_ids
+            or records_by_owner[(task.frame_id, task.candidate_id)].policy_ids
+            != task.policy_ids
             for task in self.tasks
         ):
             raise ValueError("LOWERING_RECORD_OWNERSHIP_MISMATCH")
+        expected_id = logical_query_plan_id(self)
+        if self.logical_plan_id != expected_id:
+            raise ValueError("LOGICAL_PLAN_ID_MISMATCH")
         return self
+
+
+def logical_query_plan_id(plan: LogicalQueryPlanV2) -> str:
+    return "logical-query-plan-" + canonical_sha256(
+        plan,
+        exclude_fields={"logical_plan_id"},
+    )

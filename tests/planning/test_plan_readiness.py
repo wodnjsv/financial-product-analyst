@@ -11,6 +11,7 @@ from financial_agent.intent.query_contracts import (
     SolvedQueryContractCandidateV2,
 )
 from financial_agent.intent.query_contract_registry import load_query_contract_registry
+from financial_agent.intent.view import ActiveDatasetPin
 from financial_agent.planning.physical_bindings import (
     DatasetEvidenceRecord,
     DatasetSourceRecord,
@@ -28,6 +29,27 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _CANDIDATE_ADAPTER = TypeAdapter(SolvedQueryContractCandidateV2)
 _SEMANTIC_REGISTRY = load_query_contract_registry(PROJECT_ROOT)
 _DATASET_PIN = "43138033043db74566a74023c18b83e01b9637c1041ae737758aef55aaa9b36f"
+_ACTIVE_DATASET_PIN = ActiveDatasetPin(
+    dataset_version="synthetic-dataset-v1",
+    manifest_hash=_DATASET_PIN,
+)
+
+
+def _assess_plan_readiness(
+    contract,
+    bindings,
+    policies,
+    *,
+    facts=None,
+    active_dataset_pin=_ACTIVE_DATASET_PIN,
+):
+    return assess_plan_readiness(
+        contract,
+        bindings,
+        policies,
+        facts=facts,
+        active_dataset_pin=active_dataset_pin,
+    )
 
 
 def _validate(payload: dict[str, object]):
@@ -197,11 +219,41 @@ def _verified_population_facts() -> PhysicalReadinessFacts:
     )
 
 
+def test_plan_readiness_is_bound_to_the_active_dataset_provenance() -> None:
+    result = _assess_plan_readiness(
+        _screen(field="aum", family="domestic_etf"),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+    )
+
+    assert result.dataset_version == _ACTIVE_DATASET_PIN.dataset_version
+    assert result.dataset_pin == _ACTIVE_DATASET_PIN.manifest_hash
+
+
+def test_public_fund_proof_cannot_be_relabelled_to_another_active_dataset() -> None:
+    other_dataset = ActiveDatasetPin(
+        dataset_version="synthetic-dataset-v2",
+        manifest_hash="f" * 64,
+    )
+
+    result = _assess_plan_readiness(
+        _public_fund_aum_sum(),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+        facts=_verified_population_facts(),
+        active_dataset_pin=other_dataset,
+    )
+
+    assert result.readiness is PlanReadiness.BLOCKED
+    assert "DATASET_PROVENANCE_MISMATCH" in result.reason_codes
+
+
 def test_public_fund_aum_sum_is_limited_when_real_grain_is_unverified() -> None:
     contract = _public_fund_aum_sum()
     before = contract.model_dump_json()
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         contract,
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -214,7 +266,7 @@ def test_public_fund_aum_sum_is_limited_when_real_grain_is_unverified() -> None:
 
 def test_synthetic_verified_representative_population_is_executable(
 ) -> None:
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _public_fund_aum_sum(),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -235,7 +287,7 @@ def test_public_fund_source_grain_sum_never_executes() -> None:
     payload["aggregation"]["population_grain_id"] = "source-product.v1"
     payload["aggregation"]["dedup_policy_id"] = "no-dedup.v1"
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -247,7 +299,7 @@ def test_public_fund_source_grain_sum_never_executes() -> None:
 
 
 def test_public_fund_representative_count_requires_population_proof() -> None:
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _public_fund_representative_count(),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -258,7 +310,7 @@ def test_public_fund_representative_count_requires_population_proof() -> None:
 
 
 def test_public_fund_representative_count_uses_complete_manifest_proof() -> None:
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _public_fund_representative_count(),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -281,7 +333,7 @@ def test_public_fund_representative_count_rejects_manifest_subset() -> None:
     )
     facts = base.model_copy(update={"public_fund_manifest": manifest})
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _public_fund_representative_count(),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -306,7 +358,7 @@ def test_public_fund_aum_rank_never_uses_share_class_rows_as_products() -> None:
     payload["limit_policy_id"] = None
     payload["predicate"] = None
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -326,7 +378,7 @@ def test_representative_proof_is_computed_not_declared() -> None:
         update={"public_fund_manifest": manifest}
     )
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _public_fund_aum_sum(),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -349,7 +401,7 @@ def test_self_consistent_manifest_subset_cannot_claim_complete_population() -> N
     )
     facts = base.model_copy(update={"public_fund_manifest": manifest})
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _public_fund_aum_sum(),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -375,7 +427,7 @@ def test_manifest_requires_same_dataset_pin_and_linked_evidence_source() -> None
     )
     facts = base.model_copy(update={"public_fund_manifest": manifest})
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _public_fund_aum_sum(),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -397,7 +449,7 @@ def test_manifest_is_bound_to_exact_representative_policy_registry() -> None:
     )
     facts = base.model_copy(update={"public_fund_manifest": manifest})
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _public_fund_aum_sum(),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -483,7 +535,7 @@ def test_representative_proof_rejects_ambiguity_cycles_and_multiple_aum_owners()
         }
     )
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _public_fund_aum_sum(),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -499,7 +551,7 @@ def test_representative_proof_rejects_ambiguity_cycles_and_multiple_aum_owners()
 
 
 def test_public_fund_total_fee_is_semantically_complete_but_physically_limited() -> None:
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _screen(),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -511,7 +563,7 @@ def test_public_fund_total_fee_is_semantically_complete_but_physically_limited()
 
 
 def test_unknown_esg_field_is_explorable_not_fabricated() -> None:
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _screen("esg_rating", "domestic_etf"),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -523,7 +575,7 @@ def test_unknown_esg_field_is_explorable_not_fabricated() -> None:
 
 
 def test_known_field_outside_scope_family_is_blocked() -> None:
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _screen("maturity_date", "domestic_etf"),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -534,7 +586,7 @@ def test_known_field_outside_scope_family_is_blocked() -> None:
 
 
 def test_percent_conversion_comes_from_physical_binding() -> None:
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _screen("fee_rate", "domestic_etf"),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -550,7 +602,7 @@ def test_fee_rate_requires_explicit_percentage_qualifier() -> None:
     payload = json.loads(_screen("fee_rate", "domestic_etf").model_dump_json())
     payload["qualifiers"]["unit_id"] = None
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -573,7 +625,7 @@ def test_invented_aum_currency_and_unit_qualifiers_fail_closed() -> None:
         "default_profile_id": None,
     }
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -591,7 +643,7 @@ def test_count_without_field_binding_still_validates_qualifier_registry() -> Non
     payload["qualifiers"]["currency_id"] = "INVENTED"
     payload["qualifiers"]["unit_id"] = "invented-unit"
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -614,7 +666,7 @@ def test_fee_rate_rejects_integer_and_non_percent_units() -> None:
         "unit_id": "won",
     }
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -641,7 +693,7 @@ def test_overseas_aum_rank_without_currency_normalization_is_limited() -> None:
     payload["limit_policy_id"] = None
     payload["predicate"] = None
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -666,7 +718,7 @@ def test_mixed_family_aum_rank_without_normalization_is_limited() -> None:
     payload["limit_policy_id"] = None
     payload["predicate"] = None
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -689,7 +741,7 @@ def test_domestic_overseas_aum_compare_requires_normalization() -> None:
         "normalization_policy_id": None,
     }
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -708,7 +760,7 @@ def test_required_as_of_qualifier_is_independently_enforced() -> None:
         "field_concept_ids": ["aum"],
         "default_profile_id": None,
     }
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -730,7 +782,7 @@ def test_comparison_checks_metrics_and_basis_policy() -> None:
         "normalization_policy_id": None,
     }
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -754,7 +806,7 @@ def test_calculation_requires_a_registered_recipe() -> None:
         ],
     }
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -773,7 +825,7 @@ def test_calculation_value_reference_is_independently_verified() -> None:
         ],
     }
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -797,7 +849,7 @@ def test_similarity_checks_dimension_binding_and_similarity_policy() -> None:
         "limit": 5,
     }
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -821,7 +873,7 @@ def test_unknown_count_population_and_comparison_subjects_fail_closed() -> None:
         "dedup_policy_id": "no-dedup.v1",
     }
     payload["predicate"] = None
-    count_result = assess_plan_readiness(
+    count_result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -838,7 +890,7 @@ def test_unknown_count_population_and_comparison_subjects_fail_closed() -> None:
         "basis_policy_id": "same-definition-period-unit.v1",
         "normalization_policy_id": None,
     }
-    compare_result = assess_plan_readiness(
+    compare_result = _assess_plan_readiness(
         _validate(compare),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -857,7 +909,7 @@ def test_scope_entity_and_prior_result_binding_fail_closed() -> None:
         "default_profile_id": None,
     }
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -882,7 +934,7 @@ def test_unknown_comparison_group_basis_fails_closed() -> None:
         "normalization_policy_id": None,
     }
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -896,7 +948,7 @@ def test_semantic_registry_pin_mismatch_is_blocked() -> None:
     payload = json.loads(_screen("fee_rate", "domestic_etf").model_dump_json())
     payload["registry_pins"]["operator_registry_hash"] = "f" * 64
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -910,7 +962,7 @@ def test_explanation_topic_without_physical_source_is_explorable() -> None:
     payload = _common("explain", "domestic_etf")
     payload["explanation"] = {"topic_concept_id": "risk_factor", "profile_id": None}
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -927,7 +979,7 @@ def test_explanation_profile_must_be_expanded_before_execution() -> None:
         "profile_id": "default-product-projection.v1",
     }
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -958,7 +1010,7 @@ def test_grouping_and_aggregate_operator_are_both_checked() -> None:
     }
     payload["predicate"] = None
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         _validate(payload),
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),
@@ -995,7 +1047,7 @@ def test_readiness_returns_all_stable_reasons_across_roles() -> None:
     }
     contract = _validate(payload)
 
-    result = assess_plan_readiness(
+    result = _assess_plan_readiness(
         contract,
         load_physical_binding_registry(PROJECT_ROOT),
         load_semantic_sql_policy_registry(PROJECT_ROOT),

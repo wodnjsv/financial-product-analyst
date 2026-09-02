@@ -42,7 +42,9 @@ from .logical_query import (
     LogicalCompareOperationV2,
     LogicalDependencyV2,
     LogicalExplainOperationV2,
+    LogicalExecutionRoute,
     LogicalLookupOperationV2,
+    LogicalPrimitiveStepV2,
     LogicalQueryPlanV2,
     LogicalQueryTaskV2,
     LogicalRankOperationV2,
@@ -51,6 +53,7 @@ from .logical_query import (
     PriorResultInputV2,
     ProducedResultBindingV2,
     SemanticLoweringRecordV2,
+    logical_query_plan_id,
 )
 from .physical_bindings import PhysicalBindingRegistry, SemanticSqlPolicyRegistry
 from .readiness import PlanReadinessResult
@@ -60,16 +63,48 @@ from .semantic_router import route_semantic_query
 
 _RESOLVED_ADAPTER = TypeAdapter(ResolvedQueryContractV2)
 _CANDIDATE_ADAPTER = TypeAdapter(SolvedQueryContractCandidateV2)
-_ACTION_CAPABILITY = {
-    IntentType.LOOKUP: Capability.RDB_LOOKUP,
-    IntentType.SCREEN: Capability.RDB_LOOKUP,
-    IntentType.RANK: Capability.RDB_LOOKUP,
-    IntentType.COMPARE: Capability.RDB_LOOKUP,
-    IntentType.AGGREGATE: Capability.RDB_LOOKUP,
-    IntentType.CALCULATE: Capability.FINANCIAL_CALCULATION,
-    IntentType.SIMILAR: Capability.SIMILARITY,
-    IntentType.EXPLAIN: Capability.RDB_LOOKUP,
+_SQL_EXECUTION_BUNDLES = {
+    IntentType.LOOKUP: (
+        ("lookup-products", Capability.RDB_LOOKUP, "lookup"),
+    ),
+    IntentType.SCREEN: (
+        ("lookup-products", Capability.RDB_LOOKUP, "lookup"),
+        ("screen-products", Capability.RDB_LOOKUP, "screen"),
+    ),
+    IntentType.RANK: (
+        ("lookup-products", Capability.RDB_LOOKUP, "lookup"),
+        ("rank-products", Capability.RANKING, "rank"),
+    ),
+    IntentType.COMPARE: (
+        ("lookup-products", Capability.RDB_LOOKUP, "lookup"),
+        ("compare-products", Capability.COMPARISON, "compare"),
+    ),
+    IntentType.AGGREGATE: (
+        ("lookup-products", Capability.RDB_LOOKUP, "lookup"),
+        ("aggregate-products", Capability.FINANCIAL_CALCULATION, "aggregate"),
+    ),
+    IntentType.EXPLAIN: (
+        ("lookup-products", Capability.RDB_LOOKUP, "explanation_source_lookup"),
+        ("search-documents", Capability.KEYWORD_SEARCH, "search_explanation_source"),
+    ),
 }
+_RELATION_CONCEPT_IDS = frozenset(
+    {
+        "associatedWithTheme",
+        "classifiedAsIndustry",
+        "containsSecurity",
+        "controlsCompany",
+        "documentedBy",
+        "hasRiskFactor",
+        "hasShareClass",
+        "holdsSecurity",
+        "issuedBy",
+        "listedOn",
+        "managedBy",
+        "securityOfCompany",
+        "tracksIndex",
+    }
+)
 _ACTION_PATHS = {
     IntentType.LOOKUP: ("scope", "qualifiers", "result_shape", "projections"),
     IntentType.SCREEN: ("scope", "qualifiers", "result_shape", "predicate"),
@@ -108,8 +143,6 @@ class SemanticReadinessAssessmentV2(_StrictModel):
     binding_registry_hash: Sha256Hex
     physical_policy_registry_version: Identifier
     physical_policy_registry_hash: Sha256Hex
-    dataset_version: Identifier
-    dataset_pin: Sha256Hex
     axis: AxisReadinessRecordV2
     contract: ContractReadinessRecordV2
     plan: PlanReadinessResult
@@ -149,6 +182,8 @@ class SemanticQueryPlanCompilation(RuntimeArtifact):
             raise ValueError("ONLY_FAST_ROUTE_MAY_USE_ARCHETYPE")
         if executable and not self.primitive_ids:
             raise ValueError("EXECUTABLE_ROUTE_REQUIRES_PRIMITIVE")
+        if len(set(self.primitive_ids)) != len(self.primitive_ids):
+            raise ValueError("DUPLICATE_EXECUTION_PRIMITIVE")
         assessments_by_frame = {item.frame_id: item for item in self.readiness_assessments}
         contracts_by_frame = {
             item.frame_id: item for item in self.resolved_query_contracts.contracts
@@ -156,22 +191,40 @@ class SemanticQueryPlanCompilation(RuntimeArtifact):
         if (
             len(assessments_by_frame) != len(self.readiness_assessments)
             or set(assessments_by_frame) != set(contracts_by_frame)
-            or len({item.candidate_id for item in self.readiness_assessments})
-            != len(self.readiness_assessments)
             or any(
-                item.dataset_version != self.dataset_version
+                item.plan.dataset_version != self.dataset_version
                 for item in self.readiness_assessments
             )
-            or len({item.dataset_pin for item in self.readiness_assessments}) != 1
+            or len({item.plan.dataset_pin for item in self.readiness_assessments}) != 1
         ):
             raise ValueError("COMPILATION_READINESS_OWNERSHIP_MISMATCH")
-        for frame_id, contract in contracts_by_frame.items():
+        candidate_contracts = {}
+        for frame_id, resolved_contract in contracts_by_frame.items():
             assessment = assessments_by_frame[frame_id]
+            candidate_payload = resolved_contract.model_dump(
+                mode="python",
+                exclude={"axis_readiness", "contract_readiness", "plan_readiness"},
+            )
+            candidate_contract = _CANDIDATE_ADAPTER.validate_python(candidate_payload)
+            candidate_contracts[frame_id] = candidate_contract
+            contract_hash = canonical_sha256(candidate_contract)
             if (
-                contract.axis_readiness != assessment.axis
-                or contract.contract_readiness != assessment.contract
-                or contract.plan_readiness.readiness is not assessment.plan.readiness
-                or contract.plan_readiness.reason_codes != assessment.plan.reason_codes
+                resolved_contract.axis_readiness != assessment.axis
+                or resolved_contract.contract_readiness != assessment.contract
+                or resolved_contract.plan_readiness.readiness is not assessment.plan.readiness
+                or resolved_contract.plan_readiness.reason_codes != assessment.plan.reason_codes
+                or assessment.frame_id != candidate_contract.frame_id
+                or assessment.contract_hash != contract_hash
+                or assessment.semantic_registry_pins != candidate_contract.registry_pins
+                or assessment.plan.frame_id != frame_id
+                or assessment.plan.contract_hash != contract_hash
+                or assessment.binding_registry_version
+                != assessment.plan.binding_registry_version
+                or assessment.binding_registry_hash != assessment.plan.binding_registry_hash
+                or assessment.physical_policy_registry_version
+                != assessment.plan.policy_registry_version
+                or assessment.physical_policy_registry_hash
+                != assessment.plan.policy_registry_hash
             ):
                 raise ValueError("COMPILATION_READINESS_OWNERSHIP_MISMATCH")
         if executable and any(
@@ -181,6 +234,40 @@ class SemanticQueryPlanCompilation(RuntimeArtifact):
             for item in self.readiness_assessments
         ):
             raise ValueError("EXECUTABLE_READINESS_MISMATCH")
+        restored_decision = route_semantic_query(
+            action_ids=tuple(
+                candidate_contracts[item.frame_id].action_id
+                for item in self.resolved_query_contracts.contracts
+            ),
+            axis_readiness=tuple(
+                assessments_by_frame[item.frame_id].axis.readiness
+                for item in self.resolved_query_contracts.contracts
+            ),
+            contract_readiness=tuple(
+                assessments_by_frame[item.frame_id].contract.readiness
+                for item in self.resolved_query_contracts.contracts
+            ),
+            plan_readiness=tuple(
+                assessments_by_frame[item.frame_id].plan.readiness
+                for item in self.resolved_query_contracts.contracts
+            ),
+            matched_archetype_id=self.matched_archetype_id,
+            primitive_ids=self.primitive_ids,
+        )
+        expected_issue_owners = tuple(contracts_by_frame)
+        if (
+            self.route is not restored_decision.route
+            or self.recommended_answer_disposition
+            is not restored_decision.recommended_answer_disposition
+            or tuple(item.code for item in self.blocking_issues)
+            != restored_decision.issue_codes
+            or any(
+                item.related_ids != expected_issue_owners
+                for item in self.blocking_issues
+            )
+        ):
+            raise ValueError("SEMANTIC_ROUTE_DECISION_MISMATCH")
+        bundle_id = resolved_query_contract_bundle_id(self.resolved_query_contracts)
         if self.logical_query_plan is not None and (
             self.logical_query_plan.request_key != self.request_key
             or self.logical_query_plan.run_id != self.run_id
@@ -189,7 +276,9 @@ class SemanticQueryPlanCompilation(RuntimeArtifact):
             or self.logical_query_plan.resolution_id != self.resolution_id
             or self.logical_query_plan.route is not self.route
             or self.logical_query_plan.dataset_pin
-            != self.readiness_assessments[0].dataset_pin
+            != self.readiness_assessments[0].plan.dataset_pin
+            or self.logical_query_plan.query_contract_id != bundle_id
+            or self.logical_query_plan.primitive_ids != self.primitive_ids
             or self.logical_query_plan.planning_registry_version
             != self.planning_registry_version
             or self.logical_query_plan.planning_registry_hash != self.planning_registry_hash
@@ -201,23 +290,78 @@ class SemanticQueryPlanCompilation(RuntimeArtifact):
             }
             if set(tasks_by_frame) != set(contracts_by_frame):
                 raise ValueError("LOSSY_COMPILATION_ARTIFACT")
+            first_assessment = self.readiness_assessments[0]
+            first_pins = candidate_contracts[first_assessment.frame_id].registry_pins
+            if (
+                any(
+                    item.registry_pins != first_pins
+                    for item in candidate_contracts.values()
+                )
+                or any(
+                    assessment.plan.binding_registry_version
+                    != first_assessment.plan.binding_registry_version
+                    or assessment.plan.binding_registry_hash
+                    != first_assessment.plan.binding_registry_hash
+                    or assessment.plan.policy_registry_version
+                    != first_assessment.plan.policy_registry_version
+                    or assessment.plan.policy_registry_hash
+                    != first_assessment.plan.policy_registry_hash
+                    for assessment in self.readiness_assessments
+                )
+                or self.logical_query_plan.binding_registry_version
+                != first_assessment.plan.binding_registry_version
+                or self.logical_query_plan.binding_registry_hash
+                != first_assessment.plan.binding_registry_hash
+                or self.logical_query_plan.physical_policy_registry_version
+                != first_assessment.plan.policy_registry_version
+                or self.logical_query_plan.physical_policy_registry_hash
+                != first_assessment.plan.policy_registry_hash
+                or self.logical_query_plan.contract_registry_version
+                != first_pins.contract_registry_version
+                or self.logical_query_plan.contract_registry_hash
+                != first_pins.contract_registry_hash
+                or self.logical_query_plan.operator_registry_version
+                != first_pins.operator_registry_version
+                or self.logical_query_plan.operator_registry_hash
+                != first_pins.operator_registry_hash
+                or self.logical_query_plan.semantic_policy_registry_version
+                != first_pins.policy_registry_version
+                or self.logical_query_plan.semantic_policy_registry_hash
+                != first_pins.policy_registry_hash
+            ):
+                raise ValueError("LOGICAL_PLAN_COMPILATION_PIN_MISMATCH")
             for frame_id, resolved_contract in contracts_by_frame.items():
                 assessment = assessments_by_frame[frame_id]
-                candidate_payload = resolved_contract.model_dump(
-                    mode="python",
-                    exclude={"axis_readiness", "contract_readiness", "plan_readiness"},
-                )
-                candidate_contract = _CANDIDATE_ADAPTER.validate_python(candidate_payload)
+                candidate_contract = candidate_contracts[frame_id]
                 task = tasks_by_frame[frame_id]
+                expected_resolved_id = resolved_contract_id(
+                    frame_id,
+                    assessment.candidate_id,
+                    assessment.contract_hash,
+                )
+                expected_task_id = _stable_id(
+                    "logical-task",
+                    (
+                        frame_id,
+                        assessment.candidate_id,
+                        assessment.contract_hash,
+                    ),
+                )
                 if (
-                    task.candidate_id != assessment.candidate_id
+                    task.task_id != expected_task_id
+                    or task.candidate_id != assessment.candidate_id
                     or task.contract_hash != assessment.contract_hash
+                    or task.resolved_contract_id != expected_resolved_id
                     or task.contract_variant_id != candidate_contract.contract_variant_id
                     or canonical_sha256(candidate_contract) != assessment.contract_hash
+                    or task.execution_steps
+                    != _execution_steps(candidate_contract)
                     or task.binding_ids != assessment.plan.binding_ids
                     or reverse_semantic_loss_report(candidate_contract, task)
                 ):
                     raise ValueError("LOSSY_COMPILATION_ARTIFACT")
+        if self.compilation_id != semantic_compilation_id(self):
+            raise ValueError("COMPILATION_ID_MISMATCH")
         return self
 
 
@@ -255,18 +399,20 @@ class SemanticPlanningCompiler:
             raise ValueError("SELECTED_CANDIDATE_CARDINALITY_INVALID")
         if len(set(primitive_ids)) != len(primitive_ids):
             raise ValueError("DUPLICATE_EXECUTION_PRIMITIVE")
-        if len({item.candidate_id for item in selected_candidates}) != len(selected_candidates):
-            raise ValueError("DUPLICATE_SELECTED_CANDIDATE")
-        assessments = {item.candidate_id: item for item in readiness_assessments}
+        if len({item.contract.frame_id for item in selected_candidates}) != len(
+            selected_candidates
+        ):
+            raise ValueError("DUPLICATE_SELECTED_FRAME")
+        assessments = {item.frame_id: item for item in readiness_assessments}
         if len(assessments) != len(readiness_assessments) or set(assessments) != {
-            item.candidate_id for item in selected_candidates
+            item.contract.frame_id for item in selected_candidates
         }:
             raise ValueError("READINESS_OWNERSHIP_MISMATCH")
 
         ordered_assessments: list[SemanticReadinessAssessmentV2] = []
         resolved = []
         for candidate in selected_candidates:
-            assessment = assessments[candidate.candidate_id]
+            assessment = assessments[candidate.contract.frame_id]
             self._validate_ownership(
                 candidate,
                 assessment,
@@ -286,10 +432,10 @@ class SemanticPlanningCompiler:
             resolved.append(_RESOLVED_ADAPTER.validate_python(payload))
 
         _validate_prior_result_ownership(selected_candidates, prior_result_ownership)
-        self._validate_execution_registry(
+        canonical_primitive_ids = tuple(sorted(primitive_ids))
+        self._validate_offered_primitives(
             selected_candidates,
-            primitive_ids=primitive_ids,
-            matched_archetype_id=matched_archetype_id,
+            primitive_ids=canonical_primitive_ids,
         )
 
         decision = route_semantic_query(
@@ -298,16 +444,16 @@ class SemanticPlanningCompiler:
             contract_readiness=tuple(item.contract.readiness for item in ordered_assessments),
             plan_readiness=tuple(item.plan.readiness for item in ordered_assessments),
             matched_archetype_id=matched_archetype_id,
-            primitive_ids=primitive_ids,
+            primitive_ids=canonical_primitive_ids,
+        )
+        self._validate_execution_registry(
+            selected_candidates,
+            primitive_ids=canonical_primitive_ids,
+            matched_archetype_id=matched_archetype_id,
+            route=decision.route,
         )
         contract_bundle = ResolvedQueryContractBundleV2(contracts=tuple(resolved))
-        contract_bundle_id = _stable_id(
-            "query-contract-bundle",
-            tuple(
-                (item.candidate_id, canonical_sha256(item.contract))
-                for item in selected_candidates
-            ),
-        )
+        contract_bundle_id = resolved_query_contract_bundle_id(contract_bundle)
         plan = None
         if decision.route in {CompilationRoute.FAST, CompilationRoute.COMPOSE}:
             plan = self._lower_plan(
@@ -323,6 +469,7 @@ class SemanticPlanningCompiler:
                 contract_bundle_id=contract_bundle_id,
                 candidates=selected_candidates,
                 assessments=tuple(ordered_assessments),
+                primitive_ids=canonical_primitive_ids,
                 prior_result_ownership=prior_result_ownership,
             )
         issues = tuple(
@@ -334,25 +481,13 @@ class SemanticPlanningCompiler:
             )
             for code in decision.issue_codes
         )
-        compilation_id = _stable_id(
-            "semantic-compilation",
-            {
-                "resolution_id": resolution_id,
-                "contract_bundle_id": contract_bundle_id,
-                "route": decision.route.value,
-                "plan_id": plan.logical_plan_id if plan else None,
-                "issues": decision.issue_codes,
-                "planning_registry_hash": self._planning.registry_hash,
-            },
-        )
-        return SemanticQueryPlanCompilation(
+        compilation_kwargs = dict(
             request_key=request_key,
             run_id=run_id,
             dataset_version=dataset_version,
             cutoff_date=cutoff_date,
             producer=producer,
             created_at=created_at,
-            compilation_id=compilation_id,
             resolution_id=resolution_id,
             resolved_query_contracts=contract_bundle,
             logical_query_plan=plan,
@@ -363,12 +498,20 @@ class SemanticPlanningCompiler:
                 if decision.route is CompilationRoute.FAST
                 else None
             ),
-            primitive_ids=tuple(sorted(set(primitive_ids))),
+            primitive_ids=canonical_primitive_ids,
             readiness_assessments=tuple(ordered_assessments),
             planning_registry_version=self._planning.registry_version,
             planning_registry_hash=self._planning.registry_hash,
             recommended_answer_disposition=decision.recommended_answer_disposition,
             blocking_issues=issues,
+        )
+        draft = SemanticQueryPlanCompilation.model_construct(
+            compilation_id="pending",
+            **compilation_kwargs,
+        )
+        return SemanticQueryPlanCompilation(
+            compilation_id=semantic_compilation_id(draft),
+            **compilation_kwargs,
         )
 
     def _validate_ownership(
@@ -392,10 +535,10 @@ class SemanticPlanningCompiler:
                 assessment.binding_registry_hash != self._bindings.registry_hash,
                 assessment.physical_policy_registry_version != self._policies.registry_version,
                 assessment.physical_policy_registry_hash != self._policies.registry_hash,
-                assessment.dataset_version != dataset_version,
-                assessment.dataset_pin != dataset_pin,
                 plan.frame_id != candidate.contract.frame_id,
                 plan.contract_hash != contract_hash,
+                plan.dataset_version != dataset_version,
+                plan.dataset_pin != dataset_pin,
                 plan.binding_registry_version != self._bindings.registry_version,
                 plan.binding_registry_hash != self._bindings.registry_hash,
                 plan.policy_registry_version != self._policies.registry_version,
@@ -429,12 +572,18 @@ class SemanticPlanningCompiler:
         contract_bundle_id: str,
         candidates: tuple[QueryContractCandidate, ...],
         assessments: tuple[SemanticReadinessAssessmentV2, ...],
+        primitive_ids: tuple[str, ...],
         prior_result_ownership: tuple[PriorResultOwnershipV2, ...],
     ) -> LogicalQueryPlanV2:
         owners = {item.binding_id: item for item in prior_result_ownership}
         task_ids_by_frame = {
             candidate.contract.frame_id: _stable_id(
-                "logical-task", (candidate.candidate_id, canonical_sha256(candidate.contract))
+                "logical-task",
+                (
+                    candidate.contract.frame_id,
+                    candidate.candidate_id,
+                    canonical_sha256(candidate.contract),
+                ),
             )
             for candidate in candidates
         }
@@ -445,6 +594,13 @@ class SemanticPlanningCompiler:
         for candidate, assessment in zip(candidates, assessments, strict=True):
             contract = candidate.contract
             task_id = task_ids_by_frame[contract.frame_id]
+            contract_hash = canonical_sha256(contract)
+            resolved_id = resolved_contract_id(
+                contract.frame_id,
+                candidate.candidate_id,
+                contract_hash,
+            )
+            execution_steps = _execution_steps(contract)
             prior_inputs: tuple[PriorResultInputV2, ...] = ()
             produced_outputs = tuple(
                 ProducedResultBindingV2(
@@ -486,10 +642,12 @@ class SemanticPlanningCompiler:
                 task_id=task_id,
                 frame_id=contract.frame_id,
                 candidate_id=candidate.candidate_id,
-                contract_hash=canonical_sha256(contract),
+                contract_hash=contract_hash,
+                resolved_contract_id=resolved_id,
                 contract_variant_id=contract.contract_variant_id,
                 action_id=contract.action_id,
-                capability=_ACTION_CAPABILITY[contract.action_id],
+                capability=execution_steps[-1].capability,
+                execution_steps=execution_steps,
                 scope=contract.scope,
                 qualifiers=contract.qualifiers,
                 result_shape=contract.result_shape,
@@ -506,50 +664,52 @@ class SemanticPlanningCompiler:
             tasks.append(task)
             lowering.append(
                 SemanticLoweringRecordV2(
+                    frame_id=contract.frame_id,
                     candidate_id=candidate.candidate_id,
+                    resolved_contract_id=resolved_id,
                     task_id=task_id,
                     preserved_semantic_paths=_ACTION_PATHS[contract.action_id],
                     binding_ids=assessment.plan.binding_ids,
                     policy_ids=tuple(sorted(policy_ids)),
                 )
             )
-        seed = {
-            "query_contract_id": contract_bundle_id,
-            "resolution_id": resolution_id,
-            "route": route.value,
-            "tasks": [item.model_dump(mode="json") for item in tasks],
-            "dependencies": [item.model_dump(mode="json") for item in dependencies],
-            "binding_registry_hash": self._bindings.registry_hash,
-            "policy_registry_hash": self._policies.registry_hash,
-            "planning_registry_hash": self._planning.registry_hash,
-            "dataset_pin": dataset_pin,
-        }
-        return LogicalQueryPlanV2(
+        pins = self._bindings.semantic_registry_pins
+        plan_kwargs = dict(
             request_key=request_key,
             run_id=run_id,
             dataset_version=dataset_version,
             cutoff_date=cutoff_date,
             producer=producer,
             created_at=created_at,
-            logical_plan_id=_stable_id("logical-query-plan", seed),
             query_contract_id=contract_bundle_id,
             resolution_id=resolution_id,
             route=route,
             tasks=tuple(tasks),
             dependencies=tuple(dependencies),
             applied_policy_ids=tuple(sorted(all_policies)),
+            primitive_ids=primitive_ids,
             binding_registry_version=self._bindings.registry_version,
             binding_registry_hash=self._bindings.registry_hash,
             physical_policy_registry_version=self._policies.registry_version,
             physical_policy_registry_hash=self._policies.registry_hash,
-            contract_registry_version=(
-                self._bindings.semantic_registry_pins.contract_registry_version
-            ),
-            contract_registry_hash=self._bindings.semantic_registry_pins.contract_registry_hash,
+            contract_registry_version=pins.contract_registry_version,
+            contract_registry_hash=pins.contract_registry_hash,
+            operator_registry_version=pins.operator_registry_version,
+            operator_registry_hash=pins.operator_registry_hash,
+            semantic_policy_registry_version=pins.policy_registry_version,
+            semantic_policy_registry_hash=pins.policy_registry_hash,
             planning_registry_version=self._planning.registry_version,
             planning_registry_hash=self._planning.registry_hash,
             dataset_pin=dataset_pin,
             lowering_records=tuple(lowering),
+        )
+        draft = LogicalQueryPlanV2.model_construct(
+            logical_plan_id="pending",
+            **plan_kwargs,
+        )
+        return LogicalQueryPlanV2(
+            logical_plan_id=logical_query_plan_id(draft),
+            **plan_kwargs,
         )
 
     def _evidence_requirements(
@@ -568,16 +728,17 @@ class SemanticPlanningCompiler:
             locators.update(item.value for item in policy.required_evidence_locators)
         return tuple(sorted(locators))
 
-    def _validate_execution_registry(
+    def _validate_offered_primitives(
         self,
         candidates: tuple[QueryContractCandidate, ...],
         *,
         primitive_ids: tuple[str, ...],
-        matched_archetype_id: str | None,
     ) -> None:
         unknown = set(primitive_ids) - set(self._planning.primitives_by_id)
         if unknown:
             raise ValueError("EXECUTION_PRIMITIVE_NOT_REGISTERED")
+        if not primitive_ids:
+            return
         actions = tuple(item.contract.action_id for item in candidates)
         if any(
             not any(
@@ -587,6 +748,32 @@ class SemanticPlanningCompiler:
             for action in actions
         ):
             raise ValueError("EXECUTION_PRIMITIVE_ACTION_MISMATCH")
+
+    def _validate_execution_registry(
+        self,
+        candidates: tuple[QueryContractCandidate, ...],
+        *,
+        primitive_ids: tuple[str, ...],
+        matched_archetype_id: str | None,
+        route: CompilationRoute,
+    ) -> None:
+        actions = tuple(item.contract.action_id for item in candidates)
+        if route in {CompilationRoute.FAST, CompilationRoute.COMPOSE}:
+            required_steps = tuple(
+                step
+                for candidate in candidates
+                for step in _execution_steps(candidate.contract)
+            )
+            required_ids = {step.primitive_id for step in required_steps}
+            if set(primitive_ids) != required_ids:
+                raise ValueError("EXECUTION_PRIMITIVE_BUNDLE_MISMATCH")
+            for step in required_steps:
+                primitive = self._planning.primitives_by_id[step.primitive_id]
+                if (
+                    primitive.capability is not step.capability
+                    or step.action_id not in primitive.action_ids
+                ):
+                    raise ValueError("EXECUTION_PRIMITIVE_DECLARATION_MISMATCH")
         if matched_archetype_id is None:
             return
         archetype = self._planning.archetypes_by_id.get(matched_archetype_id)
@@ -726,9 +913,115 @@ def _contract_policy_ids(contract: SolvedQueryContractCandidateV2) -> set[str]:
         policy_ids.update((contract.similarity.policy_id, "minimum-dimension-coverage.v1"))
         if contract.similarity.default_profile_id:
             policy_ids.add(contract.similarity.default_profile_id)
-    elif contract.explanation.profile_id:
+    elif action is IntentType.EXPLAIN and contract.explanation.profile_id:
         policy_ids.add(contract.explanation.profile_id)
     return policy_ids
+
+
+def _execution_steps(
+    contract: SolvedQueryContractCandidateV2,
+) -> tuple[LogicalPrimitiveStepV2, ...]:
+    action = contract.action_id
+    bundle = _SQL_EXECUTION_BUNDLES.get(action)
+    if not bundle:
+        raise ValueError("EXECUTION_PRIMITIVE_BUNDLE_MISMATCH")
+    dynamic_steps: list[tuple[str, Capability, str, LogicalExecutionRoute]] = [
+        (
+            *step,
+            LogicalExecutionRoute.SEARCH
+            if step[1] is Capability.KEYWORD_SEARCH
+            else LogicalExecutionRoute.GRAPH
+            if step[1] is Capability.GRAPH_TRAVERSAL
+            else LogicalExecutionRoute.SEMANTIC_SQL,
+        )
+        for step in bundle
+    ]
+    if action is IntentType.RANK and len(contract.scope.product_family_ids) > 1:
+        dynamic_steps[1:1] = [
+            (
+                "check-comparability",
+                Capability.COMPARISON,
+                "check_comparability",
+                LogicalExecutionRoute.SEMANTIC_SQL,
+            ),
+            (
+                "normalize-values",
+                Capability.FINANCIAL_CALCULATION,
+                "normalize_values",
+                LogicalExecutionRoute.SEMANTIC_SQL,
+            ),
+        ]
+    relation_required = (
+        action is IntentType.LOOKUP
+        and bool(_RELATION_CONCEPT_IDS & set(contract.projections.field_concept_ids))
+    ) or (
+        action is IntentType.SCREEN
+        and bool(_RELATION_CONCEPT_IDS & _predicate_field_ids(contract.predicate))
+    ) or (
+        action is IntentType.COMPARE
+        and bool(
+            _RELATION_CONCEPT_IDS
+            & set(contract.comparison.metric_concept_ids)
+        )
+    ) or (
+        action is IntentType.EXPLAIN
+        and contract.explanation.topic_concept_id in _RELATION_CONCEPT_IDS
+    )
+    if relation_required:
+        dynamic_steps.append(
+            (
+                "traverse-relations",
+                Capability.GRAPH_TRAVERSAL,
+                "traverse_relation",
+                LogicalExecutionRoute.GRAPH,
+            )
+        )
+    return tuple(
+        LogicalPrimitiveStepV2(
+            primitive_id=primitive_id,
+            action_id=action,
+            capability=capability,
+            operation_kind=operation_kind,
+            execution_route=execution_route,
+        )
+        for primitive_id, capability, operation_kind, execution_route in dynamic_steps
+    )
+
+
+def _predicate_field_ids(predicate: Any) -> set[str]:
+    if predicate.node_type == "atom":
+        return {predicate.field_concept_id}
+    if predicate.node_type == "not":
+        return _predicate_field_ids(predicate.child)
+    return {
+        field_id
+        for child in predicate.children
+        for field_id in _predicate_field_ids(child)
+    }
+
+
+def resolved_contract_id(
+    frame_id: str,
+    candidate_id: str,
+    contract_hash: str,
+) -> str:
+    return _stable_id(
+        "resolved-query-contract",
+        (frame_id, candidate_id, contract_hash),
+    )
+
+
+def resolved_query_contract_bundle_id(
+    bundle: ResolvedQueryContractBundleV2,
+) -> str:
+    return f"query-contract-bundle-{canonical_sha256(bundle)}"
+
+
+def semantic_compilation_id(compilation: SemanticQueryPlanCompilation) -> str:
+    return "semantic-compilation-" + canonical_sha256(
+        compilation,
+        exclude_fields={"compilation_id"},
+    )
 
 
 def _predicate_policy_ids(predicate: Any) -> set[str]:

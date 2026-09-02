@@ -20,6 +20,7 @@ from financial_agent.intent.query_contracts import (
     SolvedQueryContractCandidateV2,
     SemanticValueKind,
 )
+from financial_agent.intent.view import ActiveDatasetPin
 
 from .physical_bindings import (
     EXPECTED_POLICY_REGISTRY_HASH,
@@ -46,6 +47,8 @@ class PlanReadinessResult(ContractModel):
 
     frame_id: Identifier
     contract_hash: Sha256Hex
+    dataset_version: Identifier
+    dataset_pin: Sha256Hex
     binding_registry_version: Identifier
     binding_registry_hash: Sha256Hex
     policy_registry_version: Identifier
@@ -77,11 +80,18 @@ def assess_plan_readiness(
     bindings: PhysicalBindingRegistry,
     policies: SemanticSqlPolicyRegistry,
     *,
+    active_dataset_pin: ActiveDatasetPin,
     facts: PhysicalReadinessFacts | None = None,
 ) -> PlanReadinessResult:
     """Assess all semantic roles without changing the solved contract."""
 
     state = _Assessment()
+    if (
+        facts is not None
+        and facts.public_fund_manifest is not None
+        and facts.public_fund_manifest.dataset_pin != active_dataset_pin.manifest_hash
+    ):
+        state.add("DATASET_PROVENANCE_MISMATCH", PlanReadiness.BLOCKED)
     if contract.registry_pins != bindings.semantic_registry_pins:
         state.add("SEMANTIC_REGISTRY_PIN_MISMATCH", PlanReadiness.BLOCKED)
     if (
@@ -246,6 +256,8 @@ def assess_plan_readiness(
     return PlanReadinessResult(
         frame_id=contract.frame_id,
         contract_hash=canonical_sha256(contract),
+        dataset_version=active_dataset_pin.dataset_version,
+        dataset_pin=active_dataset_pin.manifest_hash,
         binding_registry_version=bindings.registry_version,
         binding_registry_hash=bindings.registry_hash,
         policy_registry_version=policies.registry_version,
