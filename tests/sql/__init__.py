@@ -1,0 +1,1 @@
+"""Semantic SQL compiler tests."""
