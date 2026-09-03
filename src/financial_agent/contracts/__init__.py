@@ -1,3 +1,6 @@
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
+
 from .base import (
     CONTRACT_SCHEMA_VERSION,
     SNAPSHOT_CUTOFF,
@@ -121,9 +124,36 @@ from .values import (
     encode_contract_value,
 )
 
-# V2 semantic-query runtime artifacts are exported here for persistence dispatch.
-from financial_agent.intent.query_contracts import ResolvedQueryContractSetV2
-from financial_agent.planning.logical_query import LogicalQueryPlanV2
+if TYPE_CHECKING:
+    from financial_agent.intent.query_contracts import ResolvedQueryContractSetV2
+    from financial_agent.planning.logical_query import LogicalQueryPlanV2
+
+
+_LAZY_EXPORTS = {
+    "ResolvedQueryContractSetV2": (
+        "financial_agent.intent.query_contracts",
+        "ResolvedQueryContractSetV2",
+    ),
+    "LogicalQueryPlanV2": (
+        "financial_agent.planning.logical_query",
+        "LogicalQueryPlanV2",
+    ),
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Load cross-layer V2 exports without creating package import cycles."""
+    target = _LAZY_EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name, attribute_name = target
+    value = getattr(import_module(module_name), attribute_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted((*globals(), *_LAZY_EXPORTS))
 
 __all__ = [
     "CONTRACT_SCHEMA_VERSION",
