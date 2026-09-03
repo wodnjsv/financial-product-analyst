@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from financial_agent.contracts import canonical_json_bytes
 from financial_agent.contracts.canonical import build_request_key
-from financial_agent.contracts.request import RequestContext, Segment
+from financial_agent.contracts.request import NamedEntityMention, RequestContext, Segment
 from financial_agent.intent.candidates import (
     EntityCandidate,
     Mention,
@@ -187,6 +187,103 @@ def test_v3_reference_output_requires_reference_evidence(v3_inputs) -> None:
 
     assert plain.reference_output_enabled is False
     assert contextual.reference_output_enabled is True
+
+
+@pytest.mark.parametrize("source_kind", ("entity", "reference"))
+def test_v3_view_rejects_forged_output_source_kinds_without_request_evidence(
+    v3_inputs, source_kind: str
+) -> None:
+    """Catches injected span tags enabling model branches without source evidence."""
+    inputs = v3_inputs(question="ETF 순위를 알려줘")
+    first_span = inputs["mention_spans"].items[0]
+    inputs["mention_spans"] = inputs["mention_spans"].model_copy(
+        update={
+            "items": (
+                first_span.model_copy(update={"source_kinds": (source_kind,)}),
+                *inputs["mention_spans"].items[1:],
+            )
+        }
+    )
+
+    with pytest.raises(ResolverInvariantError, match="MENTION_SPAN_PROVENANCE_MISMATCH"):
+        build_resolver_view_v3(**inputs)
+
+
+def test_v3_view_rejects_missing_entity_span_for_request_entity_evidence(v3_inputs) -> None:
+    """Catches silently disabling entity output when a request supplied entity evidence."""
+    entity = NamedEntityMention(
+        mention_id="entity-kodex",
+        segment_id="s1",
+        text="KODEX 200",
+        expected_entity_types=("ETF",),
+    )
+    inputs = v3_inputs(question="KODEX 200을 알려줘", named_entities=(entity,))
+
+    with pytest.raises(ResolverInvariantError, match="MENTION_SPAN_PROVENANCE_MISMATCH"):
+        build_resolver_view_v3(**inputs)
+
+
+def test_v3_view_rejects_entity_span_with_forged_normalized_text(v3_inputs) -> None:
+    """Catches a matching range and text carrying untrusted normalized content."""
+    entity = NamedEntityMention(
+        mention_id="entity-kodex",
+        segment_id="s1",
+        text="KODEX 200",
+        expected_entity_types=("ETF",),
+    )
+    inputs = v3_inputs(question="KODEX 200을 알려줘", named_entities=(entity,))
+    entity_mention = Mention(
+        mention_id="entity-kodex",
+        segment_id="s1",
+        text="KODEX 200",
+        normalized_text="KODEX 200",
+        start_char=0,
+        end_char=9,
+    )
+    spans = generate_mention_spans(
+        inputs["normalized"],
+        (),
+        inputs["literals"],
+        (entity_mention,),
+        inputs["normalized"].reference_candidates,
+    )
+    inputs["mention_spans"] = spans.model_copy(
+        update={
+            "items": tuple(
+                item.model_copy(update={"normalized_text": "forged"})
+                if "entity" in item.source_kinds
+                else item
+                for item in spans.items
+            )
+        }
+    )
+
+    with pytest.raises(ResolverInvariantError, match="MENTION_SPAN_PROVENANCE_MISMATCH"):
+        build_resolver_view_v3(**inputs)
+
+
+def test_v3_view_rejects_missing_reference_span_for_request_reference_evidence(
+    v3_inputs,
+) -> None:
+    """Catches silently disabling context output when a reference was detected."""
+    inputs = v3_inputs(question="그 상품들 순위를 알려줘")
+    inputs["mention_spans"] = inputs["mention_spans"].model_copy(
+        update={
+            "items": tuple(
+                item.model_copy(
+                    update={
+                        "source_kinds": tuple(
+                            kind for kind in item.source_kinds if kind != "reference"
+                        )
+                    }
+                )
+                for item in inputs["mention_spans"].items
+            )
+        }
+    )
+
+    with pytest.raises(ResolverInvariantError, match="MENTION_SPAN_PROVENANCE_MISMATCH"):
+        build_resolver_view_v3(**inputs)
 
 
 def test_v3_view_projects_only_source_ranged_semantic_locks(v3_inputs) -> None:

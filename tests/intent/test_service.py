@@ -172,6 +172,48 @@ async def test_prepare_hybrid_builds_v3_view_without_invoking_the_model() -> Non
     assert adapter.call_count == 0
 
 
+@pytest.mark.asyncio
+async def test_prepare_hybrid_enables_entity_output_for_verified_entity_evidence() -> None:
+    """Catches V3 provenance checks rejecting the source span service created."""
+    context = _context("KODEX 200을 알려줘").model_copy(
+        update={
+            "named_entities": (
+                NamedEntityMention(
+                    mention_id="entity-kodex",
+                    segment_id="s1",
+                    text="KODEX 200",
+                    expected_entity_types=("ETF",),
+                ),
+            )
+        }
+    )
+    catalog = load_hybrid_catalog(PROJECT_ROOT)
+    service = IntentResolverService(
+        adapter=FakeAdapter(),
+        entity_repository=EmptyEntityRepository(),
+        catalog=catalog,
+        manifest=build_hybrid_manifest(
+            catalog,
+            {
+                "normalizer_version": NORMALIZER_VERSION,
+                "candidate_policy_version": HYBRID_CANDIDATE_POLICY_VERSION,
+                "resolver_schema_version": HYBRID_RESOLVER_SCHEMA_VERSION,
+                "prompt_version": HYBRID_PROMPT_VERSION,
+                "adapter_version": HYBRID_ADAPTER_VERSION,
+            },
+        ),
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version=context.dataset_version,
+            manifest_hash="a" * 64,
+        ),
+        utcnow=lambda: NOW,
+    )
+
+    prepared = await service.prepare_hybrid(context)
+
+    assert prepared.view.entity_output_enabled is True
+
+
 def _valid_proposal_json() -> str:
     return json.dumps(
         {

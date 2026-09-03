@@ -28,7 +28,7 @@ from .catalog import SemanticCatalogSnapshot
 from .compact_catalog import CompactSemanticCatalogV1, build_compact_semantic_catalog
 from .evidence import EvidenceCandidate, build_evidence_candidates
 from .literals import LiteralCandidate
-from .mention_spans import MentionSpanSetV1
+from .mention_spans import MentionSpanSetV1, MentionSpanV1
 from .normalization import NormalizedRequest
 from .resolution import ContractFileHash, ResolverBuildManifest
 
@@ -437,6 +437,9 @@ def build_resolver_view_v3(
     validate_hybrid_resolver_pins(
         catalog, context, normalized, manifest, active_dataset_pin
     )
+    entity_output_enabled, reference_output_enabled = (
+        _validated_hybrid_output_capabilities(context, normalized, mention_spans)
+    )
     compact_catalog = build_compact_semantic_catalog(catalog)
     selected_semantic = _select_semantic_candidates(semantic_candidates)
     return ResolverViewV3(
@@ -498,12 +501,8 @@ def build_resolver_view_v3(
         exact_semantic_locks=tuple(exact_semantic_locks),
         mention_spans=mention_spans,
         compact_semantic_catalog=compact_catalog,
-        entity_output_enabled=any(
-            "entity" in item.source_kinds for item in mention_spans.items
-        ),
-        reference_output_enabled=any(
-            "reference" in item.source_kinds for item in mention_spans.items
-        ),
+        entity_output_enabled=entity_output_enabled,
+        reference_output_enabled=reference_output_enabled,
         exact_lock_projections=_exact_lock_projections(
             exact_semantic_locks, mention_spans
         ),
@@ -571,6 +570,78 @@ def validate_hybrid_resolver_pins(
         )
     ):
         raise ResolverInvariantError("CATALOG_VERSION_MISMATCH")
+
+
+def _validated_hybrid_output_capabilities(
+    context: RequestContext,
+    normalized: NormalizedRequest,
+    mention_spans: MentionSpanSetV1,
+) -> tuple[bool, bool]:
+    """Require V3 output tags to match the request's source-preserved evidence."""
+    segments = {segment.segment_id: segment for segment in normalized.segments}
+    expected_entity_spans: set[tuple[str, str, int, int, str, str]] = set()
+    for entity in context.named_entities:
+        segment = segments[entity.segment_id]
+        starts = [
+            start
+            for start in range(len(segment.original_text) - len(entity.text) + 1)
+            if entity.text and segment.original_text.startswith(entity.text, start)
+        ]
+        if len(starts) != 1:
+            raise ResolverInvariantError("ENTITY_MENTION_RANGE_AMBIGUOUS")
+        start = starts[0]
+        expected_entity_spans.add(
+            (
+                f"mention-{entity.segment_id}-{start}-{start + len(entity.text)}",
+                entity.segment_id,
+                start,
+                start + len(entity.text),
+                entity.text,
+                segment.normalized_text_for_original_span(
+                    start, start + len(entity.text)
+                ),
+            )
+        )
+    expected_reference_spans = {
+        (
+            f"mention-{reference.segment_id}-{reference.start_char}-{reference.end_char}",
+            reference.segment_id,
+            reference.start_char,
+            reference.end_char,
+            reference.text,
+            segments[reference.segment_id].normalized_text_for_original_span(
+                reference.start_char, reference.end_char
+            ),
+        )
+        for reference in normalized.reference_candidates
+    }
+    entity_spans = {
+        _mention_span_identity(item)
+        for item in mention_spans.items
+        if "entity" in item.source_kinds
+    }
+    reference_spans = {
+        _mention_span_identity(item)
+        for item in mention_spans.items
+        if "reference" in item.source_kinds
+    }
+    if (
+        entity_spans != expected_entity_spans
+        or reference_spans != expected_reference_spans
+    ):
+        raise ResolverInvariantError("MENTION_SPAN_PROVENANCE_MISMATCH")
+    return bool(expected_entity_spans), bool(expected_reference_spans)
+
+
+def _mention_span_identity(item: MentionSpanV1) -> tuple[str, str, int, int, str, str]:
+    return (
+        item.mention_id,
+        item.segment_id,
+        item.start_char,
+        item.end_char,
+        item.text,
+        item.normalized_text,
+    )
 
 
 def validate_resolver_view_catalog(
