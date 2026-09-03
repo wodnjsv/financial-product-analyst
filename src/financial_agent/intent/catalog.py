@@ -24,6 +24,7 @@ from financial_agent.graph.contract import (
 
 _CATALOG_PATH = Path("config/intent/semantic-query-catalog.v1.json")
 _OVERLAY_PATH = Path("config/intent/korean-nlu-overlay.v3.json")
+_HYBRID_OVERLAY_PATH = Path("config/intent/korean-nlu-overlay.v4.json")
 _CONCEPT_KINDS = Literal["attribute", "metric", "relation", "document_topic"]
 _ALIAS_KINDS = Literal["direct", "ambiguous", "group"]
 _SH = Namespace("http://www.w3.org/ns/shacl#")
@@ -63,6 +64,7 @@ class KoreanNluEntry(_StrictModel):
     aliases: tuple[str, ...]
     alias_kind: _ALIAS_KINDS
     negative_semantic_ids: tuple[str, ...]
+    disambiguation_ko: str | None = Field(default=None, min_length=1)
 
 
 class KoreanLexicalCandidate(_StrictModel):
@@ -112,6 +114,8 @@ class SemanticCatalogSnapshot:
     class_ancestor_ids: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     axis_definitions: Mapping[str, AxisLanguageDefinition] = field(default_factory=dict)
     policy_cues: tuple[PolicyCue, ...] = ()
+    preferred_labels_by_semantic_id: Mapping[str, str] = field(default_factory=dict)
+    disambiguation_by_semantic_id: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -121,6 +125,8 @@ class SemanticCatalogSnapshot:
             "ontology_hashes",
             "class_ancestor_ids",
             "axis_definitions",
+            "preferred_labels_by_semantic_id",
+            "disambiguation_by_semantic_id",
         ):
             value = getattr(self, field_name)
             object.__setattr__(
@@ -136,6 +142,17 @@ def load_catalog(project_root: Path) -> SemanticCatalogSnapshot:
     return compile_catalog(
         (root / _CATALOG_PATH).read_bytes(),
         (root / _OVERLAY_PATH).read_bytes(),
+        ontology_paths=tuple(root / path for path in TBOX_RELATIVE_PATHS),
+        shacl_paths=tuple(root / path for path in SHACL_RELATIVE_PATHS),
+    )
+
+
+def load_hybrid_catalog(project_root: Path) -> SemanticCatalogSnapshot:
+    """Load the V4 model-facing overlay without changing the V2 catalog path."""
+    root = project_root.resolve()
+    return compile_catalog(
+        (root / _CATALOG_PATH).read_bytes(),
+        (root / _HYBRID_OVERLAY_PATH).read_bytes(),
         ontology_paths=tuple(root / path for path in TBOX_RELATIVE_PATHS),
         shacl_paths=tuple(root / path for path in SHACL_RELATIVE_PATHS),
     )
@@ -164,7 +181,12 @@ def compile_catalog(
     ontology_types = _tbox_classes(tbox_graph)
     _validate_ontology_references(catalog, concepts_by_id, ontology_types)
     _validate_relations(concepts_by_id, tbox_graph, shacl_paths)
-    alias_candidates, alias_kinds = _index_overlay(
+    (
+        alias_candidates,
+        alias_kinds,
+        preferred_labels_by_semantic_id,
+        disambiguation_by_semantic_id,
+    ) = _index_overlay(
         overlay.entries,
         overlay.lexical_candidates,
         allowed_semantic_ids=(
@@ -189,6 +211,8 @@ def compile_catalog(
         class_ancestor_ids=_class_ancestor_ids(tbox_graph),
         axis_definitions=axis_definitions,
         policy_cues=policy_cues,
+        preferred_labels_by_semantic_id=preferred_labels_by_semantic_id,
+        disambiguation_by_semantic_id=disambiguation_by_semantic_id,
     )
 
 
@@ -449,7 +473,12 @@ def _index_overlay(
     lexical_candidates: tuple[KoreanLexicalCandidate, ...],
     *,
     allowed_semantic_ids: set[str],
-) -> tuple[Mapping[str, tuple[str, ...]], Mapping[str, str]]:
+) -> tuple[
+    Mapping[str, tuple[str, ...]],
+    Mapping[str, str],
+    Mapping[str, str],
+    Mapping[str, str],
+]:
     semantic_ids = [entry.semantic_id for entry in entries]
     if len(set(semantic_ids)) != len(semantic_ids):
         raise ValueError("overlay semantic IDs must be unique")
@@ -492,8 +521,19 @@ def _index_overlay(
             raise ValueError("ambiguous alias must have at least two semantic IDs")
         candidates[label] = tuple(sorted(semantic_id_set))
         alias_kinds[label] = alias_kind
-    return MappingProxyType(dict(sorted(candidates.items()))), MappingProxyType(
-        dict(sorted(alias_kinds.items()))
+    preferred_labels_by_semantic_id = {
+        entry.semantic_id: entry.preferred_label for entry in entries
+    }
+    disambiguation_by_semantic_id = {
+        entry.semantic_id: entry.disambiguation_ko
+        for entry in entries
+        if entry.disambiguation_ko is not None
+    }
+    return (
+        MappingProxyType(dict(sorted(candidates.items()))),
+        MappingProxyType(dict(sorted(alias_kinds.items()))),
+        MappingProxyType(dict(sorted(preferred_labels_by_semantic_id.items()))),
+        MappingProxyType(dict(sorted(disambiguation_by_semantic_id.items()))),
     )
 
 
@@ -523,7 +563,7 @@ def _canonical_overlay_payload(overlay: _OverlayPayload) -> dict[str, object]:
         "overlay_version": overlay.overlay_version,
         "entries": [
             {
-                **entry.model_dump(mode="json"),
+                **entry.model_dump(mode="json", exclude_none=True),
                 "aliases": sorted(entry.aliases),
                 "negative_semantic_ids": sorted(entry.negative_semantic_ids),
             }

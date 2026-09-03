@@ -8,7 +8,7 @@ from types import MappingProxyType
 import pytest
 
 from financial_agent.contracts.enums import IntentType, ProductFamily
-from financial_agent.intent.catalog import compile_catalog, load_catalog
+from financial_agent.intent.catalog import compile_catalog, load_catalog, load_hybrid_catalog
 from financial_agent.graph.contract import (
     APPROVED_PREDICATES,
     SHACL_RELATIVE_PATHS,
@@ -99,6 +99,9 @@ EXPECTED_FAMILIES_BY_CONCEPT = {
     "yield_rate": {"domestic_bond"},
 }
 
+V2_CATALOG_HASH = "c1e88ebd353e6306e8f61f4bef31d23fbed802adf4811a8ea287e40dbde73076"
+V2_OVERLAY_HASH = "6b80ee8afa7a53110bcdd4c0ee1a88a9b3da96c09855757fdaf1e9f5c6a0b307"
+
 
 def copy_catalog_and_ontology_without_tests(destination: Path) -> Path:
     """Create the complete production catalog input set with no test tree."""
@@ -124,6 +127,40 @@ def test_catalog_build_does_not_read_gold(tmp_path: Path) -> None:
 
     assert first.catalog_hash == second.catalog_hash
     assert first.overlay_hash == second.overlay_hash
+
+
+def test_v2_catalog_and_overlay_hashes_remain_pinned() -> None:
+    snapshot = load_catalog(PROJECT_ROOT)
+
+    assert snapshot.catalog_hash == V2_CATALOG_HASH
+    assert snapshot.overlay_hash == V2_OVERLAY_HASH
+
+
+def test_hybrid_labels_and_disambiguation_do_not_change_v2_alias_locks() -> None:
+    v2 = load_catalog(PROJECT_ROOT)
+    hybrid = load_hybrid_catalog(PROJECT_ROOT)
+
+    assert hybrid.alias_candidates == v2.alias_candidates
+    assert hybrid.alias_kinds == v2.alias_kinds
+    assert hybrid.preferred_labels_by_semantic_id["nav"] == "순자산가치"
+    assert all(
+        label not in hybrid.alias_candidates
+        or (
+            hybrid.alias_kinds[label] == "direct"
+            and hybrid.alias_candidates[label] == (semantic_id,)
+        )
+        for semantic_id, label in hybrid.preferred_labels_by_semantic_id.items()
+    )
+    assert set(hybrid.disambiguation_by_semantic_id) == {
+        "aum",
+        "credit_grade",
+        "nav",
+        "product_risk_grade",
+        "remaining_days",
+        "remaining_maturity",
+        "trailing_1y_historical_cumulative_return",
+        "yield_rate",
+    }
 
 
 def test_catalog_uses_frozen_runtime_axes() -> None:
