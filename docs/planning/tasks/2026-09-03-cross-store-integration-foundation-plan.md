@@ -279,31 +279,31 @@ feat: build deterministic graph artifacts
   Graph build and Evidence promotion paths.
 - Produces: a local cross-store verification record without activating data.
 
-- [ ] **Step 1: Build the real Graph twice**
+- [x] **Step 1: Build the real Graph twice**
 
 Require byte-identical data/evidence N-Quads and manifests, then run RDFLib and
 pySHACL validation.
 
-- [ ] **Step 2: Run Jena/TDB2/Fuseki verification**
+- [x] **Step 2: Run Jena/TDB2/Fuseki verification**
 
 Use the existing pinned 6.0.0 verifier and temporary read-only Fuseki. Require
 parse, SHACL, TDB2 load/query, Fuseki query, blocked update surfaces, process
 termination, and temporary-state cleanup.
 
-- [ ] **Step 3: Run real retrieval canaries**
+- [x] **Step 3: Run real retrieval canaries**
 
 For one domestic ETF and one public fund, run Vector Top-5 retrieval, promote
 one selected hit to Evidence, read it back, and verify the exact source span.
 For one real structured relationship, require Graph results to return the
 original PostgreSQL `relation_id` and `evidence_id`.
 
-- [ ] **Step 4: Reconcile protected state**
+- [x] **Step 4: Reconcile protected state**
 
 Require 40,149 exact embeddings with all anomaly counts zero. Confirm the
 Graph build did not modify PostgreSQL relation/observation counts and that only
 the two canary document Evidence records and origins were appended.
 
-- [ ] **Step 5: Run the complete suite**
+- [x] **Step 5: Run the complete suite**
 
 ```bash
 FINANCIAL_AGENT_TEST_DATABASE_URL="$FINANCIAL_AGENT_TEST_DATABASE_URL" \
@@ -313,18 +313,50 @@ FINANCIAL_AGENT_TEST_DATABASE_URL="$FINANCIAL_AGENT_TEST_DATABASE_URL" \
 All ordinary tests must pass; externally gated tests may skip only for their
 documented environment gates.
 
-- [ ] **Step 6: Record accurate phase status**
+- [x] **Step 6: Record accurate phase status**
 
 Record aggregate Graph entity/relation/Evidence/triple counts, deterministic
 hash equality, two Evidence promotion canaries, Vector reconciliation, and
 test counts. Keep official structured-source integration, readiness,
 activation, and NCP deployment explicitly incomplete.
 
-- [ ] **Step 7: Commit verification evidence**
+- [x] **Step 7: Commit verification evidence**
 
 ```text
 docs: record cross-store integration verification
 ```
+
+#### Verification result — 2026-09-04
+
+- Two independent real Graph exports contained 64,019 entities, 78,532
+  relations, 81,063 relation Evidence bindings, four sources, and 1,150,917
+  N-Quads statements (`826,657` data plus `324,260` Evidence). Their
+  `data.nq` SHA-256 was
+  `d8db7a5850b0091df125a37435e420c160aa0bbd4af50e95247d2df292d78704`
+  and their `evidence.nq` SHA-256 was
+  `16886b7a6a3d8ba07a2a921e5192d33218e645eb90bd305843f306555e944226`;
+  both byte streams and component hashes matched exactly. RDFLib and pySHACL
+  conformed. The component manifest hash was
+  `053df3d127c1f769b7859f2bedf664a0fb3eeb51c234d25797d407af235c80cb`
+  and the validation report hash was
+  `e545e9080d316a321311b86fb59bf73029156c09650920296997b829509b8667`.
+- Apache Jena/Fuseki 6.0.0 and Java 24 passed parse, SHACL, TDB2 load/query,
+  Fuseki query, blocked update/Graph Store/admin surfaces, process
+  termination, and temporary-state cleanup. A real zero-row
+  `holdsSecurity` query exposed a Jena optimizer internal error; the verifier
+  and read-only query endpoint now disable ARQ optimization, and an exact
+  zero-row integration regression test protects that boundary.
+- One domestic ETF and one public fund passed Vector Top-5 retrieval,
+  authoritative PostgreSQL re-read, selected-hit Evidence promotion, origin
+  round-trip, and exact source-span verification. Exactly two
+  `document_span` Evidence records and two document origins were appended.
+- Relations remained 78,532, observations remained 3,555,838, and embeddings
+  remained 40,149. Embedding reconciliation reported 40,149 eligible and
+  exact vectors with zero missing, duplicate, stale, orphan, or
+  wrong-dimension rows.
+- The complete suite passed with `2069 passed, 15 skipped`. Skips were limited
+  to their explicit NCP identity/scale/Object Storage and live official-source
+  gates. The dataset remained inactive.
 
 ---
 
@@ -341,18 +373,50 @@ docs: record cross-store integration verification
 - Produces: exact input inventory, disk requirement, and completion boundary
   for the separate final-dataset build.
 
-- [ ] **Step 1: Reconcile branch and source inventories read-only**
+- [x] **Step 1: Reconcile branch and source inventories read-only**
 
 Identify the exact verified KRX/SEC/ECOS commits and local raw manifests that
 are absent from the current database. Do not copy or reload them in this task.
 
-- [ ] **Step 2: Measure final local/NCP storage requirement**
+- [x] **Step 2: Measure final local/NCP storage requirement**
 
 Use current PostgreSQL table sizes and the approved source manifests. Do not
 assume the earlier 12.5 GB local free-space observation is still current.
 
-- [ ] **Step 3: Report the next planning gate**
+- [x] **Step 3: Report the next planning gate**
 
 State which official sources can be integrated locally and which require NCP
 storage expansion. Do not activate the current dataset or represent this
 foundation as final competition readiness.
+
+#### Read-only handoff result — 2026-09-04
+
+- The verified source implementations are already ancestors of this branch:
+  current KRX ETF holdings `00b1e66`, KRX security binding `f9bc8aa`, current
+  ECOS rates `f08d602`, and current SEC reapproval `56e84fa`.
+- The local immutable inventory reverified 1,166 manifests and 1,166 objects,
+  totaling 453,101,555 bytes: 1,161 KRX ETF holdings objects, two KRX security
+  identity objects, one ECOS object, one SEC Series/Class object, and one SEC
+  N-PORT object. The six source codes and every object checksum matched their
+  manifests.
+- The current `organizer-dart-2026-08-24-v2` database contains four organizer
+  dataset sources and 2,214 DART filing sources. It does not yet contain the
+  six KRX/ECOS/SEC structured-source snapshots above.
+- The current database is 7,108,771,175 bytes (`6779 MB`) and the filesystem
+  had only `8.9 GiB` available. The last verified full structured build had
+  1,380,654 entities, 1,316,613 securities, 1,455,508 relations, 11,690,591
+  observations, and 13,269,577 Evidence records. Scaling those verified row
+  counts by the current PostgreSQL table footprints, then retaining the DART
+  document and Vector tables, gives a planning estimate of approximately
+  `26–30 GB` for one combined database. This is an estimate until the combined
+  build is measured.
+- KRX and ECOS payload bytes are small enough to process locally in isolation,
+  but the available `8.9 GiB` is not a safe boundary for a clean combined
+  rebuild, index creation, temporary files, and WAL. SEC N-PORT is the dominant
+  expansion. Require at least `50 GB` for one disposable build and preserve
+  the existing `100 GB` NCP recommendation for two clean reproducibility
+  builds plus operational headroom.
+- The next gate is a separately approved final-dataset build plan that composes
+  organizer, KRX, ECOS, SEC, DART documents, and the existing embeddings into
+  a new inactive dataset, performs two clean builds, and only then considers
+  readiness or activation. No source was copied or reloaded in this task.
