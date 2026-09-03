@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-03
 
-**Status:** Proposed for user review
+**Status:** Approved 2026-09-03
 
 **Scope:** Merge the verified Graph Phase 1 core with the current organizer and
 DART Vector branch, make the current PostgreSQL dataset projectable, and add
@@ -114,6 +114,12 @@ Only present text values `ETF` and `ETN` are accepted. Conflicting values,
 missing values on an ETP participating in a typed Graph relation, and a
 disagreement between overseas `product_type` and `is_etn` fail the projection.
 No type is inferred from a product name.
+
+The organizer-authoritative dataset contains 47 `tracksIndex` relations whose
+subject is an ETN. The ontology therefore permits `tracksIndex` from any
+`ExchangeTradedProduct` (`ETF` or `ETN`) and from `PublicFund`, while retaining
+the ETF/ETN disjointness rule. This amendment is recorded separately rather
+than silently changing ADR-0021.
 
 ### 4.4 Document Evidence promotion
 
