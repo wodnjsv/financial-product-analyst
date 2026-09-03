@@ -35,7 +35,9 @@ from financial_agent.intent.query_contract_registry import (
     assess_requirement_representability,
     load_query_contract_registry,
 )
+from financial_agent.intent.query_contract_judge import QueryContractJudgePromptEnvelope
 from financial_agent.intent.service import IntentResolverService
+from financial_agent.intent.types import SemanticTag
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
     CANDIDATE_POLICY_VERSION,
@@ -117,16 +119,19 @@ class LivePathEvidence(StrictModel):
     family_exact: CountEvidence | None = None
     tag_exact: CountEvidence | None = None
     complete_contract: CountEvidence | None = None
+    representative_contract_exact: CountEvidence | None = None
     repair_count: int = Field(ge=0)
     judge_count: int = Field(ge=0)
     provider_calls: int = Field(ge=0)
+    successful_provider_calls: int = Field(ge=0)
+    call_type_counts: Mapping[str, int]
+    provider_error_counts: Mapping[str, int]
+    semantic_error_counts: Mapping[str, int]
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     p50_latency_ms: int | None = Field(default=None, ge=0)
     p95_latency_ms: int | None = Field(default=None, ge=0)
     rate_limit_count: int = Field(ge=0)
-    stable_error_counts: Mapping[str, int] = Field(default_factory=dict)
-
     @model_validator(mode="after")
     def validate_accounting(self) -> "LivePathEvidence":
         if self.provider_success.total != self.case_count:
@@ -141,19 +146,69 @@ class LivePathEvidence(StrictModel):
         ):
             if metric is not None and metric.total != self.case_count:
                 raise ValueError("LIVE_METRIC_DENOMINATOR_MISMATCH")
-        base_calls = self.case_count * (
-            1 if self.path_id == "production_one_axis" else 3
+        semantic_metrics = tuple(
+            metric
+            for metric in (
+                self.action_exact,
+                self.family_exact,
+                self.tag_exact,
+                self.complete_contract,
+            )
+            if metric is not None
         )
-        known_calls = base_calls + self.repair_count + self.judge_count
-        failed_extra_call_allowance = (
-            0
-            if self.path_id == "parallel_three_axis_challenger"
-            else sum(self.stable_error_counts.values())
-        )
-        if not known_calls <= self.provider_calls <= known_calls + failed_extra_call_allowance:
+        if any(
+            metric.successes > self.structured_validity.successes
+            for metric in semantic_metrics
+        ):
+            raise ValueError("LIVE_SEMANTIC_COUNTER_EXCEEDS_STRUCTURED")
+        if self.structured_validity.successes > self.provider_success.successes:
+            raise ValueError("LIVE_STRUCTURED_EXCEEDS_PROVIDER")
+        if self.provider_success.successes > self.successful_provider_calls:
+            raise ValueError("LIVE_PROVIDER_CASE_SUCCESS_EXCEEDS_CALL_SUCCESS")
+        if self.representative_contract_exact is not None and (
+            self.path_id != "production_one_axis"
+            or self.representative_contract_exact.total != 5
+            or self.representative_contract_exact.successes
+            > self.structured_validity.successes
+        ):
+            raise ValueError("LIVE_REPRESENTATIVE_METRIC_INVALID")
+        if any(value < 0 for value in self.call_type_counts.values()):
+            raise ValueError("LIVE_CALL_TYPE_COUNT_INVALID")
+        if any(value < 1 for value in self.provider_error_counts.values()):
+            raise ValueError("LIVE_PROVIDER_ERROR_COUNT_INVALID")
+        if any(value < 1 for value in self.semantic_error_counts.values()):
+            raise ValueError("LIVE_SEMANTIC_ERROR_COUNT_INVALID")
+        if sum(self.call_type_counts.values()) != self.provider_calls:
             raise ValueError("LIVE_PROVIDER_CALL_ACCOUNTING_MISMATCH")
-        if any(value < 1 for value in self.stable_error_counts.values()):
-            raise ValueError("LIVE_ERROR_COUNT_INVALID")
+        if self.successful_provider_calls + sum(self.provider_error_counts.values()) != self.provider_calls:
+            raise ValueError("LIVE_PROVIDER_OUTCOME_ACCOUNTING_MISMATCH")
+        if self.rate_limit_count != self.provider_error_counts.get("MODEL_RATE_LIMITED", 0):
+            raise ValueError("LIVE_RATE_LIMIT_ACCOUNTING_MISMATCH")
+        if sum(self.semantic_error_counts.values()) != self.case_count - self.structured_validity.successes:
+            raise ValueError("LIVE_SEMANTIC_OUTCOME_ACCOUNTING_MISMATCH")
+        if self.path_id == "production_one_axis":
+            if self.call_type_counts.get("primary", 0) != self.case_count:
+                raise ValueError("LIVE_PRIMARY_CALL_COUNT_MISMATCH")
+            if self.call_type_counts.get("repair", 0) != self.repair_count:
+                raise ValueError("LIVE_REPAIR_CALL_COUNT_MISMATCH")
+            if self.call_type_counts.get("judge", 0) != self.judge_count:
+                raise ValueError("LIVE_JUDGE_CALL_COUNT_MISMATCH")
+            if set(self.call_type_counts) - {"primary", "repair", "judge"}:
+                raise ValueError("LIVE_CALL_TYPE_INVALID")
+        else:
+            expected = {"challenger_action", "challenger_family", "challenger_tag"}
+            if set(self.call_type_counts) != expected or any(
+                self.call_type_counts[item] != self.case_count for item in expected
+            ):
+                raise ValueError("LIVE_CHALLENGER_CALL_COUNT_MISMATCH")
+            if self.repair_count or self.judge_count:
+                raise ValueError("LIVE_CHALLENGER_EXTRA_CALL_INVALID")
+        if self.provider_calls and (
+            self.p50_latency_ms is None
+            or self.p95_latency_ms is None
+            or self.p50_latency_ms > self.p95_latency_ms
+        ):
+            raise ValueError("LIVE_LATENCY_ACCOUNTING_INVALID")
         return self
 
 
@@ -182,7 +237,11 @@ class PromotionEvidence(StrictModel):
 
     @model_validator(mode="after")
     def validate_shape(self) -> "PromotionEvidence":
-        if set(self.source_hashes) != {"core", "heldout"}:
+        if set(self.source_hashes) != {
+            "core",
+            "heldout",
+            "representative_contract_expectations",
+        }:
             raise ValueError("SOURCE_HASH_SET_INVALID")
         if set(self.registry_hashes) != {
             "physical_bindings",
@@ -208,6 +267,11 @@ class PromotionEvidence(StrictModel):
             raise ValueError("FALSE_COMPLETE_DENOMINATOR_MISMATCH")
         if any(not _is_sha256(value) for value in self.source_hashes.values()):
             raise ValueError("SOURCE_HASH_INVALID")
+        if (
+            self.source_hashes["representative_contract_expectations"]
+            != REPRESENTATIVE_EXPECTATION_HASH
+        ):
+            raise ValueError("REPRESENTATIVE_EXPECTATION_HASH_MISMATCH")
         if any(not _is_sha256(value) for value in self.registry_hashes.values()):
             raise ValueError("REGISTRY_HASH_INVALID")
         if set(self.readiness_distribution) - {
@@ -258,18 +322,18 @@ class _GateDefinition:
     attribute: str
     comparison: Literal["equal", "at_least", "at_most"]
     threshold: Decimal
-    denominator: int | Literal["contract_gold", "positive"]
+    denominator: int | Literal["contract_gold", "positive", "undefined"]
 
 
 _GATES = (
     _GateDefinition("supported_representability", "supported_representability", "equal", Decimal("1"), 199),
     _GateDefinition("unsupported_reason_coverage", "unsupported_reason_coverage", "equal", Decimal("1"), 10),
     _GateDefinition("false_complete", "false_complete", "equal", Decimal("0"), 10),
-    _GateDefinition("exact_lock_precision", "exact_lock_precision", "equal", Decimal("1"), "positive"),
+    _GateDefinition("exact_lock_precision", "exact_lock_precision", "equal", Decimal("1"), "undefined"),
     _GateDefinition("complete_contract_candidate_recall", "complete_contract_candidate_recall", "at_least", Decimal("0.99"), "contract_gold"),
     _GateDefinition("decoupled_contract_exact_match", "decoupled_contract_exact_match", "at_least", Decimal("0.95"), "contract_gold"),
-    _GateDefinition("executable_compile_success", "executable_compile_success", "equal", Decimal("1"), "positive"),
-    _GateDefinition("byte_equivalence", "byte_equivalence", "equal", Decimal("1"), "positive"),
+    _GateDefinition("executable_compile_success", "executable_compile_success", "equal", Decimal("1"), "undefined"),
+    _GateDefinition("byte_equivalence", "byte_equivalence", "equal", Decimal("1"), "undefined"),
     _GateDefinition("adr_candidate_recall_at_5", "adr_candidate_recall_at_5", "at_least", Decimal("0.99"), 196),
     _GateDefinition("adr_first_pass_structured_validity", "adr_first_pass_structured_validity", "at_least", Decimal("0.99"), 155),
     _GateDefinition("adr_joint_frame_exact", "adr_joint_frame_exact", "at_least", Decimal("0.90"), 155),
@@ -329,6 +393,23 @@ def build_promotion_report(
     if live_gate.status != "pass" and live_gate.reason_code is not None:
         reasons.append(live_gate.reason_code)
 
+    representative_metric = (
+        None if production is None else production.representative_contract_exact
+    )
+    representative_definition = _GateDefinition(
+        "representative_contract_exact",
+        "live_paths",
+        "equal",
+        Decimal("1"),
+        5,
+    )
+    representative_gate = _assess_gate(
+        representative_definition, representative_metric, 5
+    )
+    gates.append(representative_gate)
+    if representative_gate.status != "pass" and representative_gate.reason_code:
+        reasons.append(representative_gate.reason_code)
+
     if evidence.counts.contract_gold_unmeasured_frames:
         reasons.append("SUPPORTED_GOLD_COVERAGE_INCOMPLETE")
     reasons = sorted(set(reasons))
@@ -355,7 +436,7 @@ def build_promotion_report(
 
 def _expected_denominator(
     definition: _GateDefinition, counts: SemanticQueryCounts
-) -> int | Literal["positive"]:
+) -> int | Literal["positive", "undefined"]:
     if definition.denominator == "contract_gold":
         return counts.supported_frames - counts.intentionally_blocked_frames
     return definition.denominator
@@ -364,8 +445,20 @@ def _expected_denominator(
 def _assess_gate(
     definition: _GateDefinition,
     metric: CountEvidence | None,
-    expected_denominator: int | Literal["positive"],
+    expected_denominator: int | Literal["positive", "undefined"],
 ) -> PromotionGate:
+    if expected_denominator == "undefined":
+        return PromotionGate(
+            name=definition.name,
+            status="unmeasured",
+            numerator=None if metric is None else metric.successes,
+            denominator=None if metric is None else metric.total,
+            comparison=definition.comparison,
+            threshold=definition.threshold,
+            reason_code=(
+                f"{definition.name.upper()}_AUTHORITATIVE_POPULATION_UNDEFINED"
+            ),
+        )
     if metric is None or metric.total == 0:
         return PromotionGate(
             name=definition.name,
@@ -470,6 +563,7 @@ def collect_static_evidence(project_root: Path) -> PromotionEvidence:
         source_hashes={
             "core": snapshot.core_source_hash,
             "heldout": snapshot.heldout_source_hash,
+            "representative_contract_expectations": REPRESENTATIVE_EXPECTATION_HASH,
         },
         registry_hashes={
             "physical_bindings": bindings.registry_hash,
@@ -557,9 +651,310 @@ _LIVE_CASES = (
 )
 
 
+def _scope(*families: str, prior: str | None = None) -> dict[str, object]:
+    return {
+        "product_family_ids": list(families),
+        "entity_refs": [],
+        "prior_result_binding": prior,
+    }
+
+
+def _qualifiers() -> dict[str, object]:
+    return {
+        "period_id": None,
+        "currency_id": None,
+        "unit_id": None,
+        "as_of_date": None,
+    }
+
+
+def _value(decimal: str, unit: str) -> dict[str, object]:
+    return {
+        "kind": "decimal",
+        "string": None,
+        "integer": None,
+        "decimal": decimal,
+        "boolean": None,
+        "date": None,
+        "datetime": None,
+        "identifier": None,
+        "unit_id": unit,
+    }
+
+
+def _atom(field: str, operator: str, decimal: str, unit: str) -> dict[str, object]:
+    return {
+        "node_type": "atom",
+        "field_concept_id": field,
+        "operator_id": operator,
+        "value": _value(decimal, unit),
+        "values": [],
+        "null_policy_id": "exclude_missing.v1",
+    }
+
+
+def _contract_base(
+    variant: str, action: str, families: tuple[str, ...], result_shape: str, *, prior: str | None = None
+) -> dict[str, object]:
+    return {
+        "contract_variant_id": variant,
+        "action_id": action,
+        "scope": _scope(*families, prior=prior),
+        "qualifiers": _qualifiers(),
+        "result_shape": result_shape,
+    }
+
+
+def _screen_contract(families: tuple[str, ...], predicate: dict[str, object]) -> dict[str, object]:
+    return {
+        **_contract_base("screen.predicate.v2", "screen", families, "product_list"),
+        "predicate": predicate,
+    }
+
+
+def _aggregate_contract(
+    family: str,
+    function: str,
+    *,
+    target: str | None = None,
+    count_population: str | None = None,
+    group_by: tuple[str, ...] = (),
+) -> dict[str, object]:
+    grouped = bool(group_by)
+    return {
+        **_contract_base(
+            "aggregate.grouped.v2" if grouped else "aggregate.scalar.v2",
+            "aggregate",
+            (family,),
+            "grouped_table" if grouped else "single_value",
+        ),
+        "aggregation": {
+            "function_id": function,
+            "target_field_concept_id": target,
+            "count_population_id": count_population,
+            "group_by_field_concept_ids": list(group_by),
+            "bucket_policy_id": None,
+            "population_grain_id": "source-product.v1",
+            "dedup_policy_id": "no-dedup.v1",
+        },
+        "predicate": None,
+    }
+
+
+_fee_screen = _screen_contract(("public_fund",), _atom("fee_rate", "lte", "1", "percent"))
+_multi_predicate = _screen_contract(
+    ("overseas_etf",),
+    {
+        "node_type": "all_of",
+        "children": [
+            _atom("fee_rate", "lte", "0.5", "percent"),
+            _atom("aum", "gte", "100", "krw"),
+        ],
+    },
+)
+_prior_first = {
+    **_contract_base(
+        "rank.ordering.v2",
+        "rank",
+        ("domestic_etf", "overseas_etf"),
+        "top_k",
+    ),
+    "ordering": [{
+        "field_concept_id": "aum",
+        "direction": "desc",
+        "direction_policy_id": None,
+        "nulls_policy_id": "exclude_missing.v1",
+        "tie_break_policy_id": "stable-product-id.v1",
+    }],
+    "limit": 5,
+    "limit_policy_id": None,
+    "predicate": None,
+}
+_prior_second = {
+    **_contract_base(
+        "rank.ordering.v2", "rank", (), "top_k", prior="producer-frame-0"
+    ),
+    "ordering": [{
+        "field_concept_id": "trailing_1y_historical_cumulative_return",
+        "direction": "desc",
+        "direction_policy_id": None,
+        "nulls_policy_id": "exclude_missing.v1",
+        "tie_break_policy_id": "stable-product-id.v1",
+    }],
+    "limit": 1,
+    "limit_policy_id": None,
+    "predicate": None,
+}
+_qualitative_rank = {
+    **_contract_base(
+        "rank.ordering.v2",
+        "rank",
+        ("domestic_etf", "overseas_etf"),
+        "top_k",
+    ),
+    "ordering": [{
+        "field_concept_id": "fee_rate",
+        "direction": "asc",
+        "direction_policy_id": None,
+        "nulls_policy_id": "exclude_missing.v1",
+        "tie_break_policy_id": "stable-product-id.v1",
+    }],
+    "limit": 5,
+    "limit_policy_id": None,
+    "predicate": None,
+}
+
+# This hand-adjudicated population is deliberately small but complete: every one of
+# the five named groups and every semantic role below is authoritative and hashed.
+REPRESENTATIVE_CASE_EXPECTATIONS: Mapping[str, object] = {
+    "fee-screen": {
+        "actions": ["screen"],
+        "families": ["public_fund"],
+        "contracts": [_fee_screen],
+        "context_links": [],
+    },
+    "multi-predicate": {
+        "actions": ["screen"],
+        "families": ["overseas_etf"],
+        "contracts": [_multi_predicate],
+        "context_links": [],
+    },
+    "count": {
+        "actions": ["aggregate"],
+        "families": ["domestic_etf"],
+        "contracts": [_aggregate_contract("domestic_etf", "count", count_population="source-product.v1")],
+        "context_links": [],
+    },
+    "sum": {
+        "actions": ["aggregate"],
+        "families": ["overseas_etf"],
+        "contracts": [_aggregate_contract("overseas_etf", "sum", target="aum")],
+        "context_links": [],
+    },
+    "grouped-aggregate": {
+        "actions": ["aggregate"],
+        "families": ["domestic_etf"],
+        "contracts": [_aggregate_contract(
+            "domestic_etf",
+            "count",
+            count_population="source-product.v1",
+            group_by=("product_risk_grade",),
+        )],
+        "context_links": [],
+    },
+    "qualitative-rank": {
+        "actions": ["rank"],
+        "families": ["domestic_etf", "overseas_etf"],
+        "contracts": [_qualitative_rank],
+        "context_links": [],
+    },
+    "prior-result": {
+        "actions": ["rank", "rank"],
+        "families": ["domestic_etf", "overseas_etf"],
+        "contracts": [_prior_first, _prior_second],
+        "context_links": [{
+            "link_type": "consume_result_set",
+            "source_role": "top_k_products",
+            "selector": ["all"],
+            "producer_frame_ordinal": 0,
+            "consumer_frame_ordinal": 1,
+            "target_kind": ["result_set"],
+            "target_cardinality": ["many"],
+            "target_slot_kind": ["entity"],
+        }],
+    },
+}
+REPRESENTATIVE_GROUPS = (
+    ("fee-screen", "multi-predicate"),
+    ("count", "sum"),
+    ("grouped-aggregate",),
+    ("prior-result",),
+    ("qualitative-rank",),
+)
+REPRESENTATIVE_EXPECTATION_HASH = hashlib.sha256(
+    canonical_json_bytes(REPRESENTATIVE_CASE_EXPECTATIONS)
+).hexdigest()
+
+
+def evaluate_representative_contracts(
+    observations: Mapping[str, object],
+) -> CountEvidence:
+    """Score the five complete, pinned semantic groups; missing or extra data fails."""
+
+    if set(observations) != set(REPRESENTATIVE_CASE_EXPECTATIONS):
+        return CountEvidence(successes=0, total=len(REPRESENTATIVE_GROUPS))
+    successes = sum(
+        all(
+            case_id in observations
+            and canonical_json_bytes(observations[case_id])
+            == canonical_json_bytes(REPRESENTATIVE_CASE_EXPECTATIONS[case_id])
+            for case_id in group
+        )
+        for group in REPRESENTATIVE_GROUPS
+    )
+    return CountEvidence(successes=successes, total=len(REPRESENTATIVE_GROUPS))
+
+
+def _representative_observation(attempt: object) -> dict[str, object]:
+    resolution = attempt.resolution  # type: ignore[attr-defined]
+    candidate_set = attempt.candidates  # type: ignore[attr-defined]
+    frames = resolution.canonical_frames
+    frame_ordinals = {frame.frame_id: frame.ordinal for frame in frames}
+    contracts: list[dict[str, object]] = []
+    for frame_candidates in candidate_set.frames:
+        for candidate in frame_candidates.complete_candidates:
+            payload = candidate.contract.model_dump(
+                mode="json",
+                exclude={"contract_schema_version", "frame_id", "provenance", "registry_pins"},
+            )
+            prior = payload["scope"]["prior_result_binding"]
+            if prior is not None:
+                producer_ordinal = frame_ordinals.get(prior)
+                payload["scope"]["prior_result_binding"] = (
+                    None
+                    if producer_ordinal is None
+                    else f"producer-frame-{producer_ordinal}"
+                )
+            contracts.append(payload)
+    return {
+        "actions": [
+            action.value
+            for frame in frames
+            for action in frame.action_choice.selected_ids
+        ],
+        "families": sorted({
+            family.value
+            for frame in frames
+            for family in frame.product_family_choice.selected_ids
+        }),
+        "contracts": contracts,
+        "context_links": [{
+            "link_type": link.link_type.value,
+            "source_role": link.source_role.value,
+            "selector": [item.value for item in link.selector],
+            "producer_frame_ordinal": frame_ordinals.get(link.producer_frame_id),
+            "consumer_frame_ordinal": frame_ordinals.get(link.consumer_frame_id),
+            "target_kind": [item.value for item in link.target_kind],
+            "target_cardinality": [item.value for item in link.target_cardinality],
+            "target_slot_kind": [item.value for item in link.target_slot_kind],
+        } for link in resolution.context_links],
+    }
+
+
 class _EmptyEntityRepository:
     async def search_batch(self, dataset_version: str, mentions: object) -> dict[str, object]:
         return {}
+
+
+@dataclass(frozen=True, slots=True)
+class _ProviderCallRecord:
+    call_id: int
+    call_type: str
+    success: bool
+    elapsed_ms: int
+    prompt_tokens: int
+    completion_tokens: int
+    error_code: str | None
 
 
 class _RecordingAdapter:
@@ -567,25 +962,45 @@ class _RecordingAdapter:
         self.inner = inner
         self.raw_path = raw_path
         self.calls = 0
-        self.successes = 0
-        self.rate_limits = 0
+        self.records: list[_ProviderCallRecord] = []
 
     async def invoke(self, envelope: object, timeout_seconds: float) -> ModelInvocationResult:
         self.calls += 1
         call_id = self.calls
+        call_type = _call_type(envelope)
+        started = time.perf_counter()
         try:
             result = await self.inner.invoke(envelope, timeout_seconds)
-        except ModelInvocationError as error:
-            if error.code == "MODEL_RATE_LIMITED":
-                self.rate_limits += 1
+        except Exception as error:
+            self.records.append(_ProviderCallRecord(
+                call_id=call_id,
+                call_type=call_type,
+                success=False,
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+                prompt_tokens=0,
+                completion_tokens=0,
+                error_code=getattr(error, "code", type(error).__name__),
+            ))
             raise
-        self.successes += 1
-        _append_raw(self.raw_path, {"call": call_id, "content": result.content})
+        self.records.append(_ProviderCallRecord(
+            call_id=call_id,
+            call_type=call_type,
+            success=True,
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+            prompt_tokens=int(result.usage.get("promptTokens", 0)),
+            completion_tokens=int(result.usage.get("completionTokens", 0)),
+            error_code=None,
+        ))
+        _append_raw(
+            self.raw_path,
+            {"call": call_id, "call_type": call_type, "content": result.content},
+        )
         return result
 
 
 @dataclass(frozen=True, slots=True)
 class _Envelope:
+    axis: Literal["action", "family", "tag"]
     system_message: str
     user_message: str
     response_schema: dict[str, object]
@@ -598,7 +1013,7 @@ def _axis_envelope(case: _BenchmarkCase, axis: str) -> _Envelope:
             "type": "object",
             "additionalProperties": False,
             "required": ["ids"],
-            "properties": {"ids": {"type": "array", "maxItems": 16, "items": {"type": "string", "enum": values}}},
+            "properties": {"ids": {"type": "array", "maxItems": len(values), "uniqueItems": True, "items": {"type": "string", "enum": values}}},
         }
     elif axis == "family":
         values = ["domestic_bond", "domestic_etf", "overseas_etf", "public_fund"]
@@ -609,14 +1024,15 @@ def _axis_envelope(case: _BenchmarkCase, axis: str) -> _Envelope:
             "properties": {"ids": {"type": "array", "maxItems": 4, "uniqueItems": True, "items": {"type": "string", "enum": values}}},
         }
     else:
-        values = ["CROSS_CLASS", "ERROR", "POLICY", "PRIOR_RESULT"]
+        values = [item.value for item in SemanticTag]
         schema = {
             "type": "object",
             "additionalProperties": False,
             "required": ["ids"],
-            "properties": {"ids": {"type": "array", "maxItems": 4, "uniqueItems": True, "items": {"type": "string", "enum": values}}},
+            "properties": {"ids": {"type": "array", "maxItems": len(values), "uniqueItems": True, "items": {"type": "string", "enum": values}}},
         }
     return _Envelope(
+        axis=axis,  # type: ignore[arg-type]
         system_message=(
             f"한국어 금융상품 질문에서 {axis} 축만 분류하세요. 제공된 ID만 사용하고 "
             "설명 없이 JSON으로 답하세요. 모르면 빈 배열을 반환하세요."
@@ -624,6 +1040,55 @@ def _axis_envelope(case: _BenchmarkCase, axis: str) -> _Envelope:
         user_message=case.question,
         response_schema=schema,
     )
+
+
+def _call_type(envelope: object) -> str:
+    if isinstance(envelope, _Envelope):
+        return f"challenger_{envelope.axis}"
+    if isinstance(envelope, QueryContractJudgePromptEnvelope):
+        return "judge"
+    if "Apply this correction only:" in str(getattr(envelope, "system_message", "")):
+        return "repair"
+    return "primary"
+
+
+def parse_challenger_axis_payload(content: str, axis: str) -> tuple[str, ...]:
+    allowed_by_axis = {
+        "action": (set(ACTION_IDS), len(ACTION_IDS)),
+        "family": (
+            {"domestic_bond", "domestic_etf", "overseas_etf", "public_fund"},
+            4,
+        ),
+        "tag": ({item.value for item in SemanticTag}, len(SemanticTag)),
+    }
+    if axis not in allowed_by_axis:
+        raise ValueError("CHALLENGER_SCHEMA_INVALID")
+
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("CHALLENGER_SCHEMA_INVALID")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(content, object_pairs_hook=unique_object)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise ValueError("CHALLENGER_SCHEMA_INVALID") from error
+    if not isinstance(value, dict) or set(value) != {"ids"}:
+        raise ValueError("CHALLENGER_SCHEMA_INVALID")
+    ids = value["ids"]
+    allowed, maximum = allowed_by_axis[axis]
+    if (
+        not isinstance(ids, list)
+        or len(ids) > maximum
+        or any(type(item) is not str for item in ids)
+        or len(ids) != len(set(ids))
+        or any(item not in allowed for item in ids)
+    ):
+        raise ValueError("CHALLENGER_SCHEMA_INVALID")
+    return tuple(ids)
 
 
 async def run_live_benchmark(
@@ -684,20 +1149,17 @@ async def _run_production_path(
     paced: bool,
     interval: float,
 ) -> LivePathEvidence:
-    provider_successes = valid = action_hits = family_hits = complete = repairs = judges = 0
-    prompt_tokens = completion_tokens = 0
-    latencies: list[int] = []
-    errors: Counter[str] = Counter()
-    start_calls = adapter.calls
-    start_limits = adapter.rate_limits
+    provider_successes = valid = action_hits = family_hits = complete = 0
+    semantic_errors: Counter[str] = Counter()
+    observations: dict[str, object] = {}
+    start_record = len(adapter.records)
     for index, case in enumerate(_LIVE_CASES):
         context = _request_context(case)
-        started = time.perf_counter()
-        successful_calls_before = adapter.successes
+        case_record = len(adapter.records)
         try:
             attempt = await service.resolve_query_contract_candidates(context)
         except (ModelInvocationError, ResolverContractError, ValueError) as error:
-            errors[getattr(error, "code", type(error).__name__)] += 1
+            semantic_errors[getattr(error, "code", type(error).__name__)] += 1
         else:
             valid += 1
             actual_actions = tuple(
@@ -720,14 +1182,18 @@ async def _run_production_path(
                 bool(attempt.candidates.frames)
                 and all(frame.complete_candidates for frame in attempt.candidates.frames)
             )
-            repairs += int(attempt.telemetry.repair_used)
-            judges += int(attempt.telemetry.candidate_judge_used)
-            prompt_tokens += attempt.telemetry.usage.prompt_tokens
-            completion_tokens += attempt.telemetry.usage.completion_tokens
-        provider_successes += int(adapter.successes > successful_calls_before)
-        latencies.append(int((time.perf_counter() - started) * 1000))
+            if case.case_id in REPRESENTATIVE_CASE_EXPECTATIONS:
+                observations[case.case_id] = _representative_observation(attempt)
+        provider_successes += int(
+            any(record.success for record in adapter.records[case_record:])
+        )
         if paced and index + 1 < len(_LIVE_CASES):
             await asyncio.sleep(interval)
+    records = adapter.records[start_record:]
+    provider_errors = Counter(
+        record.error_code for record in records if record.error_code is not None
+    )
+    call_types = Counter(record.call_type for record in records)
     return LivePathEvidence(
         path_id="production_one_axis",
         case_count=len(_LIVE_CASES),
@@ -738,15 +1204,19 @@ async def _run_production_path(
         action_exact=CountEvidence(successes=action_hits, total=len(_LIVE_CASES)),
         family_exact=CountEvidence(successes=family_hits, total=len(_LIVE_CASES)),
         complete_contract=CountEvidence(successes=complete, total=len(_LIVE_CASES)),
-        repair_count=repairs,
-        judge_count=judges,
-        provider_calls=adapter.calls - start_calls,
-        input_tokens=prompt_tokens,
-        output_tokens=completion_tokens,
-        p50_latency_ms=_percentile(latencies, 50),
-        p95_latency_ms=_percentile(latencies, 95),
-        rate_limit_count=adapter.rate_limits - start_limits,
-        stable_error_counts=dict(sorted(errors.items())),
+        representative_contract_exact=evaluate_representative_contracts(observations),
+        repair_count=call_types["repair"],
+        judge_count=call_types["judge"],
+        provider_calls=len(records),
+        successful_provider_calls=sum(record.success for record in records),
+        call_type_counts=dict(sorted(call_types.items())),
+        provider_error_counts=dict(sorted(provider_errors.items())),
+        semantic_error_counts=dict(sorted(semantic_errors.items())),
+        input_tokens=sum(record.prompt_tokens for record in records),
+        output_tokens=sum(record.completion_tokens for record in records),
+        p50_latency_ms=_percentile([record.elapsed_ms for record in records], 50),
+        p95_latency_ms=_percentile([record.elapsed_ms for record in records], 95),
+        rate_limit_count=provider_errors["MODEL_RATE_LIMITED"],
     )
 
 
@@ -754,13 +1224,9 @@ async def _run_challenger_path(
     adapter: _RecordingAdapter, paced: bool, interval: float
 ) -> LivePathEvidence:
     successes = valid = action_hits = family_hits = 0
-    prompt_tokens = completion_tokens = 0
-    latencies: list[int] = []
-    errors: Counter[str] = Counter()
-    start_calls = adapter.calls
-    start_limits = adapter.rate_limits
+    semantic_errors: Counter[str] = Counter()
+    start_record = len(adapter.records)
     for index, case in enumerate(_LIVE_CASES):
-        started = time.perf_counter()
         results = await asyncio.gather(
             *(
                 adapter.invoke(_axis_envelope(case, axis), REQUEST_DEADLINE_SECONDS)
@@ -771,27 +1237,25 @@ async def _run_challenger_path(
         if all(isinstance(item, ModelInvocationResult) for item in results):
             successes += 1
             try:
-                parsed = [json.loads(item.content) for item in results]  # type: ignore[union-attr]
-                ids = [tuple(value["ids"]) for value in parsed]
-                if any(not isinstance(value, tuple) for value in ids):
-                    raise ValueError
-            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-                errors["MODEL_SCHEMA_INVALID"] += 1
+                ids = [
+                    parse_challenger_axis_payload(item.content, axis)  # type: ignore[union-attr]
+                    for item, axis in zip(results, ("action", "family", "tag"), strict=True)
+                ]
+            except ValueError:
+                semantic_errors["CHALLENGER_SCHEMA_INVALID"] += 1
             else:
                 valid += 1
                 action_hits += int(ids[0] == case.actions)
                 family_hits += int(tuple(sorted(ids[1])) == tuple(sorted(case.families)))
-                for result in results:
-                    assert isinstance(result, ModelInvocationResult)
-                    prompt_tokens += result.usage["promptTokens"]
-                    completion_tokens += result.usage["completionTokens"]
         else:
-            for result in results:
-                if isinstance(result, BaseException):
-                    errors[getattr(result, "code", type(result).__name__)] += 1
-        latencies.append(int((time.perf_counter() - started) * 1000))
+            semantic_errors["CHALLENGER_PROVIDER_BUNDLE_INCOMPLETE"] += 1
         if paced and index + 1 < len(_LIVE_CASES):
             await asyncio.sleep(interval)
+    records = adapter.records[start_record:]
+    provider_errors = Counter(
+        record.error_code for record in records if record.error_code is not None
+    )
+    call_types = Counter(record.call_type for record in records)
     return LivePathEvidence(
         path_id="parallel_three_axis_challenger",
         case_count=len(_LIVE_CASES),
@@ -801,13 +1265,16 @@ async def _run_challenger_path(
         family_exact=CountEvidence(successes=family_hits, total=len(_LIVE_CASES)),
         repair_count=0,
         judge_count=0,
-        provider_calls=adapter.calls - start_calls,
-        input_tokens=prompt_tokens,
-        output_tokens=completion_tokens,
-        p50_latency_ms=_percentile(latencies, 50),
-        p95_latency_ms=_percentile(latencies, 95),
-        rate_limit_count=adapter.rate_limits - start_limits,
-        stable_error_counts=dict(sorted(errors.items())),
+        provider_calls=len(records),
+        successful_provider_calls=sum(record.success for record in records),
+        call_type_counts=dict(sorted(call_types.items())),
+        provider_error_counts=dict(sorted(provider_errors.items())),
+        semantic_error_counts=dict(sorted(semantic_errors.items())),
+        input_tokens=sum(record.prompt_tokens for record in records),
+        output_tokens=sum(record.completion_tokens for record in records),
+        p50_latency_ms=_percentile([record.elapsed_ms for record in records], 50),
+        p95_latency_ms=_percentile([record.elapsed_ms for record in records], 95),
+        rate_limit_count=provider_errors["MODEL_RATE_LIMITED"],
     )
 
 

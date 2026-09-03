@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,10 @@ from scripts.run_semantic_query_benchmark import (
     build_promotion_report,
     canonical_report_bytes,
     collect_static_evidence,
+    evaluate_representative_contracts,
+    parse_challenger_axis_payload,
+    REPRESENTATIVE_CASE_EXPECTATIONS,
+    REPRESENTATIVE_EXPECTATION_HASH,
     _parser,
     REQUEST_DEADLINE_SECONDS,
 )
@@ -37,6 +42,14 @@ def _registry_hashes() -> dict[str, str]:
     }
 
 
+def _source_hashes() -> dict[str, str]:
+    return {
+        "core": SHA_A,
+        "heldout": SHA_B,
+        "representative_contract_expectations": REPRESENTATIVE_EXPECTATION_HASH,
+    }
+
+
 def _counts() -> SemanticQueryCounts:
     return SemanticQueryCounts(
         core_questions=52,
@@ -56,9 +69,14 @@ def _live() -> LivePathEvidence:
         case_count=16,
         provider_success=CountEvidence(successes=16, total=16),
         structured_validity=CountEvidence(successes=16, total=16),
+        representative_contract_exact=CountEvidence(successes=5, total=5),
         repair_count=0,
         judge_count=0,
         provider_calls=16,
+        successful_provider_calls=16,
+        call_type_counts={"primary": 16},
+        provider_error_counts={},
+        semantic_error_counts={},
         input_tokens=100,
         output_tokens=40,
         p50_latency_ms=100,
@@ -69,7 +87,7 @@ def _live() -> LivePathEvidence:
 
 def _evidence() -> PromotionEvidence:
     return PromotionEvidence(
-        source_hashes={"core": SHA_A, "heldout": SHA_B},
+        source_hashes=_source_hashes(),
         registry_hashes=_registry_hashes(),
         counts=_counts(),
         per_action_representability={
@@ -113,7 +131,7 @@ def _evidence() -> PromotionEvidence:
 def test_incomplete_contract_gold_denominator_is_unmeasured_and_defers_promotion() -> None:
     report = build_promotion_report(
         _evidence(),
-        expected_source_hashes={"core": SHA_A, "heldout": SHA_B},
+        expected_source_hashes=_source_hashes(),
         expected_registry_hashes=_registry_hashes(),
     )
     gates = {gate.name: gate for gate in report.gates}
@@ -123,6 +141,7 @@ def test_incomplete_contract_gold_denominator_is_unmeasured_and_defers_promotion
     assert gates["decoupled_contract_exact_match"].status == "unmeasured"
     assert gates["postgres_conformance"].status == "unmeasured"
     assert gates["public_fund_physical_definition"].status == "unmeasured"
+    assert gates["representative_contract_exact"].status == "pass"
     assert report.overall_status == "deferred"
     assert "SUPPORTED_GOLD_COVERAGE_INCOMPLETE" in report.blocking_reason_codes
 
@@ -142,7 +161,7 @@ def test_zero_denominator_is_unmeasured_not_perfect() -> None:
 
     report = build_promotion_report(
         evidence,
-        expected_source_hashes={"core": SHA_A, "heldout": SHA_B},
+        expected_source_hashes=_source_hashes(),
         expected_registry_hashes=_registry_hashes(),
     )
 
@@ -151,10 +170,24 @@ def test_zero_denominator_is_unmeasured_not_perfect() -> None:
     assert report.overall_status == "deferred"
 
 
+def test_arbitrary_positive_subsets_cannot_pass_population_gates() -> None:
+    report = build_promotion_report(
+        _evidence(),
+        expected_source_hashes=_source_hashes(),
+        expected_registry_hashes=_registry_hashes(),
+    )
+    gates = {gate.name: gate for gate in report.gates}
+
+    assert gates["exact_lock_precision"].status == "unmeasured"
+    assert gates["executable_compile_success"].status == "unmeasured"
+    assert gates["byte_equivalence"].status == "unmeasured"
+    assert gates["exact_lock_precision"].reason_code == "EXACT_LOCK_PRECISION_AUTHORITATIVE_POPULATION_UNDEFINED"
+
+
 @pytest.mark.parametrize("pin_group", ("source_hashes", "registry_hashes"))
 def test_hash_changes_are_detected(pin_group: str) -> None:
     evidence = _evidence()
-    expected_sources = {"core": SHA_A, "heldout": SHA_B}
+    expected_sources = _source_hashes()
     expected_registries = _registry_hashes()
     if pin_group == "source_hashes":
         expected_sources["heldout"] = "c" * 64
@@ -169,6 +202,14 @@ def test_hash_changes_are_detected(pin_group: str) -> None:
         )
 
 
+def test_representative_expectation_hash_cannot_be_self_pinned() -> None:
+    payload = _evidence().model_dump(mode="json")
+    payload["source_hashes"]["representative_contract_expectations"] = "c" * 64
+
+    with pytest.raises(ValidationError, match="REPRESENTATIVE_EXPECTATION_HASH_MISMATCH"):
+        PromotionEvidence.model_validate_json(json.dumps(payload))
+
+
 def test_count_changes_are_rejected_fail_closed() -> None:
     evidence = _evidence().model_copy(
         update={"counts": _counts().model_copy(update={"heldout_frames": 208})}
@@ -177,14 +218,14 @@ def test_count_changes_are_rejected_fail_closed() -> None:
     with pytest.raises(ValueError, match="FRAME_COUNT_MISMATCH"):
         build_promotion_report(
             evidence,
-            expected_source_hashes={"core": SHA_A, "heldout": SHA_B},
+            expected_source_hashes=_source_hashes(),
             expected_registry_hashes=_registry_hashes(),
         )
 
 
 def test_report_serialization_is_byte_deterministic() -> None:
     kwargs = {
-        "expected_source_hashes": {"heldout": SHA_B, "core": SHA_A},
+        "expected_source_hashes": dict(reversed(tuple(_source_hashes().items()))),
         "expected_registry_hashes": dict(reversed(tuple(_registry_hashes().items()))),
     }
     first = build_promotion_report(_evidence(), **kwargs)
@@ -203,16 +244,90 @@ def test_live_path_rejects_inconsistent_provider_call_accounting() -> None:
         )
 
 
-def test_production_live_path_accounts_for_failed_extra_calls() -> None:
-    path = _live().model_copy(
-        update={
-            "provider_success": CountEvidence(successes=15, total=16),
-            "provider_calls": 17,
-            "stable_error_counts": {"MODEL_SCHEMA_INVALID": 1},
-        }
+@pytest.mark.parametrize(
+    "updates",
+    (
+        {"structured_validity": {"successes": 15, "total": 16}, "action_exact": {"successes": 16, "total": 16}},
+        {"provider_success": {"successes": 15, "total": 16}, "structured_validity": {"successes": 16, "total": 16}},
+        {"provider_calls": 17, "successful_provider_calls": 16, "provider_error_counts": {}},
+        {"successful_provider_calls": 15, "provider_error_counts": {"MODEL_PROVIDER_ERROR": 1}},
+        {"provider_calls": 16, "successful_provider_calls": 15, "provider_error_counts": {"MODEL_RATE_LIMITED": 1}, "rate_limit_count": 0},
+        {"repair_count": 1, "call_type_counts": {"primary": 16}},
+        {"p50_latency_ms": 201, "p95_latency_ms": 200},
+        {"semantic_error_counts": {"MODEL_SCHEMA_INVALID": 1}},
+    ),
+)
+def test_live_path_rejects_contradictory_metrics(updates: dict[str, object]) -> None:
+    payload = _live().model_dump(mode="json")
+    payload.update(updates)
+
+    with pytest.raises(ValidationError):
+        LivePathEvidence.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("axis", "payload"),
+    (
+        ("action", '{"ids":[1]}'),
+        ("action", '{"ids":["invented"]}'),
+        ("family", '{"ids":["public_fund","public_fund"]}'),
+        ("family", '{"ids":["public_fund","domestic_etf","overseas_etf","domestic_bond","public_fund"]}'),
+        ("tag", '{"ids":"CROSS_FAMILY"}'),
+        ("tag", '{"ids":["INVENTED_TAG"]}'),
+        ("action", '{"ids":["rank"],"extra":true}'),
+        ("action", '{"ids":["rank"],"ids":["screen"]}'),
+    ),
+)
+def test_challenger_axis_payload_is_strict_and_bounded(axis: str, payload: str) -> None:
+    with pytest.raises(ValueError, match="CHALLENGER_SCHEMA_INVALID"):
+        parse_challenger_axis_payload(payload, axis)
+
+
+def test_challenger_axis_payload_accepts_only_known_unique_string_ids() -> None:
+    assert parse_challenger_axis_payload('{"ids":["screen"]}', "action") == (
+        "screen",
     )
 
-    assert LivePathEvidence.model_validate(path.model_dump(mode="json")) == path
+
+def _authoritative_observations() -> dict[str, object]:
+    return {
+        case_id: deepcopy(expectation)
+        for case_id, expectation in REPRESENTATIVE_CASE_EXPECTATIONS.items()
+    }
+
+
+def test_representative_contract_gate_requires_all_five_authoritative_groups() -> None:
+    evidence = evaluate_representative_contracts(_authoritative_observations())
+
+    assert evidence == CountEvidence(successes=5, total=5)
+    assert len(REPRESENTATIVE_EXPECTATION_HASH) == 64
+
+
+def test_representative_contract_gate_rejects_unpinned_population_members() -> None:
+    observations = _authoritative_observations()
+    observations["not-authoritative"] = observations["fee-screen"]
+
+    assert evaluate_representative_contracts(observations).successes == 0
+
+
+@pytest.mark.parametrize(
+    ("case_id", "mutation"),
+    (
+        ("fee-screen", lambda value: value["contracts"][0]["predicate"].update(operator_id="gt")),
+        ("multi-predicate", lambda value: value["contracts"][0]["predicate"]["children"].pop()),
+        ("count", lambda value: value["contracts"][0]["aggregation"].update(function_id="sum")),
+        ("sum", lambda value: value["contracts"][0]["aggregation"].update(function_id="count")),
+        ("grouped-aggregate", lambda value: value["contracts"][0]["aggregation"].update(group_by_field_concept_ids=[])),
+        ("prior-result", lambda value: value["contracts"][1]["scope"].update(prior_result_binding=None)),
+    ),
+)
+def test_representative_gate_rejects_wrong_or_missing_contract_roles(
+    case_id: str, mutation
+) -> None:
+    observations = _authoritative_observations()
+    mutation(observations[case_id])
+
+    assert evaluate_representative_contracts(observations).successes == 4
 
 
 def test_live_benchmark_uses_full_request_deadline_and_conservative_default_pacing() -> None:

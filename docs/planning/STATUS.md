@@ -154,7 +154,7 @@
   PostgreSQL runner, 기존 bounded Orchestrator 통합, `query_contract` 및
   `logical_query_plan` 불변 저장을 `0009`까지 구현했다. Graph·Search·Calculation
   production executor는 이 범위에 포함하지 않았다.
-- 2026-09-03 최종 V2 검증은 focused `606 passed`, broad offline `2237 passed,
+- 2026-09-03 최종 V2 검증은 focused `632 passed`, broad offline `2263 passed,
   1 expected skip, 463 deselected`다. 지원 프레임 구조 표현력은 `199/199`,
   미지원 reason coverage는 `10/10`, false-complete는 `0/10`이다. 그러나 계약
   role gold는 194개 필요 분모 중 43개만 측정 가능하고 151개가 불완전하므로,
@@ -169,12 +169,18 @@
   reproducibility `155/155`, recall@5 `123/196` (`62.76%`)로 승인된 `>=99%`
   gate에 미달한다.
 - 승인된 HCX-007 16-case smoke에서 production one-axis provider success는 `16/16`,
-  structured/semantic validity `11/16`, action exact `10/16`, family exact `11/16`,
-  complete contract `6/16`, p95 `37,384ms`였다. 세 축 병렬 challenger는 48호출
-  중 rate limit `8`, action exact `2/16`, family exact `6/16`으로 더 낮아 운영
+  structured/semantic validity `12/16`, action exact `11/16`, family exact `12/16`,
+  complete contract `7/16`이지만, action·family와 predicate typed value, COUNT/SUM,
+  grouping, ordering, prior-result binding을 함께 고정한 대표 의미 계약은 `0/5`로
+  승격 gate에 실패했다. 23개 호출은 primary `16`, repair 시도 `7`, judge `0`이며
+  모든 성공·실패 호출을 직접 계측한다. 세 축 병렬 challenger는 48호출 중 성공
+  `40`, rate limit `8`, structured `11/16`, action exact `2/16`, family exact
+  `5/16`으로 더 낮아 운영
   기본값을 변경하지 않는다. complete-population first-pass/frame/context/OOD
   metric은 여전히 미측정이고 default promotion은 fail-closed/deferred 상태다.
-  Promotion evidence는 frozen v3 SHA와 complete
+  exact-lock precision·compile success·byte equivalence는 권위 있는 완전 분모가
+  정의되지 않아 양의 부분집합 결과와 무관하게 `unmeasured`다. Promotion evidence는
+  frozen v3 SHA와 대표 의미 계약 SHA `919bba39…893f9` 및 complete
   population에 결합되며, role-required frame evidence가 비어 있거나 부분
   denominator/coverage이면 `unmeasured`다.
   `model_copy`·`model_construct`로 우회 생성된 기존 증거도 exact type·stored field
