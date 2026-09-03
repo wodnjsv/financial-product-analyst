@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-04
 
-**Status:** Implemented and locally verified; integration pending
+**Status:** Complete
 
 **Goal:** Make the default V2 resolver use the reviewed Korean V4 overlay
 without changing its bounded request-local candidate and HCX selection
@@ -31,7 +31,7 @@ architecture.
 - [x] Focused intent tests and the broader offline regression suite pass.
 - [x] Schema freshness, Python compilation, and diff checks pass; staged-secret
   and staged-data checks run immediately before commit.
-- [ ] The verified branch is committed, pushed, merged to local `main`, tested
+- [x] The verified branch is committed, pushed, merged to local `main`, tested
   again, and the resulting `main` is pushed to GitHub.
 
 ## Non-goals
@@ -50,3 +50,6 @@ architecture.
   successfully.
 - No live HCX, PostgreSQL, organizer-data, Object Storage, or Jena acceptance
   run was performed by this change.
+- Local `main`, `origin/main`, the feature branch, and its remote branch were
+  verified at commit `a03d34bd3027c92ef0132932bdfdc5cf85104de7` before this
+  closure record.

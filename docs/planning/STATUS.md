@@ -292,6 +292,6 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 43. ~~Stage 06 live HCX-007 16-case production/challenger benchmark~~ — 2026-09-03 완료; production provider `16/16`, complete contract `4/16`, representative exact `0/5`, challenger rate limit `8/48`, 승격 보류
 44. ~~SQL 의미 계약 V2·결정론적 SQL compiler·RDB executor·artifact persistence 구현~~ — 2026-09-03 로컬 완료; 불완전 gold·PostgreSQL·public-fund physical gate는 보류
 45. ~~hybrid full-catalog semantic linking V3 구현·로컬/HCX shadow 검증~~ — 2026-09-04 `implemented, shadow-only`; V2 기본 유지, 낮은 V3 정확도·provider 성공률과 미측정 PostgreSQL 때문에 promotion은 fail-closed `deferred`
-46. ~~V2 요청별 제한 후보 구조에 한국어 V4 오버레이 공유~~ — 2026-09-04 로컬 구현·검증 완료; V3 promotion 상태는 변경 없음
+46. ~~V2 요청별 제한 후보 구조에 한국어 V4 오버레이 공유~~ — 2026-09-04 로컬 구현·검증, `main` 병합과 GitHub push 완료; V3 promotion 상태는 변경 없음
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.
