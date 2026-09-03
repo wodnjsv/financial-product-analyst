@@ -1,6 +1,6 @@
 # Financial Product Agent 계획·구현 현황
 
-**Updated:** 2026-09-03
+**Updated:** 2026-09-04
 
 이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.
 
@@ -15,7 +15,7 @@
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute·문서 provenance 경계 승인; TTL·SHACL·Evidence-bound ABox·읽기 전용 Fuseki를 포함한 Graph Phase 1 core 로컬 완료, Stage 04는 미완료 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
-| Intent Resolver·QueryPlan·Orchestrator | Phase 1 Resolver, Phase 2 결정론적 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator와 action별 `ResolvedQueryContractV2`·`LogicalQueryPlanV2`·결정론적 RDB 실행·artifact 저장을 로컬 구현·검증 완료. 낮은 candidate recall을 하드 선택지 경계로 사용하지 않는 full-catalog hybrid semantic linking 아키텍처를 승인했으며 구현 계획 전 설계 문서 검토 대기 상태다. 기존 V2 운영 승격은 계속 차단된다. | [Hybrid Semantic Linking Design](specs/2026-09-03-hybrid-full-catalog-semantic-linking-design.md), [ADR-0030](decisions/ADR-0030-use-hybrid-full-catalog-semantic-linking.md), [Final Semantic Query Verification](verification/2026-09-02-semantic-query-contracts-and-sql-compilation-verification.md) |
+| Intent Resolver·QueryPlan·Orchestrator | Phase 1~3와 SQL 의미 계약 V2 경로를 로컬 구현·검증했다. full-catalog hybrid V3도 구현·검증했지만 HCX-007 정확도와 provider 성공률이 승격 기준에 크게 미달해 `implemented, shadow-only`; V2가 기본이며 promotion은 fail-closed `deferred`다. PostgreSQL conformance는 미측정이다. | [Hybrid V3 Verification](verification/2026-09-03-hybrid-full-catalog-semantic-linking-verification.md), [Hybrid Semantic Linking Design](specs/2026-09-03-hybrid-full-catalog-semantic-linking-design.md), [ADR-0030](decisions/ADR-0030-use-hybrid-full-catalog-semantic-linking.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 | Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
 
@@ -143,9 +143,11 @@
 
 ### Stage 06 Intent Resolver·QueryPlan·Orchestrator
 
-**상태: Phase 1-3 및 SQL 의미 계약 V2→결정론적 RDB 실행·저장 로컬 구현 완료; live promotion은 불완전 gold, 낮은 recall/정확도, 미측정 PostgreSQL·물리 정의 gate로 보류**
+**상태: Phase 1-3 및 SQL 의미 계약 V2→결정론적 RDB 실행·저장 로컬 구현 완료; hybrid V3는 implemented, shadow-only; promotion은 fail-closed deferred**
 
-- 2026-09-03 [ADR-0030](decisions/ADR-0030-use-hybrid-full-catalog-semantic-linking.md)으로 request-local 후보를 HCX의 전체 선택지로 사용하던 경계를 폐기하고, 전체 compact semantic catalog와 의미 중립 mention span을 제공하는 hybrid semantic linking 방향을 승인했다. deterministic candidate는 exact lock 또는 advisory hint로 유지한다. 상세 설계 문서를 작성했으며 구현 계획 작성 전 사용자 문서 검토를 기다린다. V2는 새 경로의 완전한 평가와 별도 승격 승인 전까지 기본값을 유지한다.
+- 2026-09-03 [ADR-0030](decisions/ADR-0030-use-hybrid-full-catalog-semantic-linking.md)으로 request-local 후보를 HCX의 전체 선택지로 사용하던 경계를 폐기하고, 전체 compact semantic catalog와 의미 중립 mention span을 제공하는 hybrid semantic linking 방향을 승인했다. deterministic candidate는 exact lock 또는 advisory hint로 유지한다. hybrid V3 구현과 로컬 검증은 완료했지만 V2는 계속 기본값이며, 모든 gate 통과와 별도 사용자 승인 전까지 V3는 shadow-only다.
+- 2026-09-04 hybrid V3 최종 검증은 narrow `139 passed`, Intent Resolver·evaluation `806 passed`, Jena 환경 의존 suite를 명시적으로 제외한 broad offline `2419 passed, 13 skipped, 451 deselected`다. 계획의 원래 broad 명령은 이 호스트에 `RUN_JENA_INTEGRATION`·Jena/Fuseki `6.0.0`이 없어 Jena 전용 13건만 실패했으며, 제품 회귀로 간주하지 않았다. compileall과 V2/V3 schema freshness도 통과했다.
+- 승인된 HCX-007 V3 shadow 21-case는 first-pass validity `5/21`, repair validity `0/16`, Action/ProductFamily exact 각각 `3/21`, semantic-link exact `0/5`, complete-contract exact `0/5`, provider success `19/21`이었다. OOD false-fast는 `0/1`이지만 완전 분모가 아니며 PostgreSQL도 미측정이다. offline/live report hash는 각각 `620f1ca0…9353a`, `4796116b…eccc`이고, 실측 결과는 승격 기준에 크게 미달하므로 promotion은 fail-closed `deferred`다.
 
 - 온톨로지 기반 semantic catalog, 한국어 정규화·literal·candidate·bounded view,
   strict HCX adapter, semantic/context validator, one-call service, 불변
@@ -215,7 +217,7 @@
   reason을 담는다. 평가 fixture만 변경했으며 resolver·planner 런타임은 변경하지
   않았다.
 
-기준 보고서: [Intent Resolver Phase 1 Verification](reports/2026-08-31-intent-resolver-phase1-verification.md), [QueryPlan and Orchestrator Verification](reports/2026-09-02-query-plan-orchestrator-verification.md)
+기준 보고서: [Hybrid V3 Verification](verification/2026-09-03-hybrid-full-catalog-semantic-linking-verification.md), [Intent Resolver Phase 1 Verification](reports/2026-08-31-intent-resolver-phase1-verification.md), [QueryPlan and Orchestrator Verification](reports/2026-09-02-query-plan-orchestrator-verification.md)
 
 ## 3. 현재 실행하면 안 되는 계획
 
@@ -232,7 +234,7 @@
 | 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | current organizer 로컬 결정성 검증 완료; current KRX holdings 로컬 통합과 나머지 공식 source 동결 대기; NCP acceptance는 Stage 08로 이연 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | Graph Phase 1 core 로컬 완료; Vector·실제 관계/문서·manifest 동일성·readiness/activation·NCP·23질문 커버리지 대기, Stage 04 미완료 |
 | 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | SQL 의미 계약 V2·결정론적 compiler·읽기 전용 RDB executor 로컬 구현 완료; PostgreSQL conformance는 미측정이고 public-fund 물리 gate는 `LIMITED`; Graph·Search·Calculation production executor는 범위 밖이며 Stage 05는 미완료 |
-| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Phase 1 Resolver, Phase 2 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator와 SQL 의미 계약 V2 통합·artifact persistence 로컬 구현 완료; 불완전 gold와 낮은 candidate/live 정확도로 production promotion은 `deferred` |
+| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Phase 1~3와 SQL 의미 계약 V2 통합·artifact persistence 로컬 구현 완료; hybrid V3도 구현됐으나 HCX-007 V3 shadow 정확도·provider gate 실패와 미측정 PostgreSQL 때문에 `shadow-only`, production promotion은 `deferred` |
 | 07 | Verifier, Claim Gate Registry, Answer Composer, Renderer와 검증된 응답 캐시 | 대기 |
 | 08 | 공식 `GET /answer`, NCP 이중화·Load Balancer·모니터링·복구 | 대기 |
 | 09 | 52개 종합 평가, 제출 동결, 공식 평가 운영과 종료 기록 | 대기 |
@@ -287,5 +289,6 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 42. ~~Stage 06 Phase 2 QueryPlan compiler·4경로 router와 Phase 3 bounded Orchestrator 로컬 구현·통합 검증~~ — 2026-09-02 완료; production executor와 답변 생성은 포함하지 않음
 43. ~~Stage 06 live HCX-007 16-case production/challenger benchmark~~ — 2026-09-03 완료; production provider `16/16`, complete contract `4/16`, representative exact `0/5`, challenger rate limit `8/48`, 승격 보류
 44. ~~SQL 의미 계약 V2·결정론적 SQL compiler·RDB executor·artifact persistence 구현~~ — 2026-09-03 로컬 완료; 불완전 gold·PostgreSQL·public-fund physical gate는 보류
+45. ~~hybrid full-catalog semantic linking V3 구현·로컬/HCX shadow 검증~~ — 2026-09-04 `implemented, shadow-only`; V2 기본 유지, 낮은 V3 정확도·provider 성공률과 미측정 PostgreSQL 때문에 promotion은 fail-closed `deferred`
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

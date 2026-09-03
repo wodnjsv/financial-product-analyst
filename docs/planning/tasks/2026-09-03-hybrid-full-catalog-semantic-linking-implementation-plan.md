@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Awaiting implementation approval
+**Status:** Implemented, shadow-only; promotion deferred
 
 **Goal:** Implement a shadow V3 Intent Resolver that lets HCX link bounded source spans to every registered semantic concept while preserving deterministic exact locks, validation, QueryContract solving, and physical-schema isolation.
 
@@ -93,7 +93,7 @@ Existing modules retain their current responsibility:
   `CompactSemanticConceptV1`, `CompactSemanticCatalogV1`, and
   `build_compact_semantic_catalog(snapshot: SemanticCatalogSnapshot) -> CompactSemanticCatalogV1`.
 
-- [ ] **Step 1: Write failing full-selectability and no-physical-schema tests**
+- [x] **Step 1: Write failing full-selectability and no-physical-schema tests**
 
 ```python
 def test_compact_catalog_contains_every_registered_concept(project_root: Path) -> None:
@@ -111,13 +111,13 @@ def test_compact_catalog_contains_no_physical_schema_tokens(project_root: Path) 
         assert forbidden not in payload
 ```
 
-- [ ] **Step 2: Run the focused tests and verify they fail because the compact catalog module does not exist**
+- [x] **Step 2: Run the focused tests and verify they fail because the compact catalog module does not exist**
 
 Run: `.venv/bin/pytest tests/intent/test_compact_catalog.py -q`
 
 Expected: collection failure naming `financial_agent.intent.compact_catalog`.
 
-- [ ] **Step 3: Add strict compact-card contracts and deterministic construction**
+- [x] **Step 3: Add strict compact-card contracts and deterministic construction**
 
 ```python
 class CompactSemanticConceptV1(ContractModel):
@@ -150,7 +150,7 @@ sorted by `(concept_kind, semantic_id)`. The constructor rejects duplicate IDs,
 missing cards, unknown families, empty definitions, and any physical-schema
 field.
 
-- [ ] **Step 4: Correct preferred-label indexing without changing lock authority**
+- [x] **Step 4: Correct preferred-label indexing without changing lock authority**
 
 Copy V3 overlay content into the separately versioned V4 overlay, extend the
 strict overlay entry with optional `disambiguation_ko`, and add catalog mappings
@@ -171,14 +171,14 @@ Add `_HYBRID_OVERLAY_PATH` and `load_hybrid_catalog()`. Keep `_OVERLAY_PATH`,
 `load_catalog()`, and the V2 overlay bytes unchanged. Add a regression assertion
 that the V2 catalog and overlay hashes are identical before and after this task.
 
-- [ ] **Step 5: Run catalog tests**
+- [x] **Step 5: Run catalog tests**
 
 Run: `.venv/bin/pytest tests/intent/test_catalog.py tests/intent/test_compact_catalog.py -q`
 
 Expected: all tests pass and the compact catalog contains exactly the same 42
 semantic IDs as the authoritative catalog.
 
-- [ ] **Step 6: Commit the independently useful catalog projection**
+- [x] **Step 6: Commit the independently useful catalog projection**
 
 ```bash
 git add config/intent/korean-nlu-overlay.v4.json src/financial_agent/intent/catalog.py src/financial_agent/intent/compact_catalog.py tests/intent/test_catalog.py tests/intent/test_compact_catalog.py
@@ -196,7 +196,7 @@ git commit -m "feat: add compact semantic catalog"
 - Consumes: `NormalizedRequest`, exact candidate mentions, literals, named-entity mentions, and reference mentions.
 - Produces: `MentionSpanV1`, `MentionSpanSetV1`, `MentionSpanLimitError`, and `generate_mention_spans(...) -> MentionSpanSetV1`.
 
-- [ ] **Step 1: Write failing tests for unseen paraphrases and source preservation**
+- [x] **Step 1: Write failing tests for unseen paraphrases and source preservation**
 
 ```python
 def test_phrase_spans_preserve_unseen_fee_paraphrase(request_context) -> None:
@@ -214,13 +214,13 @@ def test_required_spans_are_never_silently_truncated(long_request) -> None:
         generate_mention_spans(long_request, required_exact_spans, (), (), ())
 ```
 
-- [ ] **Step 2: Run the tests and verify the missing module failure**
+- [x] **Step 2: Run the tests and verify the missing module failure**
 
 Run: `.venv/bin/pytest tests/intent/test_mention_spans.py -q`
 
 Expected: collection failure naming `financial_agent.intent.mention_spans`.
 
-- [ ] **Step 3: Implement strict span types and the deterministic policy**
+- [x] **Step 3: Implement strict span types and the deterministic policy**
 
 ```python
 MAX_PHRASE_TOKENS = 4
@@ -248,20 +248,20 @@ full segment span. Merge exact, literal, reference, and entity ranges into the
 same range record. Sort by segment ordinal, source start, source end, and ID. If
 the de-duplicated set exceeds 96, raise `MentionSpanLimitError`; do not truncate.
 
-- [ ] **Step 4: Add Korean punctuation and particle boundary regression tests**
+- [x] **Step 4: Add Korean punctuation and particle boundary regression tests**
 
 Cover `수수료율은`, `신용 등급`, `만기까지 며칠 남았는지`, Unicode composition,
 comma-separated predicates, and a two-frame prior-result question. Verify exact
 source offsets after normalization.
 
-- [ ] **Step 5: Run normalization and mention-span tests**
+- [x] **Step 5: Run normalization and mention-span tests**
 
 Run: `.venv/bin/pytest tests/intent/test_normalization.py tests/intent/test_mention_spans.py -q`
 
 Expected: all tests pass, outputs are byte-reproducible, and the 96-span overflow
 is the only accepted bound failure.
 
-- [ ] **Step 6: Commit mention-span generation**
+- [x] **Step 6: Commit mention-span generation**
 
 ```bash
 git add src/financial_agent/intent/normalization.py src/financial_agent/intent/mention_spans.py tests/intent/test_mention_spans.py
@@ -281,7 +281,7 @@ git commit -m "feat: generate semantic mention spans"
 - Produces: `ResolverViewV3`, `build_hybrid_manifest(...)`,
   `build_resolver_view_v3(...) -> ResolverViewV3`, and hybrid version constants.
 
-- [ ] **Step 1: Write failing tests proving hints do not limit concept selectability**
+- [x] **Step 1: Write failing tests proving hints do not limit concept selectability**
 
 ```python
 def test_v3_view_offers_full_catalog_when_no_alias_matches(v3_inputs) -> None:
@@ -301,13 +301,13 @@ def test_v3_non_entity_request_disables_entity_output(v3_inputs) -> None:
     assert view.entity_output_enabled is False
 ```
 
-- [ ] **Step 2: Run the focused view tests and verify they fail**
+- [x] **Step 2: Run the focused view tests and verify they fail**
 
 Run: `.venv/bin/pytest tests/intent/test_view.py -q`
 
 Expected: failures naming `ResolverViewV3` and `build_resolver_view_v3`.
 
-- [ ] **Step 3: Add V3 contracts and version pins without modifying V2 constants**
+- [x] **Step 3: Add V3 contracts and version pins without modifying V2 constants**
 
 ```python
 HYBRID_RESOLVER_SCHEMA_VERSION = "3.0"
@@ -328,19 +328,19 @@ request evidence. `build_hybrid_manifest` accepts only the V3 version map and
 the V4 overlay hash. V2 `build_manifest`, `build_resolver_view`, version
 constants, fixture payloads, and hashes remain byte-stable.
 
-- [ ] **Step 4: Add model-safe exact-lock projections**
+- [x] **Step 4: Add model-safe exact-lock projections**
 
 Expose only lock ID, mention ID, canonical semantic ID, and role. Exclude physical
 or literal implementation details. Assert that the model-safe V3 payload cannot
 contain an exact lock whose source range is absent from `mention_spans`.
 
-- [ ] **Step 5: Run V2 and V3 view tests**
+- [x] **Step 5: Run V2 and V3 view tests**
 
 Run: `.venv/bin/pytest tests/intent/test_view.py tests/intent/test_axis_locks.py -q`
 
 Expected: all tests pass and existing V2 fixture hashes do not change.
 
-- [ ] **Step 6: Commit the shadow V3 view**
+- [x] **Step 6: Commit the shadow V3 view**
 
 ```bash
 git add src/financial_agent/intent/view.py src/financial_agent/intent/service.py tests/intent/test_view.py tests/intent/view_fixtures.py
@@ -363,7 +363,7 @@ git commit -m "feat: add full catalog resolver view"
   `build_hybrid_prompt(...) -> ResolverPromptEnvelope`, and
   `build_hybrid_response_schema(...) -> dict[str, object]`.
 
-- [ ] **Step 1: Write failing ProposalV3 invariant tests**
+- [x] **Step 1: Write failing ProposalV3 invariant tests**
 
 ```python
 def test_selected_semantic_link_requires_one_catalog_id() -> None:
@@ -386,7 +386,7 @@ def test_ambiguous_semantic_link_requires_multiple_catalog_ids() -> None:
         )
 ```
 
-- [ ] **Step 2: Write failing request-specific schema tests**
+- [x] **Step 2: Write failing request-specific schema tests**
 
 ```python
 def test_simple_question_schema_forbids_entity_and_context_arrays(simple_v3_view) -> None:
@@ -401,13 +401,13 @@ def test_semantic_link_enum_contains_unhinted_catalog_id(simple_v3_view) -> None
     assert "fee_rate" in semantic_id_enum(schema)
 ```
 
-- [ ] **Step 3: Run the new tests and verify missing-type failures**
+- [x] **Step 3: Run the new tests and verify missing-type failures**
 
 Run: `.venv/bin/pytest tests/intent/test_hybrid_proposal.py tests/intent/test_hybrid_prompt.py -q`
 
 Expected: collection failures for the new V3 modules.
 
-- [ ] **Step 4: Implement the strict ProposalV3 shape**
+- [x] **Step 4: Implement the strict ProposalV3 shape**
 
 ```python
 class ProposedSemanticLinkV3(ContractModel):
@@ -448,7 +448,7 @@ mention IDs. Uncovered frames require a non-`none` reason and at least one
 unmapped mention ID. This avoids making HCX repeat the same IDs inside the
 coverage object.
 
-- [ ] **Step 5: Implement the compact prompt and adaptive JSON Schema**
+- [x] **Step 5: Implement the compact prompt and adaptive JSON Schema**
 
 The system message tells HCX to map offered source mentions to registered
 semantic IDs, use `unmapped_mention_ids` rather than nearest-concept coercion,
@@ -456,19 +456,19 @@ and leave entity/context arrays empty when disabled. The schema enumerates every
 compact semantic ID and mention ID. It sets entity and reference branch limits
 from `ResolverViewV3` flags.
 
-- [ ] **Step 6: Add payload scans and exact HCX adapter compatibility tests**
+- [x] **Step 6: Add payload scans and exact HCX adapter compatibility tests**
 
 Assert no prompt or schema contains physical tokens, raw TBox text, SQL, or
 arbitrary IDs. Reuse the existing HCX-007 Structured Outputs transport without
 another provider client or model call.
 
-- [ ] **Step 7: Run proposal, prompt, and adapter tests**
+- [x] **Step 7: Run proposal, prompt, and adapter tests**
 
 Run: `.venv/bin/pytest tests/intent/test_hybrid_proposal.py tests/intent/test_hybrid_prompt.py tests/intent/test_clova.py -q`
 
 Expected: all tests pass; V2 prompt snapshots remain unchanged.
 
-- [ ] **Step 8: Commit ProposalV3 and prompt shaping**
+- [x] **Step 8: Commit ProposalV3 and prompt shaping**
 
 ```bash
 git add src/financial_agent/intent/hybrid_proposal.py src/financial_agent/intent/hybrid_prompt.py src/financial_agent/intent/clova.py tests/intent/test_hybrid_proposal.py tests/intent/test_hybrid_prompt.py tests/intent/test_clova.py
@@ -491,7 +491,7 @@ git commit -m "feat: add hybrid semantic prompt"
 - Consumes: `IntentResolutionProposalV3`, `NormalizedRequest`, `ResolverViewV3`, and `SemanticCatalogSnapshot`.
 - Produces: `SemanticLinkDraftV3`, `IntentResolutionDraftV3`, `ValidatedSemanticLinkV3`, `ValidatedIntentResolutionV3`, and `assemble_hybrid_proposal(...) -> IntentResolutionDraftV3`.
 
-- [ ] **Step 1: Write failing assembly tests for unhinted valid concepts**
+- [x] **Step 1: Write failing assembly tests for unhinted valid concepts**
 
 ```python
 def test_assembler_accepts_registered_unhinted_semantic_link(v3_fixture) -> None:
@@ -506,20 +506,20 @@ def test_assembler_accepts_registered_unhinted_semantic_link(v3_fixture) -> None
     assert draft.semantic_links[0].semantic_id == "fee_rate"
 ```
 
-- [ ] **Step 2: Write failing validation tests for unsafe selections**
+- [x] **Step 2: Write failing validation tests for unsafe selections**
 
 Cover unknown semantic IDs, unknown mentions, exact-lock contradiction,
 family-incompatible concepts, relation endpoint mismatch, a mention selected and
 unmapped simultaneously, covered frames with unmapped evidence, and model
 entity output when `entity_output_enabled` is false.
 
-- [ ] **Step 3: Run focused tests and verify V3 types are missing**
+- [x] **Step 3: Run focused tests and verify V3 types are missing**
 
 Run: `.venv/bin/pytest tests/intent/test_hybrid_assembler.py tests/intent/test_validation.py -q`
 
 Expected: failures naming the V3 draft and validation contracts.
 
-- [ ] **Step 4: Add immutable V3 canonical contracts**
+- [x] **Step 4: Add immutable V3 canonical contracts**
 
 ```python
 class SemanticLinkDraftV3(ContractModel):
@@ -542,7 +542,7 @@ Frame ownership and ID uniqueness are validated in the contracts. V3 extends V2
 so downstream readers can continue to consume common frame/context fields while
 V3-aware consumers retain semantic-link provenance.
 
-- [ ] **Step 5: Implement deterministic assembly and validation order**
+- [x] **Step 5: Implement deterministic assembly and validation order**
 
 Use server-owned IDs derived from frame ordinal, mention ID, semantic IDs, and
 proposal hash. Validate offered IDs before assembly, exact locks before semantic
@@ -550,19 +550,19 @@ coverage, applicability before contract solving, and relation endpoints before
 entity projection. The validator may restore an omitted exact lock but may not
 replace a model-selected concept.
 
-- [ ] **Step 6: Extend context validation without changing V2 behavior**
+- [x] **Step 6: Extend context validation without changing V2 behavior**
 
 V3 reference graphs use the existing backward, acyclic, cardinality-safe rules.
 When reference output is disabled, V3 rejects any reference, link, or mutation.
 Run the existing prior-result and correction cases against both V2 and V3.
 
-- [ ] **Step 7: Run assembler, validation, and context tests**
+- [x] **Step 7: Run assembler, validation, and context tests**
 
 Run: `.venv/bin/pytest tests/intent/test_hybrid_assembler.py tests/intent/test_assembler.py tests/intent/test_validation.py tests/intent/test_context.py -q`
 
 Expected: all V2 and V3 tests pass with zero unknown-ID acceptance.
 
-- [ ] **Step 8: Commit V3 assembly and validation**
+- [x] **Step 8: Commit V3 assembly and validation**
 
 ```bash
 git add src/financial_agent/intent/hybrid_assembler.py src/financial_agent/intent/draft.py src/financial_agent/intent/resolution.py src/financial_agent/intent/validation.py src/financial_agent/intent/context.py tests/intent/test_hybrid_assembler.py tests/intent/test_validation.py tests/intent/test_context.py
@@ -585,7 +585,7 @@ git commit -m "feat: validate semantic links"
   `QueryContractResolutionAttemptV3`, and
   `IntentResolverService.resolve_hybrid_query_contract_candidates(...)`.
 
-- [ ] **Step 1: Write failing solver tests for model-only field offers**
+- [x] **Step 1: Write failing solver tests for model-only field offers**
 
 ```python
 def test_model_semantic_link_can_complete_fee_rank(v3_solver_inputs) -> None:
@@ -603,20 +603,20 @@ def test_model_semantic_link_can_complete_fee_rank(v3_solver_inputs) -> None:
     )
 ```
 
-- [ ] **Step 2: Write failing negative tests**
+- [x] **Step 2: Write failing negative tests**
 
 Assert that an ambiguous link cannot form one complete candidate without a
 deterministic disambiguator, an unmapped mention creates no contract, an
 incompatible family creates a stable rejection, and a model link never outranks
 a conflicting exact lock.
 
-- [ ] **Step 3: Run solver tests and verify model links are ignored by V2 code**
+- [x] **Step 3: Run solver tests and verify model links are ignored by V2 code**
 
 Run: `.venv/bin/pytest tests/intent/test_query_contract_solver.py -q`
 
 Expected: the new V3 completion test fails with no complete candidate.
 
-- [ ] **Step 4: Add model-link field offers and provenance**
+- [x] **Step 4: Add model-link field offers and provenance**
 
 ```python
 class ProvenanceSourceKind(str, Enum):
@@ -631,7 +631,7 @@ Merge selected V3 semantic links into coalesced field groups after exact locks
 and before advisory hints. Keep ambiguous links as multiple bounded offers.
 Attach mention and semantic-link IDs to provenance. Preserve the V2 path exactly.
 
-- [ ] **Step 5: Add the shadow V3 service entry point**
+- [x] **Step 5: Add the shadow V3 service entry point**
 
 ```python
 async def resolve_hybrid_query_contract_candidates(
@@ -652,14 +652,14 @@ prompt through type coercion.
 Do not switch `resolve_query_contract_candidates` to V3. Record preparation,
 model, repair, validation, solve, and judge telemetry separately.
 
-- [ ] **Step 6: Run service and solver tests**
+- [x] **Step 6: Run service and solver tests**
 
 Run: `.venv/bin/pytest tests/intent/test_query_contract_solver.py tests/intent/test_query_contract_service.py tests/intent/test_service.py -q`
 
 Expected: all V2 tests remain green; V3 uses one primary call and at most one
 repair or judge.
 
-- [ ] **Step 7: Commit solver and service integration**
+- [x] **Step 7: Commit solver and service integration**
 
 ```bash
 git add src/financial_agent/intent/query_contracts.py src/financial_agent/intent/query_contract_solver.py src/financial_agent/intent/service.py tests/intent/test_query_contract_solver.py tests/intent/test_query_contract_service.py
@@ -683,7 +683,7 @@ git commit -m "feat: solve contracts from semantic links"
 - Consumes: ProposalV3, DraftV3, and ValidatedIntentResolutionV3.
 - Produces: deterministic V3 JSON Schemas and schema-version dispatch for persisted `intent_resolution` artifacts.
 
-- [ ] **Step 1: Write failing schema export and persistence tests**
+- [x] **Step 1: Write failing schema export and persistence tests**
 
 ```python
 def test_v3_intent_schemas_are_fresh(project_root: Path) -> None:
@@ -697,13 +697,13 @@ def test_intent_resolution_dispatch_restores_v3(v3_resolution_json: bytes) -> No
 Also assert that removing `semantic_links` from a V3 artifact fails rather than
 dispatching it as V2.
 
-- [ ] **Step 2: Run schema and repository tests and verify failure**
+- [x] **Step 2: Run schema and repository tests and verify failure**
 
 Run: `.venv/bin/pytest tests/intent/test_schema_export.py tests/db/test_artifact_repository.py -q`
 
 Expected: V3 is rejected as an unknown resolver schema version.
 
-- [ ] **Step 3: Add explicit V3 schema registry and artifact dispatch**
+- [x] **Step 3: Add explicit V3 schema registry and artifact dispatch**
 
 Extend accepted schema-version literals to `"1.0" | "2.0" | "3.0"`. Dispatch
 only exact `3.0` manifests to `ValidatedIntentResolutionV3`. Do not add a fallback
@@ -713,13 +713,13 @@ Extend `scripts/export_intent_schemas.py` with strict `--schema-version` choices
 `1.0`, `2.0`, and `3.0`, plus an explicit `--output-dir`. Preserve the current
 no-argument V1 behavior.
 
-- [ ] **Step 4: Export committed V3 schemas using the repository script**
+- [x] **Step 4: Export committed V3 schemas using the repository script**
 
 Run: `.venv/bin/python scripts/export_intent_schemas.py --schema-version 3.0 --output-dir schemas/intent/v3`
 
 Expected: exactly four V3 schema files are generated deterministically.
 
-- [ ] **Step 5: Verify repository round-trip and database contract compatibility**
+- [x] **Step 5: Verify repository round-trip and database contract compatibility**
 
 Run: `.venv/bin/pytest tests/db/test_artifact_repository.py tests/db/test_migration_cycle.py -q`
 
@@ -727,7 +727,7 @@ Expected: V1, V2, and V3 artifacts round-trip through the existing immutable
 JSON boundary. This task adds no migration; a failing database-contract test
 blocks completion and requires a separately reviewed migration plan.
 
-- [ ] **Step 6: Commit schema and persistence support**
+- [x] **Step 6: Commit schema and persistence support**
 
 ```bash
 git add src/financial_agent/intent/schema_export.py scripts/export_intent_schemas.py schemas/intent/v3 src/financial_agent/db/repositories/artifacts.py tests/intent/test_schema_export.py tests/db/test_artifact_repository.py
@@ -748,7 +748,7 @@ git commit -m "feat: persist hybrid intent artifacts"
 - Consumes: a dataset-version and manifest-hash pinned `DatasetSemanticDefaultsV1` supplied by the service caller.
 - Produces: `SemanticDefaultPolicyRegistry`, `load_semantic_default_policy_registry(project_root)`, and eligible `as_of` qualifier offers with registry provenance.
 
-- [ ] **Step 1: Write failing positive and negative default tests**
+- [x] **Step 1: Write failing positive and negative default tests**
 
 ```python
 def test_verified_dataset_date_completes_aum_rank(v3_solver_inputs) -> None:
@@ -777,13 +777,13 @@ def test_cutoff_date_is_not_used_as_an_observation_default(v3_solver_inputs) -> 
     assert "REQUIRED_QUALIFIER_MISSING" in result.frames[0].contract_readiness.reason_codes
 ```
 
-- [ ] **Step 2: Run the tests and verify AUM remains incomplete**
+- [x] **Step 2: Run the tests and verify AUM remains incomplete**
 
 Run: `.venv/bin/pytest tests/intent/test_semantic_defaults.py tests/intent/test_query_contract_solver.py -q`
 
 Expected: the positive test fails because no default registry is connected.
 
-- [ ] **Step 3: Implement the pinned input and registry**
+- [x] **Step 3: Implement the pinned input and registry**
 
 ```python
 class SemanticAsOfDefaultV1(ContractModel):
@@ -803,21 +803,21 @@ The JSON registry contains only `active-dataset-as-of.v1`, kind `default`, the
 eligible snapshot concepts, and applicable families. Runtime dates never live
 in the tracked registry; callers supply them from verified dataset metadata.
 
-- [ ] **Step 4: Apply defaults only after pin and conflict validation**
+- [x] **Step 4: Apply defaults only after pin and conflict validation**
 
 Reject dataset or manifest mismatch, multiple dates, a date after the request
 cutoff, an ineligible concept/family, and conflict with an explicit date. Add
 `REGISTRY_DEFAULT` provenance containing the policy ID and the supplied default
 record ID.
 
-- [ ] **Step 5: Run default and solver tests**
+- [x] **Step 5: Run default and solver tests**
 
 Run: `.venv/bin/pytest tests/intent/test_semantic_defaults.py tests/intent/test_query_contract_solver.py tests/intent/test_query_contract_service.py -q`
 
 Expected: AUM completes only with an eligible pinned date; no existing fixture
 uses the cutoff date as a substitute observation date.
 
-- [ ] **Step 6: Commit registered semantic defaults**
+- [x] **Step 6: Commit registered semantic defaults**
 
 ```bash
 git add config/intent/semantic-default-policy-registry.v1.json src/financial_agent/intent/semantic_defaults.py src/financial_agent/intent/query_contract_solver.py src/financial_agent/intent/service.py tests/intent/test_semantic_defaults.py tests/intent/test_query_contract_solver.py tests/intent/test_query_contract_service.py
@@ -839,7 +839,7 @@ git commit -m "feat: add pinned semantic defaults"
 - Consumes: existing 160-case held-out gold, V3 span/link predictions, representative contract expectations, and V2/V3 runtime evidence.
 - Produces: separate mention-span, hint, selectability, structured, semantic-link, frame, OOD, contract, and planning metrics.
 
-- [ ] **Step 1: Write failing metric-separation tests**
+- [x] **Step 1: Write failing metric-separation tests**
 
 ```python
 def test_missing_hint_does_not_fail_catalog_selectability() -> None:
@@ -856,7 +856,7 @@ def test_representative_cases_score_independently() -> None:
     assert metric.total == 5
 ```
 
-- [ ] **Step 2: Add focused unseen-paraphrase and contrastive OOD fixtures**
+- [x] **Step 2: Add focused unseen-paraphrase and contrastive OOD fixtures**
 
 The new fixture contains, at minimum:
 
@@ -876,13 +876,13 @@ Define a strict `HybridSemanticLinkCase` with `case_id`, `question`,
 all eight fields for each of the five records; fixture loading rejects missing
 or extra fields.
 
-- [ ] **Step 3: Run evaluation tests and verify missing V3 metrics**
+- [x] **Step 3: Run evaluation tests and verify missing V3 metrics**
 
 Run: `.venv/bin/pytest tests/evaluation/intent/test_intent_evaluation.py tests/evaluation/query_contract/test_end_to_end_metrics.py -q`
 
 Expected: failures naming hybrid metrics and independent representative scoring.
 
-- [ ] **Step 4: Implement complete-denominator V3 metrics**
+- [x] **Step 4: Implement complete-denominator V3 metrics**
 
 Keep V2 report fields unchanged. Add V3 fields for required span preservation,
 hint recall, exact-lock precision, compact-catalog selectability, first-pass and
@@ -895,7 +895,7 @@ Add `hybrid-deterministic` to the strict resolver-evaluation mode choices. Add
 must prohibit provider calls even when credentials are present, while
 `--include-hybrid-v3` reports V2 and V3 under separate path IDs.
 
-- [ ] **Step 5: Normalize only registered semantic equivalence before contract comparison**
+- [x] **Step 5: Normalize only registered semantic equivalence before contract comparison**
 
 Normalize explicit descending and `default-direction-descending.v1` only when
 the registry proves equivalence. Keep predicate value units separate from query
@@ -903,7 +903,7 @@ qualifiers so a duplicated unit representation is not labeled an intent error.
 Do not normalize differing filters, fields, dates, periods, grains, de-duplication,
 or comparison bases.
 
-- [ ] **Step 6: Run deterministic V2 and V3 reports**
+- [x] **Step 6: Run deterministic V2 and V3 reports**
 
 Run: `.venv/bin/python scripts/evaluate_intent_resolver.py deterministic --output build/reports/intent-resolver-v2-deterministic.json`
 
@@ -913,14 +913,14 @@ Expected: V2 remains `123/196`; V3 catalog selectability is `196/196`; hint
 recall is reported diagnostically; exact locks and required spans are 100% on
 their authoritative denominators.
 
-- [ ] **Step 7: Run query-contract evaluation tests**
+- [x] **Step 7: Run query-contract evaluation tests**
 
 Run: `.venv/bin/pytest tests/evaluation/query_contract/test_decoupled_resolution.py tests/evaluation/query_contract/test_end_to_end_metrics.py -q`
 
 Expected: representative cases score independently and incomplete contract gold
 remains `unmeasured` rather than passing on 43 measured frames.
 
-- [ ] **Step 8: Commit V3 evaluation**
+- [x] **Step 8: Commit V3 evaluation**
 
 ```bash
 git add src/financial_agent/intent/evaluation.py scripts/evaluate_intent_resolver.py scripts/run_semantic_query_benchmark.py tests/evaluation/intent/test_intent_evaluation.py tests/evaluation/intent/hybrid_semantic_link_cases.v1.json tests/evaluation/query_contract/test_end_to_end_metrics.py tests/evaluation/query_contract/test_decoupled_resolution.py
@@ -938,27 +938,27 @@ git commit -m "test: measure hybrid intent resolution"
 - Consumes: every V3 implementation task, deterministic reports, optional PostgreSQL evidence, and authorized HCX-007 credentials.
 - Produces: one reproducible verification record and a fail-closed promotion status.
 
-- [ ] **Step 1: Run the narrow V3 suite**
+- [x] **Step 1: Run the narrow V3 suite**
 
 Run: `.venv/bin/pytest tests/intent/test_compact_catalog.py tests/intent/test_mention_spans.py tests/intent/test_hybrid_proposal.py tests/intent/test_hybrid_prompt.py tests/intent/test_hybrid_assembler.py tests/intent/test_query_contract_solver.py tests/intent/test_query_contract_service.py -q`
 
 Expected: zero failures.
 
-- [ ] **Step 2: Run all Intent Resolver and evaluation tests**
+- [x] **Step 2: Run all Intent Resolver and evaluation tests**
 
 Run: `.venv/bin/pytest tests/intent tests/evaluation/intent tests/evaluation/query_contract -q`
 
 Expected: zero failures, with provider and PostgreSQL markers deselected unless
 their explicit environments are configured.
 
-- [ ] **Step 3: Run the broad offline suite**
+- [x] **Step 3: Run the broad offline suite**
 
 Run: `.venv/bin/pytest -m "not ncp and not live and not postgres" -q`
 
 Expected: zero failures; only documented environment-dependent skips or
 deselections are accepted.
 
-- [ ] **Step 4: Verify schemas, compilation, dependencies, and diff scope**
+- [x] **Step 4: Verify schemas, compilation, dependencies, and diff scope**
 
 Run: `.venv/bin/python -m compileall -q src scripts tests`
 
@@ -971,14 +971,14 @@ Run: `git diff --check`
 Expected: every command exits zero and no secret-bearing or organizer source file
 is staged.
 
-- [ ] **Step 5: Produce the offline promotion report**
+- [x] **Step 5: Produce the offline promotion report**
 
 Run: `.venv/bin/python scripts/run_semantic_query_benchmark.py --offline --include-hybrid-v3 --sanitized-report /private/tmp/hybrid-semantic-query-offline.json`
 
 Expected: every available offline gate is explicitly `pass`, `fail`, or
 `unmeasured`; V3 remains non-default if any required gate is fail or unmeasured.
 
-- [ ] **Step 6: Run the paced HCX-007 shadow comparison only if offline gates permit it**
+- [x] **Step 6: Run the paced HCX-007 shadow comparison only if offline gates permit it**
 
 Load `NCP_CLOVA_STUDIO_API` without printing it. Run:
 
@@ -990,7 +990,7 @@ Expected: V2 and V3 paths are reported separately with primary, repair, judge,
 provider, token, p50, p95, schema, semantic, contract, and OOD metrics. Raw
 responses remain mode `0600` under `/private/tmp` and are never staged.
 
-- [ ] **Step 7: Record exact evidence and keep promotion fail closed**
+- [x] **Step 7: Record exact evidence and keep promotion fail closed**
 
 The new verification document records commit SHA, source/config hashes, exact
 commands, counts, gate results, unavailable denominators, live-call totals, and
@@ -998,7 +998,7 @@ remaining limitations. Update `STATUS.md` to `implemented, shadow-only` only whe
 the code and offline suite pass. Do not state that V3 is promoted unless every
 gate passes and the user separately approves promotion.
 
-- [ ] **Step 8: Inspect and commit only verified task paths**
+- [x] **Step 8: Inspect and commit only verified task paths**
 
 Run: `git status --short`
 
