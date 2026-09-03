@@ -1,4 +1,5 @@
 from hashlib import sha256
+import json
 from pathlib import Path
 
 import pytest
@@ -70,3 +71,38 @@ def test_committed_v2_schema_files_match_a_fresh_export() -> None:
     project_root = Path(__file__).resolve().parents[2]
 
     check_schemas(project_root / "schemas/intent/v2", schema_version="2.0")
+
+
+def test_v3_schema_export_generates_the_complete_v3_contract_bundle(
+    tmp_path: Path,
+) -> None:
+    export_schemas(tmp_path, schema_version="3.0")
+
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "intent-resolution-draft.schema.json",
+        "intent-resolution-proposal.schema.json",
+        "resolver-build-manifest.schema.json",
+        "validated-intent-resolution.schema.json",
+    ]
+    proposal_schema = json.loads(
+        (tmp_path / "intent-resolution-proposal.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    resolution_schema = json.loads(
+        (tmp_path / "validated-intent-resolution.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert (
+        proposal_schema["properties"]["proposal_schema_version"]["const"]
+        == "3.0"
+    )
+    assert "semantic_links" in resolution_schema["required"]
+    check_schemas(tmp_path, schema_version="3.0")
+
+
+def test_v3_intent_schemas_are_fresh() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+
+    check_schemas(project_root / "schemas/intent/v3", schema_version="3.0")

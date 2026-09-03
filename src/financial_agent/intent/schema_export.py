@@ -3,12 +3,18 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
 
-from .draft import IntentResolutionDraft, IntentResolutionDraftV2
+from .draft import (
+    IntentResolutionDraft,
+    IntentResolutionDraftV2,
+    IntentResolutionDraftV3,
+)
+from .hybrid_proposal import IntentResolutionProposalV3
 from .proposal import IntentResolutionProposalV2
 from .resolution import (
     ResolverBuildManifest,
     ValidatedIntentResolution,
     ValidatedIntentResolutionV2,
+    ValidatedIntentResolutionV3,
 )
 
 SCHEMA_REGISTRY = {
@@ -22,10 +28,16 @@ V2_SCHEMA_REGISTRY = {
     "intent-resolution-draft": IntentResolutionDraftV2,
     "validated-intent-resolution": ValidatedIntentResolutionV2,
 }
+V3_SCHEMA_REGISTRY = {
+    "intent-resolution-proposal": IntentResolutionProposalV3,
+    "resolver-build-manifest": ResolverBuildManifest,
+    "intent-resolution-draft": IntentResolutionDraftV3,
+    "validated-intent-resolution": ValidatedIntentResolutionV3,
+}
 
 
 def export_schemas(
-    output_dir: Path, *, schema_version: Literal["1.0", "2.0"] = "1.0"
+    output_dir: Path, *, schema_version: Literal["1.0", "2.0", "3.0"] = "1.0"
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     for name, model in _schema_registry(schema_version).items():
@@ -39,7 +51,7 @@ def export_schemas(
 
 
 def check_schemas(
-    expected_dir: Path, *, schema_version: Literal["1.0", "2.0"] = "1.0"
+    expected_dir: Path, *, schema_version: Literal["1.0", "2.0", "3.0"] = "1.0"
 ) -> None:
     with TemporaryDirectory() as temporary_dir:
         generated_dir = Path(temporary_dir)
@@ -58,7 +70,9 @@ def check_schemas(
         raise ValueError("committed intent schemas do not match fresh export")
 
 
-def _schema_registry(schema_version: Literal["1.0", "2.0"]):
+def _schema_registry(schema_version: Literal["1.0", "2.0", "3.0"]):
     if schema_version == "1.0":
         return SCHEMA_REGISTRY
-    return V2_SCHEMA_REGISTRY
+    if schema_version == "2.0":
+        return V2_SCHEMA_REGISTRY
+    return V3_SCHEMA_REGISTRY

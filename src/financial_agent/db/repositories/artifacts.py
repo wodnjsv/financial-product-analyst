@@ -28,6 +28,7 @@ from financial_agent.db.schema.operations import request_artifact
 from financial_agent.intent.resolution import (
     ValidatedIntentResolution,
     ValidatedIntentResolutionV2,
+    ValidatedIntentResolutionV3,
 )
 
 from .operations import raise_request_run_error
@@ -124,6 +125,8 @@ def _artifact_model(
         return ValidatedIntentResolution
     if resolver_schema_version == "2.0":
         return ValidatedIntentResolutionV2
+    if resolver_schema_version == "3.0":
+        return ValidatedIntentResolutionV3
     raise ValueError("INTENT_RESOLUTION_SCHEMA_VERSION_INVALID")
 
 

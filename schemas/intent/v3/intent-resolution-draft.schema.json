@@ -1,0 +1,1000 @@
+{
+  "$defs": {
+    "ActionChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "selected_ids": {
+          "items": {
+            "$ref": "#/$defs/IntentType"
+          },
+          "title": "Selected Ids",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/ChoiceState"
+        }
+      },
+      "required": [
+        "state",
+        "selected_ids",
+        "evidence_span_ids",
+        "reason_code"
+      ],
+      "title": "ActionChoice",
+      "type": "object"
+    },
+    "Cardinality": {
+      "enum": [
+        "one",
+        "many"
+      ],
+      "title": "Cardinality",
+      "type": "string"
+    },
+    "ChoiceState": {
+      "enum": [
+        "selected",
+        "ambiguous",
+        "unmapped"
+      ],
+      "title": "ChoiceState",
+      "type": "string"
+    },
+    "ContextLinkHint": {
+      "additionalProperties": false,
+      "properties": {
+        "consumer_frame_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Consumer Frame Id",
+          "type": "string"
+        },
+        "context_link_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Context Link Id",
+          "type": "string"
+        },
+        "link_type": {
+          "$ref": "#/$defs/ContextLinkType"
+        },
+        "producer_frame_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Producer Frame Id",
+          "type": "string"
+        },
+        "reference_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reference Id",
+          "type": "string"
+        },
+        "selector": {
+          "items": {
+            "$ref": "#/$defs/Selector"
+          },
+          "maxItems": 1,
+          "title": "Selector",
+          "type": "array"
+        },
+        "selector_literal_candidate_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Selector Literal Candidate Id",
+          "type": "array"
+        },
+        "source_role": {
+          "$ref": "#/$defs/SourceRole"
+        },
+        "target_slot_kind": {
+          "items": {
+            "$ref": "#/$defs/SlotKind"
+          },
+          "maxItems": 1,
+          "title": "Target Slot Kind",
+          "type": "array"
+        }
+      },
+      "required": [
+        "context_link_id",
+        "reference_id",
+        "link_type",
+        "source_role",
+        "selector",
+        "selector_literal_candidate_id",
+        "producer_frame_id",
+        "consumer_frame_id",
+        "target_slot_kind"
+      ],
+      "title": "ContextLinkHint",
+      "type": "object"
+    },
+    "ContextLinkType": {
+      "enum": [
+        "consume_single_result",
+        "consume_result_set",
+        "derive_entity",
+        "derive_metric_value",
+        "inherit_scope",
+        "replace_slot",
+        "refer_exclusion_set",
+        "refer_evidence"
+      ],
+      "title": "ContextLinkType",
+      "type": "string"
+    },
+    "EntityHintV2": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_entity_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Candidate Entity Ids",
+          "type": "array"
+        },
+        "entity_hint_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Entity Hint Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "expected_entity_type_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Expected Entity Type Ids",
+          "type": "array"
+        },
+        "mention_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Mention Id",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "relation_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Relation Id",
+          "type": "array"
+        },
+        "selected_candidate_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Selected Candidate Ids",
+          "type": "array"
+        },
+        "semantic_role": {
+          "$ref": "#/$defs/EntitySemanticRole"
+        }
+      },
+      "required": [
+        "entity_hint_id",
+        "mention_id",
+        "evidence_span_ids",
+        "expected_entity_type_ids",
+        "candidate_entity_ids",
+        "selected_candidate_ids",
+        "reason_code",
+        "semantic_role",
+        "relation_id"
+      ],
+      "title": "EntityHintV2",
+      "type": "object"
+    },
+    "EntitySemanticRole": {
+      "enum": [
+        "frame_subject",
+        "relation_object"
+      ],
+      "title": "EntitySemanticRole",
+      "type": "string"
+    },
+    "EvidenceSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "end_char": {
+          "minimum": 0,
+          "title": "End Char",
+          "type": "integer"
+        },
+        "segment_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "span_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Span Id",
+          "type": "string"
+        },
+        "start_char": {
+          "minimum": 0,
+          "title": "Start Char",
+          "type": "integer"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "span_id",
+        "segment_id",
+        "start_char",
+        "end_char",
+        "text"
+      ],
+      "title": "EvidenceSpan",
+      "type": "object"
+    },
+    "FrameSemanticCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "reason": {
+          "$ref": "#/$defs/SemanticCoverageReason"
+        },
+        "state": {
+          "$ref": "#/$defs/SemanticCoverageState"
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "evidence_ids"
+      ],
+      "title": "FrameSemanticCoverage",
+      "type": "object"
+    },
+    "IntentFrameDraftV2": {
+      "additionalProperties": false,
+      "properties": {
+        "action_choice": {
+          "$ref": "#/$defs/ActionChoice"
+        },
+        "entity_hint_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Entity Hint Ids",
+          "type": "array"
+        },
+        "entity_type_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Entity Type Ids",
+          "type": "array"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "frame_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Frame Id",
+          "type": "string"
+        },
+        "normalized_intent_argument": {
+          "title": "Normalized Intent Argument",
+          "type": "string"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "produced_result_hints": {
+          "items": {
+            "$ref": "#/$defs/SourceRole"
+          },
+          "title": "Produced Result Hints",
+          "type": "array"
+        },
+        "product_family_choice": {
+          "$ref": "#/$defs/ProductFamilyChoice"
+        },
+        "segment_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Segment Ids",
+          "type": "array"
+        },
+        "semantic_coverage": {
+          "items": {
+            "$ref": "#/$defs/FrameSemanticCoverage"
+          },
+          "maxItems": 1,
+          "minItems": 1,
+          "title": "Semantic Coverage",
+          "type": "array"
+        },
+        "slot_assignments": {
+          "items": {
+            "$ref": "#/$defs/SlotAssignment"
+          },
+          "title": "Slot Assignments",
+          "type": "array"
+        }
+      },
+      "required": [
+        "frame_id",
+        "ordinal",
+        "segment_ids",
+        "evidence_span_ids",
+        "normalized_intent_argument",
+        "action_choice",
+        "product_family_choice",
+        "entity_type_ids",
+        "entity_hint_ids",
+        "slot_assignments",
+        "produced_result_hints",
+        "semantic_coverage"
+      ],
+      "title": "IntentFrameDraftV2",
+      "type": "object"
+    },
+    "IntentType": {
+      "enum": [
+        "lookup",
+        "screen",
+        "rank",
+        "compare",
+        "aggregate",
+        "calculate",
+        "similar",
+        "explain"
+      ],
+      "title": "IntentType",
+      "type": "string"
+    },
+    "ProductFamily": {
+      "enum": [
+        "domestic_bond",
+        "domestic_etf",
+        "overseas_etf",
+        "public_fund"
+      ],
+      "title": "ProductFamily",
+      "type": "string"
+    },
+    "ProductFamilyChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "selected_ids": {
+          "items": {
+            "$ref": "#/$defs/ProductFamily"
+          },
+          "title": "Selected Ids",
+          "type": "array"
+        },
+        "state": {
+          "$ref": "#/$defs/ChoiceState"
+        }
+      },
+      "required": [
+        "state",
+        "selected_ids",
+        "evidence_span_ids",
+        "reason_code"
+      ],
+      "title": "ProductFamilyChoice",
+      "type": "object"
+    },
+    "ReferenceForm": {
+      "enum": [
+        "demonstrative",
+        "zero_anaphora",
+        "lexical_anaphor",
+        "bridging",
+        "discourse_deixis"
+      ],
+      "title": "ReferenceForm",
+      "type": "string"
+    },
+    "ReferenceHint": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_target_frame_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Candidate Target Frame Ids",
+          "type": "array"
+        },
+        "candidate_target_mention_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Candidate Target Mention Ids",
+          "type": "array"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "expected_cardinality": {
+          "items": {
+            "$ref": "#/$defs/Cardinality"
+          },
+          "maxItems": 1,
+          "title": "Expected Cardinality",
+          "type": "array"
+        },
+        "expected_target_kind": {
+          "items": {
+            "$ref": "#/$defs/ReferenceTargetKind"
+          },
+          "maxItems": 1,
+          "title": "Expected Target Kind",
+          "type": "array"
+        },
+        "grammatical_number": {
+          "items": {
+            "enum": [
+              "singular",
+              "plural",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Grammatical Number",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "reference_form": {
+          "$ref": "#/$defs/ReferenceForm"
+        },
+        "reference_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reference Id",
+          "type": "string"
+        },
+        "segment_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "resolved",
+            "ambiguous",
+            "unresolved"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "surface_presence": {
+          "$ref": "#/$defs/ReferenceMentionType"
+        }
+      },
+      "required": [
+        "reference_id",
+        "segment_id",
+        "evidence_span_ids",
+        "surface_presence",
+        "reference_form",
+        "grammatical_number",
+        "expected_target_kind",
+        "expected_cardinality",
+        "candidate_target_frame_ids",
+        "candidate_target_mention_ids",
+        "status",
+        "reason_code"
+      ],
+      "title": "ReferenceHint",
+      "type": "object"
+    },
+    "ReferenceMentionType": {
+      "enum": [
+        "explicit",
+        "ellipsis"
+      ],
+      "title": "ReferenceMentionType",
+      "type": "string"
+    },
+    "ReferenceTargetKind": {
+      "enum": [
+        "entity",
+        "result_set",
+        "metric_value",
+        "related_entity",
+        "prior_operation",
+        "evidence_records",
+        "exclusion_set"
+      ],
+      "title": "ReferenceTargetKind",
+      "type": "string"
+    },
+    "Selector": {
+      "enum": [
+        "all",
+        "first",
+        "last",
+        "rank_position",
+        "top_n",
+        "former",
+        "latter",
+        "each",
+        "remaining"
+      ],
+      "title": "Selector",
+      "type": "string"
+    },
+    "SemanticCoverageReason": {
+      "enum": [
+        "none",
+        "lexical_ood",
+        "domain_ood",
+        "unsupported_operation",
+        "missing_critical_semantic"
+      ],
+      "title": "SemanticCoverageReason",
+      "type": "string"
+    },
+    "SemanticCoverageState": {
+      "enum": [
+        "covered",
+        "partial",
+        "unmapped"
+      ],
+      "title": "SemanticCoverageState",
+      "type": "string"
+    },
+    "SemanticFlagHint": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "semantic_tag": {
+          "$ref": "#/$defs/SemanticTag"
+        }
+      },
+      "required": [
+        "semantic_tag",
+        "evidence_span_ids",
+        "reason_code"
+      ],
+      "title": "SemanticFlagHint",
+      "type": "object"
+    },
+    "SemanticLinkDraftV3": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "frame_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Frame Id",
+          "type": "string"
+        },
+        "mention_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Mention Id",
+          "type": "string"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "semantic_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Semantic Ids",
+          "type": "array"
+        },
+        "semantic_link_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Semantic Link Id",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "selected",
+            "ambiguous"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "semantic_link_id",
+        "frame_id",
+        "mention_id",
+        "semantic_ids",
+        "state",
+        "evidence_span_ids",
+        "reason_code"
+      ],
+      "title": "SemanticLinkDraftV3",
+      "type": "object"
+    },
+    "SemanticTag": {
+      "enum": [
+        "CROSS_FAMILY",
+        "MULTI_STEP",
+        "CONTEXT_DEPENDENT",
+        "RELATIONSHIP_REQUIRED",
+        "DOCUMENT_GROUNDED",
+        "TEMPORAL",
+        "NORMALIZATION_REQUIRED",
+        "MISSINGNESS_SENSITIVE",
+        "OPERATIONAL_STATUS",
+        "FUTURE_FORECAST",
+        "PERSONALIZED_ADVICE",
+        "ORDER_EXECUTION",
+        "REALTIME_REQUIRED"
+      ],
+      "title": "SemanticTag",
+      "type": "string"
+    },
+    "SlotAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "slot_assignment_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Slot Assignment Id",
+          "type": "string"
+        },
+        "slot_kind": {
+          "$ref": "#/$defs/SlotKind"
+        },
+        "value_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Value Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "slot_assignment_id",
+        "slot_kind",
+        "value_ids",
+        "evidence_span_ids",
+        "reason_code"
+      ],
+      "title": "SlotAssignment",
+      "type": "object"
+    },
+    "SlotKind": {
+      "enum": [
+        "entity",
+        "metric",
+        "filter_value",
+        "filter_operator",
+        "period",
+        "unit",
+        "currency",
+        "sort_key",
+        "sort_direction",
+        "result_limit",
+        "date_scope",
+        "relation",
+        "comparison_basis",
+        "similarity_anchor",
+        "document_topic"
+      ],
+      "title": "SlotKind",
+      "type": "string"
+    },
+    "SlotMutation": {
+      "additionalProperties": false,
+      "properties": {
+        "consumer_frame_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Consumer Frame Id",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "mutation_kind": {
+          "$ref": "#/$defs/SlotMutationKind"
+        },
+        "reason_code": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Reason Code",
+          "type": "string"
+        },
+        "slot_kind": {
+          "$ref": "#/$defs/SlotKind"
+        },
+        "slot_mutation_id": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Slot Mutation Id",
+          "type": "string"
+        },
+        "source_frame_id": {
+          "items": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "type": "string"
+          },
+          "maxItems": 1,
+          "title": "Source Frame Id",
+          "type": "array"
+        }
+      },
+      "required": [
+        "slot_mutation_id",
+        "consumer_frame_id",
+        "slot_kind",
+        "mutation_kind",
+        "source_frame_id",
+        "evidence_span_ids",
+        "reason_code"
+      ],
+      "title": "SlotMutation",
+      "type": "object"
+    },
+    "SlotMutationKind": {
+      "enum": [
+        "carryover",
+        "update",
+        "delete",
+        "dontcare"
+      ],
+      "title": "SlotMutationKind",
+      "type": "string"
+    },
+    "SourceRole": {
+      "enum": [
+        "candidates",
+        "selected_product",
+        "top_k_products",
+        "excluded_products",
+        "metric_value",
+        "relation_target",
+        "comparison_decision",
+        "evidence_records"
+      ],
+      "title": "SourceRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "context_link_hints": {
+      "items": {
+        "$ref": "#/$defs/ContextLinkHint"
+      },
+      "title": "Context Link Hints",
+      "type": "array"
+    },
+    "entity_hints": {
+      "items": {
+        "$ref": "#/$defs/EntityHintV2"
+      },
+      "title": "Entity Hints",
+      "type": "array"
+    },
+    "evidence_spans": {
+      "items": {
+        "$ref": "#/$defs/EvidenceSpan"
+      },
+      "title": "Evidence Spans",
+      "type": "array"
+    },
+    "frame_limit_exceeded": {
+      "title": "Frame Limit Exceeded",
+      "type": "boolean"
+    },
+    "intent_frames": {
+      "items": {
+        "$ref": "#/$defs/IntentFrameDraftV2"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Intent Frames",
+      "type": "array"
+    },
+    "reference_hints": {
+      "items": {
+        "$ref": "#/$defs/ReferenceHint"
+      },
+      "title": "Reference Hints",
+      "type": "array"
+    },
+    "semantic_flag_hints": {
+      "items": {
+        "$ref": "#/$defs/SemanticFlagHint"
+      },
+      "title": "Semantic Flag Hints",
+      "type": "array"
+    },
+    "semantic_links": {
+      "items": {
+        "$ref": "#/$defs/SemanticLinkDraftV3"
+      },
+      "title": "Semantic Links",
+      "type": "array"
+    },
+    "slot_mutations": {
+      "items": {
+        "$ref": "#/$defs/SlotMutation"
+      },
+      "title": "Slot Mutations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "evidence_spans",
+    "intent_frames",
+    "entity_hints",
+    "reference_hints",
+    "context_link_hints",
+    "slot_mutations",
+    "semantic_flag_hints",
+    "frame_limit_exceeded",
+    "semantic_links"
+  ],
+  "title": "IntentResolutionDraftV3",
+  "type": "object"
+}

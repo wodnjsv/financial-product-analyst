@@ -14,6 +14,7 @@ import psycopg
 import pytest
 import pytest_asyncio
 import sqlalchemy as sa
+from pydantic import ValidationError
 from psycopg.types.json import Jsonb
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -40,6 +41,7 @@ from financial_agent.db.preflight import normalize_psycopg_url
 from financial_agent.intent.resolution import (
     ValidatedIntentResolution,
     ValidatedIntentResolutionV2,
+    ValidatedIntentResolutionV3,
 )
 from financial_agent.intent.query_contracts import (
     ResolvedQueryContractSetV2,
@@ -317,7 +319,15 @@ def _v2_intent_resolution(context: ArtifactContext) -> ValidatedIntentResolution
             ],
         }
     ]
-    return ValidatedIntentResolutionV2.model_validate(payload)
+    payload["entity_hints"] = []
+    return ValidatedIntentResolutionV2.model_validate_json(json.dumps(payload))
+
+
+def _v3_intent_resolution(context: ArtifactContext) -> ValidatedIntentResolutionV3:
+    payload = json.loads(canonical_json_bytes(_v2_intent_resolution(context)))
+    payload["build_manifest"]["resolver_schema_version"] = "3.0"
+    payload["semantic_links"] = []
+    return ValidatedIntentResolutionV3.model_validate_json(json.dumps(payload))
 
 
 def test_intent_resolution_and_query_plan_model_metadata_policy() -> None:
@@ -354,6 +364,7 @@ def test_intent_resolution_and_query_plan_model_metadata_policy() -> None:
     (
         ("1.0", ValidatedIntentResolution),
         ("2.0", ValidatedIntentResolutionV2),
+        ("3.0", ValidatedIntentResolutionV3),
     ),
 )
 def test_intent_resolution_dispatch_accepts_only_known_schema_versions(
@@ -378,7 +389,7 @@ def test_intent_resolution_dispatch_accepts_only_known_schema_versions(
         {"build_manifest": {}},
         {"build_manifest": {"resolver_schema_version": None}},
         {"build_manifest": {"resolver_schema_version": 2}},
-        {"build_manifest": {"resolver_schema_version": "3.0"}},
+        {"build_manifest": {"resolver_schema_version": "4.0"}},
     ),
 )
 def test_intent_resolution_dispatch_rejects_missing_or_unknown_schema_versions(
@@ -388,6 +399,28 @@ def test_intent_resolution_dispatch_rejects_missing_or_unknown_schema_versions(
 
     with pytest.raises(ValueError, match="INTENT_RESOLUTION_SCHEMA_VERSION_INVALID"):
         _artifact_model("intent_resolution", json.dumps(payload))
+
+
+def test_v3_intent_resolution_without_semantic_links_never_downgrades() -> None:
+    from financial_agent.db.repositories.artifacts import _artifact_model
+
+    context = ArtifactContext(
+        dataset_version="artifact-v3-no-links",
+        run_id="run-v3-no-links",
+        request_key="a" * 64,
+        question_id="Q-v3-no-links",
+        question="Synthetic V3 artifact without semantic links",
+        created_at=datetime(2026, 8, 17, tzinfo=UTC),
+    )
+    payload = json.loads(canonical_json_bytes(_v3_intent_resolution(context)))
+    del payload["semantic_links"]
+    serialized = json.dumps(payload)
+
+    model = _artifact_model("intent_resolution", serialized)
+
+    assert model is ValidatedIntentResolutionV3
+    with pytest.raises(ValidationError, match="semantic_links"):
+        model.model_validate_json(serialized)
 
 
 @pytest.mark.asyncio
@@ -409,7 +442,7 @@ async def test_repository_append_rejects_unknown_intent_resolution_schema_versio
     invalid_resolution = resolution.model_copy(
         update={
             "build_manifest": resolution.build_manifest.model_copy(
-                update={"resolver_schema_version": "3.0"}
+                update={"resolver_schema_version": "4.0"}
             )
         }
     )
@@ -1248,6 +1281,28 @@ async def test_repository_round_trips_v2_intent_resolution(
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
+async def test_repository_round_trips_v3_intent_resolution(
+    migrated_database_url: str,
+    artifact_engine: AsyncEngine,
+) -> None:
+    from financial_agent.db.repositories.artifacts import RequestArtifactRepository
+
+    context = _artifact_context(migrated_database_url)
+    resolution = _v3_intent_resolution(context)
+    repository = RequestArtifactRepository(artifact_engine)
+
+    artifact_record_id = await repository.append(
+        "intent_resolution",
+        resolution,
+        model_id="hcx-model",
+        prompt_version="prompt-v3",
+    )
+
+    assert await repository.get(context.run_id, artifact_record_id) == resolution
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
 async def test_repository_restore_rejects_unknown_intent_resolution_schema_version(
     migrated_database_url: str,
     artifact_engine: AsyncEngine,
@@ -1262,7 +1317,7 @@ async def test_repository_restore_rejects_unknown_intent_resolution_schema_versi
     invalid_resolution = resolution.model_copy(
         update={
             "build_manifest": resolution.build_manifest.model_copy(
-                update={"resolver_schema_version": "3.0"}
+                update={"resolver_schema_version": "4.0"}
             )
         }
     )
