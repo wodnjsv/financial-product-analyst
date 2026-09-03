@@ -236,7 +236,7 @@ async def test_sql_producer_result_is_bound_into_dependent_sql_request() -> None
     assert bound_values == [("product-1", "product-2")]
     assert engine.connect_count == 1
     business_parameters = engine.connection.executions[1][1]
-    assert ("product-1", "product-2") in business_parameters.values()
+    assert ["product-1", "product-2"] in business_parameters.values()
 
 
 @pytest.mark.asyncio

@@ -82,7 +82,7 @@ class ParameterBuilder:
         self,
         binding_id: str,
         entity_ids: tuple[str, ...] | None,
-    ) -> sa.BindParameter:
+    ) -> sa.ColumnElement:
         name = f"prior_result_{self._counter}"
         self._counter += 1
         if entity_ids is None:
@@ -97,7 +97,7 @@ class ParameterBuilder:
                     value_kind=SqlValueKind.TUPLE,
                 )
             )
-        return sa.bindparam(name, type_=sa.ARRAY(sa.String()))
+        return sa.cast(sa.bindparam(name), sa.ARRAY(sa.String()))
 
 
 def physical_value_column(binding: PhysicalBindingDefinition):

@@ -1626,7 +1626,7 @@ def _attach_count_population_lineage(
                 sa.distinct(
                     sa.func.concat(
                         observation_alias.c.metric_id,
-                        separator,
+                        sa.cast(separator, sa.String()),
                         observation_alias.c.metric_definition_version,
                     )
                 )
@@ -1814,11 +1814,13 @@ def _attach_flat_aggregate_evidence(
     evidence_item = (
         sa.func.unnest(combined_evidence)
         .table_valued("evidence_id")
+        .render_derived()
         .lateral("aggregate_evidence_item")
     )
     source_item = (
         sa.func.unnest(combined_sources)
         .table_valued("source_id")
+        .render_derived()
         .lateral("aggregate_source_item")
     )
     evidence_base = evidence_base.join(evidence_item, sa.true()).join(
@@ -1834,6 +1836,7 @@ def _attach_flat_aggregate_evidence(
         observation_item = (
             sa.func.unnest(combined_observations)
             .table_valued("observation_id")
+            .render_derived()
             .lateral("aggregate_observation_item")
         )
         evidence_base = evidence_base.join(observation_item, sa.true())
@@ -1847,7 +1850,7 @@ def _attach_flat_aggregate_evidence(
                 tuple(
                     sa.func.concat(
                         alias.c.metric_id,
-                        separator,
+                        sa.cast(separator, sa.String()),
                         alias.c.metric_definition_version,
                     )
                     for alias in observation_aliases
@@ -1856,6 +1859,7 @@ def _attach_flat_aggregate_evidence(
             metric_definition_item = (
                 sa.func.unnest(combined_metric_definitions)
                 .table_valued("metric_definition_ref")
+                .render_derived()
                 .lateral("aggregate_metric_definition_item")
             )
             evidence_base = evidence_base.join(metric_definition_item, sa.true())
@@ -1948,15 +1952,26 @@ def _qualifier_filters(context: _Context):
         ):
             raise SqlCompileRejection("COUNT_QUALIFIER_BINDING_REQUIRED")
         raise SqlCompileRejection("QUALIFIER_BINDING_REQUIRED")
+    supplied = {key for key, value in requested.items() if value is not None}
+    supported_by_any_binding = all(
+        any(
+            qualifier_id in binding.supported_qualifier_ids
+            for binding in bindings
+        )
+        for qualifier_id in supplied
+    )
+    if supplied and not supported_by_any_binding:
+        raise SqlCompileRejection("PHYSICAL_QUALIFIER_UNSUPPORTED")
     for binding in bindings:
-        supplied = {key for key, value in requested.items() if value is not None}
         if not set(binding.required_qualifier_ids) <= supplied:
             raise SqlCompileRejection("PHYSICAL_REQUIRED_QUALIFIER_MISSING")
-        if not supplied <= set(binding.supported_qualifier_ids):
-            raise SqlCompileRejection("PHYSICAL_QUALIFIER_UNSUPPORTED")
-        if binding.currency_normalization_required and qualifiers.currency_id is not None:
+        consumed = supplied & set(binding.supported_qualifier_ids)
+        if (
+            binding.currency_normalization_required
+            and SemanticQualifierId.CURRENCY in consumed
+        ):
             raise SqlCompileRejection("CROSS_CURRENCY_NORMALIZATION_UNVERIFIED")
-        for qualifier_id in sorted(supplied, key=lambda item: item.value):
+        for qualifier_id in sorted(consumed, key=lambda item: item.value):
             policies = (
                 (binding.unit_conversion_policy_id,)
                 if qualifier_id is SemanticQualifierId.UNIT
@@ -1974,14 +1989,35 @@ def _qualifier_filters(context: _Context):
     filters = []
     for binding_id, alias in context.observation_aliases.items():
         binding = context.bindings.binding_sets_by_key[binding_id]
-        if qualifiers.period_id is not None:
+        supported = set(binding.supported_qualifier_ids)
+        if (
+            qualifiers.period_id is not None
+            and SemanticQualifierId.PERIOD in supported
+        ):
             raise SqlCompileRejection("PERIOD_LOWERING_NOT_REGISTERED")
-        if qualifiers.currency_id is not None:
-            filters.append(alias.c.currency == context.params.bind(qualifiers.currency_id, prefix="currency"))
-        if qualifiers.unit_id is not None:
-            filters.append(alias.c.unit == context.params.bind(binding.storage_unit_id, prefix="unit"))
-        if qualifiers.as_of_date is not None:
-            filters.append(alias.c.applicable_date == context.params.bind(qualifiers.as_of_date, prefix="as_of"))
+        if (
+            qualifiers.currency_id is not None
+            and SemanticQualifierId.CURRENCY in supported
+        ):
+            filters.append(
+                alias.c.currency
+                == context.params.bind(
+                    qualifiers.currency_id, prefix="currency"
+                )
+            )
+        if qualifiers.unit_id is not None and SemanticQualifierId.UNIT in supported:
+            filters.append(
+                alias.c.unit
+                == context.params.bind(binding.storage_unit_id, prefix="unit")
+            )
+        if (
+            qualifiers.as_of_date is not None
+            and SemanticQualifierId.AS_OF in supported
+        ):
+            filters.append(
+                alias.c.applicable_date
+                == context.params.bind(qualifiers.as_of_date, prefix="as_of")
+            )
     return filters
 
 

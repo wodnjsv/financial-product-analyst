@@ -14,14 +14,32 @@ def _versioned_graph_iris(dataset_version: str) -> tuple[URIRef, URIRef]:
     )
 
 
-def build_relation_query(predicate_id: str, dataset_version: str) -> str:
+def build_relation_query(
+    predicate_id: str,
+    dataset_version: str,
+    *,
+    entity_ids: tuple[str, ...] | None = None,
+) -> str:
     """Build the evidence-bound query for one approved relation predicate."""
     if predicate_id not in APPROVED_PREDICATES:
         raise ValueError(f"unknown_predicate: {predicate_id}")
+    if entity_ids is not None and (
+        not entity_ids
+        or len(entity_ids) != len(set(entity_ids))
+        or any(not value for value in entity_ids)
+    ):
+        raise ValueError("entity_ids must contain unique nonblank identifiers")
 
     data_graph, evidence_graph = _versioned_graph_iris(dataset_version)
     predicate = FP[predicate_id]
     version = Literal(dataset_version).n3()
+    scope_filter = ""
+    if entity_ids is not None:
+        scope_values = " ".join(Literal(value).n3() for value in entity_ids)
+        scope_filter = (
+            f"  VALUES ?scope_id {{ {scope_values} }}\n"
+            "  FILTER (?subject_id = ?scope_id || ?object_id = ?scope_id)\n"
+        )
     return f"""\
 PREFIX fp: <{FP}>
 SELECT ?subject_id ?predicate_id ?object_id ?relation_assertion_id ?evidence_id ?dataset_version ?valid_from ?valid_to
@@ -47,6 +65,7 @@ WHERE {{
     ?source a fp:SourceRecord ; fp:sourceId ?source_id .
   }}
   FILTER (?dataset_version = {version})
+{scope_filter}\
   BIND ({Literal(predicate_id).n3()} AS ?predicate_id)
 }}
 """

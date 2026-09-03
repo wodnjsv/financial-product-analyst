@@ -205,11 +205,6 @@ def _prepare_target_scope(database_url: str) -> str:
             ("overseas-etf-1", "overseas_etf"),
             ("public-fund-1", "public_fund"),
         ):
-            insert_entity(
-                connection,
-                dataset_version=dataset_version,
-                entity_id=entity_id,
-            )
             insert_product(
                 connection,
                 dataset_version=dataset_version,
@@ -352,11 +347,6 @@ def _prepare_dart_recovery_states(database_url: str) -> tuple[str, dict[str, str
         for key, entity_id in product_ids.items():
             product_family = "domestic_etf" if key in {"embedded_etf", "missing_etf", "etn"} else "public_fund"
             marker = "PREF01_PD_ITM_NO" if product_family == "domestic_etf" else "PRFD_ITM_NO"
-            insert_entity(
-                connection,
-                dataset_version=dataset_version,
-                entity_id=entity_id,
-            )
             insert_product(
                 connection,
                 dataset_version=dataset_version,
@@ -624,11 +614,6 @@ async def test_organizer_dart_rows_exclude_nonorganizer_and_out_of_scope_product
             ("bond-one", "domestic_bond", "ISIN"),
             ("dart-only", "domestic_etf", "DART_PRODUCT"),
         ):
-            insert_entity(
-                connection,
-                dataset_version=dataset_version,
-                entity_id=entity_id,
-            )
             insert_product(
                 connection,
                 dataset_version=dataset_version,
@@ -643,11 +628,6 @@ async def test_organizer_dart_rows_exclude_nonorganizer_and_out_of_scope_product
                 scheme=scheme,
                 identifier_value=f"value-{entity_id}",
             )
-        insert_entity(
-            connection,
-            dataset_version=dataset_version,
-            entity_id="fund-representative",
-        )
         insert_product(
             connection,
             dataset_version=dataset_version,

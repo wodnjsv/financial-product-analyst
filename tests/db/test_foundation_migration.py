@@ -970,6 +970,7 @@ def _truncate_foundation_tables(database_url: str) -> None:
         connection.execute(
             """
             TRUNCATE TABLE
+                operations.verified_release_cache,
                 operations.artifact_evidence_ref,
                 operations.artifact_calculation_ref,
                 operations.artifact_claim_ref,

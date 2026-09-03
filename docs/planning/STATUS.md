@@ -15,7 +15,7 @@
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute·문서 provenance 경계 승인; 실제 PostgreSQL 관계의 결정론적 Evidence-bound ABox·읽기 전용 Fuseki와 Vector Evidence 승격 경로를 로컬 검증, Stage 04는 미완료 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
-| 통합 마이그레이션 기준 | 문서 `0008`·`0009` 뒤에 Intent `0010`·`0011`을 연결한 단일 head; 기존 문서 코퍼스 재적재 불필요 | [ADR-0046](decisions/ADR-0046-linearize-document-and-intent-migrations.md), [검증 기록](verification/2026-09-04-main-history-integration-verification.md) |
+| 통합 마이그레이션 기준 | 문서 `0008`·`0009`, Intent `0010`·`0011`, 검증 응답 캐시 `0012`를 연결한 단일 head; 기존 문서 코퍼스 재적재 불필요 | [ADR-0046](decisions/ADR-0046-linearize-document-and-intent-migrations.md), [Stage 05–07 검증 기록](verification/2026-09-04-stage05-stage07-local-vertical-slice-verification.md) |
 | Intent Resolver·QueryPlan·Orchestrator | Phase 1~3와 SQL 의미 계약 V2 경로를 로컬 구현·검증했다. V2는 요청별 제한 후보 구조를 유지하면서 한국어 V4 오버레이를 공유한다. full-catalog hybrid V3도 구현·검증했지만 HCX-007 정확도와 provider 성공률이 승격 기준에 크게 미달해 `implemented, shadow-only`; V2가 기본이며 promotion은 fail-closed `deferred`다. PostgreSQL conformance는 미측정이다. | [Hybrid V3 Verification](verification/2026-09-03-hybrid-full-catalog-semantic-linking-verification.md), [ADR-0030](decisions/ADR-0030-use-hybrid-full-catalog-semantic-linking.md), [ADR-0031](decisions/ADR-0031-share-korean-nlu-overlay-v4-with-v2.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 | Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
@@ -143,6 +143,28 @@
 
 기준 계획: [Stage 04 Graph Phase 1](tasks/2026-08-30-stage-04-graph-phase-1-implementation-plan.md)
 
+### Stage 05 Graph·문서 실행과 계산 경계
+
+**상태: Graph·공식 문서 검색 executor와 PostgreSQL SQL 경로 로컬 구현·검증; 계산·유사도 production route는 fail-closed, Stage 05 전체 미완료**
+
+- 승인된 관계만 고정 SPARQL로 조회하는 Graph executor와 상품·문서 유형·컷오프를 제한한 Keyword/Vector 결합 문서 executor를 구현했다. 두 경로 모두 후보 결과만으로는 답변 근거가 되지 않으며, 관계 Evidence ID 또는 승격된 문서 Evidence가 있어야 `ToolResult`를 발행한다.
+- 새 executor는 기존 bounded Orchestrator의 `ExecutorRegistry`를 통해 실행되며, 별도 자유 질의나 새 스케줄러를 추가하지 않았다.
+- 기존 SQL 의미 경로는 실제 PostgreSQL 15 통합 테스트에서 혼합 qualifier, 배열 binding, metric lineage 타입 문제를 보정했다.
+- 현재 V2 계산 피연산자는 권위 있는 typed literal 값을 executor까지 전달하지 않는다. 따라서 일반 계산 evaluator를 추가하지 않았고, 유사도 결과도 승인 정책이 활성화되기 전에는 Verifier가 거부한다. provenance가 완전한 외부 `CalculationRecord`의 변환 등만 Stage 07에서 검증·출력할 수 있다.
+
+기준 설계·계획: [Stage 05–07 Local Vertical Slice](specs/2026-09-04-stage05-stage07-local-vertical-slice-design.md), [Implementation Plan](tasks/2026-09-04-stage05-stage07-local-vertical-slice-plan.md)
+
+### Stage 07 근거 검증·답변 출시 경로
+
+**상태: bounded local vertical slice 구현·검증; 최종 데이터 활성화·52문항·NCP/API acceptance 대기**
+
+- `ToolResult`의 개별 필드를 정확한 Evidence 또는 Calculation과 결합해 `AtomicClaim`, `ClaimSupport`, `EvidenceBundle`을 결정론적으로 생성한다. 검색 결과가 비었을 때 closed-world 범위 근거가 없으면 “없음”이 아니라 제한 답변으로 처리한다.
+- Verifier는 계약·해시, 출처 권위, 서울 기준 컷오프, 온톨로지 결합, 계산 지원, coverage 순서로 검사한다. Claim Gate는 서버 등록 template과 검증 통과 Claim만 허용하고, Renderer는 원장 값과 출처 locator만으로 대회 응답 문자열을 만든다.
+- 마이그레이션 `0012`는 검증 보고서·승인된 AnswerPlan·ReleasedAnswer가 정확히 일치할 때만 불변 캐시에 저장한다. 저장 payload 위조, 다른 dataset/version 혼합, 미검증 Claim 캐시는 거부한다.
+- 이는 로컬 실행 경계의 구현 완료를 뜻하며 Stage 07 전체 완료 선언은 아니다. 최종 활성 데이터셋, 52문항 종합 평가, NCP 권한·성능, 공식 API 검증은 Stage 08~09 입력으로 남는다.
+
+기준 검증: [Stage 05–07 Verification](verification/2026-09-04-stage05-stage07-local-vertical-slice-verification.md)
+
 ### Stage 06 Intent Resolver·QueryPlan·Orchestrator
 
 **상태: Phase 1-3 및 SQL 의미 계약 V2→결정론적 RDB 실행·저장 로컬 구현 완료; hybrid V3는 implemented, shadow-only; promotion은 fail-closed deferred**
@@ -160,8 +182,7 @@
 - action별 `ResolvedQueryContractV2`, bounded candidate solver, 별도 contract
   readiness, `LogicalQueryPlanV2`, 폐쇄형 semantic-to-SQL compiler, 읽기 전용
   PostgreSQL runner, 기존 bounded Orchestrator 통합, `query_contract` 및
-  `logical_query_plan` 불변 저장을 통합 마이그레이션 head `0011`까지 구현했다. Graph·Search·Calculation
-  production executor는 이 범위에 포함하지 않았다.
+  `logical_query_plan` 불변 저장을 당시 통합 마이그레이션 head `0011`까지 구현했다. 이 Phase 1~3 범위에는 Graph·Search·Calculation production executor가 포함되지 않았으며, 이후 Stage 05–07 local vertical slice에서 Graph·공식 문서 executor만 추가했다.
 - 2026-09-03 최종 V2 검증은 focused `660 passed`, broad offline `2281 passed,
   1 expected skip, 463 deselected`다. 지원 프레임 구조 표현력은 `199/199`,
   미지원 reason coverage는 `10/10`, false-complete는 `0/10`이다. 그러나 계약
@@ -237,9 +258,9 @@
 | --- | --- | --- |
 | 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | current organizer 로컬 결정성 검증 완료; current KRX holdings 로컬 통합과 나머지 공식 source 동결 대기; NCP acceptance는 Stage 08로 이연 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | 실제 PostgreSQL·Graph·Vector·Evidence 통합 기반 검증 완료; 최종 공식 정형 source·manifest 동일성·readiness/activation·NCP·23질문 커버리지 대기, Stage 04 미완료 |
-| 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | SQL 의미 계약 V2·결정론적 compiler·읽기 전용 RDB executor 로컬 구현 완료; PostgreSQL conformance는 미측정이고 public-fund 물리 gate는 `LIMITED`; Graph·Search·Calculation production executor는 범위 밖이며 Stage 05는 미완료 |
+| 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | SQL PostgreSQL 15 경로와 evidence-bound Graph·공식 문서 hybrid executor 로컬 구현·검증; public-fund 물리 gate는 `LIMITED`, typed 계산 입력·승인 recipe·유사도 정책은 fail-closed로 남아 Stage 05 미완료 |
 | 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Phase 1~3와 SQL 의미 계약 V2 통합·artifact persistence 로컬 구현 완료; hybrid V3도 구현됐으나 HCX-007 V3 shadow 정확도·provider gate 실패와 미측정 PostgreSQL 때문에 `shadow-only`, production promotion은 `deferred` |
-| 07 | Verifier, Claim Gate Registry, Answer Composer, Renderer와 검증된 응답 캐시 | 대기 |
+| 07 | Verifier, Claim Gate Registry, Answer Composer, Renderer와 검증된 응답 캐시 | 근거 조립→검증→Claim Gate→결정론적 Renderer→불변 캐시 local vertical slice 구현·검증; 최종 활성 데이터·52문항·NCP/API acceptance 대기 |
 | 08 | 공식 `GET /answer`, NCP 이중화·Load Balancer·모니터링·복구 | 대기 |
 | 09 | 52개 종합 평가, 제출 동결, 공식 평가 운영과 종료 기록 | 대기 |
 
@@ -295,5 +316,6 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 44. ~~SQL 의미 계약 V2·결정론적 SQL compiler·RDB executor·artifact persistence 구현~~ — 2026-09-03 로컬 완료; 불완전 gold·PostgreSQL·public-fund physical gate는 보류
 45. ~~hybrid full-catalog semantic linking V3 구현·로컬/HCX shadow 검증~~ — 2026-09-04 `implemented, shadow-only`; V2 기본 유지, 낮은 V3 정확도·provider 성공률과 미측정 PostgreSQL 때문에 promotion은 fail-closed `deferred`
 46. ~~V2 요청별 제한 후보 구조에 한국어 V4 오버레이 공유~~ — 2026-09-04 로컬 구현·검증, `main` 병합과 GitHub push 완료; V3 promotion 상태는 변경 없음
+47. ~~Stage 05 Graph·공식 문서 executor와 Stage 07 근거 검증·답변 출시 local vertical slice 구현~~ — 2026-09-04 로컬 구현·검증; 계산·유사도 production route와 최종 데이터·NCP/API acceptance는 후속 gate로 유지
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

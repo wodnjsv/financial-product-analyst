@@ -13,7 +13,7 @@ from financial_agent.planning.logical_query import LogicalQueryPlanV2
 from financial_agent.planning.physical_bindings import PhysicalReadinessFacts
 
 from .compiler import SemanticSqlCompiler
-from .contracts import CompiledSqlRequest, DeferredSqlParameter
+from .contracts import CompiledSqlRequest, DeferredSqlParameter, SqlValueKind
 from .result_mapping import MAX_RETURNED_ROWS, MappedSqlResult, map_sql_rows
 
 
@@ -80,7 +80,10 @@ class ReadOnlySqlRunner:
             raise SqlExecutionError("EXECUTION_REQUEST_REJECTED") from error
 
         parameters = {
-            item.name: decode_contract_value(item.value) for item in request.parameters
+            item.name: _driver_value(
+                decode_contract_value(item.value), item.value_kind
+            )
+            for item in request.parameters
         }
         try:
             async with self._engine.connect() as connection:
@@ -119,6 +122,12 @@ def _assert_read_only(statement: str) -> None:
         raise SqlExecutionError("SQL_READ_ONLY_STATEMENT_REQUIRED")
     if _FORBIDDEN.search(stripped):
         raise SqlExecutionError("SQL_READ_ONLY_STATEMENT_REQUIRED")
+
+
+def _driver_value(value, value_kind: SqlValueKind):
+    if value_kind is SqlValueKind.TUPLE:
+        return list(value)
+    return value
 
 
 def _validate_timeout(value: int) -> int:

@@ -116,7 +116,11 @@ def _validate_contract_json(
 
 
 def _json_default(value: object) -> str:
-    if isinstance(value, (date, datetime)):
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            raise ValueError("database datetime must be timezone-aware")
+        return value.astimezone(UTC).isoformat()
+    if isinstance(value, date):
         return value.isoformat()
     raise TypeError(f"unsupported JSON value: {type(value).__name__}")
 
@@ -632,6 +636,20 @@ class EvidenceLedgerRepository:
             "claim_hash": parent["claim_hash"],
         }
         return _validate_contract_json(AtomicClaim, payload)
+
+    async def get_source(
+        self, dataset_version: str, source_id: str
+    ) -> SourceRecord:
+        """Return the immutable source needed by verifier and renderer."""
+
+        return await self._get_source(dataset_version, source_id)
+
+    async def get_claim_supports(
+        self, run_id: str, claim_id: str
+    ) -> tuple[ClaimSupport, ...]:
+        """Return ordered support links for one candidate claim."""
+
+        return await self._get_supports(run_id, claim_id)
 
     async def _get_source(
         self, dataset_version: str, source_id: str

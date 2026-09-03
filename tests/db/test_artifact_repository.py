@@ -1131,7 +1131,7 @@ def test_artifact_and_reference_rows_reject_updates_and_deletes(
 
 
 @pytest.mark.postgres
-def test_stage02_creates_no_release_authority_or_raw_chain_of_thought_column(
+def test_stage07_creates_verified_release_cache_without_raw_chain_of_thought_column(
     migrated_database_url: str,
 ) -> None:
     with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
@@ -1163,9 +1163,82 @@ def test_stage02_creates_no_release_authority_or_raw_chain_of_thought_column(
             """
         ).fetchall()
 
-    assert release_relations == []
-    assert release_functions == []
+    assert release_relations == [("verified_release_cache",)]
+    assert {row[0] for row in release_functions} == {
+        "cache_verified_release",
+        "get_cached_release",
+    }
     assert forbidden_columns == []
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_verified_release_cache_round_trips_only_linked_artifacts(
+    migrated_database_url: str,
+    artifact_engine: AsyncEngine,
+) -> None:
+    from financial_agent.db.repositories.artifacts import RequestArtifactRepository
+    from financial_agent.db.repositories.releases import (
+        VerifiedReleaseCacheError,
+        VerifiedReleaseCacheRepository,
+    )
+
+    context = _artifact_context(migrated_database_url)
+    artifacts = RequestArtifactRepository(artifact_engine)
+    verification = _artifact("verification_report", context)
+    answer_plan = _artifact("answer_plan", context)
+    released_draft = _artifact("released_answer", context)
+    released = released_draft.model_copy(
+        update={
+            "response_hash": canonical_sha256(
+                released_draft, exclude_fields=("response_hash",)
+            )
+        }
+    )
+    verification_id = await artifacts.append("verification_report", verification)
+    answer_plan_id = await artifacts.append("answer_plan", answer_plan)
+    released_id = await artifacts.append("released_answer", released)
+
+    cache = VerifiedReleaseCacheRepository(artifact_engine)
+    assert await cache.cache(
+        run_id=context.run_id,
+        verification_artifact_id=verification_id,
+        answer_plan_artifact_id=answer_plan_id,
+        released_answer_artifact_id=released_id,
+        released_answer=released,
+    ) == released_id
+    assert await cache.cache(
+        run_id=context.run_id,
+        verification_artifact_id=verification_id,
+        answer_plan_artifact_id=answer_plan_id,
+        released_answer_artifact_id=released_id,
+        released_answer=released,
+    ) == released_id
+    assert await cache.get(
+        request_key=context.request_key,
+        dataset_version=context.dataset_version,
+        schema_version="1.0",
+    ) == released
+
+    divergent = released.model_copy(update={"answer_text": "다른 답변"})
+    divergent = divergent.model_copy(
+        update={
+            "response_hash": canonical_sha256(
+                divergent, exclude_fields=("response_hash",)
+            )
+        }
+    )
+    with pytest.raises(
+        VerifiedReleaseCacheError,
+        match="RELEASED_ANSWER_ARTIFACT_MISMATCH",
+    ):
+        await cache.cache(
+            run_id=context.run_id,
+            verification_artifact_id=verification_id,
+            answer_plan_artifact_id=answer_plan_id,
+            released_answer_artifact_id=released_id,
+            released_answer=divergent,
+        )
 
 
 @pytest.mark.postgres
@@ -1235,6 +1308,7 @@ async def test_semantic_query_object_id_is_idempotent_only_for_identical_payload
 ) -> None:
     from financial_agent.db.repositories.artifacts import (
         ArtifactConflict,
+        ArtifactValidationError,
         RequestArtifactRepository,
     )
 
@@ -1251,7 +1325,17 @@ async def test_semantic_query_object_id_is_idempotent_only_for_identical_payload
         == first
     )
     divergent = artifact.model_copy(update={"producer": "divergent-producer"})
-    with pytest.raises(ArtifactConflict, match="ARTIFACT_CONFLICT"):
+    expected_error = (
+        ArtifactValidationError
+        if artifact_type == "logical_query_plan"
+        else ArtifactConflict
+    )
+    expected_message = (
+        "ARTIFACT_PAYLOAD_INVALID"
+        if artifact_type == "logical_query_plan"
+        else "ARTIFACT_CONFLICT"
+    )
+    with pytest.raises(expected_error, match=expected_message):
         await repository.append(artifact_type, divergent)  # type: ignore[arg-type]
 
     assert await repository.get(context.run_id, first) == artifact

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from zoneinfo import ZoneInfo
 
@@ -353,8 +353,8 @@ def _build_evidence(
         applicable_date=row["effective_from"],
         valid_from=row["effective_from"],
         valid_to=row["effective_to"],
-        published_at=row["published_at"],
-        available_at=row["available_at"],
+        published_at=_utc(row["published_at"]),
+        available_at=_utc(row["available_at"]),
         vintage_date=None,
         source_locator=SourceLocator(
             locator_type="document_span",
@@ -383,3 +383,7 @@ def _build_evidence(
 
 def _seoul_date(value: datetime) -> date:
     return value.astimezone(_SEOUL).date()
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    return None if value is None else value.astimezone(UTC)

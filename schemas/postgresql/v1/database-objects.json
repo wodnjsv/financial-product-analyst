@@ -129,6 +129,15 @@
     },
     {
       "schema": "operations",
+      "name": "cache_verified_release",
+      "identity_arguments": "p_run_id text, p_verification_artifact_id uuid, p_answer_plan_artifact_id uuid, p_released_answer_artifact_id uuid",
+      "definition": "CREATE OR REPLACE FUNCTION operations.cache_verified_release(p_run_id text, p_verification_artifact_id uuid, p_answer_plan_artifact_id uuid, p_released_answer_artifact_id uuid)\n RETURNS uuid\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'operations', 'pg_temp'\nAS $function$\n        DECLARE\n            verification operations.request_artifact%ROWTYPE;\n            answer_plan operations.request_artifact%ROWTYPE;\n            released operations.request_artifact%ROWTYPE;\n            existing operations.verified_release_cache%ROWTYPE;\n            releaseable_claims text[];\n            planned_claims text[];\n            bound_claims text[];\n            response_hash character(64);\n        BEGIN\n            SELECT * INTO verification\n              FROM operations.request_artifact\n             WHERE run_id = p_run_id\n               AND artifact_record_id = p_verification_artifact_id\n             FOR SHARE;\n            SELECT * INTO answer_plan\n              FROM operations.request_artifact\n             WHERE run_id = p_run_id\n               AND artifact_record_id = p_answer_plan_artifact_id\n             FOR SHARE;\n            SELECT * INTO released\n              FROM operations.request_artifact\n             WHERE run_id = p_run_id\n               AND artifact_record_id = p_released_answer_artifact_id\n             FOR SHARE;\n            IF verification.artifact_record_id IS NULL\n               OR answer_plan.artifact_record_id IS NULL\n               OR released.artifact_record_id IS NULL\n            THEN\n                RAISE EXCEPTION 'VERIFIED_RELEASE_ARTIFACT_NOT_FOUND'\n                    USING ERRCODE = 'P0001';\n            END IF;\n            IF verification.artifact_type <> 'verification_report'\n               OR answer_plan.artifact_type <> 'answer_plan'\n               OR released.artifact_type <> 'released_answer'\n               OR verification.dataset_version <> answer_plan.dataset_version\n               OR verification.dataset_version <> released.dataset_version\n               OR verification.request_key <> answer_plan.request_key\n               OR verification.request_key <> released.request_key\n               OR verification.schema_version <> answer_plan.schema_version\n               OR verification.schema_version <> released.schema_version\n               OR verification.cutoff_date <> answer_plan.cutoff_date\n               OR verification.cutoff_date <> released.cutoff_date\n            THEN\n                RAISE EXCEPTION 'VERIFIED_RELEASE_SCOPE_MISMATCH'\n                    USING ERRCODE = 'P0001';\n            END IF;\n            IF verification.payload_jsonb ->> 'verification_status' <> 'pass'\n               OR answer_plan.payload_jsonb ->> 'verification_report_id'\n                  IS DISTINCT FROM verification.contract_object_id\n               OR answer_plan.payload_jsonb ->> 'answer_disposition'\n                  IS DISTINCT FROM verification.payload_jsonb\n                    ->> 'recommended_answer_disposition'\n               OR released.payload_jsonb ->> 'answer_disposition'\n                  IS DISTINCT FROM answer_plan.payload_jsonb\n                    ->> 'answer_disposition'\n            THEN\n                RAISE EXCEPTION 'VERIFIED_RELEASE_GATE_MISMATCH'\n                    USING ERRCODE = 'P0001';\n            END IF;\n\n            SELECT ARRAY(\n                SELECT value\n                  FROM pg_catalog.jsonb_array_elements_text(\n                      COALESCE(\n                          verification.payload_jsonb -> 'releaseable_claim_ids',\n                          '[]'::jsonb\n                      )\n                  ) AS item(value)\n                 ORDER BY value\n            ) INTO releaseable_claims;\n            SELECT ARRAY(\n                SELECT slot.value ->> 'claim_id'\n                  FROM pg_catalog.jsonb_array_elements(\n                      COALESCE(answer_plan.payload_jsonb -> 'blocks', '[]'::jsonb)\n                  ) AS block(value)\n                  CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(\n                      COALESCE(block.value -> 'claim_slots', '[]'::jsonb)\n                  ) AS slot(value)\n                 ORDER BY slot.value ->> 'claim_id'\n            ) INTO planned_claims;\n            SELECT ARRAY(\n                SELECT claim.value\n                  FROM pg_catalog.jsonb_array_elements(\n                      COALESCE(released.payload_jsonb -> 'claim_bindings', '[]'::jsonb)\n                  ) AS binding(value)\n                  CROSS JOIN LATERAL pg_catalog.jsonb_array_elements_text(\n                      COALESCE(binding.value -> 'claim_ids', '[]'::jsonb)\n                  ) AS claim(value)\n                 ORDER BY claim.value\n            ) INTO bound_claims;\n            IF releaseable_claims IS DISTINCT FROM planned_claims\n               OR releaseable_claims IS DISTINCT FROM bound_claims\n               OR pg_catalog.cardinality(planned_claims)\n                  <> pg_catalog.cardinality(\n                      ARRAY(SELECT DISTINCT value FROM pg_catalog.unnest(planned_claims) value)\n                  )\n            THEN\n                RAISE EXCEPTION 'VERIFIED_RELEASE_CLAIM_SET_MISMATCH'\n                    USING ERRCODE = 'P0001';\n            END IF;\n            response_hash := released.payload_jsonb ->> 'response_hash';\n            IF response_hash IS NULL OR response_hash !~ '^[0-9a-f]{64}$' THEN\n                RAISE EXCEPTION 'VERIFIED_RELEASE_RESPONSE_HASH_INVALID'\n                    USING ERRCODE = 'P0001';\n            END IF;\n\n            INSERT INTO operations.verified_release_cache (\n                request_key, dataset_version, schema_version, run_id,\n                cutoff_date, verification_artifact_id, answer_plan_artifact_id,\n                released_answer_artifact_id, response_hash\n            ) VALUES (\n                released.request_key, released.dataset_version,\n                released.schema_version, released.run_id, released.cutoff_date,\n                verification.artifact_record_id, answer_plan.artifact_record_id,\n                released.artifact_record_id, response_hash\n            )\n            ON CONFLICT DO NOTHING\n            RETURNING * INTO existing;\n            IF FOUND THEN\n                RETURN existing.released_answer_artifact_id;\n            END IF;\n            SELECT * INTO existing\n              FROM operations.verified_release_cache\n             WHERE request_key = released.request_key\n               AND dataset_version = released.dataset_version\n               AND schema_version = released.schema_version;\n            IF existing.verification_artifact_id = verification.artifact_record_id\n               AND existing.answer_plan_artifact_id = answer_plan.artifact_record_id\n               AND existing.released_answer_artifact_id = released.artifact_record_id\n               AND existing.response_hash = response_hash\n            THEN\n                RETURN existing.released_answer_artifact_id;\n            END IF;\n            RAISE EXCEPTION 'VERIFIED_RELEASE_CACHE_CONFLICT'\n                USING ERRCODE = 'P0001';\n        END\n        $function$",
+      "configuration": [
+        "search_path=pg_catalog, operations, pg_temp"
+      ]
+    },
+    {
+      "schema": "operations",
       "name": "derive_request_artifact",
       "identity_arguments": "",
       "definition": "CREATE OR REPLACE FUNCTION operations.derive_request_artifact()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'pg_catalog', 'operations', 'pg_temp'\nAS $function$\n        BEGIN\n            NEW.payload_jsonb := NEW.canonical_payload::jsonb;\n            IF pg_catalog.jsonb_typeof(NEW.payload_jsonb) IS DISTINCT FROM 'object'\n            THEN\n                RAISE EXCEPTION 'ARTIFACT_PAYLOAD_INVALID'\n                    USING ERRCODE = '22023';\n            END IF;\n\n            NEW.payload_hash := pg_catalog.encode(\n                public.digest(NEW.canonical_payload, 'sha256'), 'hex'\n            );\n            NEW.schema_version := NEW.payload_jsonb ->> 'schema_version';\n            NEW.request_key := NEW.payload_jsonb ->> 'request_key';\n            NEW.run_id := NEW.payload_jsonb ->> 'run_id';\n            NEW.dataset_version := NEW.payload_jsonb ->> 'dataset_version';\n            NEW.cutoff_date := (NEW.payload_jsonb ->> 'cutoff_date')::date;\n            NEW.producer := NEW.payload_jsonb ->> 'producer';\n            NEW.created_at := (NEW.payload_jsonb ->> 'created_at')::timestamptz;\n            NEW.contract_object_id := CASE NEW.artifact_type\n                WHEN 'intent_resolution' THEN NEW.payload_jsonb ->> 'resolution_id'\n                WHEN 'query_contract' THEN NEW.payload_jsonb ->> 'query_contract_id'\n                WHEN 'logical_query_plan' THEN NEW.payload_jsonb ->> 'logical_plan_id'\n                WHEN 'execution_graph' THEN NEW.payload_jsonb ->> 'graph_id'\n                WHEN 'tool_result' THEN NEW.payload_jsonb ->> 'task_id'\n                WHEN 'evidence_bundle' THEN NEW.payload_jsonb ->> 'bundle_id'\n                WHEN 'verification_report'\n                    THEN NEW.payload_jsonb ->> 'verification_report_id'\n                ELSE NULL\n            END;\n\n            IF NEW.artifact_type = 'intent_resolution'\n               AND (NEW.contract_object_id IS NULL\n                    OR NEW.contract_object_id !~ '[^[:space:]]')\n            THEN\n                RAISE EXCEPTION 'INTENT_RESOLUTION_ID_REQUIRED'\n                    USING ERRCODE = '22023';\n            END IF;\n\n            IF NEW.artifact_type IN ('query_contract','logical_query_plan')\n               AND (NEW.contract_object_id IS NULL\n                    OR NEW.contract_object_id !~ '[^[:space:]]')\n            THEN\n                RAISE EXCEPTION 'SEMANTIC_QUERY_OBJECT_ID_REQUIRED'\n                    USING ERRCODE = '22023';\n            END IF;\n\n            IF NEW.schema_version IS NULL OR NEW.request_key IS NULL\n               OR NEW.run_id IS NULL OR NEW.dataset_version IS NULL\n               OR NEW.cutoff_date IS NULL OR NEW.producer IS NULL\n               OR NEW.created_at IS NULL\n            THEN\n                RAISE EXCEPTION 'ARTIFACT_METADATA_INVALID'\n                    USING ERRCODE = '22023';\n            END IF;\n            RETURN NEW;\n        EXCEPTION\n            WHEN invalid_text_representation OR datetime_field_overflow\n                 OR invalid_datetime_format THEN\n                RAISE EXCEPTION 'ARTIFACT_PAYLOAD_INVALID'\n                    USING ERRCODE = '22023';\n        END\n        $function$",
@@ -150,6 +159,15 @@
       "name": "finish_request_run",
       "identity_arguments": "p_run_id text, p_execution_outcome text, p_verification_status text, p_answer_disposition text, p_http_status smallint, p_final_verification_report_id text, p_terminal_failure_code text, p_finished_at timestamp with time zone",
       "definition": "CREATE OR REPLACE FUNCTION operations.finish_request_run(p_run_id text, p_execution_outcome text, p_verification_status text, p_answer_disposition text, p_http_status smallint, p_final_verification_report_id text, p_terminal_failure_code text, p_finished_at timestamp with time zone)\n RETURNS operations.request_run\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'operations', 'pg_temp'\nAS $function$\n        DECLARE\n            request_record operations.request_run%ROWTYPE;\n            report_record operations.request_artifact%ROWTYPE;\n        BEGIN\n            SELECT request.*\n              INTO request_record\n              FROM operations.request_run AS request\n             WHERE request.run_id = p_run_id\n             FOR UPDATE;\n            IF NOT FOUND THEN\n                RAISE EXCEPTION 'REQUEST_RUN_NOT_FOUND'\n                    USING ERRCODE = 'P0002';\n            END IF;\n\n            IF request_record.finished_at IS NOT NULL THEN\n                IF request_record.execution_outcome = p_execution_outcome\n                   AND request_record.verification_status\n                       IS NOT DISTINCT FROM p_verification_status\n                   AND request_record.answer_disposition\n                       IS NOT DISTINCT FROM p_answer_disposition\n                   AND request_record.http_status = p_http_status\n                   AND request_record.terminal_failure_code\n                       IS NOT DISTINCT FROM p_terminal_failure_code\n                   AND request_record.finished_at = p_finished_at\n                   AND (\n                       p_final_verification_report_id IS NULL\n                       AND request_record.final_verification_artifact_id IS NULL\n                       OR EXISTS (\n                           SELECT 1\n                             FROM operations.request_artifact AS artifact\n                            WHERE artifact.run_id = p_run_id\n                              AND artifact.artifact_record_id =\n                                  request_record.final_verification_artifact_id\n                              AND artifact.artifact_type = 'verification_report'\n                              AND artifact.contract_object_id =\n                                  p_final_verification_report_id\n                       )\n                   )\n                THEN\n                    RETURN request_record;\n                END IF;\n                RAISE EXCEPTION 'REQUEST_RUN_CONFLICT'\n                    USING ERRCODE = 'P0001';\n            END IF;\n\n            IF p_http_status = 200 THEN\n                IF p_execution_outcome NOT IN (\n                       'completed', 'completed_with_failures'\n                   )\n                   OR p_verification_status IS DISTINCT FROM 'pass'\n                   OR p_answer_disposition IS NULL\n                   OR p_final_verification_report_id IS NULL\n                   OR p_terminal_failure_code IS NOT NULL\n                THEN\n                    RAISE EXCEPTION 'INVALID_TERMINAL_STATE'\n                        USING ERRCODE = 'P0001';\n                END IF;\n                SELECT artifact.*\n                  INTO report_record\n                  FROM operations.request_artifact AS artifact\n                 WHERE artifact.run_id = p_run_id\n                   AND artifact.artifact_type = 'verification_report'\n                   AND artifact.contract_object_id =\n                       p_final_verification_report_id\n                 FOR SHARE;\n                IF NOT FOUND\n                   OR report_record.payload_jsonb ->> 'verification_status'\n                       IS DISTINCT FROM 'pass'\n                   OR report_record.payload_jsonb\n                       ->> 'recommended_answer_disposition'\n                       IS DISTINCT FROM p_answer_disposition\n                THEN\n                    RAISE EXCEPTION 'FINAL_VERIFICATION_ARTIFACT_INVALID'\n                        USING ERRCODE = 'P0001';\n                END IF;\n            ELSIF p_http_status BETWEEN 500 AND 599 THEN\n                IF p_execution_outcome IS DISTINCT FROM 'failed'\n                   OR p_verification_status IS NOT NULL\n                   OR p_answer_disposition IS NOT NULL\n                   OR p_final_verification_report_id IS NOT NULL\n                   OR p_terminal_failure_code IS NULL\n                   OR pg_catalog.btrim(p_terminal_failure_code) = ''\n                THEN\n                    RAISE EXCEPTION 'INVALID_TERMINAL_STATE'\n                        USING ERRCODE = 'P0001';\n                END IF;\n            ELSE\n                RAISE EXCEPTION 'INVALID_TERMINAL_STATE'\n                    USING ERRCODE = 'P0001';\n            END IF;\n\n            UPDATE operations.request_run\n               SET finished_at = p_finished_at,\n                   execution_outcome = p_execution_outcome,\n                   verification_status = p_verification_status,\n                   answer_disposition = p_answer_disposition,\n                   http_status = p_http_status,\n                   final_verification_artifact_id =\n                       report_record.artifact_record_id,\n                   terminal_failure_code = p_terminal_failure_code\n             WHERE run_id = p_run_id\n            RETURNING * INTO request_record;\n            RETURN request_record;\n        END\n        $function$",
+      "configuration": [
+        "search_path=pg_catalog, operations, pg_temp"
+      ]
+    },
+    {
+      "schema": "operations",
+      "name": "get_cached_release",
+      "identity_arguments": "p_request_key text, p_dataset_version text, p_schema_version text",
+      "definition": "CREATE OR REPLACE FUNCTION operations.get_cached_release(p_request_key text, p_dataset_version text, p_schema_version text)\n RETURNS text\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'operations', 'pg_temp'\nAS $function$\n            SELECT artifact.canonical_payload\n              FROM operations.verified_release_cache AS cache\n              JOIN operations.request_artifact AS artifact\n                ON artifact.artifact_record_id = cache.released_answer_artifact_id\n               AND artifact.run_id = cache.run_id\n               AND artifact.dataset_version = cache.dataset_version\n             WHERE cache.request_key = p_request_key\n               AND cache.dataset_version = p_dataset_version\n               AND cache.schema_version = p_schema_version\n        $function$",
       "configuration": [
         "search_path=pg_catalog, operations, pg_temp"
       ]
@@ -603,6 +621,12 @@
       "table": "request_subtask",
       "name": "reject_request_subtask_mutation",
       "definition": "CREATE TRIGGER reject_request_subtask_mutation BEFORE DELETE OR UPDATE ON operations.request_subtask FOR EACH ROW EXECUTE FUNCTION operations.reject_immutable_mutation()"
+    },
+    {
+      "schema": "operations",
+      "table": "verified_release_cache",
+      "name": "reject_verified_release_cache_mutation",
+      "definition": "CREATE TRIGGER reject_verified_release_cache_mutation BEFORE DELETE OR UPDATE ON operations.verified_release_cache FOR EACH ROW EXECUTE FUNCTION operations.reject_immutable_mutation()"
     },
     {
       "schema": "relation",
@@ -1519,6 +1543,18 @@
       "definition": "CHECK (importance = ANY (ARRAY['critical'::text, 'required_independent'::text, 'optional'::text]))"
     },
     {
+      "schema": "operations",
+      "table": "verified_release_cache",
+      "name": "ck_verified_release_cache_request_key",
+      "definition": "CHECK (request_key ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "operations",
+      "table": "verified_release_cache",
+      "name": "ck_verified_release_cache_response_hash",
+      "definition": "CHECK (response_hash ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
       "schema": "relation",
       "table": "relation_record",
       "name": "ck_relation_record_predicate_id",
@@ -1673,6 +1709,12 @@
     {
       "object_type": "function",
       "schema": "operations",
+      "name": "cache_verified_release(p_run_id text, p_verification_artifact_id uuid, p_answer_plan_artifact_id uuid, p_released_answer_artifact_id uuid)",
+      "owner": "__unexpected_principal__"
+    },
+    {
+      "object_type": "function",
+      "schema": "operations",
       "name": "derive_request_artifact()",
       "owner": "fa_migration"
     },
@@ -1687,6 +1729,12 @@
       "schema": "operations",
       "name": "finish_request_run(p_run_id text, p_execution_outcome text, p_verification_status text, p_answer_disposition text, p_http_status smallint, p_final_verification_report_id text, p_terminal_failure_code text, p_finished_at timestamp with time zone)",
       "owner": "fa_migration"
+    },
+    {
+      "object_type": "function",
+      "schema": "operations",
+      "name": "get_cached_release(p_request_key text, p_dataset_version text, p_schema_version text)",
+      "owner": "__unexpected_principal__"
     },
     {
       "object_type": "function",
@@ -2011,6 +2059,12 @@
       "schema": "operations",
       "name": "request_subtask",
       "owner": "fa_migration"
+    },
+    {
+      "object_type": "table",
+      "schema": "operations",
+      "name": "verified_release_cache",
+      "owner": "__unexpected_principal__"
     },
     {
       "object_type": "table",
@@ -5062,6 +5116,62 @@
       "grantable": false
     },
     {
+      "schema": "operations",
+      "name": "verified_release_cache",
+      "grantee": "__unexpected_principal__",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "verified_release_cache",
+      "grantee": "__unexpected_principal__",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "verified_release_cache",
+      "grantee": "__unexpected_principal__",
+      "privilege": "REFERENCES",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "verified_release_cache",
+      "grantee": "__unexpected_principal__",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "verified_release_cache",
+      "grantee": "__unexpected_principal__",
+      "privilege": "TRIGGER",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "verified_release_cache",
+      "grantee": "__unexpected_principal__",
+      "privilege": "TRUNCATE",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "verified_release_cache",
+      "grantee": "__unexpected_principal__",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "verified_release_cache",
+      "grantee": "fa_runtime",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
       "schema": "public",
       "name": "alembic_version",
       "grantee": "fa_migration",
@@ -5538,6 +5648,22 @@
     },
     {
       "schema": "operations",
+      "name": "cache_verified_release",
+      "identity_arguments": "p_run_id text, p_verification_artifact_id uuid, p_answer_plan_artifact_id uuid, p_released_answer_artifact_id uuid",
+      "grantee": "__unexpected_principal__",
+      "privilege": "EXECUTE",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "cache_verified_release",
+      "identity_arguments": "p_run_id text, p_verification_artifact_id uuid, p_answer_plan_artifact_id uuid, p_released_answer_artifact_id uuid",
+      "grantee": "fa_runtime",
+      "privilege": "EXECUTE",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
       "name": "derive_request_artifact",
       "identity_arguments": "",
       "grantee": "fa_migration",
@@ -5572,6 +5698,22 @@
       "schema": "operations",
       "name": "finish_request_run",
       "identity_arguments": "p_run_id text, p_execution_outcome text, p_verification_status text, p_answer_disposition text, p_http_status smallint, p_final_verification_report_id text, p_terminal_failure_code text, p_finished_at timestamp with time zone",
+      "grantee": "fa_runtime",
+      "privilege": "EXECUTE",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "get_cached_release",
+      "identity_arguments": "p_request_key text, p_dataset_version text, p_schema_version text",
+      "grantee": "__unexpected_principal__",
+      "privilege": "EXECUTE",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "get_cached_release",
+      "identity_arguments": "p_request_key text, p_dataset_version text, p_schema_version text",
       "grantee": "fa_runtime",
       "privilege": "EXECUTE",
       "grantable": false

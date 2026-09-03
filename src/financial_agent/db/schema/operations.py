@@ -605,6 +605,78 @@ sa.Index(
 )
 
 
+verified_release_cache = sa.Table(
+    "verified_release_cache",
+    metadata,
+    sa.Column("request_key", sa.CHAR(64), primary_key=True),
+    sa.Column("dataset_version", sa.Text, primary_key=True),
+    sa.Column("schema_version", sa.Text, primary_key=True),
+    sa.Column("run_id", sa.Text, nullable=False),
+    sa.Column("cutoff_date", sa.Date, nullable=False),
+    sa.Column(
+        "verification_artifact_id",
+        postgresql.UUID(as_uuid=True),
+        nullable=False,
+    ),
+    sa.Column(
+        "answer_plan_artifact_id",
+        postgresql.UUID(as_uuid=True),
+        nullable=False,
+    ),
+    sa.Column(
+        "released_answer_artifact_id",
+        postgresql.UUID(as_uuid=True),
+        nullable=False,
+        unique=True,
+    ),
+    sa.Column("response_hash", sa.CHAR(64), nullable=False),
+    sa.Column(
+        "created_at",
+        sa.TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=sa.text("clock_timestamp()"),
+    ),
+    sa.ForeignKeyConstraint(
+        ["run_id", "request_key", "dataset_version", "cutoff_date", "schema_version"],
+        [
+            "operations.request_run.run_id",
+            "operations.request_run.request_key",
+            "operations.request_run.dataset_version",
+            "operations.request_run.cutoff_date",
+            "operations.request_run.schema_version",
+        ],
+        name="fk_verified_release_cache_run",
+        ondelete="RESTRICT",
+    ),
+    *(
+        sa.ForeignKeyConstraint(
+            [column_name, "run_id", "dataset_version"],
+            [
+                "operations.request_artifact.artifact_record_id",
+                "operations.request_artifact.run_id",
+                "operations.request_artifact.dataset_version",
+            ],
+            name=f"fk_verified_release_cache_{label}",
+            ondelete="RESTRICT",
+        )
+        for column_name, label in (
+            ("verification_artifact_id", "verification"),
+            ("answer_plan_artifact_id", "answer_plan"),
+            ("released_answer_artifact_id", "released_answer"),
+        )
+    ),
+    sa.CheckConstraint(
+        f"request_key ~ '{SHA256_PATTERN}'",
+        name="request_key",
+    ),
+    sa.CheckConstraint(
+        f"response_hash ~ '{SHA256_PATTERN}'",
+        name="response_hash",
+    ),
+    schema="operations",
+)
+
+
 artifact_claim_ref = sa.Table(
     "artifact_claim_ref",
     metadata,
