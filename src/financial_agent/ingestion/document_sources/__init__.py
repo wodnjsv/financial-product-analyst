@@ -40,10 +40,13 @@ from .dart_publishers import (
     reconcile_dart_publishers,
 )
 from .dart_targets import (
+    DartRecoveryProductState,
+    DartRecoverySelection,
     OrganizerDartInventory,
     OrganizerDartProductRow,
     OrganizerDartTarget,
     build_organizer_dart_inventory,
+    select_dart_recovery_targets,
 )
 
 __all__ = [
@@ -63,11 +66,14 @@ __all__ = [
     "DartPublisherFailure",
     "DartPublisherReconciliation",
     "DartTargetDiscoveryDisposition",
+    "DartRecoveryProductState",
+    "DartRecoverySelection",
     "OrganizerDartInventory",
     "OrganizerDartProductRow",
     "OrganizerDartTarget",
     "assemble_captured_corpus",
     "build_organizer_dart_inventory",
+    "select_dart_recovery_targets",
     "discover_dart_candidates_by_publisher",
     "fetch_dart_corporation_codes",
     "ingest_one_dart_document",

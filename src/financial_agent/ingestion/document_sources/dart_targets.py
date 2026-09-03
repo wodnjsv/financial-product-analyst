@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 import hashlib
 import json
@@ -22,6 +22,13 @@ class DartRecoveryProductState:
         "private_fund_not_applicable",
     ]
     has_exact_embedding: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DartRecoverySelection:
+    actionable_inventory: OrganizerDartInventory
+    already_embedded_target_ids: tuple[str, ...]
+    not_applicable_targets: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +224,49 @@ def build_organizer_dart_inventory(
         product_count=len(products),
         targets=target_tuple,
         inventory_hash=inventory_hash,
+    )
+
+
+def select_dart_recovery_targets(
+    inventory: OrganizerDartInventory,
+    states: tuple[DartRecoveryProductState, ...],
+) -> DartRecoverySelection:
+    state_by_id: dict[str, DartRecoveryProductState] = {}
+    for state in states:
+        if state.entity_id in state_by_id:
+            raise ValueError("DART recovery state mismatch")
+        state_by_id[state.entity_id] = state
+    expected = {
+        entity_id
+        for target in inventory.targets
+        for entity_id in target.member_entity_ids
+    }
+    if set(state_by_id) != expected:
+        raise ValueError("DART recovery state mismatch")
+
+    actionable: list[OrganizerDartTarget] = []
+    embedded: list[str] = []
+    not_applicable: list[tuple[str, str]] = []
+    for target in inventory.targets:
+        members = tuple(state_by_id[item] for item in target.member_entity_ids)
+        scopes = {item.product_scope for item in members}
+        if len(scopes) == 1:
+            scope = next(iter(scopes))
+            if scope in {"etn_not_applicable", "private_fund_not_applicable"}:
+                not_applicable.append((target.target_key, scope))
+            elif scope == "fund_prospectus":
+                if all(item.has_exact_embedding for item in members):
+                    embedded.append(target.target_key)
+                else:
+                    actionable.append(target)
+            else:
+                raise ValueError("mixed DART recovery scope")
+        else:
+            raise ValueError("mixed DART recovery scope")
+    return DartRecoverySelection(
+        actionable_inventory=replace(inventory, targets=tuple(actionable)),
+        already_embedded_target_ids=tuple(sorted(embedded)),
+        not_applicable_targets=tuple(sorted(not_applicable)),
     )
 
 
