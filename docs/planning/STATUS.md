@@ -15,7 +15,7 @@
 | 근거·Claim·AnswerPlan·Renderer | 확정 기본안; Claim Gate Registry 호환성 검사는 후속 구현 필수 | [Evidence, Verification, and Rendering](architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md), [ADR-0007](decisions/ADR-0007-normalized-evidence-ledger-structured-answer-plan.md) |
 | 3개 물리 저장소·5개 논리 계층·NCP 사양 | 저장 기본안 확정; PostgreSQL 비운영 NCP 부하·권한 검증 완료, 최종 HA·운영 부하는 배포 단계 | [NCP Deployment Architecture](architecture/NCP_DEPLOYMENT_ARCHITECTURE.md) |
 | 온톨로지 논리 구조 | 13개 관계 유지, `ProductRiskGrade`·`CreditGrade` 분리, `PolicyProgram`, controlled attribute·문서 provenance 경계 승인; TTL·SHACL·Evidence-bound ABox·읽기 전용 Fuseki를 포함한 Graph Phase 1 core 로컬 완료, Stage 04는 미완료 | [Financial Ontology Architecture](architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md), [ADR-0018](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md), [ADR-0021](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md) |
-| Intent Resolver·QueryPlan·Orchestrator | Phase 1 Resolver, Phase 2 결정론적 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator 경계를 로컬 구현·검증 완료. SQL 실행 의미를 완전하게 표현하기 위한 action별 `ResolvedQueryContractV2`·`LogicalQueryPlanV2`·결정론적 SQL compiler 설계는 승인됐고 작성 명세 검토를 기다린다. Phase 1 `candidate_recall_at_5` 실패와 live gate 미측정으로 운영 승격은 계속 차단된다. | [Phase 1 Report](reports/2026-08-31-intent-resolver-phase1-verification.md), [Phase 2·3 Report](reports/2026-09-02-query-plan-orchestrator-verification.md), [ADR-0025](decisions/ADR-0025-use-deterministic-query-plan-compilation-and-four-path-routing.md), [ADR-0026](decisions/ADR-0026-use-a-deterministic-bounded-orchestrator.md), [ADR-0029](decisions/ADR-0029-use-semantic-query-contracts-and-deterministic-sql-compilation.md) |
+| Intent Resolver·QueryPlan·Orchestrator | Phase 1 Resolver, Phase 2 결정론적 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator와 action별 `ResolvedQueryContractV2`·`LogicalQueryPlanV2`·결정론적 RDB 실행·artifact 저장을 로컬 구현·검증 완료. 불완전 contract gold, 낮은 candidate/live 정확도, 미측정 PostgreSQL·public-fund physical gate로 운영 승격은 계속 차단된다. | [Final Semantic Query Verification](verification/2026-09-02-semantic-query-contracts-and-sql-compilation-verification.md), [ADR-0025](decisions/ADR-0025-use-deterministic-query-plan-compilation-and-four-path-routing.md), [ADR-0026](decisions/ADR-0026-use-a-deterministic-bounded-orchestrator.md), [ADR-0029](decisions/ADR-0029-use-semantic-query-contracts-and-deterministic-sql-compilation.md) |
 | 공식 평가 API | 규격 기록 완료; 서버 구현은 후속 Stage | [Official Evaluation API](../reference/official-evaluation-api.md) |
 | Stage 03 organizer·외부 정형 데이터 | 최신 주최 측 8개 workbook·8월 24일 cutoff·280필드·전역 identity 재베이스와 organizer 로컬 결정성 검증 완료; 8월 22일 KRX ETF 구성종목 1,161개의 로컬 PostgreSQL 통합·재현·대표 질의 검증 완료; 새 NCP acceptance는 Stage 08로 이연 | [ADR-0016](decisions/ADR-0016-use-2026-08-24-organizer-baseline.md), [ADR-0019](decisions/ADR-0019-defer-ncp-acceptance-until-local-end-to-end.md), [Local KRX Plan](tasks/2026-08-26-local-krx-holdings-integration-plan.md) |
 
@@ -143,32 +143,45 @@
 
 ### Stage 06 Intent Resolver·QueryPlan·Orchestrator
 
-**상태: Phase 1-3 로컬 경계 구현 완료; SQL 의미 계약 V2 설계 승인·작성 명세 검토 대기; live promotion은 `candidate_recall_at_5`와 미측정 required gate로 보류**
+**상태: Phase 1-3 및 SQL 의미 계약 V2→결정론적 RDB 실행·저장 로컬 구현 완료; live promotion은 불완전 gold, 낮은 recall/정확도, 미측정 PostgreSQL·물리 정의 gate로 보류**
 
 - 온톨로지 기반 semantic catalog, 한국어 정규화·literal·candidate·bounded view,
   strict HCX adapter, semantic/context validator, one-call service, 불변
   `intent_resolution` 저장, 160-case held-out evaluation과 fail-closed promotion
   판정 경계를 구현했다.
+- action별 `ResolvedQueryContractV2`, bounded candidate solver, 별도 contract
+  readiness, `LogicalQueryPlanV2`, 폐쇄형 semantic-to-SQL compiler, 읽기 전용
+  PostgreSQL runner, 기존 bounded Orchestrator 통합, `query_contract` 및
+  `logical_query_plan` 불변 저장을 `0009`까지 구현했다. Graph·Search·Calculation
+  production executor는 이 범위에 포함하지 않았다.
+- 2026-09-03 최종 V2 검증은 focused `606 passed`, broad offline `2237 passed,
+  1 expected skip, 463 deselected`다. 지원 프레임 구조 표현력은 `199/199`,
+  미지원 reason coverage는 `10/10`, false-complete는 `0/10`이다. 그러나 계약
+  role gold는 194개 필요 분모 중 43개만 측정 가능하고 151개가 불완전하므로,
+  measured subset의 recall/exact `43/43`을 승격 근거로 사용하지 않는다.
 - 2026-09-01 entity-role final hardening의 fresh intent/evaluation suite는
    `369 passed`; v1·v2 schema freshness check와 v1 no-drift check도 통과했다.
    외부 marker를 제외한 broad offline suite는 `1301 passed, 1 skipped,
    378 deselected`였다. 명시적 PostgreSQL evidence는 이 final fix에서는 실행하지
   않았고, URL 미설정으로 계속 `unmeasured`다.
-- resolver view의 exact catalog entity-type registry는 fresh `155/155` reachability
-  (unreachable case `0`)를 유지한다. 결정론적 candidate reproducibility도
-  `155/155`지만 recall@5는 `118/196` (`60.2040816%`)로 승인된 `>=99%` gate에
-  미달한다.
-- 승인된 HCX-007 12-case smoke는 retry 없이 한 번만 실행했으며 provider success는
-  `0/12` (timeout `10`, rate-limited `2`)였다. 따라서 live/stored validation,
-  first-pass, frame, context, OOD metric은 여전히 미측정이고 default promotion은
-  fail-closed/deferred 상태다. Promotion evidence는 frozen v3 SHA와 complete
+- resolver view의 exact catalog entity-type registry는 prior fresh `155/155`
+  reachability (unreachable case `0`)를 유지한다. 새 결정론적 평가는 candidate
+  reproducibility `155/155`, recall@5 `123/196` (`62.76%`)로 승인된 `>=99%`
+  gate에 미달한다.
+- 승인된 HCX-007 16-case smoke에서 production one-axis provider success는 `16/16`,
+  structured/semantic validity `11/16`, action exact `10/16`, family exact `11/16`,
+  complete contract `6/16`, p95 `37,384ms`였다. 세 축 병렬 challenger는 48호출
+  중 rate limit `8`, action exact `2/16`, family exact `6/16`으로 더 낮아 운영
+  기본값을 변경하지 않는다. complete-population first-pass/frame/context/OOD
+  metric은 여전히 미측정이고 default promotion은 fail-closed/deferred 상태다.
+  Promotion evidence는 frozen v3 SHA와 complete
   population에 결합되며, role-required frame evidence가 비어 있거나 부분
   denominator/coverage이면 `unmeasured`다.
   `model_copy`·`model_construct`로 우회 생성된 기존 증거도 exact type·stored field
   keys·strict JSON 재검증을 통과하지 못하면 판정 전에 예외로 차단한다.
 - 이 호스트에는 Docker 계열 runtime이 없어 Linux/amd64 build/run/Compose는
-  실행하지 않았다. 위 HCX smoke 외에는 NCP·HCX를 호출하지 않았고, smoke는
-  provider 성공 output·semantic metric·retry를 만들지 않았다.
+  실행하지 않았다. 이번 검증의 외부 호출은 승인된 HCX smoke뿐이며 NCP 데이터베이스,
+  organizer/official source, Object Storage, Jena는 호출하지 않았다.
 - Phase 2는 검증된 resolution과 exact ResolverView를 versioned registry에 따라
   `fast`, `compose`, `explore`, `abstain`으로 라우팅하고 기존 QueryPlan 계약으로
   손실 없이 내리는 compiler를 구현했다. 교차 상품군 순위에는 comparability와
@@ -180,14 +193,11 @@
   evidence 검증, terminal outcome 분류를 구현했다.
 - 한 요청 안의 `ETF 상위 5개 → 그 상품 중 수익률 1위`는 첫 결과 binding을
   두 번째 subtask로 전달하며 전체 상품군 조회를 반복하지 않는다.
-- 로컬 in-memory executor 경계까지 완료한 것이며 실제 SQL·Graph·Keyword·
-  Vector·금융 계산 executor와 답변 생성은 각각 Stage 05·07 범위다. Phase 1
-  live 승격 차단도 유지된다. 다음 live HCX benchmark는 별도 승인 없이는 실행하지
-  않는다.
-- 현재 평면 TaskInputContract가 209개 평가 frame 중 94개만 완전하게 표현한
-  설계 결함을 보완하기 위해 action별 `ResolvedQueryContractV2`, exact family·
-  operator lock, bounded contract candidate solver, `LogicalQueryPlanV2`, 결정론적
-  semantic-to-SQL compiler 방향을 [ADR-0029](decisions/ADR-0029-use-semantic-query-contracts-and-deterministic-sql-compilation.md)로 승인했다. 작성된 상세 명세 검토와 별도 구현 계획 승인이 끝나기 전에는 런타임 코드를 변경하지 않는다.
+- 실제 SQL executor는 합성·로컬 경계까지 구현됐지만 승인된 PostgreSQL URL이 없어
+  migration/SQL conformance는 `unmeasured`다. `public_fund.fee_rate`와 대표 상품
+  grain도 production 정의 검증 전까지 `LIMITED`다. Graph·Keyword·Vector·금융
+  계산 production executor와 답변 생성은 후속 범위다. 상세 근거는
+  [Semantic Query Verification](verification/2026-09-02-semantic-query-contracts-and-sql-compilation-verification.md)에 있다.
 - Task 1 audit-only fixture는 core 52개(`03de130a…3618a2`)와 held-out 160 case의
   action-bearing 209 frame(`bd40481c…f4c7de`)을 SHA-256으로 pin했다. V1
   representability는 94/209로 고정했고, generated requirement snapshot은 52개
@@ -265,7 +275,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 40. ~~Stage 06 Phase 1 Intent Resolver의 온톨로지 기반 분류·한국어 문맥 해소·OOD·검증·평가 설계 승인~~ — 2026-08-31 완료; 상세 구현 계획과 런타임 변경은 별도 승인 대기
 41. ~~Stage 06 Phase 1 Intent Resolver 상세 구현·로컬 비라이브·PostgreSQL 검증~~ — 2026-09-01 완료; Linux/amd64 container 미실행, candidate recall 실패와 live 미측정 gate로 승격 차단
 42. ~~Stage 06 Phase 2 QueryPlan compiler·4경로 router와 Phase 3 bounded Orchestrator 로컬 구현·통합 검증~~ — 2026-09-02 완료; production executor와 답변 생성은 포함하지 않음
-43. Stage 06 Phase 1 live HCX benchmark — `candidate_recall_at_5` 보강과 비용·호출·runtime credential·Structured Outputs preflight에 대한 별도 사용자 승인 대기
-44. SQL 의미 계약 V2·결정론적 SQL compiler 설계 — 2026-09-02 아키텍처 승인·작성 명세 완료; 사용자 명세 검토 후 상세 구현 계획 작성·승인 대기
+43. ~~Stage 06 live HCX-007 16-case production/challenger benchmark~~ — 2026-09-03 완료; production provider `16/16`, complete contract `6/16`, challenger rate limit `8/48`, 승격 보류
+44. ~~SQL 의미 계약 V2·결정론적 SQL compiler·RDB executor·artifact persistence 구현~~ — 2026-09-03 로컬 완료; 불완전 gold·PostgreSQL·public-fund physical gate는 보류
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.
