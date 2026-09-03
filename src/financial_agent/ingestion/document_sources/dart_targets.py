@@ -14,6 +14,17 @@ _CUTOFF = date(2026, 8, 24)
 
 
 @dataclass(frozen=True, slots=True)
+class DartRecoveryProductState:
+    entity_id: str
+    product_scope: Literal[
+        "fund_prospectus",
+        "etn_not_applicable",
+        "private_fund_not_applicable",
+    ]
+    has_exact_embedding: bool
+
+
+@dataclass(frozen=True, slots=True)
 class OrganizerDartProductRow:
     entity_id: str
     canonical_name: str

@@ -2,15 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
+from typing import Literal, cast
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from financial_agent.db.schema.catalog import entity, identifier, product
-from financial_agent.db.schema.relation import relation_record
+from financial_agent.db.schema.document import document_chunk, document_entity_binding
 from financial_agent.db.schema.evidence import evidence_record
+from financial_agent.db.schema.observation import observation_record
+from financial_agent.db.schema.relation import relation_record
+from financial_agent.db.schema.search import document_embedding
 from financial_agent.documents import DocumentRole, DocumentSourceTarget
+from financial_agent.embeddings.contracts import EmbeddingModelContract
 from financial_agent.ingestion.document_sources.dart_targets import (
+    DartRecoveryProductState,
     OrganizerDartProductRow,
 )
 
@@ -102,6 +108,31 @@ class DocumentTargetRepository:
                     row,
                     "document_collection_block_reason",
                 ),
+            )
+            for row in result.mappings().all()
+        )
+
+    async def list_dart_recovery_states(
+        self,
+        dataset_version: str,
+        model: EmbeddingModelContract,
+    ) -> tuple[DartRecoveryProductState, ...]:
+        _validate_dataset_version(dataset_version)
+        result = await self._connection.execute(
+            _dart_recovery_states_statement(dataset_version, model)
+        )
+        return tuple(
+            DartRecoveryProductState(
+                entity_id=_required_row_text(row, "entity_id"),
+                product_scope=cast(
+                    Literal[
+                        "fund_prospectus",
+                        "etn_not_applicable",
+                        "private_fund_not_applicable",
+                    ],
+                    _required_row_text(row, "product_scope"),
+                ),
+                has_exact_embedding=bool(row["has_exact_embedding"]),
             )
             for row in result.mappings().all()
         )
@@ -439,6 +470,100 @@ def _organizer_dart_statement(dataset_version: str) -> sa.Select[object]:
             manager_entity.c.entity_id,
             representative_entity.c.entity_id,
         )
+    )
+
+
+def _dart_recovery_states_statement(
+    dataset_version: str,
+    model: EmbeddingModelContract,
+) -> sa.Select[object]:
+    marker_identifier = identifier.alias("recovery_marker_identifier")
+    etn_observation_exists = sa.exists(
+        sa.select(sa.literal(1)).where(
+            observation_record.c.dataset_version == product.c.dataset_version,
+            observation_record.c.entity_id == product.c.entity_id,
+            observation_record.c.metric_id == "organizer.pref01n001.product_type",
+            observation_record.c.value_status == "present",
+            observation_record.c.text_value == "ETN",
+        )
+    )
+    private_fund_observation_exists = sa.exists(
+        sa.select(sa.literal(1)).where(
+            observation_record.c.dataset_version == product.c.dataset_version,
+            observation_record.c.entity_id == product.c.entity_id,
+            observation_record.c.metric_id
+            == "organizer.prfd01n001.public_private_class",
+            observation_record.c.value_status == "present",
+            observation_record.c.text_value == "사모",
+        )
+    )
+    organizer_marker_exists = sa.exists(
+        sa.select(sa.literal(1)).where(
+            marker_identifier.c.dataset_version == product.c.dataset_version,
+            marker_identifier.c.entity_id == product.c.entity_id,
+            sa.or_(
+                sa.and_(
+                    product.c.product_family == "domestic_etf",
+                    marker_identifier.c.scheme == "PREF01_PD_ITM_NO",
+                ),
+                sa.and_(
+                    product.c.product_family == "public_fund",
+                    marker_identifier.c.scheme == "PRFD_ITM_NO",
+                ),
+            ),
+        )
+    )
+    exact_embedding_exists = sa.exists(
+        sa.select(sa.literal(1))
+        .select_from(
+            document_entity_binding.join(
+                document_chunk,
+                sa.and_(
+                    document_chunk.c.dataset_version
+                    == document_entity_binding.c.dataset_version,
+                    document_chunk.c.document_id
+                    == document_entity_binding.c.document_id,
+                ),
+            ).join(
+                document_embedding,
+                sa.and_(
+                    document_embedding.c.dataset_version
+                    == document_chunk.c.dataset_version,
+                    document_embedding.c.document_id == document_chunk.c.document_id,
+                    document_embedding.c.chunk_id == document_chunk.c.chunk_id,
+                    document_embedding.c.chunk_content_hash
+                    == document_chunk.c.content_hash,
+                    document_embedding.c.model_id == model.model_id,
+                    document_embedding.c.model_version == model.model_version,
+                    document_embedding.c.dimension == model.dimension,
+                ),
+            )
+        )
+        .where(
+            document_entity_binding.c.dataset_version == product.c.dataset_version,
+            document_entity_binding.c.entity_id == product.c.entity_id,
+            document_entity_binding.c.binding_role == "subject_product",
+        )
+    )
+    return (
+        sa.select(
+            product.c.entity_id,
+            sa.case(
+                (etn_observation_exists, "etn_not_applicable"),
+                (
+                    private_fund_observation_exists,
+                    "private_fund_not_applicable",
+                ),
+                else_="fund_prospectus",
+            ).label("product_scope"),
+            exact_embedding_exists.label("has_exact_embedding"),
+        )
+        .where(
+            product.c.dataset_version == dataset_version,
+            product.c.product_family.in_(("domestic_etf", "public_fund")),
+            organizer_marker_exists,
+        )
+        .order_by(product.c.entity_id)
     )
 
 

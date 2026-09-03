@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
+import hashlib
 from uuid import uuid4
 
 import psycopg
@@ -11,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from financial_agent.db.preflight import normalize_psycopg_url
 from financial_agent.db.repositories.document_targets import DocumentTargetRepository
 from financial_agent.documents import DocumentRole
+from financial_agent.embeddings.contracts import APPROVED_MODEL
 from tests.fixtures.db.synthetic_dataset import (
+    CREATED_AT,
+    VALID_RECORD_HASH,
     insert_building_dataset,
     insert_entity,
     insert_identifier,
@@ -23,6 +27,10 @@ from tests.fixtures.db.synthetic_dataset import (
 
 
 CUTOFF = date(2026, 8, 24)
+
+
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def test_compiled_queries_join_each_dataset_scoped_table_by_dataset_version() -> None:
@@ -303,6 +311,270 @@ async def test_lists_all_product_and_unique_index_targets(
     assert sum(item.entity_id == "index-space" for item in targets) == 1
     assert targets[1].identifiers == (("ISIN", "KR-domestic-etf-1"),)
     assert all(("ISIN", "FOREIGN-ONLY") not in item.identifiers for item in targets)
+
+
+def _prepare_dart_recovery_states(database_url: str) -> tuple[str, dict[str, str]]:
+    dataset_version = f"dart-recovery-{_token()}"
+    product_ids = {
+        "embedded_etf": "embedded-etf",
+        "missing_etf": "missing-etf",
+        "etn": "etn",
+        "public_fund": "public-fund",
+        "private_fund": "private-fund",
+    }
+    current_text = "current missing ETF chunk"
+    current_hash = _sha256(current_text)
+    embedded_text = "embedded ETF chunk"
+    embedded_hash = _sha256(embedded_text)
+    vector_literal = "[" + ",".join("0" for _ in range(APPROVED_MODEL.dimension)) + "]"
+    wrong_model_id = f"wrong-model-{_token()}"
+
+    with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+        insert_building_dataset(connection, dataset_version)
+        insert_institution(
+            connection,
+            dataset_version=dataset_version,
+            entity_id="recovery-publisher",
+        )
+        insert_source(
+            connection,
+            dataset_version=dataset_version,
+            source_id="recovery-source",
+            publisher="recovery-publisher",
+        )
+        for key, entity_id in product_ids.items():
+            product_family = "domestic_etf" if key in {"embedded_etf", "missing_etf", "etn"} else "public_fund"
+            marker = "PREF01_PD_ITM_NO" if product_family == "domestic_etf" else "PRFD_ITM_NO"
+            insert_entity(
+                connection,
+                dataset_version=dataset_version,
+                entity_id=entity_id,
+            )
+            insert_product(
+                connection,
+                dataset_version=dataset_version,
+                entity_id=entity_id,
+                product_family=product_family,
+            )
+            insert_identifier(
+                connection,
+                dataset_version=dataset_version,
+                identifier_id=f"marker-{entity_id}",
+                entity_id=entity_id,
+                scheme=marker,
+                identifier_value=f"organizer-{entity_id}",
+            )
+        connection.execute(
+            """
+            INSERT INTO observation.metric_definition (
+                metric_id, definition_version, semantic_family, value_kind,
+                definition_hash, approved_at
+            ) VALUES
+                ('organizer.pref01n001.product_type', '1', 'product_type', 'text', %s, %s),
+                ('organizer.prfd01n001.public_private_class', '1', 'public_private_class', 'text', %s, %s)
+            ON CONFLICT DO NOTHING
+            """,
+            (VALID_RECORD_HASH, CREATED_AT, VALID_RECORD_HASH, CREATED_AT),
+        )
+        connection.execute(
+            """
+            INSERT INTO observation.observation_record (
+                dataset_version, observation_id, entity_id, metric_id,
+                metric_definition_version, value_status, text_value,
+                record_hash, created_at
+            ) VALUES
+                (%s, 'etn-product-type', %s, 'organizer.pref01n001.product_type', '1', 'present', 'ETN', %s, %s),
+                (%s, 'private-fund-class', %s, 'organizer.prfd01n001.public_private_class', '1', 'present', '사모', %s, %s)
+            """,
+            (
+                dataset_version,
+                product_ids["etn"],
+                VALID_RECORD_HASH,
+                CREATED_AT,
+                dataset_version,
+                product_ids["private_fund"],
+                VALID_RECORD_HASH,
+                CREATED_AT,
+            ),
+        )
+        for document_id, entity_id, exact_text, content_hash in (
+            ("embedded-etf-document", product_ids["embedded_etf"], embedded_text, embedded_hash),
+            ("missing-etf-document", product_ids["missing_etf"], current_text, current_hash),
+        ):
+            connection.execute(
+                """
+                INSERT INTO document.document_record (
+                    dataset_version, document_id, source_id, document_title,
+                    document_type, object_key, content_checksum, published_at,
+                    available_at, record_hash, created_at
+                ) VALUES (%s, %s, 'recovery-source', %s, 'full_prospectus',
+                          %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    dataset_version,
+                    document_id,
+                    document_id,
+                    f"discarded/{document_id}.pdf",
+                    "c" * 64,
+                    datetime(2026, 8, 20, tzinfo=UTC),
+                    datetime(2026, 8, 21, tzinfo=UTC),
+                    VALID_RECORD_HASH,
+                    CREATED_AT,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO document.document_profile (
+                    dataset_version, document_id, document_version, publisher_role,
+                    jurisdiction, original_language, effective_from,
+                    extraction_method, cutoff_eligible, record_hash, created_at
+                ) VALUES (%s, %s, '2026-08-20', 'regulator_disclosure', 'KR', 'ko',
+                          DATE '2026-08-20', 'pdfplumber-layout-v1', TRUE, %s, %s)
+                """,
+                (dataset_version, document_id, VALID_RECORD_HASH, CREATED_AT),
+            )
+            connection.execute(
+                """
+                INSERT INTO document.document_entity_binding (
+                    dataset_version, binding_id, document_id, entity_id, binding_role,
+                    record_hash, created_at
+                ) VALUES (%s, %s, %s, %s, 'subject_product', %s, %s)
+                """,
+                (
+                    dataset_version,
+                    f"binding-{document_id}",
+                    document_id,
+                    entity_id,
+                    VALID_RECORD_HASH,
+                    CREATED_AT,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO document.document_chunk (
+                    dataset_version, chunk_id, document_id, ordinal, page_start,
+                    page_end, section_type, section_path, character_start,
+                    character_end, exact_text, normalized_search_text, content_hash,
+                    record_hash, created_at
+                ) VALUES (%s, %s, %s, 0, 1, 1, 'investment_strategy',
+                          'investment strategy', 0, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    dataset_version,
+                    f"chunk-{document_id}",
+                    document_id,
+                    len(exact_text),
+                    exact_text,
+                    exact_text.casefold(),
+                    content_hash,
+                    VALID_RECORD_HASH,
+                    CREATED_AT,
+                ),
+            )
+        connection.execute(
+            """
+            INSERT INTO search.embedding_model (
+                model_id, model_version, dimension, distance_metric,
+                approval_record_id, approved_at, model_hash
+            ) VALUES
+                (%s, %s, %s, 'cosine', 'test-approved-model', %s, %s),
+                (%s, '1', %s, 'cosine', 'test-wrong-model', %s, %s)
+            ON CONFLICT (model_id, model_version) DO NOTHING
+            """,
+            (
+                APPROVED_MODEL.model_id,
+                APPROVED_MODEL.model_version,
+                APPROVED_MODEL.dimension,
+                CREATED_AT,
+                "d" * 64,
+                wrong_model_id,
+                APPROVED_MODEL.dimension,
+                CREATED_AT,
+                "e" * 64,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO search.document_embedding (
+                dataset_version, embedding_id, document_id, chunk_id,
+                chunk_content_hash, model_id, model_version, dimension,
+                embedding, created_at
+            ) VALUES
+                (%s, 'embedded-etf-vector', 'embedded-etf-document',
+                 'chunk-embedded-etf-document', %s, %s, %s, %s,
+                 %s::cdb_admin.vector, %s),
+                (%s, 'missing-etf-wrong-model-vector', 'missing-etf-document',
+                 'chunk-missing-etf-document', %s, %s, '1', %s,
+                 %s::cdb_admin.vector, %s)
+            """,
+            (
+                dataset_version,
+                embedded_hash,
+                APPROVED_MODEL.model_id,
+                APPROVED_MODEL.model_version,
+                APPROVED_MODEL.dimension,
+                vector_literal,
+                CREATED_AT,
+                dataset_version,
+                current_hash,
+                wrong_model_id,
+                APPROVED_MODEL.dimension,
+                vector_literal,
+                CREATED_AT,
+            ),
+        )
+        connection.execute("SET session_replication_role = replica")
+        try:
+            connection.execute(
+                """
+                INSERT INTO search.document_embedding (
+                    dataset_version, embedding_id, document_id, chunk_id,
+                    chunk_content_hash, model_id, model_version, dimension,
+                    embedding, created_at
+                ) VALUES (%s, 'missing-etf-stale-hash-vector', 'missing-etf-document',
+                         'chunk-missing-etf-document', %s, %s, %s, %s,
+                         %s::cdb_admin.vector, %s)
+                """,
+                (
+                    dataset_version,
+                    "f" * 64,
+                    APPROVED_MODEL.model_id,
+                    APPROVED_MODEL.model_version,
+                    APPROVED_MODEL.dimension,
+                    vector_literal,
+                    CREATED_AT,
+                ),
+            )
+        finally:
+            connection.execute("SET session_replication_role = origin")
+    return dataset_version, product_ids
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_lists_dart_recovery_states_with_only_current_approved_embeddings(
+    repository_engine: AsyncEngine,
+    migrated_database_url: str,
+) -> None:
+    dataset_version, product_ids = _prepare_dart_recovery_states(
+        migrated_database_url
+    )
+    async with repository_engine.connect() as connection:
+        states = await DocumentTargetRepository(connection).list_dart_recovery_states(
+            dataset_version,
+            APPROVED_MODEL,
+        )
+
+    by_id = {state.entity_id: state for state in states}
+
+    assert by_id[product_ids["embedded_etf"]].has_exact_embedding is True
+    assert by_id[product_ids["missing_etf"]].has_exact_embedding is False
+    assert by_id[product_ids["etn"]].product_scope == "etn_not_applicable"
+    assert by_id[product_ids["public_fund"]].product_scope == "fund_prospectus"
+    assert (
+        by_id[product_ids["private_fund"]].product_scope
+        == "private_fund_not_applicable"
+    )
 
 
 @pytest.mark.postgres
