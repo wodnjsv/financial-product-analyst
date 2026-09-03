@@ -14,7 +14,7 @@ from financial_agent.intent.clova import ClovaStructuredOutputAdapter
 from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.config import ClovaResolverConfig
 from financial_agent.intent.errors import ModelInvocationError
-from financial_agent.intent.prompt import build_prompt
+from financial_agent.intent.prompt import ResolverPromptEnvelope, build_prompt
 from financial_agent.intent.query_contract_judge import QueryContractJudgePromptEnvelope
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
 from financial_agent.intent.view import (
@@ -221,6 +221,32 @@ async def test_clova_adapter_reuses_transport_for_distinct_judge_envelope() -> N
     ]
     assert body["responseFormat"]["schema"] == envelope.response_schema
     assert result.content == '{"candidate_id":"candidate-a"}'
+
+
+@pytest.mark.asyncio
+async def test_clova_adapter_reuses_one_call_transport_for_hybrid_envelope() -> None:
+    """Catches a V3 envelope requiring a separate HCX provider path."""
+    transport, calls = successful_transport('{"proposal_schema_version":"3.0"}')
+    adapter = ClovaStructuredOutputAdapter(make_config(), transport=transport)
+    envelope = ResolverPromptEnvelope(
+        system_message="bounded hybrid semantic resolver",
+        user_message='{"context":{"question":"비용이 낮은 ETF"}}',
+        response_schema={
+            "type": "object",
+            "properties": {
+                "proposal_schema_version": {"type": "string", "enum": ["3.0"]}
+            },
+            "required": ["proposal_schema_version"],
+            "additionalProperties": False,
+        },
+    )
+
+    result = await adapter.invoke(envelope, timeout_seconds=4.0)
+
+    body = json.loads(calls[0].content)
+    assert len(calls) == 1
+    assert body["responseFormat"]["schema"] == envelope.response_schema
+    assert result.content == '{"proposal_schema_version":"3.0"}'
 
 
 @pytest.mark.asyncio
