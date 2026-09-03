@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import json
 from pathlib import Path
 from types import MappingProxyType
@@ -27,6 +27,12 @@ from financial_agent.intent.query_contracts import (
     ContractReadiness,
     ContractReadinessRecordV2,
     ProjectionSpecV2,
+    ProvenanceSourceKind,
+)
+from financial_agent.intent.semantic_defaults import (
+    DatasetSemanticDefaultsV1,
+    SemanticAsOfDefaultV1,
+    load_semantic_default_policy_registry,
 )
 import financial_agent.intent.service as service_module
 from financial_agent.intent.resolution import ResolutionIssue
@@ -174,7 +180,12 @@ def _generic_lookup_proposal(prepared: PreparedResolutionRequest) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
-def _service(adapter: _Adapter, *, timer=None) -> IntentResolverService:
+def _service(
+    adapter: _Adapter,
+    *,
+    timer=None,
+    semantic_defaults: DatasetSemanticDefaultsV1 | None = None,
+) -> IntentResolverService:
     catalog = load_catalog(PROJECT_ROOT)
     manifest = build_manifest(
         catalog,
@@ -185,6 +196,16 @@ def _service(adapter: _Adapter, *, timer=None) -> IntentResolverService:
             "prompt_version": PROMPT_VERSION,
             "adapter_version": ADAPTER_VERSION,
         },
+    )
+    semantic_default_inputs = (
+        {
+            "semantic_default_registry": load_semantic_default_policy_registry(
+                PROJECT_ROOT
+            ),
+            "dataset_semantic_defaults": semantic_defaults,
+        }
+        if semantic_defaults is not None
+        else {}
     )
     return IntentResolverService(
         adapter=adapter,
@@ -197,11 +218,27 @@ def _service(adapter: _Adapter, *, timer=None) -> IntentResolverService:
         query_contract_registry=load_query_contract_registry(PROJECT_ROOT),
         utcnow=lambda: NOW,
         timer=timer,
+        **semantic_default_inputs,
     )
 
 
-def _hybrid_service(adapter: _Adapter, *, timer=None) -> IntentResolverService:
+def _hybrid_service(
+    adapter: _Adapter,
+    *,
+    timer=None,
+    semantic_defaults: DatasetSemanticDefaultsV1 | None = None,
+) -> IntentResolverService:
     catalog = load_hybrid_catalog(PROJECT_ROOT)
+    semantic_default_inputs = (
+        {
+            "semantic_default_registry": load_semantic_default_policy_registry(
+                PROJECT_ROOT
+            ),
+            "dataset_semantic_defaults": semantic_defaults,
+        }
+        if semantic_defaults is not None
+        else {}
+    )
     return IntentResolverService(
         adapter=adapter,
         entity_repository=_EmptyEntities(),
@@ -213,6 +250,7 @@ def _hybrid_service(adapter: _Adapter, *, timer=None) -> IntentResolverService:
         query_contract_registry=load_query_contract_registry(PROJECT_ROOT),
         utcnow=lambda: NOW,
         timer=timer,
+        **semantic_default_inputs,
     )
 
 
@@ -271,6 +309,23 @@ def _hybrid_proposal(
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
+    )
+
+
+def _semantic_defaults(
+    family: str = "domestic_etf",
+) -> DatasetSemanticDefaultsV1:
+    return DatasetSemanticDefaultsV1(
+        dataset_version="dataset-v1",
+        manifest_hash="a" * 64,
+        defaults=(
+            SemanticAsOfDefaultV1(
+                default_record_id=f"dataset-v1-{family}-aum",
+                product_family_id=family,
+                semantic_id="aum",
+                as_of_date=date(2026, 8, 21),
+            ),
+        ),
     )
 
 
@@ -342,6 +397,40 @@ async def test_hybrid_query_contract_path_uses_v3_end_to_end_with_one_call() -> 
     assert "compact_semantic_catalog" in json.loads(envelope.user_message)["view"]
     with pytest.raises(FrozenInstanceError):
         attempt.resolution = attempt.resolution  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_service_injects_pinned_aum_date_into_v3_solver() -> None:
+    context = _context("비용 부담이 작은 ETF 다섯 개")
+    adapter = _Adapter([])
+    service = _hybrid_service(adapter, semantic_defaults=_semantic_defaults())
+    prepared = await service.prepare_hybrid(context)
+    adapter.responses.append(_hybrid_proposal(prepared, semantic_ids=("aum",)))
+
+    attempt = await service.resolve_hybrid_query_contract_candidates(context)
+
+    contract = attempt.candidates.complete_candidates[0].contract
+    assert contract.qualifiers.as_of_date == date(2026, 8, 21)
+    assert {
+        item.source_ref
+        for item in contract.provenance
+        if item.source_kind is ProvenanceSourceKind.REGISTRY_DEFAULT
+        and item.semantic_input_id.startswith("qualifiers.as_of_date")
+    } == {"active-dataset-as-of.v1", "dataset-v1-domestic_etf-aum"}
+
+
+@pytest.mark.asyncio
+async def test_injected_semantic_defaults_do_not_change_v2_solver_behavior() -> None:
+    context = _context()
+    adapter = _Adapter([_proposal()])
+    service = _service(adapter, semantic_defaults=_semantic_defaults())
+
+    attempt = await service.resolve_query_contract_candidates(context)
+
+    assert attempt.candidates.complete_candidates == ()
+    assert attempt.candidates.frames[0].contract_readiness.reason_codes == (
+        "REQUIRED_QUALIFIER_MISSING",
+    )
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
 
@@ -52,6 +52,11 @@ from financial_agent.intent.query_contracts import (
     QueryOperatorId,
     query_contract_candidate_id,
 )
+from financial_agent.intent.semantic_defaults import (
+    DatasetSemanticDefaultsV1,
+    SemanticAsOfDefaultV1,
+    load_semantic_default_policy_registry,
+)
 from financial_agent.intent.types import (
     ChoiceState,
     EntitySemanticRole,
@@ -87,6 +92,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REGISTRY = load_query_contract_registry(PROJECT_ROOT)
 CATALOG = load_catalog(PROJECT_ROOT)
 HYBRID_CATALOG = load_hybrid_catalog(PROJECT_ROOT)
+SEMANTIC_DEFAULT_REGISTRY = load_semantic_default_policy_registry(PROJECT_ROOT)
 
 
 def _axis(action: IntentType = IntentType.RANK, *, family: ProductFamily = ProductFamily.DOMESTIC_ETF):
@@ -366,6 +372,169 @@ def _literal(
         end_char=start + len(text or value),
         canonical_value=value,
         currency=currency,
+    )
+
+
+def _dataset_defaults(
+    *records: SemanticAsOfDefaultV1,
+    dataset_version: str = "dataset-v1",
+    manifest_hash: str = "d" * 64,
+) -> DatasetSemanticDefaultsV1:
+    return DatasetSemanticDefaultsV1(
+        dataset_version=dataset_version,
+        manifest_hash=manifest_hash,
+        defaults=records,
+    )
+
+
+def _as_of_default(
+    *,
+    record_id: str = "dataset-v1-overseas-etf-aum",
+    family: str = "overseas_etf",
+    semantic_id: str = "aum",
+    value: date = date(2026, 8, 21),
+) -> SemanticAsOfDefaultV1:
+    return SemanticAsOfDefaultV1(
+        default_record_id=record_id,
+        product_family_id=family,
+        semantic_id=semantic_id,
+        as_of_date=value,
+    )
+
+
+def _v3_default_inputs(
+    defaults: DatasetSemanticDefaultsV1 | None,
+    *,
+    family: ProductFamily = ProductFamily.OVERSEAS_ETF,
+):
+    return {
+        **_v3_solver_inputs(semantic_ids=("aum",), family=family),
+        "semantic_default_registry": SEMANTIC_DEFAULT_REGISTRY,
+        "dataset_semantic_defaults": defaults,
+    }
+
+
+def test_verified_dataset_date_completes_aum_rank() -> None:
+    defaults = _dataset_defaults(_as_of_default())
+
+    result = solve_query_contracts(**_v3_default_inputs(defaults))
+
+    contract = result.frames[0].complete_candidates[0].contract
+    assert contract.qualifiers.as_of_date == date(2026, 8, 21)
+    default_sources = {
+        item.source_ref
+        for item in contract.provenance
+        if item.source_kind is ProvenanceSourceKind.REGISTRY_DEFAULT
+        and item.semantic_input_id.startswith("qualifiers.as_of_date")
+    }
+    assert default_sources == {
+        "active-dataset-as-of.v1",
+        "dataset-v1-overseas-etf-aum",
+    }
+
+
+def test_cutoff_date_is_not_used_as_an_observation_default() -> None:
+    result = solve_query_contracts(**_v3_default_inputs(None))
+
+    assert not result.frames[0].complete_candidates
+    assert "REQUIRED_QUALIFIER_MISSING" in (
+        result.frames[0].contract_readiness.reason_codes
+    )
+
+
+@pytest.mark.parametrize(
+    ("defaults", "reason_code"),
+    (
+        (
+            _dataset_defaults(_as_of_default(), dataset_version="dataset-v2"),
+            "SEMANTIC_DEFAULT_DATASET_PIN_MISMATCH",
+        ),
+        (
+            _dataset_defaults(_as_of_default(), manifest_hash="e" * 64),
+            "SEMANTIC_DEFAULT_MANIFEST_PIN_MISMATCH",
+        ),
+        (
+            _dataset_defaults(
+                _as_of_default(),
+                _as_of_default(
+                    record_id="dataset-v1-overseas-etf-aum-second",
+                    value=date(2026, 8, 22),
+                ),
+            ),
+            "SEMANTIC_DEFAULT_MULTIPLE_DATES",
+        ),
+        (
+            _dataset_defaults(_as_of_default(value=date(2026, 8, 25))),
+            "SEMANTIC_DEFAULT_DATE_AFTER_CUTOFF",
+        ),
+        (
+            _dataset_defaults(_as_of_default(semantic_id="market_price")),
+            "SEMANTIC_DEFAULT_NOT_APPLICABLE",
+        ),
+        (
+            _dataset_defaults(_as_of_default(family="domestic_etf")),
+            "SEMANTIC_DEFAULT_NOT_APPLICABLE",
+        ),
+    ),
+)
+def test_invalid_dataset_default_never_completes_aum_rank(
+    defaults: DatasetSemanticDefaultsV1,
+    reason_code: str,
+) -> None:
+    result = solve_query_contracts(**_v3_default_inputs(defaults))
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.reason_codes == (reason_code,)
+
+
+@pytest.mark.parametrize(
+    ("resolution_update", "reason_code"),
+    (
+        (
+            {"dataset_version": "dataset-v2"},
+            "SEMANTIC_DEFAULT_DATASET_PIN_MISMATCH",
+        ),
+        (
+            {"active_dataset_manifest_hash": "e" * 64},
+            "SEMANTIC_DEFAULT_MANIFEST_PIN_MISMATCH",
+        ),
+    ),
+)
+def test_dataset_default_requires_matching_finalized_resolution_pin(
+    resolution_update: dict[str, str],
+    reason_code: str,
+) -> None:
+    inputs = _v3_default_inputs(_dataset_defaults(_as_of_default()))
+    inputs["resolution"] = inputs["resolution"].model_copy(
+        update=resolution_update
+    )
+
+    result = solve_query_contracts(**inputs)
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.reason_codes == (reason_code,)
+
+
+def test_dataset_default_conflicting_with_explicit_date_is_rejected() -> None:
+    inputs = _v3_default_inputs(_dataset_defaults(_as_of_default()))
+    inputs["view"] = inputs["view"].model_copy(
+        update={
+            "literal_candidates": (
+                _literal(
+                    "date-explicit",
+                    kind="date",
+                    value="2026-08-20",
+                    start=2,
+                ),
+            )
+        }
+    )
+
+    result = solve_query_contracts(**inputs)
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.reason_codes == (
+        "SEMANTIC_DEFAULT_AS_OF_CONFLICT",
     )
 
 

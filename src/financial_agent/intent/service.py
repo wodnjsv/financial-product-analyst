@@ -77,6 +77,10 @@ from .resolution import (
     ValidatedIntentResolutionV3,
     ValidationEvent,
 )
+from .semantic_defaults import (
+    DatasetSemanticDefaultsV1,
+    SemanticDefaultPolicyRegistry,
+)
 from .slot_resolution import resolve_ambiguous_slots
 from .task_binding import (
     TaskBindingError,
@@ -275,6 +279,8 @@ class IntentResolverService:
         active_dataset_pin: ActiveDatasetPin,
         task_contract_registry: TaskContractRegistry | None = None,
         query_contract_registry: QueryContractRegistry | None = None,
+        semantic_default_registry: SemanticDefaultPolicyRegistry | None = None,
+        dataset_semantic_defaults: DatasetSemanticDefaultsV1 | None = None,
         utcnow: Callable[[], datetime] | None = None,
         timer: Callable[[], float] | None = None,
     ) -> None:
@@ -285,6 +291,8 @@ class IntentResolverService:
         self._active_dataset_pin = active_dataset_pin
         self._task_contract_registry = task_contract_registry
         self._query_contract_registry = query_contract_registry
+        self._semantic_default_registry = semantic_default_registry
+        self._dataset_semantic_defaults = dataset_semantic_defaults
         self._utcnow = utcnow or (lambda: datetime.now(UTC))
         self._timer = timer or perf_counter
 
@@ -718,6 +726,8 @@ class IntentResolverService:
             exact_locks=prepared.view.exact_semantic_locks,
             registry=self._query_contract_registry,
             semantic_catalog=self._catalog,
+            semantic_default_registry=self._semantic_default_registry,
+            dataset_semantic_defaults=self._dataset_semantic_defaults,
         )
         candidate_solve_ms = _duration_ms(solve_started, self._timer())
         offered_candidate_count = len(candidates.complete_candidates)

@@ -60,6 +60,11 @@ from .resolution import (
     ValidatedIntentResolutionV3,
     ValidatedSemanticLinkV3,
 )
+from .semantic_defaults import (
+    ACTIVE_DATASET_AS_OF_POLICY_ID,
+    DatasetSemanticDefaultsV1,
+    SemanticDefaultPolicyRegistry,
+)
 from .types import (
     ChoiceState,
     ContextLinkType,
@@ -135,6 +140,14 @@ class _LiteralOffer:
     literal: ResolverViewLiteralCandidate
 
 
+@dataclass(frozen=True, slots=True)
+class _AsOfDefaultResult:
+    qualifier_options: tuple[QueryQualifiersV2, ...]
+    qualifier_states: dict[str, str]
+    source_refs: tuple[str, ...] = ()
+    rejection_reason: str | None = None
+
+
 class _CandidateBoundReached(RuntimeError):
     def __init__(self, role_id: str) -> None:
         self.role_id = role_id
@@ -149,6 +162,7 @@ class _CandidateAccumulator:
     frame: ValidatedIntentFrameV2
     resolution: ValidatedIntentResolutionV2
     field_roles: tuple[tuple[str, tuple[str, ...]], ...]
+    default_as_of_source_refs: tuple[str, ...]
     rejections: list[CandidateRejection]
     candidates: dict[str, QueryContractCandidate]
 
@@ -179,6 +193,7 @@ class _CandidateAccumulator:
                     self.view,
                     self.frame,
                     self.resolution,
+                    self.default_as_of_source_refs,
                 )
             }
         )
@@ -208,6 +223,8 @@ def solve_query_contracts(
     exact_locks: tuple[ExactSemanticLock, ...],
     registry: QueryContractRegistry,
     semantic_catalog: SemanticCatalogSnapshot | None = None,
+    semantic_default_registry: SemanticDefaultPolicyRegistry | None = None,
+    dataset_semantic_defaults: DatasetSemanticDefaultsV1 | None = None,
 ) -> QueryContractCandidateSet:
     """Enumerate only complete registered semantic contracts in frame order."""
 
@@ -236,6 +253,8 @@ def solve_query_contracts(
             exact_locks=_locks_for_frame(frame, resolution, locks, view),
             registry=registry,
             semantic_catalog=semantic_catalog,
+            semantic_default_registry=semantic_default_registry,
+            dataset_semantic_defaults=dataset_semantic_defaults,
         )
         for frame in resolution.canonical_frames
     )
@@ -250,6 +269,8 @@ def _solve_frame(
     exact_locks: tuple[ExactSemanticLock, ...],
     registry: QueryContractRegistry,
     semantic_catalog: SemanticCatalogSnapshot | None,
+    semantic_default_registry: SemanticDefaultPolicyRegistry | None,
+    dataset_semantic_defaults: DatasetSemanticDefaultsV1 | None,
 ) -> QueryContractFrameCandidateSet:
     rejections: list[CandidateRejection] = []
     if isinstance(resolution, ValidatedIntentResolutionV3):
@@ -413,6 +434,29 @@ def _solve_frame(
         )
     if any(lock.role == "field" for lock in exact_locks) and not fields:
         return _frame_result(frame.frame_id, (), tuple(rejections))
+    as_of_default = _apply_as_of_semantic_default(
+        resolution=resolution,
+        view=view,
+        scopes=scopes,
+        fields=fields,
+        qualifier_options=qualifier_options,
+        qualifier_states=qualifier_states,
+        semantic_default_registry=semantic_default_registry,
+        dataset_semantic_defaults=dataset_semantic_defaults,
+    )
+    if as_of_default.rejection_reason is not None:
+        rejections.append(
+            _rejection(
+                frame,
+                variants[0].id,
+                "qualifier.as_of",
+                (),
+                as_of_default.rejection_reason,
+            )
+        )
+        return _frame_result(frame.frame_id, (), tuple(rejections))
+    qualifier_options = as_of_default.qualifier_options
+    qualifier_states = as_of_default.qualifier_states
     fields = _fields_with_complete_qualifiers(
         frame, variants[0].id, fields, qualifier_states, rejections
     )
@@ -444,6 +488,7 @@ def _solve_frame(
         frame=frame,
         resolution=resolution,
         field_roles=requested_field_roles,
+        default_as_of_source_refs=as_of_default.source_refs,
         rejections=rejections,
         candidates={},
     )
@@ -1520,6 +1565,138 @@ def _qualifier_options(
     return tuple(options.values()), states
 
 
+def _apply_as_of_semantic_default(
+    *,
+    resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
+    view: ResolverView | ResolverViewV3,
+    scopes: tuple[QueryScopeV2, ...],
+    fields: tuple[_FieldOffer, ...],
+    qualifier_options: tuple[QueryQualifiersV2, ...],
+    qualifier_states: dict[str, str],
+    semantic_default_registry: SemanticDefaultPolicyRegistry | None,
+    dataset_semantic_defaults: DatasetSemanticDefaultsV1 | None,
+) -> _AsOfDefaultResult:
+    unchanged = _AsOfDefaultResult(qualifier_options, qualifier_states)
+    if not isinstance(resolution, ValidatedIntentResolutionV3):
+        return unchanged
+
+    as_of_fields = tuple(
+        field
+        for field in fields
+        if {"as_of", "as_of_date"} & set(field.concept.required_qualifiers)
+    )
+    if not as_of_fields or dataset_semantic_defaults is None:
+        return unchanged
+    if semantic_default_registry is None:
+        return _AsOfDefaultResult(
+            qualifier_options,
+            qualifier_states,
+            rejection_reason="SEMANTIC_DEFAULT_REGISTRY_MISSING",
+        )
+    if not (
+        dataset_semantic_defaults.dataset_version
+        == view.active_dataset_pin.dataset_version
+        == resolution.dataset_version
+    ):
+        return _AsOfDefaultResult(
+            qualifier_options,
+            qualifier_states,
+            rejection_reason="SEMANTIC_DEFAULT_DATASET_PIN_MISMATCH",
+        )
+    if not (
+        dataset_semantic_defaults.manifest_hash
+        == view.active_dataset_pin.manifest_hash
+        == resolution.active_dataset_manifest_hash
+    ):
+        return _AsOfDefaultResult(
+            qualifier_options,
+            qualifier_states,
+            rejection_reason="SEMANTIC_DEFAULT_MANIFEST_PIN_MISMATCH",
+        )
+
+    policy = semantic_default_registry.policies_by_id.get(
+        ACTIVE_DATASET_AS_OF_POLICY_ID
+    )
+    if policy is None or policy.kind != "default":
+        return _AsOfDefaultResult(
+            qualifier_options,
+            qualifier_states,
+            rejection_reason="SEMANTIC_DEFAULT_REGISTRY_MISSING",
+        )
+    family_ids = {
+        family.value
+        for scope in scopes
+        for family in scope.product_family_ids
+    }
+    expected_pairs = {
+        (field.concept.concept_id, family_id)
+        for field in as_of_fields
+        for family_id in family_ids
+        if family_id in field.concept.allowed_product_families
+    }
+    eligible_pairs = {
+        (semantic_id, family_id)
+        for semantic_id, family_id in expected_pairs
+        if semantic_id in policy.eligible_semantic_ids
+        and family_id in policy.eligible_product_family_ids
+    }
+    applicable = tuple(
+        item
+        for item in dataset_semantic_defaults.defaults
+        if (item.semantic_id, item.product_family_id) in eligible_pairs
+    )
+    covered_pairs = {
+        (item.semantic_id, item.product_family_id) for item in applicable
+    }
+    if not expected_pairs or eligible_pairs != expected_pairs or covered_pairs != expected_pairs:
+        return _AsOfDefaultResult(
+            qualifier_options,
+            qualifier_states,
+            rejection_reason="SEMANTIC_DEFAULT_NOT_APPLICABLE",
+        )
+
+    dates = {item.as_of_date for item in applicable}
+    if len(dates) != 1:
+        return _AsOfDefaultResult(
+            qualifier_options,
+            qualifier_states,
+            rejection_reason="SEMANTIC_DEFAULT_MULTIPLE_DATES",
+        )
+    default_date = next(iter(dates))
+    if default_date > resolution.cutoff_date:
+        return _AsOfDefaultResult(
+            qualifier_options,
+            qualifier_states,
+            rejection_reason="SEMANTIC_DEFAULT_DATE_AFTER_CUTOFF",
+        )
+
+    explicit_dates = {
+        item.as_of_date
+        for item in qualifier_options
+        if item.as_of_date is not None
+    }
+    if explicit_dates and explicit_dates != {default_date}:
+        return _AsOfDefaultResult(
+            qualifier_options,
+            qualifier_states,
+            rejection_reason="SEMANTIC_DEFAULT_AS_OF_CONFLICT",
+        )
+    if explicit_dates:
+        return unchanged
+
+    return _AsOfDefaultResult(
+        qualifier_options=tuple(
+            item.model_copy(update={"as_of_date": default_date})
+            for item in qualifier_options
+        ),
+        qualifier_states={**qualifier_states, "as_of": "resolved"},
+        source_refs=(
+            ACTIVE_DATASET_AS_OF_POLICY_ID,
+            *(item.default_record_id for item in applicable),
+        ),
+    )
+
+
 def _fields_with_complete_qualifiers(
     frame: ValidatedIntentFrameV2,
     variant_id: str,
@@ -1878,6 +2055,7 @@ def _resolved_input_provenance(
     view: ResolverView,
     frame: ValidatedIntentFrameV2,
     resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
+    default_as_of_source_refs: tuple[str, ...] = (),
 ) -> tuple[ResolvedInputProvenanceV2, ...]:
     literals_by_id = {item.literal_id: item for item in view.literal_candidates}
     payload = contract.model_dump(
@@ -1925,6 +2103,11 @@ def _resolved_input_provenance(
                 or group.mention_id in frame.evidence_span_ids
             )
         )
+        if path == "qualifiers.as_of_date" and default_as_of_source_refs:
+            sources.extend(
+                (ProvenanceSourceKind.REGISTRY_DEFAULT, source_ref)
+                for source_ref in default_as_of_source_refs
+            )
         if not sources:
             if path == "scope.prior_result_binding":
                 sources.append((ProvenanceSourceKind.PRIOR_RESULT, rendered))

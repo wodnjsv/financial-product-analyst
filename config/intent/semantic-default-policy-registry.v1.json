@@ -1,0 +1,15 @@
+{
+  "registry_version": "semantic-default-policy-registry.v1",
+  "policies": [
+    {
+      "id": "active-dataset-as-of.v1",
+      "kind": "default",
+      "eligible_semantic_ids": ["aum"],
+      "eligible_product_family_ids": [
+        "domestic_etf",
+        "overseas_etf",
+        "public_fund"
+      ]
+    }
+  ]
+}
