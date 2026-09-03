@@ -4,6 +4,7 @@ from .query_contracts import (
     AxisReadiness,
     ContractReadiness,
     PlanReadiness,
+    ResolvedQueryContractSetV2,
     ResolvedQueryContractV2,
     SolvedQueryContractCandidateV2,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "AxisReadiness",
     "ContractReadiness",
     "PlanReadiness",
+    "ResolvedQueryContractSetV2",
     "ResolvedQueryContractV2",
     "SolvedQueryContractCandidateV2",
     "CandidateRejection",

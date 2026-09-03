@@ -121,6 +121,10 @@ from .values import (
     encode_contract_value,
 )
 
+# V2 semantic-query runtime artifacts are exported here for persistence dispatch.
+from financial_agent.intent.query_contracts import ResolvedQueryContractSetV2
+from financial_agent.planning.logical_query import LogicalQueryPlanV2
+
 __all__ = [
     "CONTRACT_SCHEMA_VERSION",
     "SNAPSHOT_CUTOFF",
@@ -224,4 +228,6 @@ __all__ = [
     "TupleValue",
     "decode_contract_value",
     "encode_contract_value",
+    "ResolvedQueryContractSetV2",
+    "LogicalQueryPlanV2",
 ]

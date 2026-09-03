@@ -40,11 +40,14 @@ from scripts.verify_database_migrations import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_intent_resolution_migration_is_the_single_alembic_head() -> None:
+def test_semantic_query_artifact_migration_is_the_single_alembic_head() -> None:
     config = Config(PROJECT_ROOT / "alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["0008"]
+    assert script.get_heads() == ["0009"]
+    revision = script.get_revision("0009")
+    assert revision is not None
+    assert revision.down_revision == "0008"
 
 
 def _object_manifest() -> dict[str, object]:
@@ -596,7 +599,7 @@ def test_disposable_database_runs_base_head_base_head_cycle(
 ) -> None:
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0008"
+    assert report.alembic_head == "0009"
     assert report.application_schema_count == 7
     assert report.object_counts["tables"] > 0
     assert report.object_counts["checks"] > 0
@@ -934,7 +937,7 @@ def test_cutoff_rebaseline_preserves_legacy_rows_and_fails_closed_on_downgrade(
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 "SELECT version_num FROM public.alembic_version"
-            ).fetchone()[0] == "0008"
+            ).fetchone()[0] == "0009"
             assert connection.execute(
                 """
                 SELECT count(*) FROM operations.dataset_version
@@ -1155,7 +1158,113 @@ def test_intent_resolution_audit_migration_fails_closed_on_lossy_downgrade(
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 "SELECT version_num FROM public.alembic_version"
-            ).fetchone()[0] == "0008"
+            ).fetchone()[0] == "0009"
+
+
+@pytest.mark.postgres
+def test_semantic_query_artifact_migration_round_trips_without_v2_rows(
+    postgres_database_url: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "0008")
+            command.upgrade(config, "0009")
+            command.downgrade(config, "0008")
+            command.upgrade(config, "0009")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                "SELECT version_num FROM public.alembic_version"
+            ).fetchone()[0] == "0009"
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("artifact_type", "object_id_field"),
+    (
+        ("query_contract", "query_contract_id"),
+        ("logical_query_plan", "logical_plan_id"),
+    ),
+)
+def test_semantic_query_artifacts_derive_ids_and_guard_downgrade(
+    postgres_database_url: str,
+    artifact_type: str,
+    object_id_field: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            created_at = _seed_task10_run(connection)
+            payload = json.loads(_task10_artifact_payload(created_at))
+            payload[object_id_field] = f"{artifact_type}-object-1"
+            canonical_payload = json.dumps(
+                payload, separators=(",", ":"), sort_keys=True
+            )
+            artifact_record_id = connection.execute(
+                "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+                (artifact_type, None, None, canonical_payload),
+            ).fetchone()[0]
+            stored = connection.execute(
+                """
+                SELECT contract_object_id, canonical_payload
+                FROM operations.request_artifact
+                WHERE artifact_record_id = %s
+                """,
+                (artifact_record_id,),
+            ).fetchone()
+            assert stored == (f"{artifact_type}-object-1", canonical_payload)
+
+        with configured_alembic_target_only():
+            with pytest.raises(DBAPIError) as captured:
+                command.downgrade(config, "0008")
+        assert "SEMANTIC_QUERY_ARTIFACTS_PREVENT_DOWNGRADE" in str(
+            captured.value.orig
+        )
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                "SELECT version_num FROM public.alembic_version"
+            ).fetchone()[0] == "0009"
+            assert connection.execute(
+                "SELECT count(*) FROM operations.request_artifact"
+            ).fetchone()[0] == 1
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize(
+    ("artifact_type", "object_id_field"),
+    (
+        ("query_contract", "query_contract_id"),
+        ("logical_query_plan", "logical_plan_id"),
+    ),
+)
+def test_semantic_query_artifacts_require_nonblank_object_ids(
+    postgres_database_url: str,
+    artifact_type: str,
+    object_id_field: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "head")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            created_at = _seed_task10_run(connection)
+            for invalid_id in (None, "   "):
+                payload = json.loads(_task10_artifact_payload(created_at))
+                if invalid_id is not None:
+                    payload[object_id_field] = invalid_id
+                with pytest.raises(psycopg.errors.InvalidParameterValue):
+                    with connection.transaction():
+                        connection.execute(
+                            "SELECT operations.append_request_artifact(%s, %s, %s, %s)",
+                            (
+                                artifact_type,
+                                None,
+                                None,
+                                json.dumps(payload, separators=(",", ":")),
+                            ),
+                        )
 
 
 def _mutate_second_head_behavior(
@@ -1355,7 +1464,7 @@ def test_migration_cycle_never_uses_an_ambient_database_url(
 
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0008"
+    assert report.alembic_head == "0009"
     assert os.environ["FINANCIAL_AGENT_DATABASE_URL"] == stale_url
 
 

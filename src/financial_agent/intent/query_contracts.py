@@ -9,7 +9,14 @@ from typing import Annotated, Literal, Self, TypeAlias
 
 from pydantic import ConfigDict, Field, model_validator
 
-from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex, UtcDateTime
+from financial_agent.contracts.base import (
+    ContractModel,
+    Identifier,
+    RuntimeArtifact,
+    Sha256Hex,
+    UtcDateTime,
+)
+from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.enums import IntentType, ProductFamily
 from financial_agent.contracts.values import DECIMAL_PATTERN
 
@@ -596,6 +603,83 @@ class ResolvedQueryContractBundleV2(_StrictContractModel):
             "DUPLICATE_FRAME_ID",
         )
         return self
+
+
+class QueryContractSelectionProvenanceV2(_StrictContractModel):
+    frame_id: Identifier
+    selected_candidate_id: Identifier
+    selection_method: Literal[
+        "unique", "deterministic_tie_break", "hcx_offered_id"
+    ]
+    judge_prompt_version: Identifier | None = None
+
+    @model_validator(mode="after")
+    def require_prompt_only_for_model_judge(self) -> Self:
+        if (self.selection_method == "hcx_offered_id") != bool(
+            self.judge_prompt_version
+        ):
+            raise ValueError("JUDGE_PROMPT_PROVENANCE_MISMATCH")
+        return self
+
+
+class QueryContractFrameReadinessV2(_StrictContractModel):
+    frame_id: Identifier
+    axis: AxisReadinessRecordV2
+    contract: ContractReadinessRecordV2
+    plan: PlanReadinessRecordV2
+
+
+class ResolvedQueryContractSetV2(RuntimeArtifact):
+    """Persistable, self-validating V2 semantic-query contract artifact."""
+
+    query_contract_version: Literal["2.0"] = "2.0"
+    query_contract_id: Identifier
+    resolution_id: Identifier
+    contracts: tuple[ResolvedQueryContractV2, ...] = Field(
+        min_length=1, max_length=MAX_FRAMES
+    )
+    registry_pins: QueryRegistryPinsV2
+    judge_provenance: tuple[QueryContractSelectionProvenanceV2, ...] = Field(
+        min_length=1, max_length=MAX_FRAMES
+    )
+    readiness: tuple[QueryContractFrameReadinessV2, ...] = Field(
+        min_length=1, max_length=MAX_FRAMES
+    )
+
+    @model_validator(mode="after")
+    def validate_contract_set(self) -> Self:
+        frame_ids = tuple(contract.frame_id for contract in self.contracts)
+        _require_unique(frame_ids, "DUPLICATE_FRAME_ID")
+        if tuple(item.frame_id for item in self.judge_provenance) != frame_ids:
+            raise ValueError("CONTRACT_SELECTION_OWNERSHIP_MISMATCH")
+        if tuple(item.frame_id for item in self.readiness) != frame_ids:
+            raise ValueError("CONTRACT_READINESS_OWNERSHIP_MISMATCH")
+        if any(
+            contract.registry_pins != self.registry_pins
+            for contract in self.contracts
+        ):
+            raise ValueError("CONTRACT_REGISTRY_PIN_MISMATCH")
+        if any(
+            contract.axis_readiness != readiness.axis
+            or contract.contract_readiness != readiness.contract
+            or contract.plan_readiness != readiness.plan
+            for contract, readiness in zip(
+                self.contracts, self.readiness, strict=True
+            )
+        ):
+            raise ValueError("CONTRACT_READINESS_MISMATCH")
+        expected_id = resolved_query_contract_set_id(self.contracts)
+        if self.query_contract_id != expected_id:
+            raise ValueError("QUERY_CONTRACT_ID_MISMATCH")
+        return self
+
+
+def resolved_query_contract_set_id(
+    contracts: tuple[ResolvedQueryContractV2, ...],
+) -> str:
+    return "query-contract-bundle-" + canonical_sha256(
+        ResolvedQueryContractBundleV2(contracts=contracts)
+    )
 
 
 def predicate_atom_count(predicate: PredicateNodeV2) -> int:

@@ -32,6 +32,7 @@ from financial_agent.intent.query_contracts import (
     ResolvedQueryContractBundleV2,
     ResolvedQueryContractV2,
     SolvedQueryContractCandidateV2,
+    resolved_query_contract_set_id,
 )
 from financial_agent.intent.view import ActiveDatasetPin
 
@@ -1074,7 +1075,7 @@ def _identity_task(candidate: QueryContractCandidate) -> LogicalQueryTaskV2:
 def resolved_query_contract_bundle_id(
     bundle: ResolvedQueryContractBundleV2,
 ) -> str:
-    return f"query-contract-bundle-{canonical_sha256(bundle)}"
+    return resolved_query_contract_set_id(bundle.contracts)
 
 
 def semantic_compilation_id(compilation: SemanticQueryPlanCompilation) -> str:

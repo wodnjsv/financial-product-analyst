@@ -34,12 +34,15 @@ from financial_agent.contracts import (
     VerificationReport,
     build_request_key,
     canonical_json_bytes,
+    canonical_sha256,
 )
 from financial_agent.db.preflight import normalize_psycopg_url
 from financial_agent.intent.resolution import (
     ValidatedIntentResolution,
     ValidatedIntentResolutionV2,
 )
+from financial_agent.intent.query_contracts import ResolvedQueryContractSetV2
+from financial_agent.planning.logical_query import LogicalQueryPlanV2
 from tests.fixtures.db.synthetic_dataset import (
     CREATED_AT,
     VALID_RECORD_HASH,
@@ -51,9 +54,12 @@ from tests.fixtures.db.synthetic_dataset import (
 
 
 FIXTURE_ROOT = Path(__file__).parents[1] / "fixtures" / "contracts" / "v1"
+V2_FIXTURE_ROOT = Path(__file__).parents[1] / "fixtures" / "contracts" / "v2"
 MODEL_BY_TYPE: dict[str, type[RuntimeArtifact]] = {
     "request_context": RequestContext,
     "intent_resolution": ValidatedIntentResolution,
+    "query_contract": ResolvedQueryContractSetV2,
+    "logical_query_plan": LogicalQueryPlanV2,
     "query_plan": QueryPlan,
     "execution_graph": ExecutionGraph,
     "tool_result": ToolResult,
@@ -72,6 +78,11 @@ FIXTURE_BY_TYPE = {
     "answer_plan": "answer_plan.json",
 }
 
+V2_FIXTURE_BY_TYPE = {
+    "query_contract": "query_contract.json",
+    "logical_query_plan": "logical_query_plan.json",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ArtifactContext:
@@ -85,6 +96,10 @@ class ArtifactContext:
 
 def _fixture_payload(name: str) -> dict[str, Any]:
     return json.loads((FIXTURE_ROOT / name).read_text(encoding="utf-8"))
+
+
+def _v2_fixture_payload(name: str) -> dict[str, Any]:
+    return json.loads((V2_FIXTURE_ROOT / name).read_text(encoding="utf-8"))
 
 
 def _artifact_context(database_url: str) -> ArtifactContext:
@@ -173,6 +188,24 @@ def _artifact(
             "repair_used": False,
             "invalid_attempt_hashes": [],
         }
+    elif artifact_type in V2_FIXTURE_BY_TYPE:
+        payload = _v2_fixture_payload(V2_FIXTURE_BY_TYPE[artifact_type])
+        payload.update(
+            {
+                "request_key": context.request_key,
+                "run_id": context.run_id,
+                "dataset_version": context.dataset_version,
+                "created_at": context.created_at.isoformat().replace("+00:00", "Z"),
+            }
+        )
+        if artifact_type == "logical_query_plan":
+            payload["logical_plan_id"] = "logical-query-plan-" + canonical_sha256(
+                {
+                    key: value
+                    for key, value in payload.items()
+                    if key != "logical_plan_id"
+                }
+            )
     elif artifact_type == "released_answer":
         payload: dict[str, Any] = {
             "schema_version": "1.0",
@@ -301,6 +334,16 @@ def test_intent_resolution_and_query_plan_model_metadata_policy() -> None:
             "query_plan", "synthetic-model", "intent-resolver-ko-v1"
         )
     _validate_model_metadata("query_plan", None, None)
+    for deterministic_type in ("query_contract", "logical_query_plan"):
+        with pytest.raises(ArtifactValidationError, match="MODEL_METADATA_FORBIDDEN"):
+            _validate_model_metadata(
+                deterministic_type,  # type: ignore[arg-type]
+                "synthetic-model",
+                "semantic-query-v2",
+            )
+        _validate_model_metadata(  # type: ignore[arg-type]
+            deterministic_type, None, None
+        )
 
 
 @pytest.mark.parametrize(
@@ -410,6 +453,78 @@ def test_intent_resolution_contract_model_is_registered() -> None:
     from financial_agent.intent.resolution import ValidatedIntentResolution
 
     assert ARTIFACT_MODELS["intent_resolution"] is ValidatedIntentResolution
+
+
+def test_semantic_query_artifact_models_are_registered_without_changing_v1_dispatch(
+) -> None:
+    from financial_agent.db.repositories.artifacts import (
+        ARTIFACT_MODELS,
+        _artifact_model,
+    )
+
+    assert ARTIFACT_MODELS["query_contract"] is ResolvedQueryContractSetV2
+    assert ARTIFACT_MODELS["logical_query_plan"] is LogicalQueryPlanV2
+    assert _artifact_model("query_contract", b"{}") is ResolvedQueryContractSetV2
+    assert _artifact_model("logical_query_plan", b"{}") is LogicalQueryPlanV2
+    assert _artifact_model(
+        "intent_resolution",
+        json.dumps({"build_manifest": {"resolver_schema_version": "1.0"}}),
+    ) is ValidatedIntentResolution
+
+
+@pytest.mark.parametrize("artifact_type", ("query_contract", "logical_query_plan"))
+def test_semantic_query_fixtures_are_strict_and_content_addressed(
+    artifact_type: str,
+) -> None:
+    context = ArtifactContext(
+        dataset_version="dataset-v1",
+        run_id="run-1",
+        request_key="e" * 64,
+        question_id="Q-v2",
+        question="Synthetic V2 persistence fixture",
+        created_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+    artifact = _artifact(artifact_type, context)
+    object_id_field = (
+        "query_contract_id"
+        if artifact_type == "query_contract"
+        else "logical_plan_id"
+    )
+    payload = artifact.model_dump(mode="json")
+    payload[object_id_field] = "forged-object-id"
+
+    with pytest.raises(ValueError):
+        MODEL_BY_TYPE[artifact_type].model_validate(payload)
+    with pytest.raises(ValueError):
+        MODEL_BY_TYPE[artifact_type].model_validate(
+            {**artifact.model_dump(mode="json"), "unexpected": True}
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    (
+        (("registry_pins", "contract_registry_hash"), "f" * 64,
+         "CONTRACT_REGISTRY_PIN_MISMATCH"),
+        (("readiness", 0, "frame_id"), "foreign-frame",
+         "CONTRACT_READINESS_OWNERSHIP_MISMATCH"),
+        (("judge_provenance", 0, "frame_id"), "foreign-frame",
+         "CONTRACT_SELECTION_OWNERSHIP_MISMATCH"),
+    ),
+)
+def test_query_contract_fixture_rejects_divergent_pins_and_ownership(
+    path: tuple[str | int, ...],
+    value: object,
+    message: str,
+) -> None:
+    payload = _v2_fixture_payload("query_contract.json")
+    target: Any = payload
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = value
+
+    with pytest.raises(ValueError, match=message):
+        ResolvedQueryContractSetV2.model_validate_json(json.dumps(payload))
 
 
 def test_failure_event_accepts_only_bounded_payload_audit_metadata() -> None:
@@ -982,6 +1097,10 @@ async def test_repository_round_trips_all_registered_models(
         "request_context": None,
         "intent_resolution": "resolution-syn-001",
         "query_plan": None,
+        "query_contract": _artifact("query_contract", context).query_contract_id,
+        "logical_query_plan": _artifact(
+            "logical_query_plan", context
+        ).logical_plan_id,
         "execution_graph": "graph-syn-001",
         "tool_result": "t3",
         "evidence_bundle": "bundle-syn-001",
@@ -1013,7 +1132,39 @@ async def test_repository_round_trips_all_registered_models(
             (context.run_id,),
         ).fetchall()
     assert dict(rows) == expected_contract_ids
-    assert len(set(stored.values())) == 9
+    assert len(set(stored.values())) == len(MODEL_BY_TYPE)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artifact_type", ("query_contract", "logical_query_plan"))
+async def test_semantic_query_object_id_is_idempotent_only_for_identical_payload(
+    migrated_database_url: str,
+    artifact_engine: AsyncEngine,
+    artifact_type: str,
+) -> None:
+    from financial_agent.db.repositories.artifacts import (
+        ArtifactConflict,
+        RequestArtifactRepository,
+    )
+
+    context = _artifact_context(migrated_database_url)
+    repository = RequestArtifactRepository(artifact_engine)
+    artifact = _artifact(artifact_type, context)
+    first = await repository.append(
+        artifact_type, artifact  # type: ignore[arg-type]
+    )
+    assert (
+        await repository.append(
+            artifact_type, artifact  # type: ignore[arg-type]
+        )
+        == first
+    )
+    divergent = artifact.model_copy(update={"producer": "divergent-producer"})
+    with pytest.raises(ArtifactConflict, match="ARTIFACT_CONFLICT"):
+        await repository.append(artifact_type, divergent)  # type: ignore[arg-type]
+
+    assert await repository.get(context.run_id, first) == artifact
 
 
 @pytest.mark.postgres

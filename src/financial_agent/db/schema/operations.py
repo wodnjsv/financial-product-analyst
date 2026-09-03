@@ -379,6 +379,8 @@ ARTIFACT_TYPES = (
     "request_context",
     "intent_resolution",
     "query_plan",
+    "query_contract",
+    "logical_query_plan",
     "execution_graph",
     "tool_result",
     "evidence_bundle",
@@ -479,6 +481,12 @@ request_artifact = sa.Table(
         "(contract_object_id IS NOT NULL AND "
         "contract_object_id ~ '[^[:space:]]')",
         name="intent_resolution_contract_object_id",
+    ),
+    sa.CheckConstraint(
+        "artifact_type NOT IN ('query_contract','logical_query_plan') OR "
+        "(contract_object_id IS NOT NULL AND "
+        "contract_object_id ~ '[^[:space:]]')",
+        name="semantic_query_contract_object_id",
     ),
     schema="operations",
 )
