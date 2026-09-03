@@ -1,0 +1,17 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:product a fp:FinancialProduct, fp:ETF ; fp:holdsSecurity fp:security .
+  fp:security a fp:Security .
+  fp:evidence a fp:EvidenceRecord ; fp:sourceRecord fp:source .
+  fp:source a fp:SourceRecord .
+  fp:weight-1 a fp:HoldingWeightObservation ; fp:observationId "weight-1" ;
+    fp:holdingWeightPercentage "27.4"^^xsd:decimal ; fp:applicableDate "2026-08-24"^^xsd:date .
+  fp:weight-2 a fp:HoldingWeightObservation ; fp:observationId "weight-2" ;
+    fp:holdingWeightPercentage "25.1"^^xsd:decimal ; fp:applicableDate "2026-08-23"^^xsd:date .
+  fp:relation a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:holdsSecurity ;
+    fp:object fp:security ; fp:relationId "multiple-holding-weights" ;
+    fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence ;
+    fp:holdingWeightObservation fp:weight-1, fp:weight-2 .
+}

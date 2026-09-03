@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-10
 
-**Status:** Task 1 reinforced with official competition briefs on 2026-08-15
+**Status:** 52-case schema 1.3 requirement and retrieval contract approved 2026-08-30
 
 **Scope:** 서버를 제외한 금융 Agent 핵심 동작의 질문 이해, 문맥 해소, 검색 계획, 검증, 답변 또는 제한 판단
 
@@ -309,17 +309,18 @@ weighted_holdings_overlap(A, B)
 | `dependencies` | 앞 단계 결과를 다음 단계가 쓰는 관계 |
 | `product_families` | 질문에 필요한 상품 도메인 |
 | `required_fields` | 원천 데이터 필드 |
-| `required_relations` | 온톨로지 또는 지식 그래프 관계 |
+| `requirements` | `entities`, `attributes`, `metrics`, `relations`, `document_claims`, `control_checks`의 여섯 실행 요구사항 그룹 |
 | `data_requirements` | 주최 측 및 공식 외부 데이터와 컷오프 |
 | `business_rules` | 결정론적 검증 규칙 |
 | `reference_resolution` | 지시어와 기대 바인딩 또는 모호성 |
 | `similarity_basis` | 유사상품 질문의 비교 축 |
 | `similarity_policy_id` | 적용할 상품군별 하드 필터·가중치 정책 버전 |
 | `support_level` | 지원, 제한부 지원, 추가 데이터 필요, 미지원 |
+| `requires_data` | 현재 상태가 `requires_additional_data`인지 나타내는 명시적 불리언 |
+| `verification` | 커버리지 설계 평가와 현재 DB 실행 여부·검증 데이터셋·결과 산출물을 분리한 상태 |
 | `target_support_level` | 추가 공식 데이터 구축 후 목표 상태 |
 | `expected_route` | 선택해야 할 상품 도메인; Specialist를 쓰는 구조에서는 호출 목록으로도 사용 |
-| `retrieval_profile` | 선택적 케이스 override. 없으면 카테고리 기본값과 하위 작업 요구에서 `rdb`, `graph`, `vector`, `keyword`의 조합을 결정 |
-| `subtask_routes` | 복합·공식 예시에서 각 하위 작업과 저장소·검색기의 명시적 연결 |
+| `retrieval` | 모든 케이스의 최종 profile·역할과 각 `subtask`의 Capability route |
 | `ontology_checks` | 복합·답변 불가 사례의 엔티티 유형, 허용 어휘, 관계 경로, 카디널리티 검증 |
 | `temporal_scope` | 기간 질문에 적용할 최근 6개월, 기준일 현재 등의 범위와 경계 |
 | `answerability_basis` | 공식 답변 가능성 사례에서 답변·제한·거절을 선택하는 데이터 및 제약 근거 |
@@ -327,6 +328,17 @@ weighted_holdings_overlap(A, B)
 | `expected_disposition` | 답변, 제한, 거절; 대회 모드에서는 명확화 질문 없음 |
 | `expected_evidence` | 답변에 필요한 증거 필드 |
 | `risk_note` | 금융·데이터 위험 주의사항 |
+
+`requirements.relations`에는 승인된 13개 Graph domain predicate만 들어간다.
+`Region`, `AssetClass`, 상품 위험등급, 채권 신용등급, 통화와 상태는
+`requirements.attributes`의 제어 어휘다. AUM·수익률·가격·NAV·보수·만기 등은
+`requirements.metrics`이며 PostgreSQL 관측값 또는 관계 assertion 속성이
+권위를 갖는다. 구조·전략·위험·동향은 `document_claims`로 분리하고 발행기관,
+게시일, 효력기간, 가용일과 원문 위치를 함께 요구한다.
+
+`support_level`은 2026-08-24 기준 데이터 커버리지 판정이고,
+`verification.current_db_execution`은 실제 end-to-end 실행 결과다. 설계상
+지원된다는 이유만으로 실행하지 않은 질문을 `passed`로 표시하지 않는다.
 
 ## 7. 질문 유형과 케이스 수
 
@@ -357,7 +369,7 @@ weighted_holdings_overlap(A, B)
 - 외부 API는 승인 질문의 필수 데이터 요구사항에 연결될 때만 사용하고, 관계없는 거시·시장 데이터를 답변에 덧붙이지 않는다.
 - 다단계 질문은 선행 결과가 생성되기 전에 후행 단계를 실행하지 않는다.
 - 구조화 조건은 SQL 또는 일반 코드의 하드 필터다.
-- 각 하위 작업은 RDB·Graph·Vector·Keyword 중 검증 가능한 검색 역할에 연결된다.
+- 각 하위 작업은 schema `1.3`의 `retrieval.subtask_routes`에 정확히 한 번 나타나고 승인된 Capability와 검증 가능한 역할에 연결된다.
 - 온톨로지는 프롬프트 설명이 아니라 엔티티 해소, 관계 경로 선택, 허용 값 검증과 검색 라우팅에 사용된다.
 - 지식 그래프의 모든 관계 edge는 실제 인스턴스, 적용일과 원천을 가져야 한다.
 - 상품 문서 청크는 상품 ID, 문서 ID, 페이지·절과 부모 문맥을 보존한다.
@@ -378,4 +390,5 @@ weighted_holdings_overlap(A, B)
 3. 추가 공식 데이터의 실제 원천 활성화는 ADR-0008에서 질문별 필요성과 함께 결정한다.
 4. 내부 골드 세트는 공식 35문항보다 넓은 52개 유형으로 유지한다.
 5. 공식 과제 자료는 Graph와 Vector 검색 능력을 요구하지만 별도 Graph DB·Vector DB 또는 멀티 에이전트 구조를 강제하지 않는다.
-6. 52개 질문 유형의 구현 순서는 Task 2 결정 이후 확정한다.
+6. 52개 질문의 schema `1.3` 요구사항과 명시적 route를 Stage 04~07 구현 순서의 입력으로 사용한다.
+7. schema `1.3` 정규화는 지원 상태 수량을 바꾸지 않으며, 논리 온톨로지 경계와 실제 Stage 04 실행 검증을 분리한다.

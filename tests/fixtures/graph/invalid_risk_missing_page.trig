@@ -1,0 +1,13 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:product a fp:FinancialProduct ; fp:hasRiskFactor fp:risk .
+  fp:risk a fp:RiskFactor ; fp:documentChunk fp:chunk .
+  fp:chunk a fp:DocumentChunk ; fp:section "Risk" ; fp:sourceSpan "span" ;
+    fp:evidenceRecord fp:evidence .
+  fp:evidence a fp:EvidenceRecord ; fp:sourceRecord fp:source .
+  fp:source a fp:SourceRecord .
+  fp:relation a fp:RelationAssertion ; fp:subject fp:product ;
+    fp:predicate fp:hasRiskFactor ; fp:object fp:risk ; fp:relationId "missing-page" ;
+    fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+}

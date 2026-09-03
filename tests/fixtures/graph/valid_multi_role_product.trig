@@ -1,0 +1,10 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:product a fp:FinancialProduct, fp:ETF, fp:DomesticETF, fp:FundShareClass .
+  fp:manager a fp:AssetManager .
+  fp:evidence a fp:EvidenceRecord ; fp:sourceRecord fp:source .
+  fp:source a fp:SourceRecord .
+  fp:product fp:managedBy fp:manager .
+  fp:relation a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:managedBy ; fp:object fp:manager ; fp:relationId "multi-role-manager" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence .
+}

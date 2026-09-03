@@ -1,0 +1,1 @@
+"""Graph ontology contract tests."""

@@ -27,6 +27,10 @@ ingestion = [
   "boto3>=1.35,<2",
   "pdfplumber>=0.11.9,<0.12",
 ]
+graph = [
+  "rdflib>=7.6,<8",
+  "pyshacl>=0.40,<1",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
@@ -38,6 +42,7 @@ markers = [
   "organizer_data: requires the ignored local organizer workbooks",
   "object_storage: requires an explicitly configured private Object Storage target",
   "official_data: requires explicitly configured live official sources",
+  "jena_integration: requires RUN_JENA_INTEGRATION=1 and external Apache Jena/Fuseki 6.0.0 binaries",
 ]
 
 [tool.setuptools.packages.find]

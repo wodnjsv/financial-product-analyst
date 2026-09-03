@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-27
 
-**Status:** Frozen for Stage 03 local completion
+**Status:** Coverage frozen; schema 1.3 contract aligned 2026-08-30
 
 **Knowledge cutoff:** `2026-08-24`
 
@@ -10,7 +10,10 @@
 
 비공개 평가 35문항의 정확한 문장을 추측하지 않고, 내부 52개 회귀
 케이스의 현재 데이터 지원 경계를 고정한다. 질문별 상세 계약은
-`tests/gold/core_questions.json` 1.2가 단일 기계가독 기준이다.
+`tests/gold/core_questions.json` 1.3이 단일 기계가독 기준이다. 이 문서의
+지원 상태는 2026-08-24 데이터 커버리지 설계 판정이며, schema `1.3`의
+`verification.current_db_execution`은 실제 Stage 04 이후 실행 검증을 별도로
+기록한다. 커버리지 동결만으로 실행 결과를 `passed`로 간주하지 않는다.
 
 ## 2. 지원 상태
 
@@ -120,5 +123,6 @@ Evidence가 실제 커버 모집단을 증명하기 전에 전수 답변을 선�
 ## 7. 변경 통제
 
 - 상태 변경은 승인 원천·식별자 교차표·커버리지 수치가 변했을 때만 한다.
+- 실행 검증의 `not_run`, `passed`, `failed`, `not_applicable` 변경만으로 이 문서의 지원 상태를 바꾸지 않는다.
 - 부분 원천을 추가했다고 `closed_world_scope`를 선언하지 않는다.
 - 주최 측 결측값을 외부값으로 보완하는 정책 변경은 별도 ADR과 사용자 승인 없이 허용하지 않는다.

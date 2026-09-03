@@ -1,0 +1,11 @@
+@prefix fp: <urn:ontology:financial-product:v1#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:data:financial-product:2026-08-24-v1> {
+  fp:product a fp:FinancialProduct .
+  fp:manager a fp:AssetManager .
+  fp:evidence a fp:EvidenceRecord ; fp:sourceRecord fp:source .
+  fp:source a fp:SourceRecord .
+  fp:product fp:managedBy fp:manager .
+  fp:relation a fp:RelationAssertion ; fp:subject fp:product ; fp:predicate fp:managedBy ; fp:object fp:manager ; fp:relationId "cutoff-day-datetime" ; fp:datasetVersion "2026-08-24-v1" ; fp:supportedBy fp:evidence ; fp:publishedAt "2026-08-24T23:59:59+09:00"^^xsd:dateTime ; fp:availableAt "2026-08-24T14:59:59Z"^^xsd:dateTime .
+}
