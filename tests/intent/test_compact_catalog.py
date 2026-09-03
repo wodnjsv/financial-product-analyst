@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -65,3 +66,17 @@ def test_compact_card_rejects_physical_schema_fields() -> None:
                 "metric_id": "not-allowed",
             }
         )
+
+
+def test_compact_catalog_rejects_physical_schema_tokens_in_emitted_tuples() -> None:
+    snapshot = load_hybrid_catalog(PROJECT_ROOT)
+    unsafe_concept = snapshot.concepts_by_id["aum"].model_copy(
+        update={"required_qualifiers": ("catalog.observation",)}
+    )
+    unsafe_snapshot = replace(
+        snapshot,
+        concepts_by_id={**snapshot.concepts_by_id, "aum": unsafe_concept},
+    )
+
+    with pytest.raises(ValueError, match="physical-schema"):
+        build_compact_semantic_catalog(unsafe_snapshot)

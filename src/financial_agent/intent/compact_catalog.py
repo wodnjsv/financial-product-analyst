@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
+from financial_agent.contracts.canonical import canonical_json_bytes
 
 from .catalog import SemanticCatalogSnapshot
 
@@ -87,14 +88,6 @@ def _build_card(
 
 
 def _reject_physical_schema_tokens(card: CompactSemanticConceptV1) -> None:
-    payload = "\n".join(
-        value
-        for value in (
-            card.preferred_label_ko,
-            card.definition_ko,
-            card.disambiguation_ko,
-        )
-        if value is not None
-    )
+    payload = canonical_json_bytes(card).decode("utf-8")
     if any(token in payload for token in _PHYSICAL_SCHEMA_TOKENS):
         raise ValueError("compact semantic cards cannot contain physical-schema fields")
