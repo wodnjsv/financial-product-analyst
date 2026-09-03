@@ -75,7 +75,7 @@ def test_installed_preflight_uses_explicit_project_root(tmp_path: Path) -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout == "0008\n"
+    assert completed.stdout == "0009\n"
 
 
 def _pre_migration_snapshot() -> PreflightSnapshot:
@@ -343,7 +343,7 @@ def test_post_migration_preflight_detects_direct_dml_or_role_membership_drift(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0007",
+                alembic_head="0009",
             )
         finally:
             connection.rollback()
@@ -603,7 +603,7 @@ def test_postflight_rejects_migration_extension_inventory_drift(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0007",
+                alembic_head="0009",
             )
             with pytest.raises(PreflightFailure) as captured:
                 validate_post_migration_snapshot(snapshot)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime
 import hashlib
 from uuid import uuid4
@@ -27,6 +28,12 @@ from tests.fixtures.db.synthetic_dataset import (
 
 
 CUTOFF = date(2026, 8, 24)
+RECOVERY_TEST_MODEL = replace(
+    APPROVED_MODEL,
+    model_id="test-dart-recovery-model",
+    model_version="1",
+    approval_record_id="test-dart-recovery-approval",
+)
 
 
 def _sha256(value: str) -> str:
@@ -482,13 +489,13 @@ def _prepare_dart_recovery_states(database_url: str) -> tuple[str, dict[str, str
             ON CONFLICT (model_id, model_version) DO NOTHING
             """,
             (
-                APPROVED_MODEL.model_id,
-                APPROVED_MODEL.model_version,
-                APPROVED_MODEL.dimension,
+                RECOVERY_TEST_MODEL.model_id,
+                RECOVERY_TEST_MODEL.model_version,
+                RECOVERY_TEST_MODEL.dimension,
                 CREATED_AT,
-                "d" * 64,
+                RECOVERY_TEST_MODEL.model_hash,
                 wrong_model_id,
-                APPROVED_MODEL.dimension,
+                RECOVERY_TEST_MODEL.dimension,
                 CREATED_AT,
                 "e" * 64,
             ),
@@ -510,15 +517,15 @@ def _prepare_dart_recovery_states(database_url: str) -> tuple[str, dict[str, str
             (
                 dataset_version,
                 embedded_hash,
-                APPROVED_MODEL.model_id,
-                APPROVED_MODEL.model_version,
-                APPROVED_MODEL.dimension,
+                RECOVERY_TEST_MODEL.model_id,
+                RECOVERY_TEST_MODEL.model_version,
+                RECOVERY_TEST_MODEL.dimension,
                 vector_literal,
                 CREATED_AT,
                 dataset_version,
                 current_hash,
                 wrong_model_id,
-                APPROVED_MODEL.dimension,
+                RECOVERY_TEST_MODEL.dimension,
                 vector_literal,
                 CREATED_AT,
             ),
@@ -538,9 +545,9 @@ def _prepare_dart_recovery_states(database_url: str) -> tuple[str, dict[str, str
                 (
                     dataset_version,
                     "f" * 64,
-                    APPROVED_MODEL.model_id,
-                    APPROVED_MODEL.model_version,
-                    APPROVED_MODEL.dimension,
+                    RECOVERY_TEST_MODEL.model_id,
+                    RECOVERY_TEST_MODEL.model_version,
+                    RECOVERY_TEST_MODEL.dimension,
                     vector_literal,
                     CREATED_AT,
                 ),
@@ -562,7 +569,7 @@ async def test_lists_dart_recovery_states_with_only_current_approved_embeddings(
     async with repository_engine.connect() as connection:
         states = await DocumentTargetRepository(connection).list_dart_recovery_states(
             dataset_version,
-            APPROVED_MODEL,
+            RECOVERY_TEST_MODEL,
         )
 
     by_id = {state.entity_id: state for state in states}

@@ -488,7 +488,7 @@ def test_manifest_and_postflight_reject_redacted_unexpected_principals(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0008",
+                alembic_head="0009",
             )
             with pytest.raises(PreflightFailure) as preflight_error:
                 validate_post_migration_snapshot(snapshot)
@@ -544,7 +544,7 @@ def test_manifest_and_postflight_reject_column_acl_drift(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0008",
+                alembic_head="0009",
             )
             with pytest.raises(PreflightFailure) as preflight_error:
                 validate_post_migration_snapshot(snapshot)
@@ -591,7 +591,7 @@ def test_disposable_database_runs_base_head_base_head_cycle(
 ) -> None:
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0008"
+    assert report.alembic_head == "0009"
     assert report.application_schema_count == 7
     assert report.object_counts["tables"] > 0
     assert report.object_counts["checks"] > 0
@@ -1019,7 +1019,7 @@ def test_cutoff_rebaseline_preserves_legacy_rows_and_fails_closed_on_downgrade(
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 "SELECT version_num FROM public.alembic_version"
-            ).fetchone()[0] == "0008"
+            ).fetchone()[0] == "0009"
             assert connection.execute(
                 """
                 SELECT count(*) FROM operations.dataset_version
@@ -1227,7 +1227,7 @@ def test_migration_cycle_never_uses_an_ambient_database_url(
 
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0008"
+    assert report.alembic_head == "0009"
     assert os.environ["FINANCIAL_AGENT_DATABASE_URL"] == stale_url
 
 

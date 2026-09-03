@@ -889,6 +889,7 @@ def _truncate_foundation_tables(database_url: str) -> None:
                 evidence.evidence_record,
                 search.document_embedding,
                 search.embedding_model,
+                document.document_source_artifact,
                 document.document_chunk,
                 document.document_record,
                 observation.observation_record,
