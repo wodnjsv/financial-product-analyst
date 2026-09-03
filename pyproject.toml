@@ -10,6 +10,9 @@ dependencies = [
   "pydantic>=2.10,<3",
 ]
 
+[project.scripts]
+financial-agent-graph-build = "financial_agent.graph.cli:main"
+
 [project.optional-dependencies]
 dev = [
   "jsonschema>=4.23,<5",

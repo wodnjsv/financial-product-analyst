@@ -235,31 +235,31 @@ feat: promote document candidates to evidence
 - Produces: `data.nq`, `evidence.nq`, `manifest.json`, and a sanitized aggregate
   report only after repository load, deterministic export, and SHACL success.
 
-- [ ] **Step 1: Write failing configuration and safety tests**
+- [x] **Step 1: Write failing configuration and safety tests**
 
 Reject a missing dataset, output inside the repository, symlink output,
 nonempty output, and a report containing entity IDs, source locators, or raw
 values.
 
-- [ ] **Step 2: Write a failing deterministic build test**
+- [x] **Step 2: Write a failing deterministic build test**
 
 Build twice from the same synthetic PostgreSQL dataset into separate temporary
 directories and require byte-identical N-Quads and manifest hashes.
 
-- [ ] **Step 3: Implement the thin command**
+- [x] **Step 3: Implement the thin command**
 
 Compose only the existing repository, exporter, validator, and manifest APIs.
 Use atomic file replacement and remove partial output on failure. Do not add a
 second exporter or validation path.
 
-- [ ] **Step 4: Run CLI and Graph suites**
+- [x] **Step 4: Run CLI and Graph suites**
 
 ```bash
 .venv/bin/pytest -q tests/graph/test_graph_cli.py tests/graph \
   -m 'not jena_integration'
 ```
 
-- [ ] **Step 5: Commit the build command**
+- [x] **Step 5: Commit the build command**
 
 ```text
 feat: build deterministic graph artifacts
