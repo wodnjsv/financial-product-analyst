@@ -34,6 +34,9 @@ from tests.fixtures.db.synthetic_dataset import (
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 _TAGGED = Jsonb({"type": "string", "value": "synthetic"})
+DOMESTIC_ETP_TYPE_METRIC_ID = "organizer.pref01n001.product_type"
+OVERSEAS_ETP_TYPE_METRIC_ID = "organizer.pref02n001.product_type"
+OVERSEAS_IS_ETN_METRIC_ID = "organizer.pref02n001.is_etn"
 
 
 def _insert_product(connection, dataset_version: str, entity_id: str, family: str) -> None:
@@ -162,6 +165,7 @@ def _insert_product_type(
     value: str,
     definition_version: str,
     ordinal: int = 1,
+    metric_id: str = DOMESTIC_ETP_TYPE_METRIC_ID,
 ) -> None:
     connection.execute(
         """
@@ -169,19 +173,90 @@ def _insert_product_type(
             dataset_version, observation_id, entity_id, relation_id, metric_id,
             metric_definition_version, value_status, text_value, applicable_date,
             record_hash, created_at
-        ) VALUES (%s, %s, %s, NULL, 'product_type', %s, 'present', %s,
+        ) VALUES (%s, %s, %s, NULL, %s, %s, 'present', %s,
                   DATE '2026-08-24', %s, %s)
         """,
         (
             dataset_version,
             f"product-type-{entity_id}-{ordinal}",
             entity_id,
+            metric_id,
             definition_version,
             value,
             VALID_RECORD_HASH,
             CREATED_AT,
         ),
     )
+
+
+def _insert_is_etn(
+    connection,
+    dataset_version: str,
+    entity_id: str,
+    definition_version: str,
+    *,
+    value_status: str,
+    boolean_value: bool | None,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO observation.observation_record (
+            dataset_version, observation_id, entity_id, relation_id, metric_id,
+            metric_definition_version, value_status, boolean_value,
+            applicable_date, reason_code, record_hash, created_at
+        ) VALUES (%s, %s, %s, NULL, %s, %s, %s, %s,
+                  DATE '2026-08-24', %s, %s, %s)
+        """,
+        (
+            dataset_version,
+            f"is-etn-{entity_id}",
+            entity_id,
+            OVERSEAS_IS_ETN_METRIC_ID,
+            definition_version,
+            value_status,
+            boolean_value,
+            "SOURCE_VALUE_MISSING" if value_status == "missing" else None,
+            VALID_RECORD_HASH,
+            CREATED_AT,
+        ),
+    )
+
+
+def _seed_overseas_product_type(
+    database_url: str,
+    *,
+    product_type: str,
+    is_etn_status: str,
+    is_etn_value: bool | None,
+) -> str:
+    dataset_version = f"graph-overseas-{uuid4().hex}"
+    definition_version = f"graph-{uuid4().hex}"
+    with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+        insert_building_dataset(connection, dataset_version)
+        _insert_product(connection, dataset_version, "overseas-etp", "overseas_etf")
+        _insert_metric_definition(
+            connection, OVERSEAS_ETP_TYPE_METRIC_ID, definition_version, "text"
+        )
+        _insert_metric_definition(
+            connection, OVERSEAS_IS_ETN_METRIC_ID, definition_version, "boolean"
+        )
+        _insert_product_type(
+            connection,
+            dataset_version,
+            "overseas-etp",
+            product_type,
+            definition_version,
+            metric_id=OVERSEAS_ETP_TYPE_METRIC_ID,
+        )
+        _insert_is_etn(
+            connection,
+            dataset_version,
+            "overseas-etp",
+            definition_version,
+            value_status=is_etn_status,
+            boolean_value=is_etn_value,
+        )
+    return dataset_version
 
 
 def _seed_projection(database_url: str) -> str:
@@ -218,7 +293,12 @@ def _seed_projection(database_url: str) -> str:
             """,
             (dataset_version, VALID_RECORD_HASH, CREATED_AT),
         )
-        _insert_metric_definition(connection, "product_type", definition_version, "text")
+        _insert_metric_definition(
+            connection,
+            DOMESTIC_ETP_TYPE_METRIC_ID,
+            definition_version,
+            "text",
+        )
         _insert_metric_definition(
             connection,
             "official_holding_weight_pct",
@@ -360,7 +440,13 @@ async def test_load_projects_one_version_with_exact_types_metrics_and_stable_sor
         EntityProjection(
             dataset_version,
             "z-etf",
-            ("DomesticETF", "ETF", "FinancialProduct", "FundShareClass"),
+            (
+                "DomesticETF",
+                "ETF",
+                "ExchangeTradedProduct",
+                "FinancialProduct",
+                "FundShareClass",
+            ),
         ),
     )
     assert first.sources == (SourceProjection(dataset_version, "source-one", "y-market"),)
@@ -688,7 +774,12 @@ async def test_load_fails_closed_when_relation_typing_facts_are_missing_or_confl
         )
         _insert_institution(connection, dataset_version, "publisher", "exchange")
         _insert_source(connection, dataset_version, "publisher")
-        _insert_metric_definition(connection, "product_type", definition_version, "text")
+        _insert_metric_definition(
+            connection,
+            DOMESTIC_ETP_TYPE_METRIC_ID,
+            definition_version,
+            "text",
+        )
         for ordinal, product_type in enumerate(product_types, start=1):
             _insert_product_type(
                 connection,
@@ -711,3 +802,153 @@ async def test_load_fails_closed_when_relation_typing_facts_are_missing_or_confl
     with pytest.raises(GraphProjectionLoadError, match="type"):
         await GraphProjectionRepository(repository_engine).load(dataset_version)
     assert repository_engine.sync_engine.pool.checkedout() == 0
+
+
+async def test_load_accepts_etn_as_tracks_index_subject(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+) -> None:
+    dataset_version = f"graph-etn-{uuid4().hex}"
+    definition_version = f"graph-{uuid4().hex}"
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        insert_building_dataset(connection, dataset_version)
+        _insert_product(connection, dataset_version, "etn", "domestic_etf")
+        insert_entity(
+            connection,
+            dataset_version=dataset_version,
+            entity_id="index-one",
+            entity_type="index",
+        )
+        _insert_institution(connection, dataset_version, "publisher", "exchange")
+        _insert_source(connection, dataset_version, "publisher")
+        _insert_metric_definition(
+            connection,
+            DOMESTIC_ETP_TYPE_METRIC_ID,
+            definition_version,
+            "text",
+        )
+        _insert_product_type(
+            connection,
+            dataset_version,
+            "etn",
+            "ETN",
+            definition_version,
+        )
+        _insert_relation_with_evidence(
+            connection,
+            dataset_version,
+            relation_id="tracks",
+            subject_id="etn",
+            predicate_id="tracksIndex",
+            object_id="index-one",
+            evidence_id="evidence-tracks",
+        )
+
+    batch = await GraphProjectionRepository(repository_engine).load(dataset_version)
+
+    assert next(item for item in batch.entities if item.entity_id == "etn").rdf_types == (
+        "DomesticETN",
+        "ETN",
+        "ExchangeTradedProduct",
+        "FinancialProduct",
+    )
+    assert batch.relations[0].predicate_id == "tracksIndex"
+
+
+@pytest.mark.parametrize(
+    ("product_type", "is_etn_status", "is_etn_value", "expected_types"),
+    [
+        (
+            "ETF",
+            "missing",
+            None,
+            ("ETF", "ExchangeTradedProduct", "FinancialProduct", "OverseasETF"),
+        ),
+        (
+            "ETN",
+            "present",
+            True,
+            ("ETN", "ExchangeTradedProduct", "FinancialProduct", "OverseasETN"),
+        ),
+    ],
+)
+async def test_load_types_overseas_etp_from_qualified_metrics(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+    product_type: str,
+    is_etn_status: str,
+    is_etn_value: bool | None,
+    expected_types: tuple[str, ...],
+) -> None:
+    dataset_version = _seed_overseas_product_type(
+        migrated_database_url,
+        product_type=product_type,
+        is_etn_status=is_etn_status,
+        is_etn_value=is_etn_value,
+    )
+
+    batch = await GraphProjectionRepository(repository_engine).load(dataset_version)
+
+    assert batch.entities[0].rdf_types == expected_types
+
+
+@pytest.mark.parametrize(
+    ("product_type", "is_etn_status", "is_etn_value"),
+    [("ETF", "present", True), ("ETN", "missing", None)],
+)
+async def test_load_rejects_overseas_is_etn_disagreement(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+    product_type: str,
+    is_etn_status: str,
+    is_etn_value: bool | None,
+) -> None:
+    dataset_version = _seed_overseas_product_type(
+        migrated_database_url,
+        product_type=product_type,
+        is_etn_status=is_etn_status,
+        is_etn_value=is_etn_value,
+    )
+
+    with pytest.raises(GraphProjectionLoadError, match="conflicting_product_type_fact"):
+        await GraphProjectionRepository(repository_engine).load(dataset_version)
+
+
+async def test_load_does_not_treat_legacy_generic_product_type_as_authoritative(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+) -> None:
+    dataset_version = f"graph-legacy-type-{uuid4().hex}"
+    definition_version = f"graph-{uuid4().hex}"
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        insert_building_dataset(connection, dataset_version)
+        _insert_product(connection, dataset_version, "etp", "domestic_etf")
+        insert_entity(
+            connection,
+            dataset_version=dataset_version,
+            entity_id="index-one",
+            entity_type="index",
+        )
+        _insert_institution(connection, dataset_version, "publisher", "exchange")
+        _insert_source(connection, dataset_version, "publisher")
+        _insert_metric_definition(connection, "product_type", definition_version, "text")
+        _insert_product_type(
+            connection,
+            dataset_version,
+            "etp",
+            "ETF",
+            definition_version,
+            metric_id="product_type",
+        )
+        _insert_relation_with_evidence(
+            connection,
+            dataset_version,
+            relation_id="tracks",
+            subject_id="etp",
+            predicate_id="tracksIndex",
+            object_id="index-one",
+            evidence_id="evidence-tracks",
+        )
+
+    with pytest.raises(GraphProjectionLoadError, match="missing_relation_type"):
+        await GraphProjectionRepository(repository_engine).load(dataset_version)

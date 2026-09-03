@@ -65,10 +65,10 @@ PRODUCT_BASE_CLASSES_BY_FAMILY = MappingProxyType(
 
 ETP_CLASSES_BY_FAMILY_AND_TYPE = MappingProxyType(
     {
-        ("domestic_etf", "ETF"): ("ETF", "DomesticETF"),
-        ("domestic_etf", "ETN"): ("ETN", "DomesticETN"),
-        ("overseas_etf", "ETF"): ("ETF", "OverseasETF"),
-        ("overseas_etf", "ETN"): ("ETN", "OverseasETN"),
+        ("domestic_etf", "ETF"): ("ExchangeTradedProduct", "ETF", "DomesticETF"),
+        ("domestic_etf", "ETN"): ("ExchangeTradedProduct", "ETN", "DomesticETN"),
+        ("overseas_etf", "ETF"): ("ExchangeTradedProduct", "ETF", "OverseasETF"),
+        ("overseas_etf", "ETN"): ("ExchangeTradedProduct", "ETN", "OverseasETN"),
     }
 )
 

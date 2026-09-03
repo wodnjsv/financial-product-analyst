@@ -58,12 +58,12 @@ RDFLib 7.6, pySHACL 0.40, Apache Jena/Fuseki 6.0.0, pytest 8.
   complete Graph Phase 1 commit history ending at `631191e`.
 - Produces: one branch containing both current Vector and Graph public APIs.
 
-- [ ] **Step 1: Record pre-merge baselines**
+- [x] **Step 1: Record pre-merge baselines**
 
 Run the current full suite and Vector reconciliation. Require `1820 passed,
 15 skipped`, `eligible=40149`, `exact=40149`, and all anomaly counts zero.
 
-- [ ] **Step 2: Merge without committing automatically**
+- [x] **Step 2: Merge without committing automatically**
 
 ```bash
 git merge --no-ff --no-commit codex/graph-phase1-core
@@ -71,13 +71,13 @@ git merge --no-ff --no-commit codex/graph-phase1-core
 
 Expected conflicts are limited to the four reviewed shared files above.
 
-- [ ] **Step 3: Resolve shared files semantically**
+- [x] **Step 3: Resolve shared files semantically**
 
 Keep current source/cutoff/Vector changes and add Graph dependencies and the
 normalized question-contract changes. Do not choose either complete file
 wholesale. Validate `tests/gold/core_questions.json` as JSON after resolution.
 
-- [ ] **Step 4: Run the merged non-integration suites**
+- [x] **Step 4: Run the merged non-integration suites**
 
 ```bash
 .venv/bin/pytest -q tests/graph -m 'not jena_integration'
@@ -85,7 +85,7 @@ wholesale. Validate `tests/gold/core_questions.json` as JSON after resolution.
   tests/retrieval tests/embeddings -m 'not postgres and not jena_integration'
 ```
 
-- [ ] **Step 5: Commit the integration merge**
+- [x] **Step 5: Commit the integration merge**
 
 ```text
 merge: integrate graph phase one with vector corpus
@@ -112,26 +112,26 @@ merge: integrate graph phase one with vector corpus
 - Produces: `GraphProjectionRepository.load(dataset_version)` that types each
   current ETP exactly once and accepts an ETN `tracksIndex` assertion.
 
-- [ ] **Step 1: Add failing current-metric repository tests**
+- [x] **Step 1: Add failing current-metric repository tests**
 
 Create fixtures with domestic ETF, domestic ETN, overseas ETF, and overseas
 ETN observations using the exact source-qualified metric IDs. Assert their RDF
 types and assert failures for missing type, conflicting type, and overseas
 `is_etn` disagreement.
 
-- [ ] **Step 2: Add failing ETN ontology and SHACL tests**
+- [x] **Step 2: Add failing ETN ontology and SHACL tests**
 
 Assert that ETN `tracksIndex` conforms, ETF+ETN dual typing does not conform,
 and a non-ETP/non-public-fund subject still fails.
 
-- [ ] **Step 3: Implement the minimal current-metric mapping**
+- [x] **Step 3: Implement the minimal current-metric mapping**
 
 Replace the obsolete generic metric lookup with the two exact product-type
 metric IDs and one overseas consistency metric. Extend only the `tracksIndex`
 domain to `ExchangeTradedProduct | PublicFund` in the repository, TBox, and
 SHACL.
 
-- [ ] **Step 4: Run focused tests and a real read-only load**
+- [x] **Step 4: Run focused tests and a real read-only load**
 
 ```bash
 .venv/bin/pytest -q tests/db/test_graph_projection_repository.py \
@@ -141,7 +141,7 @@ SHACL.
 Then load `organizer-dart-2026-08-24-v2` from the current local PostgreSQL and
 require zero type, relation, Evidence, source, date, and metric errors.
 
-- [ ] **Step 5: Commit ETP compatibility**
+- [x] **Step 5: Commit ETP compatibility**
 
 ```text
 fix: align graph ETP types with organizer metrics

@@ -16,7 +16,7 @@ TBOX_PATHS = tuple(
 EXPECTED_PROPERTY_TYPES = {
     "managedBy": ("FinancialProduct", "AssetManager"),
     "issuedBy": (("FinancialProduct", "Security"), "Issuer"),
-    "tracksIndex": (("ETF", "PublicFund"), "Index"),
+    "tracksIndex": (("ExchangeTradedProduct", "PublicFund"), "Index"),
     "holdsSecurity": (("ETF", "PublicFund"), "Security"),
     "containsSecurity": ("Index", "Security"),
     "securityOfCompany": ("EquitySecurity", "Company"),
