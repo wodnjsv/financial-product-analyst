@@ -30,3 +30,14 @@ def complete_axis_definitions() -> tuple[AxisDefinition, ...]:
             *(("action", item.value) for item in IntentType),
         )
     )
+
+
+def hybrid_manifest_versions() -> dict[str, str]:
+    """Return the complete pinned version map for the shadow V3 resolver."""
+    return {
+        "normalizer_version": "intent-normalizer-v1",
+        "candidate_policy_version": "intent-hints-v3",
+        "resolver_schema_version": "3.0",
+        "prompt_version": "intent-resolver-ko-v6-full-catalog",
+        "adapter_version": "clova-chat-v3-proposal-v3",
+    }

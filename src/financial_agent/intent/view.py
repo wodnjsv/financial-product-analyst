@@ -25,8 +25,10 @@ from .candidates import (
 )
 from .axis_locks import ExactSemanticLock
 from .catalog import SemanticCatalogSnapshot
+from .compact_catalog import CompactSemanticCatalogV1, build_compact_semantic_catalog
 from .evidence import EvidenceCandidate, build_evidence_candidates
 from .literals import LiteralCandidate
+from .mention_spans import MentionSpanSetV1
 from .normalization import NormalizedRequest
 from .resolution import ContractFileHash, ResolverBuildManifest
 
@@ -36,6 +38,11 @@ CANDIDATE_POLICY_VERSION = "intent-candidate-v2"
 RESOLVER_SCHEMA_VERSION = "2.0"
 PROMPT_VERSION = "intent-resolver-ko-v5-axis-only"
 ADAPTER_VERSION = "clova-chat-v3-proposal-v2"
+
+HYBRID_RESOLVER_SCHEMA_VERSION = "3.0"
+HYBRID_CANDIDATE_POLICY_VERSION = "intent-hints-v3"
+HYBRID_PROMPT_VERSION = "intent-resolver-ko-v6-full-catalog"
+HYBRID_ADAPTER_VERSION = "clova-chat-v3-proposal-v3"
 
 MAX_CANDIDATES_PER_MENTION = 5
 MAX_SEMANTIC_CANDIDATES = 80
@@ -47,6 +54,14 @@ _VERSION_FIELDS = {
     "prompt_version": PROMPT_VERSION,
     "adapter_version": ADAPTER_VERSION,
 }
+_HYBRID_VERSION_FIELDS = {
+    "normalizer_version": NORMALIZER_VERSION,
+    "candidate_policy_version": HYBRID_CANDIDATE_POLICY_VERSION,
+    "resolver_schema_version": HYBRID_RESOLVER_SCHEMA_VERSION,
+    "prompt_version": HYBRID_PROMPT_VERSION,
+    "adapter_version": HYBRID_ADAPTER_VERSION,
+}
+_HYBRID_OVERLAY_VERSION = "korean-nlu-overlay.v4"
 _SEMANTIC_MATCH_PRIORITY = {
     "canonical_id": 0,
     "direct_alias": 1,
@@ -241,6 +256,35 @@ class ResolverView(ContractModel):
         return self
 
 
+class ResolverViewExactLockProjection(ContractModel):
+    """The minimal exact-lock evidence that V3 may show the model."""
+
+    lock_id: Identifier
+    mention_id: Identifier
+    canonical_semantic_id: Identifier
+    role: Literal["product_family", "field"]
+
+
+class ResolverViewV3(ResolverView):
+    """Shadow V3 view with full semantic selectability and bounded source spans."""
+
+    mention_spans: MentionSpanSetV1
+    compact_semantic_catalog: CompactSemanticCatalogV1
+    entity_output_enabled: bool
+    reference_output_enabled: bool
+    exact_lock_projections: tuple[ResolverViewExactLockProjection, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_exact_lock_projection_ranges(self) -> "ResolverViewV3":
+        mention_ids = {item.mention_id for item in self.mention_spans.items}
+        if any(
+            projection.mention_id not in mention_ids
+            for projection in self.exact_lock_projections
+        ):
+            raise ValueError("EXACT_LOCK_MENTION_MISSING")
+        return self
+
+
 def offered_entity_type_ids(view: ResolverView) -> tuple[str, ...]:
     """Return the exact ontology-type IDs exposed by this request view."""
     return view.entity_type_ids
@@ -266,6 +310,30 @@ def build_manifest(
         overlay_version=snapshot.overlay_version,
         overlay_hash=snapshot.overlay_hash,
         **_VERSION_FIELDS,
+    )
+
+
+def build_hybrid_manifest(
+    snapshot: SemanticCatalogSnapshot, versions: Mapping[str, str]
+) -> ResolverBuildManifest:
+    """Build a V3-only manifest from the V4 model-facing overlay."""
+    if (
+        dict(versions) != _HYBRID_VERSION_FIELDS
+        or snapshot.overlay_version != _HYBRID_OVERLAY_VERSION
+        or tuple(sorted(snapshot.ontology_hashes))
+        != tuple(sorted(GRAPH_CONTRACT_RELATIVE_PATHS))
+    ):
+        raise ResolverInvariantError("CATALOG_VERSION_MISMATCH")
+    return ResolverBuildManifest(
+        catalog_version=snapshot.catalog_version,
+        catalog_hash=snapshot.catalog_hash,
+        ontology_hashes=tuple(
+            ContractFileHash(relative_path=path, sha256=digest)
+            for path, digest in sorted(snapshot.ontology_hashes.items())
+        ),
+        overlay_version=snapshot.overlay_version,
+        overlay_hash=snapshot.overlay_hash,
+        **_HYBRID_VERSION_FIELDS,
     )
 
 
@@ -353,6 +421,95 @@ def build_resolver_view(
     )
 
 
+def build_resolver_view_v3(
+    context: RequestContext,
+    normalized: NormalizedRequest,
+    literals: Sequence[LiteralCandidate],
+    semantic_candidates: SemanticCandidateSet,
+    entity_candidates: Mapping[str, Sequence[EntityCandidate]],
+    manifest: ResolverBuildManifest,
+    active_dataset_pin: ActiveDatasetPin,
+    catalog: SemanticCatalogSnapshot,
+    mention_spans: MentionSpanSetV1,
+    exact_semantic_locks: Sequence[ExactSemanticLock] = (),
+) -> ResolverViewV3:
+    """Build the non-default V3 view without narrowing its semantic catalog."""
+    validate_hybrid_resolver_pins(
+        catalog, context, normalized, manifest, active_dataset_pin
+    )
+    compact_catalog = build_compact_semantic_catalog(catalog)
+    selected_semantic = _select_semantic_candidates(semantic_candidates)
+    return ResolverViewV3(
+        build_manifest=manifest,
+        active_dataset_pin=active_dataset_pin,
+        product_family_ids=tuple(sorted(item.value for item in ProductFamily)),
+        action_ids=tuple(sorted(item.value for item in IntentType)),
+        entity_type_ids=tuple(sorted(catalog.entity_type_ids)),
+        semantic_candidates=tuple(
+            ResolverViewSemanticCandidateGroup(
+                mention_id=mention_id,
+                items=tuple(
+                    ResolverViewSemanticCandidate(
+                        semantic_id=item.semantic_id,
+                        match_kind=item.match_kind,
+                        score=item.score,
+                    )
+                    for item in sorted(items, key=lambda item: item.semantic_id)
+                ),
+            )
+            for mention_id, items in sorted(selected_semantic.items())
+        ),
+        concept_definitions=(),
+        relation_definitions=(),
+        literal_candidates=tuple(
+            _literal_projection(item) for item in sorted(literals, key=lambda item: item.literal_id)
+        ),
+        entity_candidates=_entity_candidate_groups(entity_candidates),
+        axis_definitions=tuple(
+            AxisDefinition(
+                axis_kind=definition.axis_kind,
+                axis_id=definition.axis_id,
+                preferred_label_ko=definition.preferred_label_ko,
+                definition_ko=definition.definition_ko,
+                surface_forms=definition.surface_forms,
+            )
+            for definition in sorted(
+                catalog.axis_definitions.values(),
+                key=lambda definition: (definition.axis_kind, definition.axis_id),
+            )
+        ),
+        evidence_candidates=build_evidence_candidates(
+            normalized=normalized,
+            literals=literals,
+            semantic_candidates=semantic_candidates,
+            entity_candidates=entity_candidates,
+            policy_cues=catalog.policy_cues,
+        ),
+        reference_candidates=tuple(
+            ResolverViewReferenceCandidate(
+                reference_id=reference.reference_id,
+                segment_id=reference.segment_id,
+                text=reference.text,
+                start_char=reference.start_char,
+                end_char=reference.end_char,
+            )
+            for reference in normalized.reference_candidates
+        ),
+        exact_semantic_locks=tuple(exact_semantic_locks),
+        mention_spans=mention_spans,
+        compact_semantic_catalog=compact_catalog,
+        entity_output_enabled=any(
+            "entity" in item.source_kinds for item in mention_spans.items
+        ),
+        reference_output_enabled=any(
+            "reference" in item.source_kinds for item in mention_spans.items
+        ),
+        exact_lock_projections=_exact_lock_projections(
+            exact_semantic_locks, mention_spans
+        ),
+    )
+
+
 def validate_resolver_pins(
     catalog: SemanticCatalogSnapshot,
     context: RequestContext,
@@ -379,6 +536,38 @@ def validate_resolver_pins(
         or any(
             getattr(manifest, field_name) != expected
             for field_name, expected in _VERSION_FIELDS.items()
+        )
+    ):
+        raise ResolverInvariantError("CATALOG_VERSION_MISMATCH")
+
+
+def validate_hybrid_resolver_pins(
+    catalog: SemanticCatalogSnapshot,
+    context: RequestContext,
+    normalized: NormalizedRequest,
+    manifest: ResolverBuildManifest,
+    active_dataset_pin: ActiveDatasetPin,
+) -> None:
+    """Fail closed when a V3 view is not pinned to the V4 catalog projection."""
+    catalog_hashes = tuple(
+        ContractFileHash(relative_path=path, sha256=digest)
+        for path, digest in sorted(catalog.ontology_hashes.items())
+    )
+    if (
+        normalized.context != context
+        or not active_dataset_pin.dataset_version
+        or not active_dataset_pin.manifest_hash
+        or active_dataset_pin.dataset_version != context.dataset_version
+        or catalog.overlay_version != _HYBRID_OVERLAY_VERSION
+        or manifest.catalog_version != catalog.catalog_version
+        or manifest.catalog_hash != catalog.catalog_hash
+        or manifest.overlay_version != catalog.overlay_version
+        or manifest.overlay_hash != catalog.overlay_hash
+        or manifest.ontology_hashes != catalog_hashes
+        or manifest.schema_version != "1.0"
+        or any(
+            getattr(manifest, field_name) != expected
+            for field_name, expected in _HYBRID_VERSION_FIELDS.items()
         )
     ):
         raise ResolverInvariantError("CATALOG_VERSION_MISMATCH")
@@ -454,6 +643,34 @@ def _best_semantic_by_id(items: Sequence[SemanticCandidate]) -> list[SemanticCan
         if previous is None or _semantic_key(item) < _semantic_key(previous):
             selected[item.semantic_id] = item
     return list(selected.values())
+
+
+def _exact_lock_projections(
+    locks: Sequence[ExactSemanticLock], mention_spans: MentionSpanSetV1
+) -> tuple[ResolverViewExactLockProjection, ...]:
+    """Project only semantic exact locks whose evidence has an offered source span."""
+    mention_ids = {item.mention_id for item in mention_spans.items}
+    projections: list[ResolverViewExactLockProjection] = []
+    for lock in sorted(locks, key=lambda item: item.lock_id):
+        if lock.role not in {"product_family", "field"}:
+            continue
+        for mention_id in lock.evidence_span_ids:
+            if mention_id not in mention_ids:
+                raise ResolverInvariantError("EXACT_LOCK_MENTION_MISSING")
+            projections.append(
+                ResolverViewExactLockProjection(
+                    lock_id=lock.lock_id,
+                    mention_id=mention_id,
+                    canonical_semantic_id=lock.canonical_id,
+                    role=lock.role,
+                )
+            )
+    return tuple(projections)
+
+
+def model_safe_resolver_view_v3_payload(view: ResolverViewV3) -> dict[str, object]:
+    """Serialize V3 without raw locks, preserving only their safe projections."""
+    return view.model_dump(mode="json", exclude={"exact_semantic_locks"})
 
 
 def _semantic_key(item: SemanticCandidate) -> tuple[int, int, str, str]:

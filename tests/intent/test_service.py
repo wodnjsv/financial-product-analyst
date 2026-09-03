@@ -14,8 +14,9 @@ from financial_agent.contracts.request import (
     RequestContext,
     Segment,
 )
-from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.catalog import load_catalog, load_hybrid_catalog
 from financial_agent.intent.candidates import EntityCandidate
+from financial_agent.intent.normalization import RequestNormalizationError, normalize_request
 from financial_agent.intent.clova import ModelInvocationResult
 from financial_agent.intent.errors import (
     MODEL_INVALID_FRAME_REFERENCE,
@@ -31,6 +32,7 @@ from financial_agent.intent.proposal import IntentResolutionProposalV2
 from financial_agent.intent.resolution import ValidatedIntentResolutionV2
 from financial_agent.intent.service import (
     IntentResolverService,
+    _hybrid_entity_mentions,
     build_repair_envelope,
 )
 from financial_agent.intent.task_binding import TaskReadiness
@@ -43,7 +45,12 @@ from financial_agent.intent.view import (
     PROMPT_VERSION,
     RESOLVER_SCHEMA_VERSION,
     ActiveDatasetPin,
+    HYBRID_ADAPTER_VERSION,
+    HYBRID_CANDIDATE_POLICY_VERSION,
+    HYBRID_PROMPT_VERSION,
+    HYBRID_RESOLVER_SCHEMA_VERSION,
     ResolverInvariantError,
+    build_hybrid_manifest,
     build_manifest,
 )
 
@@ -81,6 +88,88 @@ def _context(
         ),
         deadline_at=NOW + timedelta(seconds=deadline_seconds),
     )
+
+
+@pytest.mark.parametrize(
+    ("question", "entity_text"),
+    (
+        ("KODEX 200과 KODEX 200을 비교해줘", "KODEX 200"),
+        ("ETF를 비교해줘", "KODEX 200"),
+    ),
+)
+def test_hybrid_entity_mentions_require_one_unambiguous_source_range(
+    question: str, entity_text: str
+) -> None:
+    """Catches V3 entity evidence choosing or inventing a source range."""
+    context = _context(question).model_copy(
+        update={
+            "named_entities": (
+                NamedEntityMention(
+                    mention_id="entity-kodex",
+                    segment_id="s1",
+                    text=entity_text,
+                    expected_entity_types=("ETF",),
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(RequestNormalizationError, match="ENTITY_MENTION_RANGE_AMBIGUOUS"):
+        _hybrid_entity_mentions(context, normalize_request(context))
+
+
+def test_hybrid_entity_mentions_preserve_a_unique_source_range() -> None:
+    """Catches V3 entity preparation losing the one available source location."""
+    context = _context("KODEX 200을 알려줘").model_copy(
+        update={
+            "named_entities": (
+                NamedEntityMention(
+                    mention_id="entity-kodex",
+                    segment_id="s1",
+                    text="KODEX 200",
+                    expected_entity_types=("ETF",),
+                ),
+            )
+        }
+    )
+
+    mention = _hybrid_entity_mentions(context, normalize_request(context))[0]
+
+    assert (mention.segment_id, mention.start_char, mention.end_char) == ("s1", 0, 9)
+
+
+@pytest.mark.asyncio
+async def test_prepare_hybrid_builds_v3_view_without_invoking_the_model() -> None:
+    """Catches shadow preparation using V2 pins or accidentally calling HCX."""
+    context = _context("비용 부담이 작은 ETF")
+    catalog = load_hybrid_catalog(PROJECT_ROOT)
+    adapter = FakeAdapter()
+    service = IntentResolverService(
+        adapter=adapter,
+        entity_repository=EmptyEntityRepository(),
+        catalog=catalog,
+        manifest=build_hybrid_manifest(
+            catalog,
+            {
+                "normalizer_version": NORMALIZER_VERSION,
+                "candidate_policy_version": HYBRID_CANDIDATE_POLICY_VERSION,
+                "resolver_schema_version": HYBRID_RESOLVER_SCHEMA_VERSION,
+                "prompt_version": HYBRID_PROMPT_VERSION,
+                "adapter_version": HYBRID_ADAPTER_VERSION,
+            },
+        ),
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version=context.dataset_version,
+            manifest_hash="a" * 64,
+        ),
+        utcnow=lambda: NOW,
+    )
+
+    prepared = await service.prepare_hybrid(context)
+
+    assert prepared.view.compact_semantic_catalog.concepts
+    assert prepared.view.entity_output_enabled is False
+    assert adapter.call_count == 0
 
 
 def _valid_proposal_json() -> str:

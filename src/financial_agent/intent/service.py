@@ -44,6 +44,7 @@ from .errors import (
     ResolverContractError,
 )
 from .literals import LiteralCandidate, extract_literals
+from .mention_spans import MentionSpanSetV1, generate_mention_spans
 from .normalization import (
     NormalizedRequest,
     RequestNormalizationError,
@@ -85,7 +86,10 @@ from .validation import validate_semantics
 from .view import (
     ActiveDatasetPin,
     ResolverView,
+    ResolverViewV3,
     build_resolver_view,
+    build_resolver_view_v3,
+    validate_hybrid_resolver_pins,
     validate_resolver_pins,
 )
 
@@ -196,6 +200,20 @@ class PreparedResolutionRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedHybridResolutionRequest:
+    """V3 construction result, intentionally before any HCX invocation."""
+
+    context: RequestContext
+    normalized: NormalizedRequest
+    literals: tuple[LiteralCandidate, ...]
+    semantic_candidates: SemanticCandidateSet
+    entity_candidates: Mapping[str, tuple[EntityCandidate, ...]]
+    mention_spans: MentionSpanSetV1
+    view: ResolverViewV3
+    telemetry: _PreparationTelemetry
+
+
+@dataclass(frozen=True, slots=True)
 class ResolutionAttempt:
     resolution: ValidatedIntentResolutionV2
     telemetry: ResolutionTelemetry
@@ -289,6 +307,84 @@ class IntentResolverService:
             entity_candidates=entity_candidates,
             view=view,
             prompt=prompt,
+            telemetry=_PreparationTelemetry(
+                normalization_ms=normalization_ms,
+                candidate_ms=candidate_ms,
+                semantic_candidate_count=semantic_candidates.total_count,
+                entity_candidate_count=sum(
+                    len(items) for items in entity_candidates.values()
+                ),
+            ),
+        )
+
+    async def prepare_hybrid(
+        self, context: RequestContext
+    ) -> PreparedHybridResolutionRequest:
+        """Prepare the shadow V3 request without invoking or validating HCX."""
+        normalization_started = self._timer()
+        normalized = normalize_request(context)
+        if len(context.named_entities) > MAX_ENTITY_MENTIONS:
+            raise RequestNormalizationError(
+                "REQUEST_CONTRACT_INVALID: entity mention limit exceeded"
+            )
+        validate_hybrid_resolver_pins(
+            self._catalog,
+            context,
+            normalized,
+            self._manifest,
+            self._active_dataset_pin,
+        )
+        normalization_ms = _duration_ms(normalization_started, self._timer())
+
+        candidates_started = self._timer()
+        literals = extract_literals(normalized)
+        semantic_candidates = generate_semantic_candidates(normalized, self._catalog)
+        entity_mentions = _hybrid_entity_mentions(context, normalized)
+        entity_candidates = await self._entity_repository.search_batch(
+            context.dataset_version,
+            entity_mentions,
+        )
+        exact_semantic_locks = build_exact_semantic_locks(
+            normalized,
+            self._catalog,
+            semantic_candidates=semantic_candidates,
+            literals=literals,
+        )
+        mention_spans = generate_mention_spans(
+            normalized,
+            tuple(
+                group.mention
+                for group in semantic_candidates.by_mention
+                if any(
+                    item.match_kind in {"canonical_id", "direct_alias"}
+                    for item in group.items
+                )
+            ),
+            literals,
+            entity_mentions,
+            normalized.reference_candidates,
+        )
+        view = build_resolver_view_v3(
+            context=context,
+            normalized=normalized,
+            literals=literals,
+            semantic_candidates=semantic_candidates,
+            entity_candidates=entity_candidates,
+            manifest=self._manifest,
+            active_dataset_pin=self._active_dataset_pin,
+            catalog=self._catalog,
+            mention_spans=mention_spans,
+            exact_semantic_locks=exact_semantic_locks,
+        )
+        candidate_ms = _duration_ms(candidates_started, self._timer())
+        return PreparedHybridResolutionRequest(
+            context=context,
+            normalized=normalized,
+            literals=literals,
+            semantic_candidates=semantic_candidates,
+            entity_candidates=entity_candidates,
+            mention_spans=mention_spans,
+            view=view,
             telemetry=_PreparationTelemetry(
                 normalization_ms=normalization_ms,
                 candidate_ms=candidate_ms,
@@ -1027,6 +1123,40 @@ def _entity_mentions(
                 normalized_text=normalized_text,
                 start_char=start,
                 end_char=end,
+            )
+        )
+    return tuple(mentions)
+
+
+def _hybrid_entity_mentions(
+    context: RequestContext,
+    normalized: NormalizedRequest,
+) -> tuple[Mention, ...]:
+    """Convert V3 entity evidence only when it has one unambiguous source range."""
+    segments = {segment.segment_id: segment for segment in normalized.segments}
+    mentions: list[Mention] = []
+    for source in context.named_entities:
+        segment = segments[source.segment_id]
+        if not source.text:
+            raise RequestNormalizationError("ENTITY_MENTION_RANGE_AMBIGUOUS")
+        starts = [
+            start
+            for start in range(len(segment.original_text) - len(source.text) + 1)
+            if segment.original_text.startswith(source.text, start)
+        ]
+        if len(starts) != 1:
+            raise RequestNormalizationError("ENTITY_MENTION_RANGE_AMBIGUOUS")
+        start = starts[0]
+        mentions.append(
+            Mention(
+                mention_id=source.mention_id,
+                segment_id=source.segment_id,
+                text=source.text,
+                normalized_text=normalize_segment(
+                    source.mention_id, source.text
+                ).normalized_text,
+                start_char=start,
+                end_char=start + len(source.text),
             )
         )
     return tuple(mentions)

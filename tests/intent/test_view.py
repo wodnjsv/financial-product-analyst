@@ -17,8 +17,10 @@ from financial_agent.intent.candidates import (
     SemanticCandidateSet,
     generate_semantic_candidates,
 )
-from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.axis_locks import build_exact_semantic_locks
+from financial_agent.intent.catalog import load_catalog, load_hybrid_catalog
 from financial_agent.intent.literals import extract_literals
+from financial_agent.intent.mention_spans import generate_mention_spans
 from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
@@ -28,14 +30,24 @@ from financial_agent.intent.view import (
     PROMPT_VERSION,
     RESOLVER_SCHEMA_VERSION,
     ActiveDatasetPin,
+    HYBRID_ADAPTER_VERSION,
+    HYBRID_CANDIDATE_POLICY_VERSION,
+    HYBRID_PROMPT_VERSION,
+    HYBRID_RESOLVER_SCHEMA_VERSION,
     ResolverInvariantError,
     ResolverView,
+    ResolverViewV3,
     ResolverViewEntityCandidateGroup,
     build_manifest,
+    build_hybrid_manifest,
     build_resolver_view,
+    build_resolver_view_v3,
+    model_safe_resolver_view_v3_payload,
     offered_entity_type_ids,
     validate_resolver_view_catalog,
 )
+
+from .view_fixtures import hybrid_manifest_versions
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -92,6 +104,146 @@ def resolver_inputs() -> dict[str, object]:
             manifest_hash="e" * 64,
         ),
     }
+
+
+@pytest.fixture
+def v3_inputs():
+    def build(
+        *,
+        question: str,
+        named_entities=(),
+    ) -> dict[str, object]:
+        created_at = datetime(2026, 9, 3, tzinfo=timezone.utc)
+        context = RequestContext(
+            request_key=build_request_key("q-view-v3", question, "dataset-v1", "1.0"),
+            run_id="run-view-v3",
+            dataset_version="dataset-v1",
+            producer="test",
+            created_at=created_at,
+            question_id="q-view-v3",
+            question=question,
+            segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+            named_entities=named_entities,
+            deadline_at=created_at + timedelta(seconds=10),
+        )
+        catalog = load_hybrid_catalog(PROJECT_ROOT)
+        normalized = normalize_request(context)
+        literals = extract_literals(normalized)
+        semantic_candidates = generate_semantic_candidates(normalized, catalog)
+        return {
+            "catalog": catalog,
+            "context": context,
+            "normalized": normalized,
+            "literals": literals,
+            "semantic_candidates": semantic_candidates,
+            "entity_candidates": {},
+            "manifest": build_hybrid_manifest(catalog, hybrid_manifest_versions()),
+            "active_dataset_pin": ActiveDatasetPin(
+                dataset_version="dataset-v1", manifest_hash="d" * 64
+            ),
+            "mention_spans": generate_mention_spans(
+                normalized,
+                tuple(group.mention for group in semantic_candidates.by_mention),
+                literals,
+                (),
+                normalized.reference_candidates,
+            ),
+            "exact_semantic_locks": build_exact_semantic_locks(
+                normalized,
+                catalog,
+                semantic_candidates=semantic_candidates,
+                literals=literals,
+            ),
+        }
+
+    return build
+
+
+def test_v3_view_offers_full_catalog_when_no_alias_matches(v3_inputs) -> None:
+    """Catches an absent lexical hint making a registered semantic unselectable."""
+    view = build_resolver_view_v3(**v3_inputs(question="비용 부담이 작은 ETF"))
+
+    assert not any(
+        item.semantic_id == "fee_rate"
+        for group in view.semantic_candidates
+        for item in group.items
+    )
+    assert "fee_rate" in {
+        item.semantic_id for item in view.compact_semantic_catalog.concepts
+    }
+
+
+def test_v3_non_entity_request_disables_entity_output(v3_inputs) -> None:
+    """Catches enabling an entity branch without a source entity mention."""
+    view = build_resolver_view_v3(**v3_inputs(question="ETF 순위를 알려줘"))
+
+    assert view.entity_output_enabled is False
+
+
+def test_v3_reference_output_requires_reference_evidence(v3_inputs) -> None:
+    """Catches enabling context output where no reference was detected."""
+    plain = build_resolver_view_v3(**v3_inputs(question="ETF 순위를 알려줘"))
+    contextual = build_resolver_view_v3(**v3_inputs(question="그 상품들 순위를 알려줘"))
+
+    assert plain.reference_output_enabled is False
+    assert contextual.reference_output_enabled is True
+
+
+def test_v3_view_projects_only_source_ranged_semantic_locks(v3_inputs) -> None:
+    """Catches leaking lock sources or projecting a lock with no offered mention."""
+    inputs = v3_inputs(question="공모펀드의 AUM을 알려줘")
+    view = build_resolver_view_v3(**inputs)
+
+    assert view.exact_lock_projections
+    assert {
+        projection.role for projection in view.exact_lock_projections
+    } <= {"product_family", "field"}
+    assert {
+        projection.mention_id for projection in view.exact_lock_projections
+    } <= {item.mention_id for item in view.mention_spans.items}
+    assert all(
+        set(projection.model_dump())
+        == {"lock_id", "mention_id", "canonical_semantic_id", "role"}
+        for projection in view.exact_lock_projections
+    )
+    payload = model_safe_resolver_view_v3_payload(view)
+    assert "exact_semantic_locks" not in payload
+    assert payload["exact_lock_projections"] == [
+        projection.model_dump(mode="json") for projection in view.exact_lock_projections
+    ]
+
+
+def test_v3_view_rejects_exact_lock_projection_without_a_mention_span(v3_inputs) -> None:
+    """Catches a model-facing lock whose supporting source range was removed."""
+    inputs = v3_inputs(question="공모펀드의 AUM을 알려줘")
+    inputs["mention_spans"] = inputs["mention_spans"].model_copy(update={"items": ()})
+
+    with pytest.raises(ResolverInvariantError, match="EXACT_LOCK_MENTION_MISSING"):
+        build_resolver_view_v3(**inputs)
+
+
+def test_hybrid_manifest_rejects_v2_overlay_or_version_pins() -> None:
+    """Catches a V3 resolver build being pinned to legacy catalog inputs."""
+    with pytest.raises(ResolverInvariantError, match="CATALOG_VERSION_MISMATCH"):
+        build_hybrid_manifest(load_catalog(PROJECT_ROOT), hybrid_manifest_versions())
+    versions = hybrid_manifest_versions() | {"prompt_version": "intent-resolver-ko-v5-axis-only"}
+    with pytest.raises(ResolverInvariantError, match="CATALOG_VERSION_MISMATCH"):
+        build_hybrid_manifest(load_hybrid_catalog(PROJECT_ROOT), versions)
+
+
+def test_hybrid_version_constants_match_the_shadow_v3_contract() -> None:
+    """Catches a V3 manifest reaching a model with a mismatched proposal contract."""
+    assert (
+        HYBRID_RESOLVER_SCHEMA_VERSION,
+        HYBRID_CANDIDATE_POLICY_VERSION,
+        HYBRID_PROMPT_VERSION,
+        HYBRID_ADAPTER_VERSION,
+    ) == (
+        "3.0",
+        "intent-hints-v3",
+        "intent-resolver-ko-v6-full-catalog",
+        "clova-chat-v3-proposal-v3",
+    )
 
 
 def test_view_is_byte_reproducible(resolver_inputs: dict[str, object]) -> None:
