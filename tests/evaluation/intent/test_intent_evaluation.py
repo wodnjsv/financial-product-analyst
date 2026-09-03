@@ -250,7 +250,11 @@ def test_hybrid_predictions_report_each_semantic_boundary_independently() -> Non
     report = evaluate_hybrid_predictions(cases, predictions)
 
     assert report.required_span_preservation == HybridStageMetric(
-        numerator=5, denominator=5, authoritative_denominator=5
+        numerator=5,
+        denominator=5,
+        authoritative_denominator=5,
+        observed_population_count=5,
+        authoritative_population_count=5,
     )
     assert report.hint_recall_at_5.value == Decimal("0")
     assert report.compact_catalog_selectability.value == Decimal("1")
@@ -259,10 +263,80 @@ def test_hybrid_predictions_report_each_semantic_boundary_independently() -> Non
     assert report.product_family_exact_match.value == Decimal("1")
     assert report.joint_frame_exact_match.value == Decimal("1")
     assert report.ood_false_fast_rate == HybridStageMetric(
-        numerator=0, denominator=1, authoritative_denominator=1
+        numerator=0,
+        denominator=1,
+        authoritative_denominator=1,
+        observed_population_count=5,
+        authoritative_population_count=5,
     )
     assert report.exact_lock_precision.status == "unmeasured"
     assert report.complete_contract_exact_match.status == "unmeasured"
+
+
+def _hybrid_fixture_predictions(
+    cases: tuple[HybridSemanticLinkCase, ...],
+) -> tuple[HybridSemanticLinkPrediction, ...]:
+    return tuple(
+        HybridSemanticLinkPrediction(
+            case_id=case.case_id,
+            offered_span_texts=case.expected_span_texts,
+            hint_semantic_ids_at_5=case.expected_semantic_ids,
+            selectable_semantic_ids=case.expected_semantic_ids,
+            predicted_action_ids=case.expected_action_ids,
+            predicted_product_family_ids=case.expected_product_family_ids,
+            predicted_semantic_ids=case.expected_semantic_ids,
+            predicted_coverage_state=case.expected_coverage_state,
+            predicted_ood=case.expected_ood,
+        )
+        for case in cases
+    )
+
+
+def test_four_of_five_hybrid_cases_cannot_redefine_authoritative_population() -> None:
+    cases = parse_strict_json(
+        HYBRID_LINK_PATH.read_bytes(), HybridSemanticLinkDataset
+    ).root
+
+    report = evaluate_hybrid_predictions(
+        cases[:4], _hybrid_fixture_predictions(cases[:4])
+    )
+
+    assert report.action_exact_match.numerator == 4
+    assert report.action_exact_match.denominator == 4
+    assert report.action_exact_match.authoritative_denominator == 5
+    assert report.action_exact_match.status == "unmeasured"
+    assert report.action_exact_match.reason_code == (
+        "PARTIAL_AUTHORITATIVE_DENOMINATOR"
+    )
+    assert report.first_pass_structured_validity.authoritative_denominator == 5
+    assert report.provider.provider_success.authoritative_denominator == 5
+
+
+def test_missing_one_of_five_hybrid_predictions_is_partial_not_an_exception() -> None:
+    cases = parse_strict_json(
+        HYBRID_LINK_PATH.read_bytes(), HybridSemanticLinkDataset
+    ).root
+
+    report = evaluate_hybrid_predictions(
+        cases, _hybrid_fixture_predictions(cases)[:4]
+    )
+
+    assert report.product_family_exact_match.numerator == 4
+    assert report.product_family_exact_match.denominator == 4
+    assert report.product_family_exact_match.authoritative_denominator == 5
+    assert report.product_family_exact_match.status == "unmeasured"
+
+
+def test_hybrid_evaluation_rejects_unknown_case_ids_fail_closed() -> None:
+    cases = parse_strict_json(
+        HYBRID_LINK_PATH.read_bytes(), HybridSemanticLinkDataset
+    ).root
+    unknown = cases[0].model_copy(update={"case_id": "HYB-LINK-999"})
+
+    with pytest.raises(ValueError, match="HYBRID_EVALUATION_UNKNOWN_CASE_ID"):
+        evaluate_hybrid_predictions(
+            (unknown, *cases[1:]), _hybrid_fixture_predictions(cases)
+        )
 
 
 def _frame(

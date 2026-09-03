@@ -60,6 +60,17 @@ EvaluationMode = Literal["decoupled", "full"]
 ProbeKind = Literal["unknown_id", "invalid_context_graph"]
 ProbeDecision = Literal["accepted", "rejected"]
 _FALSE_FAST_OOD_TYPES = frozenset({"vocabulary", "domain", "context"})
+_HYBRID_SEMANTIC_LINK_CASE_HASHES = {
+    "HYB-LINK-001": "081c52c09dd6e346b92bff1cc50f11e2df072e1d6fc4c6204882ada182abb2ed",
+    "HYB-LINK-002": "abe78ca47904d9a9f5b6cd4168ed33f888b1030397a8f2771de5125c748f54e2",
+    "HYB-LINK-003": "24750ba5631f982d010e1f69e0f30d95c42834840e722ddb56227b047b2fc347",
+    "HYB-LINK-004": "6b6cda1e6c5f5093c03d732f2ba99ffac02c39533006e656d263e291b722341c",
+    "HYB-LINK-005": "a70f57b472f6a711fd457687dbd8187a4ad30757fac99bf1eb15c47031ed1c8e",
+}
+_HYBRID_SEMANTIC_LINK_CASE_COUNT = len(_HYBRID_SEMANTIC_LINK_CASE_HASHES)
+_HYBRID_SEMANTIC_LINK_SPAN_COUNT = 5
+_HYBRID_SEMANTIC_LINK_SEMANTIC_COUNT = 4
+_HYBRID_SEMANTIC_LINK_OOD_COUNT = 1
 _PROBE_CODES: dict[tuple[str, str], tuple[str, str]] = {
     ("unknown_id", "accepted"): ("UNKNOWN_ID_ACCEPTED", "UNKNOWN_ID_ACCEPTED"),
     ("unknown_id", "rejected"): ("UNKNOWN_ID_REJECTED", "MODEL_UNKNOWN_ID"),
@@ -1213,6 +1224,22 @@ class HybridStageMetric(CountMetric):
     """V3 count whose authority is explicit; partial evidence stays unmeasured."""
 
     authoritative_denominator: int | None = Field(default=None, ge=0)
+    observed_population_count: int | None = Field(default=None, ge=0)
+    authoritative_population_count: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_population_counts(self) -> "HybridStageMetric":
+        if (self.observed_population_count is None) != (
+            self.authoritative_population_count is None
+        ):
+            raise ValueError("hybrid population counts must be declared together")
+        if (
+            self.observed_population_count is not None
+            and self.authoritative_population_count is not None
+            and self.observed_population_count > self.authoritative_population_count
+        ):
+            raise ValueError("hybrid observed population exceeds authority")
+        return self
 
     @computed_field
     @property
@@ -1221,6 +1248,7 @@ class HybridStageMetric(CountMetric):
             self.authoritative_denominator is None
             or self.authoritative_denominator == 0
             or self.denominator != self.authoritative_denominator
+            or self.observed_population_count != self.authoritative_population_count
         ):
             return "unmeasured"
         return "measured"
@@ -1242,6 +1270,8 @@ class HybridStageMetric(CountMetric):
         if self.denominator == 0:
             return "EVIDENCE_MISSING"
         if self.denominator != self.authoritative_denominator:
+            return "PARTIAL_AUTHORITATIVE_DENOMINATOR"
+        if self.observed_population_count != self.authoritative_population_count:
             return "PARTIAL_AUTHORITATIVE_DENOMINATOR"
         return None
 
@@ -1297,19 +1327,39 @@ class HybridEvaluationReport(ContractModel):
     provider: HybridProviderTelemetry
 
 
+def validate_hybrid_semantic_link_authority(
+    cases: Sequence[HybridSemanticLinkCase],
+) -> dict[str, HybridSemanticLinkCase]:
+    """Validate any observed slice against the pinned five-case authority."""
+
+    case_index = _unique_index(cases, lambda item: item.case_id)
+    if not set(case_index) <= set(_HYBRID_SEMANTIC_LINK_CASE_HASHES):
+        raise ValueError("HYBRID_EVALUATION_UNKNOWN_CASE_ID")
+    if any(
+        canonical_sha256(case)
+        != _HYBRID_SEMANTIC_LINK_CASE_HASHES[case.case_id]
+        for case in case_index.values()
+    ):
+        raise ValueError("HYBRID_EVALUATION_CASE_AUTHORITY_MISMATCH")
+    return case_index
+
+
 def evaluate_hybrid_predictions(
     cases: Sequence[HybridSemanticLinkCase],
     predictions: Sequence[HybridSemanticLinkPrediction],
 ) -> HybridEvaluationReport:
     """Aggregate V3 link predictions without inventing later-stage evidence."""
 
-    case_index = _unique_index(cases, lambda item: item.case_id)
+    case_index = validate_hybrid_semantic_link_authority(cases)
     prediction_index = _unique_index(predictions, lambda item: item.case_id)
-    if set(case_index) != set(prediction_index):
-        raise ValueError("HYBRID_EVALUATION_CASE_SET_MISMATCH")
+    authoritative_ids = set(_HYBRID_SEMANTIC_LINK_CASE_HASHES)
+    if not set(prediction_index) <= authoritative_ids:
+        raise ValueError("HYBRID_EVALUATION_UNKNOWN_CASE_ID")
+    if not set(prediction_index) <= set(case_index):
+        raise ValueError("HYBRID_EVALUATION_PREDICTION_WITHOUT_CASE")
     aligned = tuple(
         (case_index[case_id], prediction_index[case_id])
-        for case_id in sorted(case_index)
+        for case_id in sorted(set(case_index) & set(prediction_index))
     )
     scores = tuple(
         evaluate_hybrid_prediction(case, prediction)
@@ -1330,6 +1380,8 @@ def evaluate_hybrid_predictions(
             authoritative_denominator=(
                 denominator if authoritative is None else authoritative
             ),
+            observed_population_count=len(aligned),
+            authoritative_population_count=_HYBRID_SEMANTIC_LINK_CASE_COUNT,
         )
 
     def unavailable(authoritative: int | None) -> HybridStageMetric:
@@ -1337,6 +1389,8 @@ def evaluate_hybrid_predictions(
             numerator=0,
             denominator=0,
             authoritative_denominator=authoritative,
+            observed_population_count=len(aligned),
+            authoritative_population_count=_HYBRID_SEMANTIC_LINK_CASE_COUNT,
         )
 
     return HybridEvaluationReport(
@@ -1349,6 +1403,7 @@ def evaluate_hybrid_predictions(
                 for case, prediction in aligned
             ),
             expected_span_total,
+            _HYBRID_SEMANTIC_LINK_SPAN_COUNT,
         ),
         hint_recall_at_5=metric(
             sum(
@@ -1359,6 +1414,7 @@ def evaluate_hybrid_predictions(
                 for case, prediction in aligned
             ),
             expected_semantic_total,
+            _HYBRID_SEMANTIC_LINK_SEMANTIC_COUNT,
         ),
         exact_lock_precision=unavailable(None),
         compact_catalog_selectability=metric(
@@ -1370,15 +1426,21 @@ def evaluate_hybrid_predictions(
                 for case, prediction in aligned
             ),
             expected_semantic_total,
+            _HYBRID_SEMANTIC_LINK_SEMANTIC_COUNT,
         ),
-        first_pass_structured_validity=unavailable(len(aligned)),
+        first_pass_structured_validity=unavailable(
+            _HYBRID_SEMANTIC_LINK_CASE_COUNT
+        ),
         repaired_structured_validity=unavailable(None),
         action_exact_match=metric(
-            sum(score.action_exact_match == 1 for score in scores), len(aligned)
+            sum(score.action_exact_match == 1 for score in scores),
+            len(aligned),
+            _HYBRID_SEMANTIC_LINK_CASE_COUNT,
         ),
         product_family_exact_match=metric(
             sum(score.product_family_exact_match == 1 for score in scores),
             len(aligned),
+            _HYBRID_SEMANTIC_LINK_CASE_COUNT,
         ),
         semantic_link_recall=metric(
             sum(
@@ -1389,22 +1451,28 @@ def evaluate_hybrid_predictions(
                 for case, prediction in aligned
             ),
             expected_semantic_total,
+            _HYBRID_SEMANTIC_LINK_SEMANTIC_COUNT,
         ),
         semantic_link_exact_match=metric(
             sum(score.semantic_link_exact_match == 1 for score in scores),
             len(aligned),
+            _HYBRID_SEMANTIC_LINK_CASE_COUNT,
         ),
         joint_frame_exact_match=metric(
-            sum(score.frame_exact_match == 1 for score in scores), len(aligned)
+            sum(score.frame_exact_match == 1 for score in scores),
+            len(aligned),
+            _HYBRID_SEMANTIC_LINK_CASE_COUNT,
         ),
         context_link_exact_match=unavailable(None),
         ood_false_fast_rate=metric(
-            sum(int(score.ood_false_fast) for score in scores), ood_total
+            sum(int(score.ood_false_fast) for score in scores),
+            ood_total,
+            _HYBRID_SEMANTIC_LINK_OOD_COUNT,
         ),
         complete_contract_exact_match=unavailable(None),
         planning_readiness=unavailable(None),
         provider=HybridProviderTelemetry(
-            provider_success=unavailable(len(aligned)),
+            provider_success=unavailable(_HYBRID_SEMANTIC_LINK_CASE_COUNT),
             provider_calls=0,
             successful_provider_calls=0,
             repair_calls=0,

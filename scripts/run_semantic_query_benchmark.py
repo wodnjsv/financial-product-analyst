@@ -28,9 +28,19 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from financial_agent.contracts.canonical import build_request_key, canonical_json_bytes
 from financial_agent.contracts.request import RequestContext, Segment
-from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.catalog import load_catalog, load_hybrid_catalog
 from financial_agent.intent.clova import ClovaStructuredOutputAdapter, ModelInvocationResult
 from financial_agent.intent.config import ClovaResolverConfig
+from financial_agent.intent.evaluation import (
+    HybridEvaluationReport,
+    HybridProviderTelemetry,
+    HybridSemanticLinkCase,
+    HybridSemanticLinkDataset,
+    HybridStageMetric,
+    StableErrorCount,
+    parse_strict_json,
+    validate_hybrid_semantic_link_authority,
+)
 from financial_agent.intent.errors import ModelInvocationError, ResolverContractError
 from financial_agent.intent.query_contract_registry import (
     PolicyKind,
@@ -39,14 +49,24 @@ from financial_agent.intent.query_contract_registry import (
 )
 from financial_agent.intent.query_contract_judge import QueryContractJudgePromptEnvelope
 from financial_agent.intent.service import IntentResolverService
+from financial_agent.intent.query_contracts import (
+    AxisReadiness,
+    AxisReadinessRecordV2,
+    PlanReadiness,
+)
 from financial_agent.intent.types import SemanticTag
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
     CANDIDATE_POLICY_VERSION,
+    HYBRID_ADAPTER_VERSION,
+    HYBRID_CANDIDATE_POLICY_VERSION,
+    HYBRID_PROMPT_VERSION,
+    HYBRID_RESOLVER_SCHEMA_VERSION,
     NORMALIZER_VERSION,
     PROMPT_VERSION,
     RESOLVER_SCHEMA_VERSION,
     ActiveDatasetPin,
+    build_hybrid_manifest,
     build_manifest,
 )
 from financial_agent.planning.physical_bindings import (
@@ -54,6 +74,7 @@ from financial_agent.planning.physical_bindings import (
     load_semantic_sql_policy_registry,
 )
 from financial_agent.planning.registry import load_planning_registry
+from financial_agent.planning.semantic_compiler import SemanticPlanningCompiler
 from tests.evaluation.query_contract.coverage import (
     ACTION_IDS,
     load_requirement_snapshot,
@@ -64,6 +85,14 @@ from tests.evaluation.query_contract.decoupled import evaluate_frozen_requiremen
 LIVE_BASE_URL = "https://clovastudio.stream.ntruss.com"
 LIVE_DATASET_VERSION = "synthetic-semantic-query-benchmark-v1"
 LIVE_CASE_COUNT = 16
+HYBRID_SEMANTIC_LINK_CASE_COUNT = 5
+HYBRID_SEMANTIC_LINK_ID_COUNT = 4
+HYBRID_SEMANTIC_LINK_OOD_COUNT = 1
+HYBRID_RUNTIME_CASE_COUNT = LIVE_CASE_COUNT + HYBRID_SEMANTIC_LINK_CASE_COUNT
+HYBRID_SEMANTIC_LINK_CASE_PATH = (
+    PROJECT_ROOT
+    / "tests/evaluation/intent/hybrid_semantic_link_cases.v1.json"
+)
 REQUEST_DEADLINE_SECONDS = 55.0
 SUPPORTED_ACTION_POPULATION: Mapping[str, int] = {
     "aggregate": 11,
@@ -253,6 +282,41 @@ class LivePathEvidence(StrictModel):
             or self.p50_latency_ms > self.p95_latency_ms
         ):
             raise ValueError("LIVE_LATENCY_ACCOUNTING_INVALID")
+        return self
+
+
+class HybridRuntimePathEvidence(StrictModel):
+    """Opt-in V3 shadow observations, isolated from the V2 promotion schema."""
+
+    path_id: Literal["hybrid_shadow_v3"] = "hybrid_shadow_v3"
+    case_count: int = Field(ge=1)
+    metrics: HybridEvaluationReport
+    call_type_counts: Mapping[str, int]
+    provider_error_counts: Mapping[str, int]
+
+    @model_validator(mode="after")
+    def validate_call_accounting(self) -> "HybridRuntimePathEvidence":
+        provider = self.metrics.provider
+        if sum(self.call_type_counts.values()) != provider.provider_calls:
+            raise ValueError("HYBRID_PROVIDER_CALL_ACCOUNTING_MISMATCH")
+        if (
+            provider.successful_provider_calls
+            + sum(self.provider_error_counts.values())
+            != provider.provider_calls
+        ):
+            raise ValueError("HYBRID_PROVIDER_OUTCOME_ACCOUNTING_MISMATCH")
+        if any(value < 1 for value in self.provider_error_counts.values()):
+            raise ValueError("HYBRID_PROVIDER_ERROR_COUNT_INVALID")
+        if self.call_type_counts.get("primary", 0) != self.case_count:
+            raise ValueError("HYBRID_PRIMARY_CALL_COUNT_MISMATCH")
+        if self.call_type_counts.get("repair", 0) != provider.repair_calls:
+            raise ValueError("HYBRID_REPAIR_CALL_COUNT_MISMATCH")
+        if self.call_type_counts.get("judge", 0) != provider.candidate_judge_calls:
+            raise ValueError("HYBRID_JUDGE_CALL_COUNT_MISMATCH")
+        if set(self.call_type_counts) - {"primary", "repair", "judge"}:
+            raise ValueError("HYBRID_PROVIDER_CALL_TYPE_INVALID")
+        if provider.repair_calls + provider.candidate_judge_calls > self.case_count:
+            raise ValueError("HYBRID_RECOVERY_CALL_COUNT_INVALID")
         return self
 
 
@@ -1249,7 +1313,8 @@ async def run_live_benchmark(
     paced: bool,
     interval_seconds: float,
     raw_path: Path,
-) -> tuple[LivePathEvidence, ...]:
+    include_hybrid_v3: bool = False,
+) -> tuple[LivePathEvidence | HybridRuntimePathEvidence, ...]:
     if model != "HCX-007":
         raise ValueError("LIVE_MODEL_NOT_AUTHORIZED")
     _prepare_raw(raw_path)
@@ -1290,8 +1355,396 @@ async def run_live_benchmark(
         query_contract_registry=load_query_contract_registry(PROJECT_ROOT),
     )
     baseline = await _run_production_path(service, adapter, paced, interval_seconds)
+    paths: list[LivePathEvidence | HybridRuntimePathEvidence] = [baseline]
+    if include_hybrid_v3:
+        if paced:
+            await asyncio.sleep(interval_seconds)
+        hybrid = await _run_hybrid_path(
+            _build_hybrid_live_service(adapter),
+            adapter,
+            paced,
+            interval_seconds,
+        )
+        paths.append(hybrid)
+        if paced:
+            await asyncio.sleep(interval_seconds)
     challenger = await _run_challenger_path(adapter, paced, interval_seconds)
-    return (baseline, challenger)
+    paths.append(challenger)
+    return tuple(paths)
+
+
+def _live_dataset_pin() -> ActiveDatasetPin:
+    return ActiveDatasetPin(
+        dataset_version=LIVE_DATASET_VERSION,
+        manifest_hash="0" * 64,
+    )
+
+
+def _build_hybrid_live_service(adapter: object) -> IntentResolverService:
+    catalog = load_hybrid_catalog(PROJECT_ROOT)
+    manifest = build_hybrid_manifest(
+        catalog,
+        {
+            "normalizer_version": NORMALIZER_VERSION,
+            "candidate_policy_version": HYBRID_CANDIDATE_POLICY_VERSION,
+            "resolver_schema_version": HYBRID_RESOLVER_SCHEMA_VERSION,
+            "prompt_version": HYBRID_PROMPT_VERSION,
+            "adapter_version": HYBRID_ADAPTER_VERSION,
+        },
+    )
+    return IntentResolverService(
+        adapter=adapter,  # type: ignore[arg-type]
+        entity_repository=_EmptyEntityRepository(),
+        catalog=catalog,
+        manifest=manifest,
+        active_dataset_pin=_live_dataset_pin(),
+        query_contract_registry=load_query_contract_registry(PROJECT_ROOT),
+    )
+
+
+def _load_hybrid_semantic_link_cases() -> tuple[HybridSemanticLinkCase, ...]:
+    cases = parse_strict_json(
+        HYBRID_SEMANTIC_LINK_CASE_PATH.read_bytes(),
+        HybridSemanticLinkDataset,
+    ).root
+    validate_hybrid_semantic_link_authority(cases)
+    if len(cases) != HYBRID_SEMANTIC_LINK_CASE_COUNT:
+        raise ValueError("HYBRID_EVALUATION_AUTHORITY_INCOMPLETE")
+    return cases
+
+
+def _choice_values(choice: object) -> tuple[str, ...]:
+    return tuple(
+        getattr(item, "value", item)
+        for item in getattr(choice, "selected_ids", ())
+    )
+
+
+def _has_planning_readiness(
+    attempt: object,
+    compiler: SemanticPlanningCompiler,
+) -> bool:
+    candidate_frames = attempt.candidates.frames  # type: ignore[attr-defined]
+    if any(len(frame.complete_candidates) != 1 for frame in candidate_frames):
+        return False
+    selected = tuple(frame.complete_candidates[0] for frame in candidate_frames)
+    resolution_frames = {
+        frame.frame_id: frame
+        for frame in attempt.resolution.canonical_frames  # type: ignore[attr-defined]
+    }
+    if set(resolution_frames) != {item.contract.frame_id for item in selected}:
+        return False
+    axis_readiness = tuple(
+        AxisReadinessRecordV2(
+            readiness=AxisReadiness.COMPLETE,
+            reason_codes=(),
+        )
+        for _ in selected
+    )
+    try:
+        assessments = compiler.assess_in_dependency_order(
+            selected_candidates=selected,
+            axis_readiness=axis_readiness,
+            contract_readiness=tuple(
+                frame.contract_readiness for frame in candidate_frames
+            ),
+            active_dataset_pin=_live_dataset_pin(),
+        )
+    except ValueError:
+        return False
+    return bool(assessments) and all(
+        item.plan.readiness is PlanReadiness.EXECUTABLE for item in assessments
+    )
+
+
+async def _run_hybrid_path(
+    service: IntentResolverService,
+    adapter: object,
+    paced: bool,
+    interval: float,
+    *,
+    hybrid_cases: tuple[HybridSemanticLinkCase, ...] | None = None,
+) -> HybridRuntimePathEvidence:
+    hybrid_cases = (
+        _load_hybrid_semantic_link_cases()
+        if hybrid_cases is None
+        else hybrid_cases
+    )
+    validate_hybrid_semantic_link_authority(hybrid_cases)
+    provider_successes = first_pass_valid = repaired_valid = 0
+    action_hits = family_hits = semantic_hits = semantic_exact = 0
+    frame_hits = context_hits = false_fast = planning_ready_count = 0
+    semantic_errors: Counter[str] = Counter()
+    observations: dict[str, object] = {}
+    representative_attempts = 0
+    semantic_denominator = 0
+    start_record = len(adapter.records)  # type: ignore[attr-defined]
+    compiler = SemanticPlanningCompiler(
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+        load_planning_registry(PROJECT_ROOT),
+    )
+    for index, case in enumerate(_LIVE_CASES):
+        context = _request_context(case)
+        case_record = len(adapter.records)  # type: ignore[attr-defined]
+        if case.case_id in REPRESENTATIVE_CASE_EXPECTATIONS:
+            representative_attempts += 1
+        try:
+            attempt = await service.resolve_hybrid_query_contract_candidates(context)
+        except (ModelInvocationError, ResolverContractError, ValueError) as error:
+            semantic_errors[getattr(error, "code", type(error).__name__)] += 1
+        else:
+            repaired = attempt.telemetry.repair_used
+            first_pass_valid += int(not repaired)
+            repaired_valid += int(repaired)
+            frames = attempt.resolution.canonical_frames
+            actions = tuple(
+                action
+                for frame in frames
+                for action in _choice_values(frame.action_choice)
+            )
+            families = tuple(
+                sorted(
+                    {
+                        family
+                        for frame in frames
+                        for family in _choice_values(frame.product_family_choice)
+                    }
+                )
+            )
+            action_match = actions == case.actions
+            family_match = families == tuple(sorted(case.families))
+            action_hits += int(action_match)
+            family_hits += int(family_match)
+            ready = _has_planning_readiness(attempt, compiler)
+            planning_ready_count += int(ready)
+            if case.case_id in REPRESENTATIVE_CASE_EXPECTATIONS:
+                observation = _representative_observation(attempt)
+                observations[case.case_id] = observation
+                expected_context = REPRESENTATIVE_CASE_EXPECTATIONS[case.case_id][
+                    "context_links"
+                ]
+                context_match = observation["context_links"] == expected_context
+                context_hits += int(context_match)
+        provider_successes += int(
+            any(
+                record.success
+                for record in adapter.records[case_record:]  # type: ignore[attr-defined]
+            )
+        )
+        if paced and index + 1 < len(_LIVE_CASES):
+            await asyncio.sleep(interval)
+
+    if paced and _LIVE_CASES and hybrid_cases:
+        await asyncio.sleep(interval)
+    for index, case in enumerate(hybrid_cases):
+        context = _request_context(case)  # type: ignore[arg-type]
+        case_record = len(adapter.records)  # type: ignore[attr-defined]
+        semantic_denominator += len(case.expected_semantic_ids)
+        try:
+            attempt = await service.resolve_hybrid_query_contract_candidates(context)
+        except (ModelInvocationError, ResolverContractError, ValueError) as error:
+            semantic_errors[getattr(error, "code", type(error).__name__)] += 1
+        else:
+            repaired = attempt.telemetry.repair_used
+            first_pass_valid += int(not repaired)
+            repaired_valid += int(repaired)
+            frames = attempt.resolution.canonical_frames
+            actions = tuple(
+                action
+                for frame in frames
+                for action in _choice_values(frame.action_choice)
+            )
+            families = tuple(
+                sorted(
+                    {
+                        family
+                        for frame in frames
+                        for family in _choice_values(frame.product_family_choice)
+                    }
+                )
+            )
+            action_match = actions == case.expected_action_ids
+            family_match = families == case.expected_product_family_ids
+            action_hits += int(action_match)
+            family_hits += int(family_match)
+            actual_semantics = tuple(
+                sorted(
+                    {
+                        semantic_id
+                        for link in attempt.resolution.semantic_links
+                        for semantic_id in link.semantic_ids
+                    }
+                )
+            )
+            semantic_hits += len(
+                set(case.expected_semantic_ids) & set(actual_semantics)
+            )
+            semantic_match = actual_semantics == case.expected_semantic_ids
+            semantic_exact += int(semantic_match)
+            coverage_match = all(
+                frame.semantic_coverage[0].state.value
+                == case.expected_coverage_state
+                for frame in frames
+            )
+            ready = _has_planning_readiness(attempt, compiler)
+            false_fast += int(case.expected_ood and ready)
+            frame_hits += int(
+                action_match
+                and family_match
+                and semantic_match
+                and coverage_match
+            )
+        provider_successes += int(
+            any(
+                record.success
+                for record in adapter.records[case_record:]  # type: ignore[attr-defined]
+            )
+        )
+        if paced and index + 1 < len(hybrid_cases):
+            await asyncio.sleep(interval)
+
+    records = adapter.records[start_record:]  # type: ignore[attr-defined]
+    call_types = Counter(record.call_type for record in records)
+    provider_errors = Counter(
+        record.error_code for record in records if record.error_code is not None
+    )
+    all_errors = provider_errors + semantic_errors
+    representative_exact = evaluate_representative_contracts(observations)
+
+    def measured(
+        numerator: int,
+        denominator: int,
+        authoritative_denominator: int,
+        observed_population: int,
+        authoritative_population: int,
+    ) -> HybridStageMetric:
+        return HybridStageMetric(
+            numerator=numerator,
+            denominator=denominator,
+            authoritative_denominator=authoritative_denominator,
+            observed_population_count=observed_population,
+            authoritative_population_count=authoritative_population,
+        )
+
+    def unavailable() -> HybridStageMetric:
+        return HybridStageMetric(
+            numerator=0,
+            denominator=0,
+            authoritative_denominator=None,
+        )
+
+    case_count = len(_LIVE_CASES) + len(hybrid_cases)
+    provider = HybridProviderTelemetry(
+        provider_success=measured(
+            provider_successes,
+            case_count,
+            HYBRID_RUNTIME_CASE_COUNT,
+            case_count,
+            HYBRID_RUNTIME_CASE_COUNT,
+        ),
+        provider_calls=len(records),
+        successful_provider_calls=sum(record.success for record in records),
+        repair_calls=call_types["repair"],
+        candidate_judge_calls=call_types["judge"],
+        prompt_tokens=sum(record.prompt_tokens for record in records),
+        completion_tokens=sum(record.completion_tokens for record in records),
+        p50_latency_ms=_percentile([record.elapsed_ms for record in records], 50),
+        p95_latency_ms=_percentile([record.elapsed_ms for record in records], 95),
+        stable_error_counts=tuple(
+            StableErrorCount(code=code, count=count)
+            for code, count in sorted(all_errors.items())
+        ),
+    )
+    return HybridRuntimePathEvidence(
+        case_count=case_count,
+        metrics=HybridEvaluationReport(
+            required_span_preservation=unavailable(),
+            hint_recall_at_5=unavailable(),
+            exact_lock_precision=unavailable(),
+            compact_catalog_selectability=unavailable(),
+            first_pass_structured_validity=measured(
+                first_pass_valid,
+                case_count,
+                HYBRID_RUNTIME_CASE_COUNT,
+                case_count,
+                HYBRID_RUNTIME_CASE_COUNT,
+            ),
+            repaired_structured_validity=measured(
+                repaired_valid,
+                call_types["repair"],
+                call_types["repair"],
+                call_types["repair"],
+                call_types["repair"],
+            ),
+            action_exact_match=measured(
+                action_hits,
+                case_count,
+                HYBRID_RUNTIME_CASE_COUNT,
+                case_count,
+                HYBRID_RUNTIME_CASE_COUNT,
+            ),
+            product_family_exact_match=measured(
+                family_hits,
+                case_count,
+                HYBRID_RUNTIME_CASE_COUNT,
+                case_count,
+                HYBRID_RUNTIME_CASE_COUNT,
+            ),
+            semantic_link_recall=measured(
+                semantic_hits,
+                semantic_denominator,
+                HYBRID_SEMANTIC_LINK_ID_COUNT,
+                len(hybrid_cases),
+                HYBRID_SEMANTIC_LINK_CASE_COUNT,
+            ),
+            semantic_link_exact_match=measured(
+                semantic_exact,
+                len(hybrid_cases),
+                HYBRID_SEMANTIC_LINK_CASE_COUNT,
+                len(hybrid_cases),
+                HYBRID_SEMANTIC_LINK_CASE_COUNT,
+            ),
+            joint_frame_exact_match=measured(
+                frame_hits,
+                len(hybrid_cases),
+                HYBRID_SEMANTIC_LINK_CASE_COUNT,
+                len(hybrid_cases),
+                HYBRID_SEMANTIC_LINK_CASE_COUNT,
+            ),
+            context_link_exact_match=measured(
+                context_hits,
+                representative_attempts,
+                5,
+                representative_attempts,
+                5,
+            ),
+            ood_false_fast_rate=measured(
+                false_fast,
+                sum(case.expected_ood for case in hybrid_cases),
+                HYBRID_SEMANTIC_LINK_OOD_COUNT,
+                len(hybrid_cases),
+                HYBRID_SEMANTIC_LINK_CASE_COUNT,
+            ),
+            complete_contract_exact_match=measured(
+                representative_exact.successes,
+                representative_attempts,
+                5,
+                representative_attempts,
+                5,
+            ),
+            planning_readiness=measured(
+                planning_ready_count,
+                len(_LIVE_CASES),
+                LIVE_CASE_COUNT,
+                len(_LIVE_CASES),
+                LIVE_CASE_COUNT,
+            ),
+            provider=provider,
+        ),
+        call_type_counts=dict(sorted(call_types.items())),
+        provider_error_counts=dict(sorted(provider_errors.items())),
+    )
 
 
 async def _run_production_path(
@@ -1521,17 +1974,18 @@ async def _main_async(args: argparse.Namespace) -> int:
         print("SEMANTIC_BENCHMARK_ARGUMENT_INVALID", file=sys.stderr)
         return 2
     evidence = collect_static_evidence(PROJECT_ROOT)
-    resolver_paths: list[dict[str, object]] = [
-        {
-            "path_id": "deterministic-v2",
-            "hint_recall_at_5": evidence.adr_candidate_recall_at_5.model_dump(
-                mode="json"
-            )
-            if evidence.adr_candidate_recall_at_5 is not None
-            else None,
-        }
-    ]
+    resolver_paths: list[dict[str, object]] = []
     if args.include_hybrid_v3:
+        resolver_paths.append(
+            {
+                "path_id": "deterministic-v2",
+                "hint_recall_at_5": evidence.adr_candidate_recall_at_5.model_dump(
+                    mode="json"
+                )
+                if evidence.adr_candidate_recall_at_5 is not None
+                else None,
+            }
+        )
         from financial_agent.intent.catalog import load_hybrid_catalog
         from financial_agent.intent.evaluation import EvaluationDataset, parse_strict_json
         from scripts.evaluate_intent_resolver import _hybrid_deterministic_metrics
@@ -1552,6 +2006,9 @@ async def _main_async(args: argparse.Namespace) -> int:
         )
     api_key = _load_api_key()
     live_paths: tuple[LivePathEvidence, ...] = ()
+    all_live_paths: tuple[
+        LivePathEvidence | HybridRuntimePathEvidence, ...
+    ] = ()
     live_reason = "LIVE_CREDENTIAL_MISSING"
     raw_path: Path | None = None
     if args.offline:
@@ -1559,13 +2016,25 @@ async def _main_async(args: argparse.Namespace) -> int:
     elif api_key:
         raw_path = Path(f"/private/tmp/semantic-query-benchmark-raw-{uuid.uuid4().hex}.jsonl")
         try:
-            live_paths = await run_live_benchmark(
+            all_live_paths = await run_live_benchmark(
                 api_key=api_key,
                 model=args.model,
                 paced=args.paced,
                 interval_seconds=args.request_interval_seconds,
                 raw_path=raw_path,
+                include_hybrid_v3=args.include_hybrid_v3,
             )
+            live_paths = tuple(
+                path
+                for path in all_live_paths
+                if isinstance(path, LivePathEvidence)
+            )
+            if args.include_hybrid_v3:
+                resolver_paths.extend(
+                    path.model_dump(mode="json")
+                    for path in all_live_paths
+                    if isinstance(path, HybridRuntimePathEvidence)
+                )
         except (OSError, ModelInvocationError, ResolverContractError, ValueError) as error:
             live_reason = getattr(error, "code", type(error).__name__)
     evidence = evidence.model_copy(update={"live_paths": live_paths})
@@ -1575,10 +2044,11 @@ async def _main_async(args: argparse.Namespace) -> int:
         expected_registry_hashes=evidence.registry_hashes,
     )
     payload = report.model_dump(mode="json")
-    payload["resolver_paths"] = resolver_paths
+    if args.include_hybrid_v3:
+        payload["resolver_paths"] = resolver_paths
     payload["live_execution"] = {
-        "status": "measured" if live_paths else "unmeasured",
-        "reason_code": None if live_paths else live_reason,
+        "status": "measured" if all_live_paths else "unmeasured",
+        "reason_code": None if all_live_paths else live_reason,
         "raw_output_path": None if raw_path is None else str(raw_path),
     }
     payload["report_hash"] = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()

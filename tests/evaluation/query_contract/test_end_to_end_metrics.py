@@ -5,6 +5,7 @@ import hashlib
 import json
 from copy import deepcopy
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 from pydantic import ValidationError
@@ -499,6 +500,229 @@ def test_offline_hybrid_report_never_calls_provider_even_with_credentials(
     assert payload["live_execution"]["reason_code"] == (
         "LIVE_EXECUTION_DISABLED_OFFLINE"
     )
+    output.unlink()
+
+
+class _SyntheticHybridRecordingAdapter:
+    def __init__(self, *, invalid_primary: bool = False) -> None:
+        self.records: list[object] = []
+        self.invalid_primary = invalid_primary
+
+    async def invoke(self, envelope: object, timeout_seconds: float):
+        call_type = benchmark_module._call_type(envelope)
+        if call_type == "primary" and self.invalid_primary:
+            content = "{}"
+            self.invalid_primary = False
+        elif call_type == "judge":
+            candidate_ids = envelope.response_schema["properties"]["candidate_id"][
+                "enum"
+            ]
+            content = json.dumps({"candidate_id": candidate_ids[0]})
+        else:
+            payload = json.loads(envelope.user_message)
+            view = payload["view"]
+            question = payload["context"]["question"]
+            is_link_fixture = "비용 부담" in question
+            mention_text = "비용 부담" if is_link_fixture else "총보수"
+            mention_id = next(
+                item["mention_id"]
+                for item in view["mention_spans"]["items"]
+                if item["text"] == mention_text
+            )
+            segment_id = payload["context"]["segments"][0]["segment_id"]
+            content = json.dumps(
+                {
+                    "proposal_schema_version": "3.0",
+                    "frames": [
+                        {
+                            "segment_ids": [segment_id],
+                            "action_choice": {
+                                "state": "selected",
+                                "selected_ids": [
+                                    "rank" if is_link_fixture else "screen"
+                                ],
+                                "evidence_ids": [],
+                                "reason_code": "explicit",
+                            },
+                            "product_family_choice": {
+                                "state": "selected",
+                                "selected_ids": (
+                                    ["domestic_etf", "overseas_etf"]
+                                    if is_link_fixture
+                                    else ["public_fund"]
+                                ),
+                                "evidence_ids": [],
+                                "reason_code": "explicit",
+                            },
+                            "entity_type_ids": ["FinancialProduct"],
+                            "semantic_links": [
+                                {
+                                    "mention_id": mention_id,
+                                    "state": "selected",
+                                    "semantic_ids": ["fee_rate"],
+                                    "reason_code": "implicit",
+                                }
+                            ],
+                            "unmapped_mention_ids": [],
+                            "semantic_coverage": {
+                                "state": "covered",
+                                "reason": "none",
+                            },
+                            "entity_hints": [],
+                            "produced_result_hints": ["candidates"],
+                        }
+                    ],
+                    "references": [],
+                    "context_links": [],
+                    "slot_mutations": [],
+                    "semantic_flag_hints": [],
+                    "frame_limit_exceeded": False,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        self.records.append(
+            benchmark_module._ProviderCallRecord(
+                call_id=len(self.records) + 1,
+                call_type=call_type,
+                success=True,
+                elapsed_ms=10,
+                prompt_tokens=11,
+                completion_tokens=7,
+                error_code=None,
+            )
+        )
+        return benchmark_module.ModelInvocationResult(
+            content=content,
+            usage=MappingProxyType(
+                {"promptTokens": 11, "completionTokens": 7, "totalTokens": 18}
+            ),
+        )
+
+
+@pytest.mark.asyncio
+async def test_opt_in_live_hybrid_path_executes_v3_and_emits_runtime_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = Path("/private/tmp/pytest-semantic-live-hybrid.json")
+    output.unlink(missing_ok=True)
+    hybrid_case = benchmark_module._load_hybrid_semantic_link_cases()[0]
+    monkeypatch.setattr(benchmark_module, "_LIVE_CASES", ())
+    adapter = _SyntheticHybridRecordingAdapter()
+    service = benchmark_module._build_hybrid_live_service(adapter)
+    prepared = await service.prepare_hybrid(
+        benchmark_module._request_context(hybrid_case)
+    )
+    assert prepared.view.build_manifest.resolver_schema_version == "3.0"
+
+    hybrid_path = await benchmark_module._run_hybrid_path(
+        service,
+        adapter,
+        paced=False,
+        interval=0,
+        hybrid_cases=(hybrid_case,),
+    )
+
+    assert hybrid_path.path_id == "hybrid_shadow_v3"
+    assert hybrid_path.metrics.provider.provider_calls == 1
+    assert hybrid_path.metrics.first_pass_structured_validity.numerator == 1
+    assert hybrid_path.metrics.action_exact_match.numerator == 1
+    assert hybrid_path.metrics.semantic_link_exact_match.numerator == 1
+    assert hybrid_path.metrics.compact_catalog_selectability.status == "unmeasured"
+    assert hybrid_path.provider_error_counts == {}
+    invalid_provider = hybrid_path.metrics.provider.model_copy(
+        update={"successful_provider_calls": 0}
+    )
+    invalid_metrics = hybrid_path.metrics.model_copy(
+        update={"provider": invalid_provider}
+    )
+    with pytest.raises(
+        ValidationError, match="HYBRID_PROVIDER_OUTCOME_ACCOUNTING_MISMATCH"
+    ):
+        benchmark_module.HybridRuntimePathEvidence(
+            case_count=hybrid_path.case_count,
+            metrics=invalid_metrics,
+            call_type_counts=hybrid_path.call_type_counts,
+            provider_error_counts=hybrid_path.provider_error_counts,
+        )
+
+    async def one_hybrid_path(**kwargs):
+        assert kwargs["include_hybrid_v3"] is True
+        return (hybrid_path,)
+
+    monkeypatch.setattr(benchmark_module, "_load_api_key", lambda: "test-only")
+    monkeypatch.setattr(benchmark_module, "run_live_benchmark", one_hybrid_path)
+    args = _parser().parse_args(
+        ["--include-hybrid-v3", "--sanitized-report", str(output)]
+    )
+
+    assert await benchmark_module._main_async(args) == 0
+    payload = json.loads(output.read_bytes())
+    paths = {item["path_id"]: item for item in payload["resolver_paths"]}
+    assert "hybrid_shadow_v3" in paths
+    assert paths["hybrid_shadow_v3"]["metrics"][
+        "first_pass_structured_validity"
+    ]["numerator"] == 1
+    output.unlink()
+
+
+@pytest.mark.asyncio
+async def test_hybrid_runtime_keeps_repair_and_judge_accounting_distinct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hybrid_case = benchmark_module._load_hybrid_semantic_link_cases()[0]
+    monkeypatch.setattr(benchmark_module, "_LIVE_CASES", ())
+    adapter = _SyntheticHybridRecordingAdapter(invalid_primary=True)
+    service = benchmark_module._build_hybrid_live_service(adapter)
+
+    path = await benchmark_module._run_hybrid_path(
+        service,
+        adapter,
+        paced=False,
+        interval=0,
+        hybrid_cases=(hybrid_case,),
+    )
+
+    assert path.call_type_counts == {"primary": 1, "repair": 1}
+    assert path.metrics.first_pass_structured_validity.numerator == 0
+    assert path.metrics.repaired_structured_validity.numerator == 1
+    assert path.metrics.repaired_structured_validity.denominator == 1
+    assert path.metrics.provider.repair_calls == 1
+    assert path.metrics.provider.candidate_judge_calls == 0
+
+
+def test_default_benchmark_payload_is_byte_identical_without_hybrid_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = Path("/private/tmp/pytest-semantic-default-v2.json")
+    output.unlink(missing_ok=True)
+    monkeypatch.setattr(benchmark_module, "_load_api_key", lambda: None)
+    evidence = collect_static_evidence(PROJECT_ROOT)
+    report = build_promotion_report(
+        evidence,
+        expected_source_hashes=evidence.source_hashes,
+        expected_registry_hashes=evidence.registry_hashes,
+    )
+    expected = report.model_dump(mode="json")
+    expected["live_execution"] = {
+        "status": "unmeasured",
+        "reason_code": "LIVE_EXECUTION_DISABLED_OFFLINE",
+        "raw_output_path": None,
+    }
+    expected["report_hash"] = hashlib.sha256(
+        benchmark_module.canonical_json_bytes(expected)
+    ).hexdigest()
+
+    args = _parser().parse_args(
+        ["--offline", "--sanitized-report", str(output)]
+    )
+    assert asyncio.run(benchmark_module._main_async(args)) == 0
+
+    assert output.read_bytes() == (
+        benchmark_module.canonical_json_bytes(expected) + b"\n"
+    )
+    assert "resolver_paths" not in json.loads(output.read_bytes())
     output.unlink()
 
 
