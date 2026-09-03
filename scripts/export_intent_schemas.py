@@ -14,12 +14,15 @@ def main() -> int:
         choices=("1.0", "2.0", "3.0"),
         default="1.0",
     )
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
+    if args.schema_version != "1.0" and args.output_dir is None:
+        parser.error("--output-dir is required when --schema-version is not 1.0")
+    output_dir = args.output_dir or DEFAULT_OUTPUT
     if args.check:
-        check_schemas(args.output_dir, schema_version=args.schema_version)
+        check_schemas(output_dir, schema_version=args.schema_version)
     else:
-        export_schemas(args.output_dir, schema_version=args.schema_version)
+        export_schemas(output_dir, schema_version=args.schema_version)
     return 0
 
 

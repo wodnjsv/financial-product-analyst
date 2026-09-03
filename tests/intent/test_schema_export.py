@@ -1,6 +1,10 @@
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+from typing import Literal
 
 import pytest
 
@@ -106,3 +110,91 @@ def test_v3_intent_schemas_are_fresh() -> None:
     project_root = Path(__file__).resolve().parents[2]
 
     check_schemas(project_root / "schemas/intent/v3", schema_version="3.0")
+
+
+@pytest.mark.parametrize("schema_version", ("2.0", "3.0"))
+def test_cli_requires_explicit_output_dir_for_nondefault_schema_versions(
+    tmp_path: Path,
+    schema_version: Literal["2.0", "3.0"],
+) -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    v1_dir = project_root / "schemas/intent/v1"
+    v1_before = {path.name: path.read_bytes() for path in v1_dir.iterdir()}
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(project_root)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(project_root / "scripts/export_intent_schemas.py"),
+            "--schema-version",
+            schema_version,
+        ],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 2
+    assert (
+        "--output-dir is required when --schema-version is not 1.0"
+        in completed.stderr
+    )
+    assert {path.name: path.read_bytes() for path in v1_dir.iterdir()} == v1_before
+    assert not (tmp_path / "schemas").exists()
+
+
+@pytest.mark.parametrize("schema_version", ("2.0", "3.0"))
+def test_cli_exports_nondefault_schema_versions_to_explicit_output_dir(
+    tmp_path: Path,
+    schema_version: Literal["2.0", "3.0"],
+) -> None:
+    project_root = Path(__file__).resolve().parents[2]
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/export_intent_schemas.py",
+            "--schema-version",
+            schema_version,
+            "--output-dir",
+            str(tmp_path),
+        ],
+        cwd=project_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    check_schemas(tmp_path, schema_version=schema_version)
+
+
+def test_cli_no_arguments_retains_v1_export_and_check_behavior(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(project_root)
+    command = [sys.executable, str(project_root / "scripts/export_intent_schemas.py")]
+
+    exported = subprocess.run(
+        command,
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    checked = subprocess.run(
+        [*command, "--check"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert exported.returncode == 0, exported.stderr
+    assert checked.returncode == 0, checked.stderr
+    check_schemas(tmp_path / "schemas/intent/v1")
