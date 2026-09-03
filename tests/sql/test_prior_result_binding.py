@@ -309,3 +309,58 @@ def test_public_fund_prior_count_compiles_with_closed_manifest_lineage() -> None
         "organizer.prfd01n001.net_assets:2",
     )
     assert "representative_product" in request.statement
+
+
+@pytest.mark.parametrize(
+    "entity_ids",
+    (
+        ("representative-a",),
+        ("share-a",),
+        ("share-a", "share-b"),
+        ("representative-a", "share-a", "unrelated-product"),
+    ),
+)
+def test_public_fund_prior_membership_is_applied_before_representative_collapse(
+    entity_ids,
+) -> None:
+    compilation, assessments = _public_prior_compilation(
+        _public_fund_prior_aggregate(representative=True),
+        facts=_verified_population_facts(),
+    )
+    assert assessments[1].plan.readiness.value == "executable"
+    plan = compilation.logical_query_plan
+    assert plan is not None
+    compiler = type(SQL_COMPILER)(
+        BINDINGS, POLICIES, PLANNING, _ACTIVE_DATASET_PIN
+    )
+    request = compiler.compile_task(
+        plan,
+        plan.tasks[1].task_id,
+        readiness_facts=_verified_population_facts(),
+    ).request
+    assert request is not None
+    binding = BindingValue(
+        binding_name="result-set-1",
+        value_type="semantic-result:many",
+        value=encode_contract_value(entity_ids),
+    )
+
+    bound = SemanticSqlRuntimeBinder(compiler).bind(
+        request,
+        plan,
+        (binding,),
+        dependency_results=(_dependency_result(plan, binding),),
+    )
+
+    assert "relation_record.subject_id = ANY" in bound.statement
+    assert "relation_record.object_id = ANY" in bound.statement
+    assert "product.entity_id = ANY" not in bound.statement
+    prior_parameter = next(
+        item
+        for item in bound.parameters
+        if isinstance(item, SqlParameter) and item.name.startswith("prior_result_")
+    )
+    assert bound.statement.count(prior_parameter.name) == 2
+    assert decode_contract_value(prior_parameter.value) == tuple(
+        sorted(set(entity_ids))
+    )

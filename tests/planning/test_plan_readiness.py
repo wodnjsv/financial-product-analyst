@@ -24,6 +24,7 @@ from financial_agent.planning.physical_bindings import (
     load_semantic_sql_policy_registry,
 )
 from financial_agent.planning.readiness import (
+    PlanReadinessResult,
     PriorResultReadinessContext,
     PriorResultReadinessSource,
     assess_plan_readiness,
@@ -958,7 +959,15 @@ def _rank_contract(
     return _validate(payload)
 
 
-def _prior_context(producer, consumer, assessment):
+def _prior_context(
+    producer,
+    consumer,
+    assessment,
+    *,
+    binding_name="result-set-1",
+    product_family_ids=None,
+    producer_prior_result_context=None,
+):
     bindings = load_physical_binding_registry(PROJECT_ROOT)
     policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
     return PriorResultReadinessContext(
@@ -970,14 +979,258 @@ def _prior_context(producer, consumer, assessment):
         policy_registry_hash=policies.registry_hash,
         sources=(
             PriorResultReadinessSource(
-                binding_name="result-set-1",
+                binding_name=binding_name,
                 producer_contract=producer,
                 producer_assessment=assessment,
                 consumer_frame_id=consumer.frame_id,
                 consumer_contract_hash=canonical_sha256(consumer),
-                product_family_ids=producer.scope.product_family_ids,
+                product_family_ids=(
+                    producer.scope.product_family_ids
+                    if product_family_ids is None
+                    else product_family_ids
+                ),
+                **(
+                    {
+                        "producer_prior_result_context": (
+                            producer_prior_result_context
+                        )
+                    }
+                    if producer_prior_result_context is not None
+                    else {}
+                ),
             ),
         ),
+    )
+
+
+def test_prior_result_readiness_recomputes_every_three_frame_predecessor() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+    first = _rank_contract(family="domestic_etf", frame_id="frame-1")
+    first_plan = _assess_plan_readiness(first, bindings, policies)
+    second = _rank_contract(
+        family=None, prior="result-set-1", frame_id="frame-2"
+    )
+    first_context = _prior_context(first, second, first_plan)
+    second_plan = assess_plan_readiness(
+        second,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=first_context,
+    )
+    third = _rank_contract(
+        family=None, prior="result-set-2", frame_id="frame-3"
+    )
+    second_context = _prior_context(
+        second,
+        third,
+        second_plan,
+        binding_name="result-set-2",
+        product_family_ids=(ProductFamily.DOMESTIC_ETF,),
+        producer_prior_result_context=first_context,
+    )
+
+    result = assess_plan_readiness(
+        third,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=second_context,
+    )
+
+    assert result.readiness is PlanReadiness.EXECUTABLE
+    assert result.binding_ids == ("domestic-etf-aum.v1",)
+
+
+def test_prior_result_readiness_rejects_extra_and_missing_context_sources() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+    producer = _rank_contract(family="domestic_etf", frame_id="frame-1")
+    producer_plan = _assess_plan_readiness(producer, bindings, policies)
+    consumer = _rank_contract(
+        family=None, prior="result-set-1", frame_id="frame-2"
+    )
+    valid = _prior_context(producer, consumer, producer_plan)
+    foreign_source = valid.sources[0].model_copy(
+        update={"binding_name": "foreign-result"}
+    )
+
+    extra = assess_plan_readiness(
+        consumer,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=valid.model_copy(
+            update={"sources": (*valid.sources, foreign_source)}
+        ),
+    )
+    missing = assess_plan_readiness(
+        consumer,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=valid.model_copy(
+            update={"sources": (foreign_source,)}
+        ),
+    )
+
+    assert extra.readiness is PlanReadiness.BLOCKED
+    assert "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH" in extra.reason_codes
+    assert missing.readiness is PlanReadiness.BLOCKED
+    assert "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH" in missing.reason_codes
+
+
+def test_prior_result_readiness_rejects_forged_intermediate_assessment() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+    facts = _verified_population_facts()
+    first_payload = _common("lookup", "public_fund")
+    first_payload["qualifiers"]["as_of_date"] = "2026-08-24"
+    first_payload["projections"] = {
+        "field_concept_ids": ["aum"],
+        "default_profile_id": None,
+    }
+    first = _validate(first_payload)
+    first_plan = _assess_plan_readiness(first, bindings, policies, facts=facts)
+    second = _rank_contract(
+        family=None, prior="result-set-1", frame_id="frame-2"
+    )
+    first_context = _prior_context(first, second, first_plan)
+    limited = assess_plan_readiness(
+        second,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        facts=facts,
+        prior_result_context=first_context,
+    )
+    assert limited.readiness is PlanReadiness.LIMITED
+    forged = limited.model_copy(
+        update={"readiness": PlanReadiness.EXECUTABLE, "reason_codes": ()}
+    )
+    third = _rank_contract(
+        family=None, prior="result-set-2", frame_id="frame-3"
+    )
+    forged_context = _prior_context(
+        second,
+        third,
+        forged,
+        binding_name="result-set-2",
+        product_family_ids=(ProductFamily.PUBLIC_FUND,),
+        producer_prior_result_context=first_context,
+    )
+
+    result = assess_plan_readiness(
+        third,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        facts=facts,
+        prior_result_context=forged_context,
+    )
+
+    assert result.readiness is PlanReadiness.BLOCKED
+    assert "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH" in result.reason_codes
+
+
+def test_prior_result_readiness_rejects_dependency_cycle() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+    second = _rank_contract(
+        family=None, prior="result-set-1", frame_id="frame-2"
+    )
+    third = _rank_contract(
+        family=None, prior="result-set-2", frame_id="frame-3"
+    )
+    forged_second_plan = PlanReadinessResult(
+        frame_id=second.frame_id,
+        contract_hash=canonical_sha256(second),
+        dataset_version=_ACTIVE_DATASET_PIN.dataset_version,
+        dataset_pin=_ACTIVE_DATASET_PIN.manifest_hash,
+        binding_registry_version=bindings.registry_version,
+        binding_registry_hash=bindings.registry_hash,
+        policy_registry_version=policies.registry_version,
+        policy_registry_hash=policies.registry_hash,
+        readiness=PlanReadiness.EXECUTABLE,
+        reason_codes=(),
+        binding_ids=("domestic-etf-aum.v1",),
+        policy_ids=(
+            "exclude_missing.v1",
+            "stable-product-id.v1",
+        ),
+        unit_conversion_policy_ids=("identity-unit.v1",),
+    )
+    forged_third_plan = forged_second_plan.model_copy(
+        update={
+            "frame_id": third.frame_id,
+            "contract_hash": canonical_sha256(third),
+        }
+    )
+    cycle_back = _prior_context(
+        third,
+        second,
+        forged_third_plan,
+        binding_name="result-set-1",
+        product_family_ids=(ProductFamily.DOMESTIC_ETF,),
+    )
+    outer = _prior_context(
+        second,
+        third,
+        forged_second_plan,
+        binding_name="result-set-2",
+        product_family_ids=(ProductFamily.DOMESTIC_ETF,),
+        producer_prior_result_context=cycle_back,
+    )
+
+    result = assess_plan_readiness(
+        third,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=outer,
+    )
+
+    assert result.readiness is PlanReadiness.BLOCKED
+    assert "PRIOR_RESULT_READINESS_CYCLE" in result.reason_codes
+
+
+def test_prior_result_readiness_bounds_dependency_depth() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+    producer = _rank_contract(family="domestic_etf", frame_id="frame-1")
+    producer_plan = _assess_plan_readiness(producer, bindings, policies)
+    producer_context = None
+
+    for frame_number in range(2, 19):
+        binding_name = f"result-set-{frame_number - 1}"
+        consumer = _rank_contract(
+            family=None,
+            prior=binding_name,
+            frame_id=f"frame-{frame_number}",
+        )
+        consumer_context = _prior_context(
+            producer,
+            consumer,
+            producer_plan,
+            binding_name=binding_name,
+            product_family_ids=(ProductFamily.DOMESTIC_ETF,),
+            producer_prior_result_context=producer_context,
+        )
+        producer_plan = assess_plan_readiness(
+            consumer,
+            bindings,
+            policies,
+            active_dataset_pin=_ACTIVE_DATASET_PIN,
+            prior_result_context=consumer_context,
+        )
+        producer = consumer
+        producer_context = consumer_context
+
+    assert producer_plan.readiness is PlanReadiness.BLOCKED
+    assert (
+        "PRIOR_RESULT_READINESS_DEPTH_EXCEEDED"
+        in producer_plan.reason_codes
     )
 
 

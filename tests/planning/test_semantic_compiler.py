@@ -743,6 +743,48 @@ def test_prior_result_scope_becomes_typed_dependency() -> None:
     assert plan.tasks[1].binding_ids == ("domestic-etf-aum.v1",)
 
 
+def test_three_frame_prior_result_chain_is_assessed_from_exact_predecessors() -> None:
+    first = _rank("frame-1")
+    second = _rank("frame-2", "result-set-1")
+    third = _rank("frame-3", "result-set-2")
+    candidates = tuple(
+        QueryContractCandidate(
+            candidate_id=item.candidate_id,
+            contract=item.contract.model_copy(
+                update={
+                    "qualifiers": QueryQualifiersV2(
+                        as_of_date=date(2026, 8, 24)
+                    )
+                }
+            ),
+        )
+        for item in (first, second, third)
+    )
+    ownership = (
+        PriorResultOwnershipV2(
+            binding_id="result-set-1",
+            producer_frame_id="frame-1",
+            cardinality="many",
+        ),
+        PriorResultOwnershipV2(
+            binding_id="result-set-2",
+            producer_frame_id="frame-2",
+            cardinality="many",
+        ),
+    )
+
+    assessments = _actual_assessments(
+        candidates,
+        prior_result_ownership=ownership,
+    )
+
+    assert tuple(item.plan.readiness for item in assessments) == (
+        PlanReadiness.EXECUTABLE,
+        PlanReadiness.EXECUTABLE,
+        PlanReadiness.EXECUTABLE,
+    )
+
+
 def test_limited_contract_has_no_executable_plan() -> None:
     candidate = _rank()
     compilation = _compile(

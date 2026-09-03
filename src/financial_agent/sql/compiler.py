@@ -551,12 +551,12 @@ def _bind_compiled_request(
             "prior_result_entity_ids": entity_ids,
         }
     )
-    manifest = PhysicalSqlRenderManifest.model_validate(
+    manifest = PhysicalSqlRenderManifest.model_validate_json(
         manifest_draft.model_copy(
             update={
                 "manifest_id": physical_sql_render_manifest_id(manifest_draft)
             }
-        ).model_dump()
+        ).model_dump_json()
     )
     rendered = render_physical_sql_manifest(manifest)
     draft = request.model_copy(
@@ -569,10 +569,10 @@ def _bind_compiled_request(
             "evidence_projection_ids": rendered.evidence_projection_ids,
         }
     )
-    return CompiledSqlRequest.model_validate(
+    return CompiledSqlRequest.model_validate_json(
         draft.model_copy(
             update={"compiled_request_id": compiled_sql_request_id(draft)}
-        ).model_dump()
+        ).model_dump_json()
     )
 
 
@@ -850,7 +850,12 @@ def _compile_statement(context: _Context):
             "catalog-product-family.v1",
             PhysicalLoweringKind.SCOPE,
         )
-    if task.scope.prior_result_binding is not None:
+    representative_prior_scope = (
+        task.scope.prior_result_binding is not None
+        and ProductFamily.PUBLIC_FUND in context.scope_families
+        and _uses_representative_population(task)
+    )
+    if task.scope.prior_result_binding is not None and not representative_prior_scope:
         prior_result = context.params.bind_prior_result(
             task.scope.prior_result_binding,
             context.prior_result_entity_ids,
@@ -1170,6 +1175,12 @@ def _aggregate(context, base, where, family, operation):
             context.params,
             context.facts,
             dataset_version=context.plan.dataset_version,
+            prior_result_binding=(
+                context.task.scope.prior_result_binding
+                if context.task.scope.prior_result_binding is not None
+                else None
+            ),
+            prior_result_entity_ids=context.prior_result_entity_ids,
         )
         base = representative.join(
             product,

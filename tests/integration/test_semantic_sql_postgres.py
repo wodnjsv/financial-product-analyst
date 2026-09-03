@@ -12,7 +12,9 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from financial_agent.contracts.execution import BindingValue
 from financial_agent.contracts.enums import ProductFamily
+from financial_agent.contracts.values import encode_contract_value
 from financial_agent.db.preflight import normalize_psycopg_url
 from financial_agent.intent.query_contracts import (
     AggregationFunction,
@@ -35,7 +37,7 @@ from financial_agent.planning.logical_query import (
     LogicalRankOperationV2,
     LogicalScreenOperationV2,
 )
-from financial_agent.sql.compiler import SemanticSqlCompiler
+from financial_agent.sql.compiler import SemanticSqlCompiler, SemanticSqlRuntimeBinder
 from financial_agent.sql.executor import ReadOnlySqlRunner
 from tests.fixtures.db.synthetic_dataset import (
     insert_building_dataset,
@@ -54,6 +56,15 @@ from tests.sql.helpers import (
     POLICIES,
     make_plan,
     verified_public_fund_facts,
+)
+from tests.sql.test_prior_result_binding import (
+    _dependency_result,
+    _public_prior_compilation,
+)
+from tests.planning.test_plan_readiness import (
+    _public_fund_prior_aggregate,
+    _public_fund_representative_count,
+    _verified_population_facts,
 )
 
 
@@ -535,3 +546,116 @@ async def test_public_fund_representative_population_is_not_duplicated(
         "relation:relation-b",
         "observation:observation-a",
     } <= set(grouped_result.evidence_refs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "entity_ids",
+    (
+        ("representative-a",),
+        ("share-a",),
+        ("share-a", "share-b"),
+        ("representative-a", "share-a", "unrelated-product"),
+    ),
+)
+async def test_public_fund_prior_ids_collapse_to_one_representative_sum_and_count(
+    semantic_sql_runner,
+    entity_ids,
+) -> None:
+    facts = _verified_population_facts()
+    consumers = (
+        _public_fund_prior_aggregate(representative=True),
+        _public_fund_representative_count().model_copy(
+            update={
+                "frame_id": "frame-2",
+                "scope": _public_fund_representative_count().scope.model_copy(
+                    update={
+                        "product_family_ids": (),
+                        "prior_result_binding": "result-set-1",
+                    }
+                ),
+            }
+        ),
+    )
+    values = []
+    for consumer in consumers:
+        compilation, assessments = _public_prior_compilation(
+            consumer,
+            facts=facts,
+        )
+        assert assessments[1].plan.readiness.value == "executable"
+        plan = compilation.logical_query_plan
+        assert plan is not None
+        outcome = COMPILER.compile_task(
+            plan,
+            plan.tasks[1].task_id,
+            readiness_facts=facts,
+        )
+        assert outcome.request is not None, outcome.rejection
+        binding = BindingValue(
+            binding_name="result-set-1",
+            value_type="semantic-result:many",
+            value=encode_contract_value(entity_ids),
+        )
+        bound = SemanticSqlRuntimeBinder(COMPILER).bind(
+            outcome.request,
+            plan,
+            (binding,),
+            dependency_results=(_dependency_result(plan, binding),),
+        )
+        result = await semantic_sql_runner.execute(
+            bound,
+            plan,
+            readiness_facts=facts,
+            timeout_ms=10_000,
+        )
+        values.append(result.result_rows[0].fields[0].value.value)
+
+    assert values == [Decimal("330"), 1]
+
+
+@pytest.mark.asyncio
+async def test_unrelated_public_fund_prior_id_is_excluded(
+    semantic_sql_runner,
+) -> None:
+    facts = _verified_population_facts()
+    consumer = _public_fund_representative_count().model_copy(
+        update={
+            "frame_id": "frame-2",
+            "scope": _public_fund_representative_count().scope.model_copy(
+                update={
+                    "product_family_ids": (),
+                    "prior_result_binding": "result-set-1",
+                }
+            ),
+        }
+    )
+    compilation, _ = _public_prior_compilation(consumer, facts=facts)
+    plan = compilation.logical_query_plan
+    assert plan is not None
+    outcome = COMPILER.compile_task(
+        plan,
+        plan.tasks[1].task_id,
+        readiness_facts=facts,
+    )
+    assert outcome.request is not None, outcome.rejection
+    binding = BindingValue(
+        binding_name="result-set-1",
+        value_type="semantic-result:many",
+        value=encode_contract_value(("unrelated-product",)),
+    )
+    bound = SemanticSqlRuntimeBinder(COMPILER).bind(
+        outcome.request,
+        plan,
+        (binding,),
+        dependency_results=(_dependency_result(plan, binding),),
+    )
+
+    result = await semantic_sql_runner.execute(
+        bound,
+        plan,
+        readiness_facts=facts,
+        timeout_ms=10_000,
+    )
+
+    assert result.result_rows[0].fields[0].value.value == 0

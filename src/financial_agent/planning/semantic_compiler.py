@@ -384,6 +384,9 @@ class SemanticPlanningCompiler:
         }
         plans_by_frame: dict[str, PlanReadinessResult] = {}
         families_by_frame: dict[str, tuple[ProductFamily, ...]] = {}
+        prior_contexts_by_frame: dict[
+            str, PriorResultReadinessContext | None
+        ] = {}
         assessments: list[SemanticReadinessAssessmentV2] = []
         for candidate, axis, contract_gate in zip(
             selected_candidates,
@@ -419,6 +422,9 @@ class SemanticPlanningCompiler:
                             product_family_ids=families_by_frame[
                                 owner.producer_frame_id
                             ],
+                            producer_prior_result_context=(
+                                prior_contexts_by_frame[owner.producer_frame_id]
+                            ),
                         ),
                     ),
                 )
@@ -431,6 +437,7 @@ class SemanticPlanningCompiler:
                 prior_result_context=prior_context,
             )
             plans_by_frame[semantic_contract.frame_id] = plan
+            prior_contexts_by_frame[semantic_contract.frame_id] = prior_context
             effective_families = semantic_contract.scope.product_family_ids
             if not effective_families and prior_context is not None:
                 effective_families = prior_context.sources[0].product_family_ids

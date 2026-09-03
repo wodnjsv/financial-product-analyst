@@ -40,6 +40,7 @@ from .physical_bindings import (
 _KNOWN_CURRENCY_QUALIFIER_IDS = frozenset({"KRW", "USD"})
 _KNOWN_UNIT_QUALIFIER_IDS = frozenset({"percent", "KRW", "USD"})
 _PERIOD_QUALIFIER_PATTERN = re.compile(r"^P[1-9][0-9]*(?:Y|M)$")
+_MAX_PRIOR_RESULT_DEPTH = 16
 
 
 class PlanReadinessResult(ContractModel):
@@ -69,6 +70,7 @@ class PriorResultReadinessSource(ContractModel):
     consumer_frame_id: Identifier
     consumer_contract_hash: Sha256Hex
     product_family_ids: tuple[ProductFamily, ...] = Field(min_length=1)
+    producer_prior_result_context: PriorResultReadinessContext | None = None
 
     @model_validator(mode="after")
     def validate_source(self):
@@ -132,6 +134,8 @@ def assess_plan_readiness(
     active_dataset_pin: ActiveDatasetPin,
     facts: PhysicalReadinessFacts | None = None,
     prior_result_context: PriorResultReadinessContext | None = None,
+    _prior_result_depth: int = 0,
+    _prior_result_ancestors: frozenset[tuple[str, str]] = frozenset(),
 ) -> PlanReadinessResult:
     """Assess all semantic roles without changing the solved contract."""
 
@@ -159,6 +163,8 @@ def assess_plan_readiness(
             active_dataset_pin,
             facts,
             state,
+            depth=_prior_result_depth,
+            ancestors=_prior_result_ancestors,
         )
         if context_source is not None:
             if families and families != context_source.product_family_ids:
@@ -339,6 +345,9 @@ def _prior_result_source(
     active_dataset_pin: ActiveDatasetPin,
     facts: PhysicalReadinessFacts | None,
     state: _Assessment,
+    *,
+    depth: int,
+    ancestors: frozenset[tuple[str, str]],
 ) -> PriorResultReadinessSource | None:
     if context is None:
         state.add(
@@ -350,9 +359,26 @@ def _prior_result_source(
         context = PriorResultReadinessContext.model_validate(
             context.model_dump(mode="python", warnings=False)
         )
-    except (AttributeError, ValidationError):
+    except (AttributeError, ValidationError, ValueError, RecursionError):
         state.add(
             "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+            PlanReadiness.BLOCKED,
+        )
+        return None
+    expected_binding = contract.scope.prior_result_binding
+    if (
+        expected_binding is None
+        or len(context.sources) != 1
+        or context.sources[0].binding_name != expected_binding
+    ):
+        state.add(
+            "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+            PlanReadiness.BLOCKED,
+        )
+        return None
+    if depth >= _MAX_PRIOR_RESULT_DEPTH:
+        state.add(
+            "PRIOR_RESULT_READINESS_DEPTH_EXCEEDED",
             PlanReadiness.BLOCKED,
         )
         return None
@@ -369,15 +395,8 @@ def _prior_result_source(
             PlanReadiness.BLOCKED,
         )
         return None
-    source = next(
-        (
-            item
-            for item in context.sources
-            if item.binding_name == contract.scope.prior_result_binding
-        ),
-        None,
-    )
-    if source is None or (
+    source = context.sources[0]
+    if (
         source.consumer_frame_id != contract.frame_id
         or source.consumer_contract_hash != canonical_sha256(contract)
     ):
@@ -387,6 +406,32 @@ def _prior_result_source(
         )
         return None
     producer_plan = source.producer_assessment
+    producer_key = (
+        source.producer_contract.frame_id,
+        canonical_sha256(source.producer_contract),
+    )
+    current_key = (contract.frame_id, canonical_sha256(contract))
+    if (
+        producer_key == current_key
+        or producer_key in ancestors
+        or any(
+            ancestor_frame_id == producer_key[0]
+            for ancestor_frame_id, _ in ancestors
+        )
+    ):
+        state.add("PRIOR_RESULT_READINESS_CYCLE", PlanReadiness.BLOCKED)
+        return None
+    producer_has_prior = (
+        source.producer_contract.scope.prior_result_binding is not None
+    )
+    if producer_has_prior != (
+        source.producer_prior_result_context is not None
+    ):
+        state.add(
+            "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+            PlanReadiness.BLOCKED,
+        )
+        return None
     if (
         producer_plan.dataset_version != context.dataset_version
         or producer_plan.dataset_pin != context.dataset_pin
@@ -406,23 +451,48 @@ def _prior_result_source(
             PlanReadiness.BLOCKED,
         )
         return None
+    expected_producer_plan = assess_plan_readiness(
+        source.producer_contract,
+        bindings,
+        policies,
+        active_dataset_pin=active_dataset_pin,
+        facts=facts,
+        prior_result_context=source.producer_prior_result_context,
+        _prior_result_depth=depth + 1,
+        _prior_result_ancestors=ancestors | frozenset((current_key,)),
+    )
+    if "PRIOR_RESULT_READINESS_CYCLE" in expected_producer_plan.reason_codes:
+        state.add("PRIOR_RESULT_READINESS_CYCLE", PlanReadiness.BLOCKED)
+        return None
+    if (
+        "PRIOR_RESULT_READINESS_DEPTH_EXCEEDED"
+        in expected_producer_plan.reason_codes
+    ):
+        state.add(
+            "PRIOR_RESULT_READINESS_DEPTH_EXCEEDED",
+            PlanReadiness.BLOCKED,
+        )
+        return None
+    if producer_plan != expected_producer_plan:
+        state.add(
+            "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+            PlanReadiness.BLOCKED,
+        )
+        return None
     if producer_plan.readiness is not PlanReadiness.EXECUTABLE:
         state.add("PRIOR_RESULT_UPSTREAM_NOT_EXECUTABLE", PlanReadiness.BLOCKED)
         return None
-    if source.producer_contract.scope.prior_result_binding is None:
-        expected_producer_plan = assess_plan_readiness(
-            source.producer_contract,
-            bindings,
-            policies,
-            active_dataset_pin=active_dataset_pin,
-            facts=facts,
+    expected_families = source.producer_contract.scope.product_family_ids
+    if not expected_families and source.producer_prior_result_context is not None:
+        expected_families = (
+            source.producer_prior_result_context.sources[0].product_family_ids
         )
-        if producer_plan != expected_producer_plan:
-            state.add(
-                "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
-                PlanReadiness.BLOCKED,
-            )
-            return None
+    if source.product_family_ids != expected_families:
+        state.add(
+            "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+            PlanReadiness.BLOCKED,
+        )
+        return None
     physical = tuple(
         bindings.bindings_by_id.get(binding_id)
         for binding_id in producer_plan.binding_ids

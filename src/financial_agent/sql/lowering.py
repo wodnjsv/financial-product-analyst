@@ -320,6 +320,8 @@ def representative_product_cte(
     facts: PhysicalReadinessFacts,
     *,
     dataset_version: str,
+    prior_result_binding: str | None = None,
+    prior_result_entity_ids: tuple[str, ...] | None = None,
 ):
     manifest = facts.public_fund_manifest
     if manifest is None:
@@ -341,6 +343,22 @@ def representative_product_cte(
         )
         for edge in manifest.representative_share_edges
     )
+    where = [
+        relation_record.c.dataset_version
+        == parameters.bind(dataset_version, prefix="manifest_dataset"),
+        sa.or_(*exact_edges),
+    ]
+    if prior_result_binding is not None:
+        prior_result = parameters.bind_prior_result(
+            prior_result_binding,
+            prior_result_entity_ids,
+        )
+        where.append(
+            sa.or_(
+                relation_record.c.subject_id == sa.any_(prior_result),
+                relation_record.c.object_id == sa.any_(prior_result),
+            )
+        )
     return (
         sa.select(
             relation_record.c.dataset_version,
@@ -373,11 +391,7 @@ def representative_product_cte(
                 ),
             )
         )
-        .where(
-            relation_record.c.dataset_version
-            == parameters.bind(dataset_version, prefix="manifest_dataset"),
-            sa.or_(*exact_edges),
-        )
+        .where(*where)
         .distinct()
         .cte("representative_product")
     )
