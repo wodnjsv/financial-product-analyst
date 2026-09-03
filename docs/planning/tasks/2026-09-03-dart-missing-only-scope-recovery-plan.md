@@ -353,7 +353,7 @@ git commit -m "feat: add missing-only DART recovery run"
 - Consumes: the completed recovery-only CLI and current local PostgreSQL corpus.
 - Produces: a sanitized aggregate baseline for the next name/lineage recovery plan.
 
-- [ ] **Step 1: Run the focused test suite**
+- [x] **Step 1: Run the focused test suite**
 
 Run:
 
@@ -363,7 +363,7 @@ pytest tests/db/test_document_target_repository.py tests/ingestion/document_sour
 
 Expected: PASS.
 
-- [ ] **Step 2: Record the protected embedding baseline**
+- [x] **Step 2: Record the protected embedding baseline**
 
 Run the existing embedding reconciliation command with
 `--expected-chunks 37629`. Expected before recovery:
@@ -378,7 +378,7 @@ orphan=0
 wrong_dimension=0
 ```
 
-- [ ] **Step 3: Run a missing-only canary**
+- [x] **Step 3: Run a missing-only canary**
 
 Run `ingest-dart-corpus --missing-only --limit 1` using the existing local
 database, DART key file, temporary directory, publisher mapping, and a report
@@ -391,13 +391,13 @@ Expected:
 - the run accounts for its one selected missing target as indexed or failed;
 - no PDF remains unless a pre-existing unrelated quarantine artifact already existed.
 
-- [ ] **Step 4: Reconcile protected embeddings after the canary**
+- [x] **Step 4: Reconcile protected embeddings after the canary**
 
 Before running NCP delta embedding, assert that all existing 37,629 exact
 embeddings still exist and that any new chunks appear only as `missing` in
 the embedding preflight. Do not run a full embedding rebuild in this plan.
 
-- [ ] **Step 5: Produce the residual aggregate**
+- [x] **Step 5: Produce the residual aggregate**
 
 Record only aggregate counts for:
 
@@ -414,7 +414,7 @@ Use this residual set as the input to the next implementation plan for exact
 name parsing and correction lineage. Do not add fuzzy matching based on this
 run.
 
-- [ ] **Step 6: Inspect scope and commit the verified deliverable**
+- [x] **Step 6: Inspect scope and commit the verified deliverable**
 
 Run:
 
@@ -431,3 +431,30 @@ updates if aggregate verification notes were added:
 git add docs/planning/tasks/2026-09-03-dart-missing-only-scope-recovery-plan.md
 git commit -m "docs: record DART recovery scope baseline"
 ```
+
+#### Results (2026-09-03)
+
+- The focused suite passed: 120 tests.
+- Before and after the attempted canary, embedding reconciliation recorded
+  37,629 eligible and exact chunks, with zero missing, duplicate, stale,
+  orphan, or wrong-dimension chunks.
+- The one-target missing-only CLI attempt returned `INGESTION_FAILED` without
+  producing its required sanitized report. No residual scope counts or target
+  disposition are recorded, and no NCP delta embedding was run.
+
+#### Results (2026-09-03, resumed after selector correction)
+
+- The final focused suite passed: 122 tests.
+- One missing-only canary selected and accounted for one applicable target as a
+  bounded `PDF_TEXT_LAYER_MISSING` failure. It indexed no document or chunk,
+  and retained or quarantined no PDF.
+- The report recorded 1,959 already embedded targets; 8,495 excluded targets
+  (545 ETN and 7,950 private-fund); and 3 additional excluded private-fund
+  members from mixed public-fund targets. The resulting actionable target
+  residual is 5,117: 275 domestic ETF targets and 4,842 public-offering fund
+  targets. The report now exposes these subtotals as aggregate-only family
+  counts; a read-only selector diagnostic verified the current values without
+  issuing another DART request.
+- Post-canary reconciliation remained 37,629 eligible and exact chunks with
+  zero missing, duplicate, stale, orphan, or wrong-dimension chunks. No NCP
+  delta embedding was run. A final reconciliation repeated the same result.
