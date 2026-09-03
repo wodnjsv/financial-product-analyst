@@ -177,7 +177,7 @@ class DocumentEvidencePromoter:
     ) -> PromotedDocumentEvidence: ...
 ```
 
-- [ ] **Step 1: Write failing happy-path and round-trip tests**
+- [x] **Step 1: Write failing happy-path and round-trip tests**
 
 Persist a synthetic product, DART source, document profile, subject binding,
 source-artifact receipt, chunk, and candidate. Assert the promoted Evidence
@@ -185,14 +185,14 @@ contains the exact dataset, entity, document/chunk origin, source, page,
 section, sentence range, publication/availability/effective dates, and a
 deterministic ID/hash.
 
-- [ ] **Step 2: Write failing rejection tests**
+- [x] **Step 2: Write failing rejection tests**
 
 Cover a wrong entity binding, changed chunk hash, ineligible publisher,
 after-cutoff document, missing source-artifact metadata, invalid retention
 state, unsupported claim type, and a candidate whose stored metadata differs
 from PostgreSQL. A valid `metadata_only_deleted` artifact must be accepted.
 
-- [ ] **Step 3: Implement authoritative re-read and Evidence construction**
+- [x] **Step 3: Implement authoritative re-read and Evidence construction**
 
 Use one read transaction to join the exact candidate identity to
 `document_entity_binding`, `document_record`, `document_profile`,
@@ -201,19 +201,19 @@ Use one read transaction to join the exact candidate identity to
 `OriginReference(origin_kind="document_chunk")` through the existing Evidence
 ledger repository.
 
-- [ ] **Step 4: Make repeated promotion idempotent**
+- [x] **Step 4: Make repeated promotion idempotent**
 
 Promoting the same tuple returns the same Evidence. A stored row with the same
 ID and different canonical payload raises `EVIDENCE_LEDGER_CONFLICT`.
 
-- [ ] **Step 5: Run retrieval, Evidence, and migration tests**
+- [x] **Step 5: Run retrieval, Evidence, and migration tests**
 
 ```bash
 .venv/bin/pytest -q tests/retrieval/test_document_evidence.py \
   tests/retrieval/test_document_search.py tests/db/test_evidence_repository.py
 ```
 
-- [ ] **Step 6: Commit Evidence promotion**
+- [x] **Step 6: Commit Evidence promotion**
 
 ```text
 feat: promote document candidates to evidence
