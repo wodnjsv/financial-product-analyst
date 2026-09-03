@@ -49,6 +49,19 @@ class NormalizedSegment:
             raise ValueError("normalized text was not found")
         return start, start + len(text)
 
+    def normalized_text_for_original_span(self, start: int, end: int) -> str:
+        """Return normalized text whose complete origin lies in an original range."""
+
+        if not 0 <= start < end <= len(self.original_text):
+            raise ValueError("original span is out of range")
+        return "".join(
+            character
+            for character, (origin_start, origin_end) in zip(
+                self.normalized_text, self.origin_spans
+            )
+            if start <= origin_start and origin_end <= end
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ReferenceCandidate:
