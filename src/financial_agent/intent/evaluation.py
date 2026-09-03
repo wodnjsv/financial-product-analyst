@@ -13,7 +13,14 @@ import json
 from math import ceil
 from typing import Any, Literal
 
-from pydantic import AliasChoices, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    Field,
+    RootModel,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
 from financial_agent.contracts.request import RequestContext
@@ -302,6 +309,132 @@ class EvaluationDataset(ContractModel):
         if self.schema_version == "2.0" and any(probe.executable for probe in probes):
             raise ValueError("v2 evaluation probes must retain frozen shape")
         return self
+
+
+class HybridSemanticLinkCase(ContractModel):
+    """Authoritative V3 span/link expectation with no executable-schema detail."""
+
+    case_id: Identifier
+    question: str = Field(min_length=1)
+    expected_action_ids: tuple[Identifier, ...]
+    expected_product_family_ids: tuple[Identifier, ...]
+    expected_span_texts: tuple[str, ...]
+    expected_semantic_ids: tuple[Identifier, ...]
+    expected_coverage_state: CoverageState
+    expected_ood: bool
+
+    @model_validator(mode="after")
+    def validate_semantic_sets(self) -> "HybridSemanticLinkCase":
+        _require_sorted_unique(self.expected_action_ids, "hybrid action IDs")
+        _require_sorted_unique(
+            self.expected_product_family_ids, "hybrid product family IDs"
+        )
+        _require_unique(self.expected_span_texts, "hybrid span texts")
+        _require_sorted_unique(self.expected_semantic_ids, "hybrid semantic IDs")
+        return self
+
+
+class HybridSemanticLinkDataset(RootModel[tuple[HybridSemanticLinkCase, ...]]):
+    """Strict top-level array used only by the focused V3 semantic-link fixture."""
+
+    @model_validator(mode="after")
+    def validate_case_ids(self) -> "HybridSemanticLinkDataset":
+        _require_unique((case.case_id for case in self.root), "hybrid case IDs")
+        return self
+
+
+class HybridSemanticLinkPrediction(ContractModel):
+    """Data-neutral V3 prediction projected from model and server evidence."""
+
+    case_id: Identifier
+    offered_span_texts: tuple[str, ...]
+    hint_semantic_ids_at_5: tuple[Identifier, ...]
+    selectable_semantic_ids: tuple[Identifier, ...]
+    predicted_action_ids: tuple[Identifier, ...]
+    predicted_product_family_ids: tuple[Identifier, ...]
+    predicted_semantic_ids: tuple[Identifier, ...]
+    predicted_coverage_state: CoverageState
+    predicted_ood: bool
+
+    @model_validator(mode="after")
+    def validate_prediction_sets(self) -> "HybridSemanticLinkPrediction":
+        _require_unique(self.offered_span_texts, "hybrid offered span texts")
+        for values, label in (
+            (self.hint_semantic_ids_at_5, "hybrid hint semantic IDs"),
+            (self.selectable_semantic_ids, "hybrid selectable semantic IDs"),
+            (self.predicted_action_ids, "hybrid predicted action IDs"),
+            (
+                self.predicted_product_family_ids,
+                "hybrid predicted product family IDs",
+            ),
+            (self.predicted_semantic_ids, "hybrid predicted semantic IDs"),
+        ):
+            _require_sorted_unique(values, label)
+        return self
+
+
+class HybridPredictionMetrics(ContractModel):
+    """Per-case V3 scores; stages remain independent by construction."""
+
+    required_span_preservation: Decimal
+    hint_recall_at_5: Decimal
+    catalog_selectability: Decimal
+    action_exact_match: Decimal
+    product_family_exact_match: Decimal
+    semantic_link_recall: Decimal
+    semantic_link_exact_match: Decimal
+    frame_exact_match: Decimal
+    coverage_exact_match: Decimal
+    ood_false_fast: Decimal
+
+
+def evaluate_hybrid_prediction(
+    case: HybridSemanticLinkCase,
+    prediction: HybridSemanticLinkPrediction,
+) -> HybridPredictionMetrics:
+    """Score one V3 semantic-link case without coupling hints to selectability."""
+
+    if case.case_id != prediction.case_id:
+        raise ValueError("HYBRID_EVALUATION_CASE_MISMATCH")
+    expected_semantics = set(case.expected_semantic_ids)
+
+    def recall(values: Sequence[str]) -> Decimal:
+        if not expected_semantics:
+            return Decimal("1")
+        return Decimal(len(expected_semantics & set(values))) / Decimal(
+            len(expected_semantics)
+        )
+
+    action_exact = Decimal(
+        case.expected_action_ids == prediction.predicted_action_ids
+    )
+    family_exact = Decimal(
+        case.expected_product_family_ids
+        == prediction.predicted_product_family_ids
+    )
+    semantic_exact = Decimal(
+        case.expected_semantic_ids == prediction.predicted_semantic_ids
+    )
+    coverage_exact = Decimal(
+        case.expected_coverage_state == prediction.predicted_coverage_state
+    )
+    false_fast = Decimal(case.expected_ood and not prediction.predicted_ood)
+    return HybridPredictionMetrics(
+        required_span_preservation=Decimal(
+            set(case.expected_span_texts) <= set(prediction.offered_span_texts)
+        ),
+        hint_recall_at_5=recall(prediction.hint_semantic_ids_at_5),
+        catalog_selectability=recall(prediction.selectable_semantic_ids),
+        action_exact_match=action_exact,
+        product_family_exact_match=family_exact,
+        semantic_link_recall=recall(prediction.predicted_semantic_ids),
+        semantic_link_exact_match=semantic_exact,
+        frame_exact_match=Decimal(
+            bool(action_exact and family_exact and semantic_exact and coverage_exact)
+        ),
+        coverage_exact_match=coverage_exact,
+        ood_false_fast=false_fast,
+    )
 
 
 class CandidateGroup(ContractModel):
@@ -1074,6 +1207,215 @@ class RuntimeMetrics(ContractModel):
     prompt_tokens: int = Field(ge=0)
     completion_tokens: int = Field(ge=0)
     stable_error_counts: tuple[StableErrorCount, ...]
+
+
+class HybridStageMetric(CountMetric):
+    """V3 count whose authority is explicit; partial evidence stays unmeasured."""
+
+    authoritative_denominator: int | None = Field(default=None, ge=0)
+
+    @computed_field
+    @property
+    def status(self) -> Literal["measured", "unmeasured"]:
+        if (
+            self.authoritative_denominator is None
+            or self.authoritative_denominator == 0
+            or self.denominator != self.authoritative_denominator
+        ):
+            return "unmeasured"
+        return "measured"
+
+    @computed_field
+    @property
+    def reason_code(
+        self,
+    ) -> Literal[
+        "NEEDS_CONTEXT",
+        "AUTHORITATIVE_POPULATION_EMPTY",
+        "EVIDENCE_MISSING",
+        "PARTIAL_AUTHORITATIVE_DENOMINATOR",
+    ] | None:
+        if self.authoritative_denominator is None:
+            return "NEEDS_CONTEXT"
+        if self.authoritative_denominator == 0:
+            return "AUTHORITATIVE_POPULATION_EMPTY"
+        if self.denominator == 0:
+            return "EVIDENCE_MISSING"
+        if self.denominator != self.authoritative_denominator:
+            return "PARTIAL_AUTHORITATIVE_DENOMINATOR"
+        return None
+
+    @computed_field
+    @property
+    def evidence_sufficient(self) -> bool:
+        return self.status == "measured"
+
+
+class HybridProviderTelemetry(ContractModel):
+    provider_success: HybridStageMetric
+    provider_calls: int = Field(ge=0)
+    successful_provider_calls: int = Field(ge=0)
+    repair_calls: int = Field(ge=0)
+    candidate_judge_calls: int = Field(ge=0)
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    p50_latency_ms: int | None = Field(default=None, ge=0)
+    p95_latency_ms: int | None = Field(default=None, ge=0)
+    stable_error_counts: tuple[StableErrorCount, ...]
+
+    @model_validator(mode="after")
+    def validate_provider_counts(self) -> "HybridProviderTelemetry":
+        if self.successful_provider_calls > self.provider_calls:
+            raise ValueError("successful provider calls exceed total calls")
+        if (
+            self.p50_latency_ms is not None
+            and self.p95_latency_ms is not None
+            and self.p50_latency_ms > self.p95_latency_ms
+        ):
+            raise ValueError("provider latency percentiles are reversed")
+        return self
+
+
+class HybridEvaluationReport(ContractModel):
+    """Stage-separated V3 evidence without conflating deterministic reachability."""
+
+    required_span_preservation: HybridStageMetric
+    hint_recall_at_5: HybridStageMetric
+    exact_lock_precision: HybridStageMetric
+    compact_catalog_selectability: HybridStageMetric
+    first_pass_structured_validity: HybridStageMetric
+    repaired_structured_validity: HybridStageMetric
+    action_exact_match: HybridStageMetric
+    product_family_exact_match: HybridStageMetric
+    semantic_link_recall: HybridStageMetric
+    semantic_link_exact_match: HybridStageMetric
+    joint_frame_exact_match: HybridStageMetric
+    context_link_exact_match: HybridStageMetric
+    ood_false_fast_rate: HybridStageMetric
+    complete_contract_exact_match: HybridStageMetric
+    planning_readiness: HybridStageMetric
+    provider: HybridProviderTelemetry
+
+
+def evaluate_hybrid_predictions(
+    cases: Sequence[HybridSemanticLinkCase],
+    predictions: Sequence[HybridSemanticLinkPrediction],
+) -> HybridEvaluationReport:
+    """Aggregate V3 link predictions without inventing later-stage evidence."""
+
+    case_index = _unique_index(cases, lambda item: item.case_id)
+    prediction_index = _unique_index(predictions, lambda item: item.case_id)
+    if set(case_index) != set(prediction_index):
+        raise ValueError("HYBRID_EVALUATION_CASE_SET_MISMATCH")
+    aligned = tuple(
+        (case_index[case_id], prediction_index[case_id])
+        for case_id in sorted(case_index)
+    )
+    scores = tuple(
+        evaluate_hybrid_prediction(case, prediction)
+        for case, prediction in aligned
+    )
+    expected_span_total = sum(len(case.expected_span_texts) for case, _ in aligned)
+    expected_semantic_total = sum(
+        len(case.expected_semantic_ids) for case, _ in aligned
+    )
+    ood_total = sum(case.expected_ood for case, _ in aligned)
+
+    def metric(
+        numerator: int, denominator: int, authoritative: int | None = None
+    ) -> HybridStageMetric:
+        return HybridStageMetric(
+            numerator=numerator,
+            denominator=denominator,
+            authoritative_denominator=(
+                denominator if authoritative is None else authoritative
+            ),
+        )
+
+    def unavailable(authoritative: int | None) -> HybridStageMetric:
+        return HybridStageMetric(
+            numerator=0,
+            denominator=0,
+            authoritative_denominator=authoritative,
+        )
+
+    return HybridEvaluationReport(
+        required_span_preservation=metric(
+            sum(
+                len(
+                    set(case.expected_span_texts)
+                    & set(prediction.offered_span_texts)
+                )
+                for case, prediction in aligned
+            ),
+            expected_span_total,
+        ),
+        hint_recall_at_5=metric(
+            sum(
+                len(
+                    set(case.expected_semantic_ids)
+                    & set(prediction.hint_semantic_ids_at_5)
+                )
+                for case, prediction in aligned
+            ),
+            expected_semantic_total,
+        ),
+        exact_lock_precision=unavailable(None),
+        compact_catalog_selectability=metric(
+            sum(
+                len(
+                    set(case.expected_semantic_ids)
+                    & set(prediction.selectable_semantic_ids)
+                )
+                for case, prediction in aligned
+            ),
+            expected_semantic_total,
+        ),
+        first_pass_structured_validity=unavailable(len(aligned)),
+        repaired_structured_validity=unavailable(None),
+        action_exact_match=metric(
+            sum(score.action_exact_match == 1 for score in scores), len(aligned)
+        ),
+        product_family_exact_match=metric(
+            sum(score.product_family_exact_match == 1 for score in scores),
+            len(aligned),
+        ),
+        semantic_link_recall=metric(
+            sum(
+                len(
+                    set(case.expected_semantic_ids)
+                    & set(prediction.predicted_semantic_ids)
+                )
+                for case, prediction in aligned
+            ),
+            expected_semantic_total,
+        ),
+        semantic_link_exact_match=metric(
+            sum(score.semantic_link_exact_match == 1 for score in scores),
+            len(aligned),
+        ),
+        joint_frame_exact_match=metric(
+            sum(score.frame_exact_match == 1 for score in scores), len(aligned)
+        ),
+        context_link_exact_match=unavailable(None),
+        ood_false_fast_rate=metric(
+            sum(int(score.ood_false_fast) for score in scores), ood_total
+        ),
+        complete_contract_exact_match=unavailable(None),
+        planning_readiness=unavailable(None),
+        provider=HybridProviderTelemetry(
+            provider_success=unavailable(len(aligned)),
+            provider_calls=0,
+            successful_provider_calls=0,
+            repair_calls=0,
+            candidate_judge_calls=0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            p50_latency_ms=None,
+            p95_latency_ms=None,
+            stable_error_counts=(),
+        ),
+    )
 
 
 class EvaluationReport(ContractModel):

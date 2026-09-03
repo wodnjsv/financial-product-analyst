@@ -55,12 +55,18 @@ from financial_agent.intent.evaluation import (
     ValidatedResolutionBundleV2,
     ValidatedResolutionCaseArtifactV2,
     ValidationProbeOutcome,
+    HybridSemanticLinkCase,
+    HybridSemanticLinkDataset,
+    HybridSemanticLinkPrediction,
+    HybridStageMetric,
     assess_promotion,
     evaluate_candidates,
     evaluate_context,
     evaluate_frames,
     evaluate_ood,
     evaluate_predictions,
+    evaluate_hybrid_prediction,
+    evaluate_hybrid_predictions,
     parse_strict_json,
     replay_validation_probes,
 )
@@ -141,12 +147,122 @@ REGRESSION_PATH = Path(__file__).with_name("intent_resolution_regression.json")
 HELDOUT_V1_PATH = Path(__file__).with_name("intent_resolution_heldout_ko.json")
 HELDOUT_V2_PATH = Path(__file__).with_name("intent_resolution_heldout_ko_v2.json")
 HELDOUT_PATH = Path(__file__).with_name("intent_resolution_heldout_ko_v3.json")
+HYBRID_LINK_PATH = Path(__file__).with_name("hybrid_semantic_link_cases.v1.json")
 GOLD_PATH = PROJECT_ROOT / "tests" / "gold" / "core_questions.json"
 SCRIPT_PATH = PROJECT_ROOT / "scripts" / "evaluate_intent_resolver.py"
 REGRESSION_SHA256 = "5f917cbd326d4b4a27d260aecaf63460dffa4302dcabd5e9599efe7c90b1b18b"
 HELDOUT_V1_SHA256 = "d23eae797026ed66fa2f52ae49a602f991bd9b6d02b890c799342c0a6145f63e"
 HELDOUT_V2_SHA256 = "de015673ad4fa327ed3369997120f8465fb9b14e4998a924a8b90eaf45c450fb"
 HELDOUT_SHA256 = "bd40481c57975d66a84a98005b771761c023ae5461cbd3c232508522bbf4c7de"
+
+
+def test_missing_hint_does_not_fail_catalog_selectability() -> None:
+    case = HybridSemanticLinkCase(
+        case_id="hybrid-fee",
+        question="비용 부담이 작은 ETF 다섯 개",
+        expected_action_ids=("rank",),
+        expected_product_family_ids=("domestic_etf", "overseas_etf"),
+        expected_span_texts=("비용 부담",),
+        expected_semantic_ids=("fee_rate",),
+        expected_coverage_state="covered",
+        expected_ood=False,
+    )
+    prediction = HybridSemanticLinkPrediction(
+        case_id="hybrid-fee",
+        offered_span_texts=("비용 부담",),
+        hint_semantic_ids_at_5=(),
+        selectable_semantic_ids=("aum", "fee_rate"),
+        predicted_action_ids=("rank",),
+        predicted_product_family_ids=("domestic_etf", "overseas_etf"),
+        predicted_semantic_ids=("fee_rate",),
+        predicted_coverage_state="covered",
+        predicted_ood=False,
+    )
+
+    metrics = evaluate_hybrid_prediction(case, prediction)
+
+    assert metrics.hint_recall_at_5 == Decimal("0")
+    assert metrics.catalog_selectability == Decimal("1")
+    assert metrics.semantic_link_recall == Decimal("1")
+
+
+def test_hybrid_semantic_link_fixture_has_strict_eight_field_records() -> None:
+    dataset = parse_strict_json(HYBRID_LINK_PATH.read_bytes(), HybridSemanticLinkDataset)
+
+    assert len(dataset.root) == 5
+    assert {
+        semantic_id
+        for case in dataset.root
+        for semantic_id in case.expected_semantic_ids
+    } == {
+        "credit_grade",
+        "fee_rate",
+        "remaining_days",
+        "trailing_1y_historical_cumulative_return",
+    }
+    payload = json.loads(HYBRID_LINK_PATH.read_bytes())
+    for record in payload:
+        assert set(record) == set(HybridSemanticLinkCase.model_fields)
+
+    missing = dict(payload[0])
+    missing.pop("expected_span_texts")
+    with pytest.raises(ValidationError):
+        HybridSemanticLinkCase.model_validate(missing)
+    extra = dict(payload[0], semantic_ids=["fee_rate"])
+    with pytest.raises(ValidationError):
+        HybridSemanticLinkCase.model_validate(extra)
+
+
+def test_partial_hybrid_denominator_is_unmeasured() -> None:
+    metric = HybridStageMetric(
+        numerator=4,
+        denominator=4,
+        authoritative_denominator=5,
+    )
+
+    assert metric.status == "unmeasured"
+    assert metric.evidence_sufficient is False
+    assert metric.reason_code == "PARTIAL_AUTHORITATIVE_DENOMINATOR"
+    assert HybridStageMetric(
+        numerator=0, denominator=0, authoritative_denominator=None
+    ).reason_code == "NEEDS_CONTEXT"
+
+
+def test_hybrid_predictions_report_each_semantic_boundary_independently() -> None:
+    cases = parse_strict_json(
+        HYBRID_LINK_PATH.read_bytes(), HybridSemanticLinkDataset
+    ).root
+    predictions = tuple(
+        HybridSemanticLinkPrediction(
+            case_id=case.case_id,
+            offered_span_texts=case.expected_span_texts,
+            hint_semantic_ids_at_5=(),
+            selectable_semantic_ids=case.expected_semantic_ids,
+            predicted_action_ids=case.expected_action_ids,
+            predicted_product_family_ids=case.expected_product_family_ids,
+            predicted_semantic_ids=case.expected_semantic_ids,
+            predicted_coverage_state=case.expected_coverage_state,
+            predicted_ood=case.expected_ood,
+        )
+        for case in cases
+    )
+
+    report = evaluate_hybrid_predictions(cases, predictions)
+
+    assert report.required_span_preservation == HybridStageMetric(
+        numerator=5, denominator=5, authoritative_denominator=5
+    )
+    assert report.hint_recall_at_5.value == Decimal("0")
+    assert report.compact_catalog_selectability.value == Decimal("1")
+    assert report.semantic_link_recall.value == Decimal("1")
+    assert report.action_exact_match.value == Decimal("1")
+    assert report.product_family_exact_match.value == Decimal("1")
+    assert report.joint_frame_exact_match.value == Decimal("1")
+    assert report.ood_false_fast_rate == HybridStageMetric(
+        numerator=0, denominator=1, authoritative_denominator=1
+    )
+    assert report.exact_lock_precision.status == "unmeasured"
+    assert report.complete_contract_exact_match.status == "unmeasured"
 
 
 def _frame(
@@ -1481,6 +1597,65 @@ def test_deterministic_cli_is_reproducible_aggregate_only_and_provenanced(
     assert "api_key" not in serialized
     assert "queryplan" not in serialized
     assert "sql" not in serialized
+
+
+def test_hybrid_deterministic_cli_separates_hint_quality_from_selectability(
+    tmp_path: Path,
+) -> None:
+    output = _report_path(tmp_path, "hybrid-deterministic")
+
+    result = _run_cli(
+        "hybrid-deterministic",
+        "--dataset",
+        str(HELDOUT_PATH),
+        "--output",
+        str(output),
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = _load_json(output)
+    assert report["mode"] == "hybrid-deterministic"
+    metrics = report["metrics"]["hybrid_v3"]
+    assert metrics["hint_recall_at_5"]["numerator"] == 123
+    assert metrics["hint_recall_at_5"]["denominator"] == 196
+    assert metrics["compact_catalog_selectability"]["numerator"] == 196
+    assert metrics["compact_catalog_selectability"]["denominator"] == 196
+    assert metrics["required_span_preservation"]["status"] == "measured"
+    assert metrics["required_span_preservation"]["value"] == "1"
+    assert metrics["exact_lock_precision"]["status"] == "measured"
+    assert metrics["exact_lock_precision"]["value"] == "1"
+    for name in (
+        "first_pass_structured_validity",
+        "repaired_structured_validity",
+        "action_exact_match",
+        "product_family_exact_match",
+        "semantic_link_exact_match",
+        "joint_frame_exact_match",
+        "context_link_exact_match",
+        "ood_false_fast_rate",
+        "complete_contract_exact_match",
+        "planning_readiness",
+    ):
+        assert metrics[name]["status"] == "unmeasured"
+    assert metrics["provider"]["provider_success"]["status"] == "unmeasured"
+
+
+def test_v2_deterministic_baseline_remains_123_of_196_with_positional_mode(
+    tmp_path: Path,
+) -> None:
+    output = _report_path(tmp_path, "v2-positional")
+
+    result = _run_cli(
+        "deterministic",
+        "--dataset",
+        str(HELDOUT_PATH),
+        "--output",
+        str(output),
+    )
+
+    assert result.returncode == 0, result.stderr
+    metric = _load_json(output)["metrics"]["candidate"]["recall_at_5"]
+    assert (metric["numerator"], metric["denominator"]) == (123, 196)
 
 
 def test_cli_refuses_fixture_overwrite_and_live_execution() -> None:

@@ -30,6 +30,7 @@ from tests.evaluation.query_contract.decoupled import (
     evaluate_decoupled_contract_resolution,
     evaluate_frozen_requirement_snapshot,
 )
+from scripts.run_semantic_query_benchmark import contracts_semantically_equal
 import tests.evaluation.query_contract.decoupled as decoupled_module
 from tests.planning.fixtures import resolution, view
 
@@ -248,6 +249,60 @@ def test_predicate_exactness_rejects_wrong_unit_on_the_correct_atom() -> None:
     )
 
     assert not _candidate_matches_adjudication(wrong_unit, requirement)
+
+
+def test_registered_default_descending_equals_explicit_descending_only() -> None:
+    explicit = {
+        "action_id": "rank",
+        "ordering": [{"field_concept_id": "aum", "direction": "desc", "direction_policy_id": None}],
+    }
+    registered_default = {
+        "action_id": "rank",
+        "ordering": [{
+            "field_concept_id": "aum",
+            "direction": "desc",
+            "direction_policy_id": "default-direction-descending.v1",
+        }],
+    }
+    different_field = {
+        "action_id": "rank",
+        "ordering": [{
+            "field_concept_id": "fee_rate",
+            "direction": "desc",
+            "direction_policy_id": "default-direction-descending.v1",
+        }],
+    }
+
+    assert contracts_semantically_equal(explicit, registered_default, PROJECT_ROOT)
+    assert not contracts_semantically_equal(explicit, different_field, PROJECT_ROOT)
+
+
+def test_predicate_value_unit_is_not_confused_with_duplicate_query_qualifier() -> None:
+    expected = {
+        "action_id": "screen",
+        "qualifiers": {"unit_id": None, "period_id": None},
+        "predicate": {
+            "field_concept_id": "fee_rate",
+            "operator_id": "lte",
+            "value": {"kind": "decimal", "decimal": "1", "unit_id": "percent"},
+        },
+    }
+    duplicate_qualifier = {
+        "action_id": "screen",
+        "qualifiers": {"unit_id": "percent", "period_id": None},
+        "predicate": {
+            "field_concept_id": "fee_rate",
+            "operator_id": "lte",
+            "value": {"kind": "decimal", "decimal": "1", "unit_id": "percent"},
+        },
+    }
+    different_qualifier = {
+        **duplicate_qualifier,
+        "qualifiers": {"unit_id": "ratio", "period_id": None},
+    }
+
+    assert contracts_semantically_equal(expected, duplicate_qualifier, PROJECT_ROOT)
+    assert not contracts_semantically_equal(expected, different_qualifier, PROJECT_ROOT)
 
 
 def test_incomplete_predicate_atom_gold_has_a_stable_unmeasured_reason() -> None:

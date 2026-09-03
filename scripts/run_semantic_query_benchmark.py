@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections import Counter
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -32,6 +33,7 @@ from financial_agent.intent.clova import ClovaStructuredOutputAdapter, ModelInvo
 from financial_agent.intent.config import ClovaResolverConfig
 from financial_agent.intent.errors import ModelInvocationError, ResolverContractError
 from financial_agent.intent.query_contract_registry import (
+    PolicyKind,
     assess_requirement_representability,
     load_query_contract_registry,
 )
@@ -146,6 +148,7 @@ class LivePathEvidence(StrictModel):
     tag_exact: CountEvidence | None = None
     complete_contract: CountEvidence | None = None
     representative_contract_exact: CountEvidence | None = None
+    representative_population_integrity: bool | None = None
     repair_count: int = Field(ge=0)
     judge_count: int = Field(ge=0)
     provider_calls: int = Field(ge=0)
@@ -198,6 +201,11 @@ class LivePathEvidence(StrictModel):
             > self.structured_validity.successes
         ):
             raise ValueError("LIVE_REPRESENTATIVE_METRIC_INVALID")
+        if (
+            self.representative_population_integrity is not None
+            and self.path_id != "production_one_axis"
+        ):
+            raise ValueError("LIVE_REPRESENTATIVE_POPULATION_INVALID")
         if any(value < 0 for value in self.call_type_counts.values()):
             raise ValueError("LIVE_CALL_TYPE_COUNT_INVALID")
         if any(value < 1 for value in self.provider_error_counts.values()):
@@ -463,6 +471,29 @@ def build_promotion_report(
     gates.append(representative_gate)
     if representative_gate.status != "pass" and representative_gate.reason_code:
         reasons.append(representative_gate.reason_code)
+
+    population_metric = (
+        None
+        if production is None
+        or production.representative_population_integrity is None
+        else CountEvidence(
+            successes=int(production.representative_population_integrity), total=1
+        )
+    )
+    population_gate = _assess_gate(
+        _GateDefinition(
+            "representative_population_integrity",
+            "live_paths",
+            "equal",
+            Decimal("1"),
+            1,
+        ),
+        population_metric,
+        1,
+    )
+    gates.append(population_gate)
+    if population_gate.status != "pass" and population_gate.reason_code:
+        reasons.append(population_gate.reason_code)
 
     if evidence.counts.contract_gold_unmeasured_frames:
         reasons.append("SUPPORTED_GOLD_COVERAGE_INCOMPLETE")
@@ -910,20 +941,109 @@ REPRESENTATIVE_EXPECTATION_HASH = hashlib.sha256(
 def evaluate_representative_contracts(
     observations: Mapping[str, object],
 ) -> CountEvidence:
-    """Score the five complete, pinned semantic groups; missing or extra data fails."""
+    """Score each pinned representative case independently as exact or not exact."""
 
-    if set(observations) != set(REPRESENTATIVE_CASE_EXPECTATIONS):
-        return CountEvidence(successes=0, total=len(REPRESENTATIVE_GROUPS))
     successes = sum(
         all(
             case_id in observations
-            and canonical_json_bytes(observations[case_id])
-            == canonical_json_bytes(REPRESENTATIVE_CASE_EXPECTATIONS[case_id])
+            and contracts_semantically_equal(
+                REPRESENTATIVE_CASE_EXPECTATIONS[case_id],
+                observations[case_id],
+                PROJECT_ROOT,
+            )
             for case_id in group
         )
         for group in REPRESENTATIVE_GROUPS
     )
     return CountEvidence(successes=successes, total=len(REPRESENTATIVE_GROUPS))
+
+
+def representative_population_integrity(observations: Mapping[str, object]) -> bool:
+    """Keep population integrity separate from per-case semantic scoring."""
+
+    return set(observations) == set(REPRESENTATIVE_CASE_EXPECTATIONS)
+
+
+def contracts_semantically_equal(
+    expected: object,
+    observed: object,
+    project_root: Path,
+) -> bool:
+    """Compare contracts after only registry-proven representational equivalence."""
+
+    registry = load_query_contract_registry(project_root)
+    return canonical_json_bytes(_normalize_contract_equivalence(expected, registry)) == (
+        canonical_json_bytes(_normalize_contract_equivalence(observed, registry))
+    )
+
+
+def _normalize_contract_equivalence(value: object, registry: object) -> object:
+    normalized = deepcopy(value)
+    _normalize_registered_descending(normalized, registry)
+    _remove_redundant_predicate_unit_qualifier(normalized)
+    return normalized
+
+
+def _normalize_registered_descending(value: object, registry: object) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _normalize_registered_descending(item, registry)
+        return
+    if not isinstance(value, dict):
+        return
+    policy = registry.policies_by_id.get("default-direction-descending.v1")
+    rank = registry.variants_by_id.get("rank.ordering.v2")
+    equivalence_registered = (
+        policy is not None
+        and policy.kind is PolicyKind.DEFAULT
+        and rank is not None
+        and "default-direction-descending.v1" in rank.policy_ids
+    )
+    if equivalence_registered and value.get("direction_policy_id") == (
+        "default-direction-descending.v1"
+    ) and value.get("direction") in {None, "desc"}:
+        value["direction"] = "desc"
+        value["direction_policy_id"] = None
+    for item in value.values():
+        _normalize_registered_descending(item, registry)
+
+
+def _remove_redundant_predicate_unit_qualifier(value: object) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _remove_redundant_predicate_unit_qualifier(item)
+        return
+    if not isinstance(value, dict):
+        return
+    predicate = value.get("predicate")
+    qualifiers = value.get("qualifiers")
+    if isinstance(predicate, dict) and isinstance(qualifiers, dict):
+        predicate_units = _predicate_value_units(predicate)
+        qualifier_unit = qualifiers.get("unit_id")
+        if qualifier_unit is not None and predicate_units == {qualifier_unit}:
+            qualifiers["unit_id"] = None
+    for item in value.values():
+        _remove_redundant_predicate_unit_qualifier(item)
+
+
+def _predicate_value_units(predicate: object) -> set[object]:
+    units: set[object] = set()
+    if isinstance(predicate, list):
+        for item in predicate:
+            units.update(_predicate_value_units(item))
+    elif isinstance(predicate, dict):
+        value = predicate.get("value")
+        if isinstance(value, dict) and value.get("unit_id") is not None:
+            units.add(value["unit_id"])
+        values = predicate.get("values")
+        if isinstance(values, list):
+            for item in values:
+                if isinstance(item, dict) and item.get("unit_id") is not None:
+                    units.add(item["unit_id"])
+        for key in ("children", "predicate"):
+            if key in predicate:
+                units.update(_predicate_value_units(predicate[key]))
+    return units
 
 
 def _representative_observation(attempt: object) -> dict[str, object]:
@@ -1236,6 +1356,9 @@ async def _run_production_path(
         family_exact=CountEvidence(successes=family_hits, total=len(_LIVE_CASES)),
         complete_contract=CountEvidence(successes=complete, total=len(_LIVE_CASES)),
         representative_contract_exact=evaluate_representative_contracts(observations),
+        representative_population_integrity=representative_population_integrity(
+            observations
+        ),
         repair_count=call_types["repair"],
         judge_count=call_types["judge"],
         provider_calls=len(records),
@@ -1387,6 +1510,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="HCX-007")
     parser.add_argument("--paced", action="store_true")
     parser.add_argument("--request-interval-seconds", type=float, default=10.0)
+    parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--include-hybrid-v3", action="store_true")
     parser.add_argument("--sanitized-report", type=Path, required=True)
     return parser
 
@@ -1396,11 +1521,42 @@ async def _main_async(args: argparse.Namespace) -> int:
         print("SEMANTIC_BENCHMARK_ARGUMENT_INVALID", file=sys.stderr)
         return 2
     evidence = collect_static_evidence(PROJECT_ROOT)
+    resolver_paths: list[dict[str, object]] = [
+        {
+            "path_id": "deterministic-v2",
+            "hint_recall_at_5": evidence.adr_candidate_recall_at_5.model_dump(
+                mode="json"
+            )
+            if evidence.adr_candidate_recall_at_5 is not None
+            else None,
+        }
+    ]
+    if args.include_hybrid_v3:
+        from financial_agent.intent.catalog import load_hybrid_catalog
+        from financial_agent.intent.evaluation import EvaluationDataset, parse_strict_json
+        from scripts.evaluate_intent_resolver import _hybrid_deterministic_metrics
+
+        heldout_path = (
+            PROJECT_ROOT
+            / "tests/evaluation/intent/intent_resolution_heldout_ko_v3.json"
+        )
+        heldout = parse_strict_json(heldout_path.read_bytes(), EvaluationDataset)
+        hybrid_metrics = _hybrid_deterministic_metrics(
+            heldout, load_hybrid_catalog(PROJECT_ROOT)
+        )
+        resolver_paths.append(
+            {
+                "path_id": "hybrid-deterministic-v3",
+                **hybrid_metrics.model_dump(mode="json"),
+            }
+        )
     api_key = _load_api_key()
     live_paths: tuple[LivePathEvidence, ...] = ()
     live_reason = "LIVE_CREDENTIAL_MISSING"
     raw_path: Path | None = None
-    if api_key:
+    if args.offline:
+        live_reason = "LIVE_EXECUTION_DISABLED_OFFLINE"
+    elif api_key:
         raw_path = Path(f"/private/tmp/semantic-query-benchmark-raw-{uuid.uuid4().hex}.jsonl")
         try:
             live_paths = await run_live_benchmark(
@@ -1419,6 +1575,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         expected_registry_hashes=evidence.registry_hashes,
     )
     payload = report.model_dump(mode="json")
+    payload["resolver_paths"] = resolver_paths
     payload["live_execution"] = {
         "status": "measured" if live_paths else "unmeasured",
         "reason_code": None if live_paths else live_reason,

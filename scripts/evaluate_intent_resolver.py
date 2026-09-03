@@ -25,7 +25,12 @@ from financial_agent.contracts.canonical import (
 )
 from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.candidates import generate_semantic_candidates
-from financial_agent.intent.catalog import SemanticCatalogSnapshot, load_catalog
+from financial_agent.intent.axis_locks import build_exact_semantic_locks
+from financial_agent.intent.catalog import (
+    SemanticCatalogSnapshot,
+    load_catalog,
+    load_hybrid_catalog,
+)
 from financial_agent.intent.evaluation import (
     CandidateGroup,
     EntityTypeReachabilityEvidence,
@@ -43,6 +48,9 @@ from financial_agent.intent.evaluation import (
     IntentDraftBundleV2,
     IntentRunTrace,
     IntentRunTraceBundle,
+    HybridEvaluationReport,
+    HybridProviderTelemetry,
+    HybridStageMetric,
     PredictionDataset,
     RepairOutcome,
     ResolverViewBundle,
@@ -68,6 +76,7 @@ from financial_agent.intent.errors import (
     ResolverContractError,
 )
 from financial_agent.intent.literals import extract_literals
+from financial_agent.intent.mention_spans import generate_mention_spans
 from financial_agent.intent.normalization import RequestNormalizationError, normalize_request
 from financial_agent.intent.resolution import (
     ResolverBuildManifest,
@@ -85,8 +94,14 @@ from financial_agent.intent.view import (
     PROMPT_VERSION,
     RESOLVER_SCHEMA_VERSION,
     ActiveDatasetPin,
+    HYBRID_ADAPTER_VERSION,
+    HYBRID_CANDIDATE_POLICY_VERSION,
+    HYBRID_PROMPT_VERSION,
+    HYBRID_RESOLVER_SCHEMA_VERSION,
     ResolverView,
     build_manifest,
+    build_hybrid_manifest,
+    build_resolver_view_v3,
     build_resolver_view,
 )
 
@@ -133,6 +148,13 @@ def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "live":
         return _run_live(argv[1:])
+    if argv and argv[0] in {
+        "deterministic",
+        "hybrid-deterministic",
+        "decoupled",
+        "full",
+    }:
+        argv = ["--mode", argv[0], *argv[1:]]
     args = _parser().parse_args(argv)
     report_directory_fd: int | None = None
     try:
@@ -147,9 +169,22 @@ def main(argv: list[str] | None = None) -> int:
         dataset_path = Path(args.dataset).resolve()
         dataset_bytes = dataset_path.read_bytes()
         dataset = parse_strict_json(dataset_bytes, EvaluationDataset)
-        catalog = load_catalog(PROJECT_ROOT)
-        current_manifest = _current_manifest(catalog)
-        reachability = _entity_type_reachability(dataset, catalog)
+        hybrid_deterministic = args.mode == "hybrid-deterministic"
+        catalog = (
+            load_hybrid_catalog(PROJECT_ROOT)
+            if hybrid_deterministic
+            else load_catalog(PROJECT_ROOT)
+        )
+        current_manifest = (
+            _current_hybrid_manifest(catalog)
+            if hybrid_deterministic
+            else _current_manifest(catalog)
+        )
+        reachability = (
+            _entity_type_reachability_direct(dataset, catalog)
+            if hybrid_deterministic
+            else _entity_type_reachability(dataset, catalog)
+        )
         prediction_bundle: PredictionDataset | None = None
         prediction_bytes: bytes | None = None
         evidence_hashes: dict[str, str | None] = {
@@ -177,6 +212,21 @@ def main(argv: list[str] | None = None) -> int:
                 "validation": None,
                 "diagnostics": None,
                 "runtime": None,
+            }
+        elif args.mode == "hybrid-deterministic":
+            metrics = {
+                "candidate": None,
+                "entity_type_reachability": reachability.model_dump(mode="json"),
+                "frame": None,
+                "context": None,
+                "ood": None,
+                "coverage": None,
+                "validation": None,
+                "diagnostics": None,
+                "runtime": None,
+                "hybrid_v3": _hybrid_deterministic_metrics(
+                    dataset, catalog
+                ).model_dump(mode="json"),
             }
         else:
             prediction_path = Path(args.predictions).resolve()
@@ -304,7 +354,13 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--mode",
-        choices=("deterministic", "decoupled", "full", "live"),
+        choices=(
+            "deterministic",
+            "hybrid-deterministic",
+            "decoupled",
+            "full",
+            "live",
+        ),
         required=True,
     )
     parser.add_argument("--dataset", default=str(DEFAULT_DATASET))
@@ -598,6 +654,7 @@ def _validate_mode_arguments(args: argparse.Namespace) -> None:
     }
     expected = {
         "deterministic": set(),
+        "hybrid-deterministic": set(),
         "live": set(),
         "decoupled": {"predictions", "bounded_views", "drafts", "run_traces"},
         "full": {
@@ -1432,6 +1489,183 @@ def _entity_type_reachability(
     )
 
 
+def _entity_type_reachability_direct(
+    dataset: EvaluationDataset,
+    catalog: SemanticCatalogSnapshot,
+) -> EntityTypeReachabilityEvidence:
+    """Measure the complete registered type axis without invoking a prompt builder."""
+
+    cases = tuple(
+        case
+        for case in dataset.cases
+        if case.expected_pipeline_outcome == "semantic_resolution"
+    )
+    offered = set(catalog.entity_type_ids)
+    unreachable = tuple(
+        case.case_id
+        for case in cases
+        if any(
+            not set(frame.entity_type_ids) <= offered
+            for frame in case.expected_frames
+        )
+    )
+    return EntityTypeReachabilityEvidence(
+        total=len(cases),
+        reachable=len(cases) - len(unreachable),
+        unreachable_case_ids=unreachable,
+    )
+
+
+def _hybrid_deterministic_metrics(
+    dataset: EvaluationDataset,
+    catalog: SemanticCatalogSnapshot,
+) -> HybridEvaluationReport:
+    semantic_cases = tuple(
+        case
+        for case in dataset.cases
+        if case.expected_pipeline_outcome == "semantic_resolution"
+    )
+    hint_hits = selectable_hits = 0
+    semantic_total = 0
+    required_spans = preserved_spans = 0
+    lock_total = lock_hits = 0
+    for case in semantic_cases:
+        context = _case_context(case, SYNTHETIC_DATASET_VERSION, None)
+        normalized = normalize_request(context)
+        literals = extract_literals(normalized)
+        semantic_candidates = generate_semantic_candidates(normalized, catalog)
+        exact_locks = build_exact_semantic_locks(
+            normalized,
+            catalog,
+            semantic_candidates=semantic_candidates,
+            literals=literals,
+        )
+        exact_mentions = tuple(
+            group.mention
+            for group in semantic_candidates.by_mention
+            if any(
+                item.match_kind in {"canonical_id", "direct_alias"}
+                for item in group.items
+            )
+        )
+        mention_spans = generate_mention_spans(
+            normalized,
+            exact_mentions,
+            literals,
+            (),
+            normalized.reference_candidates,
+        )
+        view = build_resolver_view_v3(
+            context=context,
+            normalized=normalized,
+            literals=literals,
+            semantic_candidates=semantic_candidates,
+            entity_candidates={},
+            manifest=_current_hybrid_manifest(catalog),
+            active_dataset_pin=ActiveDatasetPin(
+                dataset_version=SYNTHETIC_DATASET_VERSION,
+                manifest_hash="0" * 64,
+            ),
+            catalog=catalog,
+            mention_spans=mention_spans,
+            exact_semantic_locks=exact_locks,
+        )
+        hint_ids = {
+            item.semantic_id
+            for group in view.semantic_candidates
+            for item in group.items[:5]
+        }
+        selectable_ids = {
+            *view.action_ids,
+            *view.product_family_ids,
+            *view.entity_type_ids,
+            *(
+                item.semantic_id
+                for item in view.compact_semantic_catalog.concepts
+            ),
+        }
+        expected_ids = set(case.expected_candidate_ids)
+        semantic_total += len(expected_ids)
+        hint_hits += len(expected_ids & hint_ids)
+        selectable_hits += len(expected_ids & selectable_ids)
+
+        offered_mentions = {item.mention_id for item in view.mention_spans.items}
+        required_mentions = {
+            projection.mention_id for projection in view.exact_lock_projections
+        } | {
+            f"mention-{item.segment_id}-{item.start_char}-{item.end_char}"
+            for item in view.literal_candidates
+        } | {
+            f"mention-{item.segment_id}-{item.start_char}-{item.end_char}"
+            for item in view.reference_candidates
+        }
+        required_spans += len(required_mentions)
+        preserved_spans += len(required_mentions & offered_mentions)
+
+        gold_lock_ids = expected_ids | {
+            family_id
+            for frame in case.expected_frames
+            for family_id in frame.product_family_ids
+        } | {
+            value_id
+            for frame in case.expected_frames
+            for slot in frame.slots
+            for value_id in slot.value_ids
+            if value_id in catalog.concepts_by_id
+        }
+        lock_total += len(view.exact_lock_projections)
+        lock_hits += sum(
+            projection.canonical_semantic_id in gold_lock_ids
+            for projection in view.exact_lock_projections
+        )
+
+    def measured(numerator: int, denominator: int) -> HybridStageMetric:
+        return HybridStageMetric(
+            numerator=numerator,
+            denominator=denominator,
+            authoritative_denominator=denominator,
+        )
+
+    def unmeasured(authoritative_denominator: int | None) -> HybridStageMetric:
+        return HybridStageMetric(
+            numerator=0,
+            denominator=0,
+            authoritative_denominator=authoritative_denominator,
+        )
+
+    semantic_case_total = len(semantic_cases)
+    ood_total = sum(case.ood_type is not None for case in semantic_cases)
+    return HybridEvaluationReport(
+        required_span_preservation=measured(preserved_spans, required_spans),
+        hint_recall_at_5=measured(hint_hits, semantic_total),
+        exact_lock_precision=measured(lock_hits, lock_total),
+        compact_catalog_selectability=measured(selectable_hits, semantic_total),
+        first_pass_structured_validity=unmeasured(semantic_case_total),
+        repaired_structured_validity=unmeasured(None),
+        action_exact_match=unmeasured(semantic_case_total),
+        product_family_exact_match=unmeasured(semantic_case_total),
+        semantic_link_recall=unmeasured(semantic_total),
+        semantic_link_exact_match=unmeasured(semantic_case_total),
+        joint_frame_exact_match=unmeasured(semantic_case_total),
+        context_link_exact_match=unmeasured(semantic_case_total),
+        ood_false_fast_rate=unmeasured(ood_total),
+        complete_contract_exact_match=unmeasured(None),
+        planning_readiness=unmeasured(None),
+        provider=HybridProviderTelemetry(
+            provider_success=unmeasured(semantic_case_total),
+            provider_calls=0,
+            successful_provider_calls=0,
+            repair_calls=0,
+            candidate_judge_calls=0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            p50_latency_ms=None,
+            p95_latency_ms=None,
+            stable_error_counts=(),
+        ),
+    )
+
+
 def _deterministic_view(
     context: RequestContext,
     normalized: Any,
@@ -1461,6 +1695,21 @@ def _current_manifest(catalog: SemanticCatalogSnapshot) -> ResolverBuildManifest
             "resolver_schema_version": RESOLVER_SCHEMA_VERSION,
             "prompt_version": PROMPT_VERSION,
             "adapter_version": ADAPTER_VERSION,
+        },
+    )
+
+
+def _current_hybrid_manifest(
+    catalog: SemanticCatalogSnapshot,
+) -> ResolverBuildManifest:
+    return build_hybrid_manifest(
+        catalog,
+        {
+            "normalizer_version": NORMALIZER_VERSION,
+            "candidate_policy_version": HYBRID_CANDIDATE_POLICY_VERSION,
+            "resolver_schema_version": HYBRID_RESOLVER_SCHEMA_VERSION,
+            "prompt_version": HYBRID_PROMPT_VERSION,
+            "adapter_version": HYBRID_ADAPTER_VERSION,
         },
     )
 

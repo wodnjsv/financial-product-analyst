@@ -1,0 +1,52 @@
+[
+  {
+    "case_id": "HYB-LINK-001",
+    "question": "비용 부담이 작은 ETF 다섯 개",
+    "expected_action_ids": ["rank"],
+    "expected_product_family_ids": ["domestic_etf", "overseas_etf"],
+    "expected_span_texts": ["비용 부담"],
+    "expected_semantic_ids": ["fee_rate"],
+    "expected_coverage_state": "covered",
+    "expected_ood": false
+  },
+  {
+    "case_id": "HYB-LINK-002",
+    "question": "신용 상태가 우수한 국내 채권",
+    "expected_action_ids": ["rank"],
+    "expected_product_family_ids": ["domestic_bond"],
+    "expected_span_texts": ["신용 상태"],
+    "expected_semantic_ids": ["credit_grade"],
+    "expected_coverage_state": "covered",
+    "expected_ood": false
+  },
+  {
+    "case_id": "HYB-LINK-003",
+    "question": "만기까지 얼마 안 남은 채권",
+    "expected_action_ids": ["rank"],
+    "expected_product_family_ids": ["domestic_bond"],
+    "expected_span_texts": ["만기까지 얼마 안 남은"],
+    "expected_semantic_ids": ["remaining_days"],
+    "expected_coverage_state": "covered",
+    "expected_ood": false
+  },
+  {
+    "case_id": "HYB-LINK-004",
+    "question": "성과가 괜찮은 해외 ETF",
+    "expected_action_ids": ["rank"],
+    "expected_product_family_ids": ["overseas_etf"],
+    "expected_span_texts": ["성과가 괜찮은"],
+    "expected_semantic_ids": ["trailing_1y_historical_cumulative_return"],
+    "expected_coverage_state": "covered",
+    "expected_ood": false
+  },
+  {
+    "case_id": "HYB-LINK-005",
+    "question": "ESG 등급이 높은 ETF",
+    "expected_action_ids": ["rank"],
+    "expected_product_family_ids": ["domestic_etf", "overseas_etf"],
+    "expected_span_texts": ["ESG 등급"],
+    "expected_semantic_ids": [],
+    "expected_coverage_state": "unmapped",
+    "expected_ood": true
+  }
+]

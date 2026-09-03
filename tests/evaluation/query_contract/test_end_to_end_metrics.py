@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from copy import deepcopy
@@ -17,6 +18,7 @@ from scripts.run_semantic_query_benchmark import (
     canonical_report_bytes,
     collect_static_evidence,
     evaluate_representative_contracts,
+    representative_population_integrity,
     parse_challenger_axis_payload,
     REPRESENTATIVE_CASE_EXPECTATIONS,
     REPRESENTATIVE_EXPECTATION_HASH,
@@ -25,6 +27,7 @@ from scripts.run_semantic_query_benchmark import (
     _parser,
     REQUEST_DEADLINE_SECONDS,
 )
+import scripts.run_semantic_query_benchmark as benchmark_module
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -74,6 +77,7 @@ def _live() -> LivePathEvidence:
         provider_success=CountEvidence(successes=16, total=16),
         structured_validity=CountEvidence(successes=16, total=16),
         representative_contract_exact=CountEvidence(successes=5, total=5),
+        representative_population_integrity=True,
         repair_count=0,
         judge_count=0,
         provider_calls=16,
@@ -310,6 +314,7 @@ def test_challenger_complete_bundles_require_three_successful_calls_each() -> No
         "provider_success": {"successes": 16, "total": 16},
         "structured_validity": {"successes": 16, "total": 16},
         "representative_contract_exact": None,
+        "representative_population_integrity": None,
         "provider_calls": 48,
         "successful_provider_calls": 47,
         "call_type_counts": {
@@ -390,7 +395,32 @@ def test_representative_contract_gate_rejects_unpinned_population_members() -> N
     observations = _authoritative_observations()
     observations["not-authoritative"] = observations["fee-screen"]
 
-    assert evaluate_representative_contracts(observations).successes == 0
+    assert evaluate_representative_contracts(observations).successes == 5
+    assert representative_population_integrity(observations) is False
+
+
+def test_representative_cases_score_independently_when_one_is_missing() -> None:
+    observations = _authoritative_observations()
+    observations.pop("bond-risk-screen")
+
+    metric = evaluate_representative_contracts(observations)
+
+    assert metric.successes == 4
+    assert metric.total == 5
+    assert representative_population_integrity(observations) is False
+
+
+def test_representative_population_integrity_is_a_separate_strict_gate() -> None:
+    live = _live().model_copy(update={"representative_population_integrity": False})
+    report = build_promotion_report(
+        _evidence().model_copy(update={"live_paths": (live,)}),
+        expected_source_hashes=_source_hashes(),
+        expected_registry_hashes=_registry_hashes(),
+    )
+    gates = {gate.name: gate for gate in report.gates}
+
+    assert gates["representative_contract_exact"].status == "pass"
+    assert gates["representative_population_integrity"].status == "fail"
 
 
 @pytest.mark.parametrize(
@@ -419,6 +449,57 @@ def test_live_benchmark_uses_full_request_deadline_and_conservative_default_paci
 
     assert REQUEST_DEADLINE_SECONDS == 55.0
     assert args.request_interval_seconds == 10.0
+
+
+def test_offline_mode_forbids_live_calls_and_can_include_separate_hybrid_v3_path() -> None:
+    args = _parser().parse_args(
+        [
+            "--offline",
+            "--include-hybrid-v3",
+            "--sanitized-report",
+            "/private/tmp/report.json",
+        ]
+    )
+
+    assert args.offline is True
+    assert args.include_hybrid_v3 is True
+
+
+def test_offline_hybrid_report_never_calls_provider_even_with_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = Path("/private/tmp/pytest-semantic-offline-hybrid.json")
+    output.unlink(missing_ok=True)
+
+    async def forbidden_provider_call(**_kwargs):
+        raise AssertionError("offline mode called the provider")
+
+    monkeypatch.setattr(benchmark_module, "_load_api_key", lambda: "credential-present")
+    monkeypatch.setattr(benchmark_module, "run_live_benchmark", forbidden_provider_call)
+    args = _parser().parse_args(
+        [
+            "--offline",
+            "--include-hybrid-v3",
+            "--sanitized-report",
+            str(output),
+        ]
+    )
+
+    assert asyncio.run(benchmark_module._main_async(args)) == 0
+    payload = json.loads(output.read_bytes())
+    paths = {item["path_id"]: item for item in payload["resolver_paths"]}
+    assert set(paths) == {"deterministic-v2", "hybrid-deterministic-v3"}
+    assert paths["deterministic-v2"]["hint_recall_at_5"] == {
+        "successes": 123,
+        "total": 196,
+    }
+    assert paths["hybrid-deterministic-v3"]["compact_catalog_selectability"][
+        "numerator"
+    ] == 196
+    assert payload["live_execution"]["reason_code"] == (
+        "LIVE_EXECUTION_DISABLED_OFFLINE"
+    )
+    output.unlink()
 
 
 def test_static_repository_evidence_is_pinned_and_truthfully_deferred() -> None:
