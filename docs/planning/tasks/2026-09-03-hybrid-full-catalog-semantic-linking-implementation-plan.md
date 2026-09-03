@@ -909,9 +909,11 @@ Run: `.venv/bin/python scripts/evaluate_intent_resolver.py deterministic --outpu
 
 Run: `.venv/bin/python scripts/evaluate_intent_resolver.py hybrid-deterministic --output build/reports/intent-resolver-v3-deterministic.json`
 
-Expected: V2 remains `123/196`; V3 catalog selectability is `196/196`; hint
-recall is reported diagnostically; exact locks and required spans are 100% on
-their authoritative denominators.
+Expected: V2 remains `123/196`; V3 catalog selectability is `196/196` held-out
+expected concept occurrences from 42 registered concepts; hint recall is
+reported diagnostically; the V3-path diagnostics report exact locks `140/140`
+and required spans `253/253`. The authoritative top-level exact-lock promotion
+gate remains `unmeasured` until its complete population is defined.
 
 - [x] **Step 7: Run query-contract evaluation tests**
 

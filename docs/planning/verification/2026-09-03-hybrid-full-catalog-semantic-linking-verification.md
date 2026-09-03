@@ -10,11 +10,13 @@ closed and remains deferred
 ## Result
 
 The hybrid V3 Intent Resolver is implemented as a shadow path. Its compact
-catalog exposes all `196/196` registered held-out concept occurrences, exact
-locks are `140/140`, and required source spans are preserved `253/253` in the
-deterministic report. The narrow V3 suite, the full Intent Resolver/evaluation
-suite, the environment-corrected broad offline suite, compilation, and V2/V3
-schema freshness checks pass. V2 remains the default resolver.
+catalog contains 42 registered concepts and exposes all `196/196` held-out
+expected concept occurrences. The deterministic V3 path reports exact locks
+`140/140` as a diagnostic and preserves required source spans `253/253`; the
+authoritative top-level exact-lock promotion gate remains unmeasured. The narrow
+V3 suite, the full Intent Resolver/evaluation suite, the environment-corrected
+broad offline suite, compilation, and V2/V3 schema freshness checks pass. V2
+remains the default resolver.
 
 V3 is **not promoted**. The authorized HCX-007 V3 shadow run measured first-pass
 structured validity `5/21`, repaired structured validity `0/16`, Action exact
@@ -52,8 +54,8 @@ removing its `report_hash` field reproduced the embedded report hash exactly.
 
 | Metric | Evidence | State |
 | --- | ---: | --- |
-| Compact-catalog selectability | `196/196` | measured |
-| Exact-lock precision | `140/140` | measured |
+| Compact-catalog selectability | `196/196` held-out expected concept occurrences from 42 registered concepts | measured |
+| Exact-lock precision | `140/140` | measured V3-path diagnostic; authoritative promotion gate unmeasured |
 | Required span preservation | `253/253` | measured |
 | Hint recall at 5 | `123/196` | measured diagnostic; not a closed-world V3 selector |
 | Action exact | no live prediction in offline report | unmeasured offline |
@@ -138,9 +140,9 @@ promotion.
 
 | Gate | Threshold / required evidence | Exact evidence | Fail-closed status |
 | --- | --- | --- | --- |
-| Registered compact-catalog selectability | `100%` of registered held-out concepts | deterministic V3 `196/196` | `pass` |
+| Registered compact-catalog selectability | `100%` of `196` held-out expected concept occurrences; catalog size `42` concepts | deterministic V3 `196/196` | `pass` |
 | Preserved required mention spans | `100%` of required source spans | deterministic V3 `253/253` | `pass` |
-| Exact-lock precision | `100%` on the authoritative lock denominator | deterministic V3 `140/140` with authoritative denominator `140` | `pass` |
+| Exact-lock precision | `100%` on the authoritative complete population | deterministic V3-path diagnostic `140/140`; authoritative sanitized top-level gate has null numerator/denominator and reason `EXACT_LOCK_PRECISION_AUTHORITATIVE_POPULATION_UNDEFINED` | `unmeasured`; remains a blocker |
 | Requested semantic-link recall | `>=99%` on all `196` held-out requested concept occurrences | live V3 subset `0/4`; offline report has no predictions for the `196`-occurrence denominator | `unmeasured`; measured subset is below threshold |
 | First-pass structured validity | `>=99%` on all `155` authoritative cases | live V3 subset `5/21` | `unmeasured`; measured subset is below threshold |
 | Held-out joint-frame exact | `>=90%` on all `155` authoritative cases | live V3 representative subset `0/5` | `unmeasured`; measured subset is below threshold |
@@ -169,6 +171,7 @@ ADR-0030 supersedes candidate recall at five as the V3 selectability gate.
 | Supported representability | `100%` | `199/199` | `pass` |
 | Unsupported reason coverage | `100%` | `10/10` | `pass` |
 | False-complete unsupported | `0` | `0/10` | `pass` |
+| Authoritative exact-lock precision | `100%` on the complete population | numerator/denominator undefined; `EXACT_LOCK_PRECISION_AUTHORITATIVE_POPULATION_UNDEFINED` | `unmeasured` |
 | Complete-contract candidate recall | `>=99%` over `194` | observed `43/43`; 151 gold frames incomplete | `unmeasured` |
 | Decoupled contract exact match | `>=95%` over `194` | observed `43/43`; 151 gold frames incomplete | `unmeasured` |
 | Executable deterministic compile success | `100%` authoritative population | authoritative population undefined | `unmeasured` |
