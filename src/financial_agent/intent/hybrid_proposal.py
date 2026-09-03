@@ -83,7 +83,7 @@ class ProposedIntentFrameV3(ContractModel):
 
 
 class IntentResolutionProposalV3(ContractModel):
-    proposal_schema_version: Literal["3.0"] = "3.0"
+    proposal_schema_version: Literal["3.0"]
     frames: Annotated[
         tuple[ProposedIntentFrameV3, ...], Field(min_length=1, max_length=16)
     ]

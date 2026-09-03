@@ -134,6 +134,7 @@ def _proposal(
         else ()
     )
     return IntentResolutionProposalV3(
+        proposal_schema_version="3.0",
         frames=(
             ProposedIntentFrameV3(
                 segment_ids=("s1",),
@@ -416,6 +417,7 @@ def test_assembler_rejects_entity_mention_owned_by_another_frame_segment() -> No
         ),
     )
     proposal = IntentResolutionProposalV3(
+        proposal_schema_version="3.0",
         frames=frames,
         references=(),
         context_links=(),

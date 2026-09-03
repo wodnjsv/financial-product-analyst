@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from financial_agent.contracts.canonical import build_request_key
 from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.candidates import generate_semantic_candidates
@@ -13,6 +15,7 @@ from financial_agent.intent.mention_spans import generate_mention_spans
 from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.view import (
     ActiveDatasetPin,
+    ResolverInvariantError,
     build_hybrid_manifest,
     build_resolver_view_v3,
 )
@@ -151,3 +154,19 @@ def test_hybrid_prompt_uses_explicit_unmapped_outputs_and_compact_payload() -> N
     assert "catalog.observation" not in payload
     assert "bindings" not in payload
     assert "formulas" not in payload
+
+
+def test_hybrid_prompt_rejects_forged_compact_card_body_with_valid_claimed_hashes() -> None:
+    """Catches prompt construction trusting catalog hashes and ID coverage alone."""
+    context, view, catalog = _view()
+    original = view.compact_semantic_catalog.concepts[0]
+    forged = original.model_copy(
+        update={"definition_ko": "select product_id from private_products"}
+    )
+    compact = view.compact_semantic_catalog.model_copy(
+        update={"concepts": (forged, *view.compact_semantic_catalog.concepts[1:])}
+    )
+    forged_view = view.model_copy(update={"compact_semantic_catalog": compact})
+
+    with pytest.raises(ResolverInvariantError, match="CATALOG_VERSION_MISMATCH"):
+        build_hybrid_prompt(context, forged_view, catalog)

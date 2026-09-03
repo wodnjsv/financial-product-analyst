@@ -102,6 +102,7 @@ def test_v3_schema_export_generates_the_complete_v3_contract_bundle(
         proposal_schema["properties"]["proposal_schema_version"]["const"]
         == "3.0"
     )
+    assert "proposal_schema_version" in proposal_schema["required"]
     assert "semantic_links" in resolution_schema["required"]
     check_schemas(tmp_path, schema_version="3.0")
 
@@ -198,3 +199,32 @@ def test_cli_no_arguments_retains_v1_export_and_check_behavior(tmp_path: Path) -
     assert exported.returncode == 0, exported.stderr
     assert checked.returncode == 0, checked.stderr
     check_schemas(tmp_path / "schemas/intent/v1")
+
+
+@pytest.mark.parametrize("unknown_version", ("", "1", "2", "3", "4.0", "v3"))
+def test_public_schema_export_rejects_every_unknown_runtime_version(
+    tmp_path: Path,
+    unknown_version: str,
+) -> None:
+    """Catches the public export API silently falling through to V3."""
+    with pytest.raises(ValueError, match="unsupported intent schema version"):
+        export_schemas(
+            tmp_path / "unknown-export",
+            schema_version=unknown_version,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("unknown_version", ("", "1", "2", "3", "4.0", "v3"))
+def test_public_schema_check_rejects_every_unknown_runtime_version(
+    tmp_path: Path,
+    unknown_version: str,
+) -> None:
+    """Catches the public freshness API treating an unknown version as V3."""
+    expected_dir = tmp_path / "v3"
+    export_schemas(expected_dir, schema_version="3.0")
+
+    with pytest.raises(ValueError, match="unsupported intent schema version"):
+        check_schemas(
+            expected_dir,
+            schema_version=unknown_version,  # type: ignore[arg-type]
+        )

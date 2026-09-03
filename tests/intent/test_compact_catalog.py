@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from financial_agent.contracts import canonical_json_bytes
 from financial_agent.intent.compact_catalog import (
+    CompactSemanticCatalogV1,
     CompactSemanticConceptV1,
     build_compact_semantic_catalog,
 )
@@ -80,3 +81,41 @@ def test_compact_catalog_rejects_physical_schema_tokens_in_emitted_tuples() -> N
 
     with pytest.raises(ValueError, match="physical-schema"):
         build_compact_semantic_catalog(unsafe_snapshot)
+
+
+@pytest.mark.parametrize(
+    "unsafe_definition",
+    (
+        "SELECT",
+        "fRoM",
+        "select product_id from private_products",
+        "SeLeCt product_id\nFrOm private_products",
+        "catalog.OBSERVATION 값을 사용",
+        "METRIC_ID 값을 사용",
+        "Column_Name 값을 사용",
+    ),
+)
+def test_compact_card_direct_construction_rejects_case_normalized_physical_tokens(
+    unsafe_definition: str,
+) -> None:
+    """Catches direct model construction bypassing the builder's prompt guard."""
+    with pytest.raises(ValidationError, match="physical-schema"):
+        CompactSemanticConceptV1(
+            semantic_id="fee_rate",
+            preferred_label_ko="총보수",
+            definition_ko=unsafe_definition,
+            concept_kind="metric",
+            value_kind="decimal",
+            applicable_family_ids=("domestic_etf",),
+            required_qualifier_ids=(),
+        )
+
+
+def test_compact_catalog_restoration_rejects_tainted_nested_card_content() -> None:
+    """Catches persisted nested model content bypassing physical-schema isolation."""
+    compact = build_compact_semantic_catalog(load_hybrid_catalog(PROJECT_ROOT))
+    payload = compact.model_dump(mode="python")
+    payload["concepts"][0]["definition_ko"] = "read CoLuMn_NaMe from storage"
+
+    with pytest.raises(ValidationError, match="physical-schema"):
+        CompactSemanticCatalogV1.model_validate(payload)

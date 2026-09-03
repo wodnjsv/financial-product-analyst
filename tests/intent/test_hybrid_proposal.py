@@ -5,10 +5,16 @@ from pydantic import ValidationError
 
 from financial_agent.intent.hybrid_proposal import (
     FrameSemanticCoverageV3,
+    IntentResolutionProposalV3,
     ProposedIntentFrameV3,
     ProposedSemanticLinkV3,
 )
 from financial_agent.intent.proposal import ProposedAxisChoice
+from financial_agent.intent.types import (
+    ChoiceState,
+    SemanticCoverageReason,
+    SemanticCoverageState,
+)
 
 
 def _choice() -> ProposedAxisChoice:
@@ -113,4 +119,41 @@ def test_uncovered_frame_requires_reason_and_unmapped_mention() -> None:
             semantic_coverage=FrameSemanticCoverageV3(
                 state="partial", reason="lexical_ood"
             ),
+        )
+
+
+def test_v3_proposal_requires_explicit_schema_version() -> None:
+    """Catches a missing wire-version marker being supplied by a model default."""
+    valid_frame = ProposedIntentFrameV3(
+        segment_ids=("s1",),
+        action_choice=ProposedAxisChoice(
+            state=ChoiceState.SELECTED,
+            selected_ids=("lookup",),
+            evidence_ids=(),
+            reason_code="explicit",
+        ),
+        product_family_choice=ProposedAxisChoice(
+            state=ChoiceState.SELECTED,
+            selected_ids=("domestic_etf",),
+            evidence_ids=(),
+            reason_code="explicit",
+        ),
+        entity_type_ids=(),
+        semantic_links=(),
+        unmapped_mention_ids=(),
+        semantic_coverage=FrameSemanticCoverageV3(
+            state=SemanticCoverageState.COVERED,
+            reason=SemanticCoverageReason.NONE,
+        ),
+        entity_hints=(),
+        produced_result_hints=(),
+    )
+    with pytest.raises(ValidationError):
+        IntentResolutionProposalV3(
+            frames=(valid_frame,),
+            references=(),
+            context_links=(),
+            slot_mutations=(),
+            semantic_flag_hints=(),
+            frame_limit_exceeded=False,
         )

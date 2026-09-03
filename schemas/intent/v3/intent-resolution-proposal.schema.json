@@ -671,7 +671,6 @@
     },
     "proposal_schema_version": {
       "const": "3.0",
-      "default": "3.0",
       "title": "Proposal Schema Version",
       "type": "string"
     },
@@ -698,6 +697,7 @@
     }
   },
   "required": [
+    "proposal_schema_version",
     "frames",
     "references",
     "context_links",

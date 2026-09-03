@@ -39,8 +39,9 @@ V3_SCHEMA_REGISTRY = {
 def export_schemas(
     output_dir: Path, *, schema_version: Literal["1.0", "2.0", "3.0"] = "1.0"
 ) -> None:
+    registry = _schema_registry(schema_version)
     output_dir.mkdir(parents=True, exist_ok=True)
-    for name, model in _schema_registry(schema_version).items():
+    for name, model in registry.items():
         rendered = json.dumps(
             model.model_json_schema(mode="validation"),
             ensure_ascii=False,
@@ -75,4 +76,6 @@ def _schema_registry(schema_version: Literal["1.0", "2.0", "3.0"]):
         return SCHEMA_REGISTRY
     if schema_version == "2.0":
         return V2_SCHEMA_REGISTRY
-    return V3_SCHEMA_REGISTRY
+    if schema_version == "3.0":
+        return V3_SCHEMA_REGISTRY
+    raise ValueError(f"unsupported intent schema version: {schema_version}")

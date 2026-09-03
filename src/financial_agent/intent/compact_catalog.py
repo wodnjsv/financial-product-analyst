@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
 from financial_agent.contracts.canonical import canonical_json_bytes
@@ -14,11 +15,12 @@ from .catalog import SemanticCatalogSnapshot
 
 _CONCEPT_KINDS = Literal["attribute", "metric", "relation", "document_topic"]
 _PHYSICAL_SCHEMA_TOKENS = (
-    "SELECT ",
-    "FROM ",
     "catalog.observation",
     "metric_id",
     "column_name",
+)
+_PHYSICAL_SQL_TOKEN = re.compile(
+    r"(?<![a-z0-9_])(?:select|from)(?![a-z0-9_])"
 )
 
 
@@ -32,12 +34,22 @@ class CompactSemanticConceptV1(ContractModel):
     required_qualifier_ids: tuple[Identifier, ...]
     disambiguation_ko: str | None = None
 
+    @model_validator(mode="after")
+    def validate_model_safe_content(self) -> "CompactSemanticConceptV1":
+        _reject_physical_schema_tokens(self)
+        return self
+
 
 class CompactSemanticCatalogV1(ContractModel):
     projection_version: Literal["compact-semantic-catalog.v1"]
     source_catalog_hash: Sha256Hex
     source_overlay_hash: Sha256Hex
     concepts: tuple[CompactSemanticConceptV1, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_model_safe_content(self) -> "CompactSemanticCatalogV1":
+        _reject_physical_schema_tokens(self)
+        return self
 
 
 def build_compact_semantic_catalog(
@@ -58,6 +70,15 @@ def build_compact_semantic_catalog(
         source_overlay_hash=snapshot.overlay_hash,
         concepts=tuple(sorted(cards, key=lambda card: (card.concept_kind, card.semantic_id))),
     )
+
+
+def compact_catalog_matches_snapshot(
+    compact_catalog: CompactSemanticCatalogV1,
+    snapshot: SemanticCatalogSnapshot,
+) -> bool:
+    """Compare the complete canonical projection with a fresh authoritative build."""
+    expected = build_compact_semantic_catalog(snapshot)
+    return canonical_json_bytes(compact_catalog) == canonical_json_bytes(expected)
 
 
 def _build_card(
@@ -87,7 +108,13 @@ def _build_card(
     return card
 
 
-def _reject_physical_schema_tokens(card: CompactSemanticConceptV1) -> None:
-    payload = canonical_json_bytes(card).decode("utf-8")
-    if any(token in payload for token in _PHYSICAL_SCHEMA_TOKENS):
+def _reject_physical_schema_tokens(
+    value: CompactSemanticConceptV1 | CompactSemanticCatalogV1,
+) -> None:
+    payload = " ".join(
+        canonical_json_bytes(value).decode("utf-8").casefold().split()
+    )
+    if _PHYSICAL_SQL_TOKEN.search(payload) or any(
+        token in payload for token in _PHYSICAL_SCHEMA_TOKENS
+    ):
         raise ValueError("compact semantic cards cannot contain physical-schema fields")

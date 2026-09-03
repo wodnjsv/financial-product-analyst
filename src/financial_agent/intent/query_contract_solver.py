@@ -15,6 +15,7 @@ from financial_agent.contracts.enums import Cardinality, IntentType, ProductFami
 
 from .axis_locks import ExactSemanticLock, validate_exact_semantic_locks
 from .catalog import SemanticCatalogSnapshot
+from .compact_catalog import compact_catalog_matches_snapshot
 from .query_contract_registry import (
     EXPECTED_POLICY_KINDS,
     OperatorArity,
@@ -76,11 +77,18 @@ from .types import (
     SlotMutationKind,
 )
 from .view import (
+    HYBRID_ADAPTER_VERSION,
+    HYBRID_CANDIDATE_POLICY_VERSION,
+    HYBRID_PROMPT_VERSION,
+    HYBRID_RESOLVER_SCHEMA_VERSION,
+    NORMALIZER_VERSION,
+    ResolverInvariantError,
     ResolverView,
     ResolverViewConcept,
     ResolverViewV3,
     ResolverViewLiteralCandidate,
     ResolverViewSemanticCandidateGroup,
+    build_hybrid_manifest,
 )
 
 
@@ -233,17 +241,9 @@ def solve_query_contracts(
         view, ResolverViewV3
     ):
         raise ValueError("QUERY_CONTRACT_RESOLVER_VERSION_MISMATCH")
-    if isinstance(view, ResolverViewV3) and (
-        semantic_catalog is None
-        or semantic_catalog.catalog_hash
-        != view.compact_semantic_catalog.source_catalog_hash
-        or set(semantic_catalog.concepts_by_id)
-        != {
-            card.semantic_id
-            for card in view.compact_semantic_catalog.concepts
-        }
-    ):
-        raise ValueError("QUERY_CONTRACT_SEMANTIC_CATALOG_MISMATCH")
+    if isinstance(view, ResolverViewV3):
+        assert isinstance(resolution, ValidatedIntentResolutionV3)
+        _validate_v3_solver_pins(resolution, view, semantic_catalog)
 
     locks = validate_exact_semantic_locks(exact_locks)
     frames = tuple(
@@ -260,6 +260,50 @@ def solve_query_contracts(
         for frame in resolution.canonical_frames
     )
     return QueryContractCandidateSet(frames=frames)
+
+
+def _validate_v3_solver_pins(
+    resolution: ValidatedIntentResolutionV3,
+    view: ResolverViewV3,
+    semantic_catalog: SemanticCatalogSnapshot | None,
+) -> None:
+    if semantic_catalog is None:
+        raise ValueError("QUERY_CONTRACT_SEMANTIC_CATALOG_MISMATCH")
+    if resolution.build_manifest != view.build_manifest:
+        raise ValueError("QUERY_CONTRACT_BUILD_MANIFEST_MISMATCH")
+    if resolution.dataset_version != view.active_dataset_pin.dataset_version:
+        raise ValueError("QUERY_CONTRACT_DATASET_PIN_MISMATCH")
+    if (
+        resolution.active_dataset_manifest_hash
+        != view.active_dataset_pin.manifest_hash
+    ):
+        raise ValueError("QUERY_CONTRACT_MANIFEST_PIN_MISMATCH")
+
+    try:
+        expected_manifest = build_hybrid_manifest(
+            semantic_catalog,
+            {
+                "normalizer_version": NORMALIZER_VERSION,
+                "candidate_policy_version": HYBRID_CANDIDATE_POLICY_VERSION,
+                "resolver_schema_version": HYBRID_RESOLVER_SCHEMA_VERSION,
+                "prompt_version": HYBRID_PROMPT_VERSION,
+                "adapter_version": HYBRID_ADAPTER_VERSION,
+            },
+        )
+    except (ResolverInvariantError, ValueError):
+        raise ValueError("QUERY_CONTRACT_BUILD_MANIFEST_MISMATCH") from None
+    if view.build_manifest != expected_manifest:
+        raise ValueError("QUERY_CONTRACT_BUILD_MANIFEST_MISMATCH")
+
+    try:
+        compact_catalog_matches = compact_catalog_matches_snapshot(
+            view.compact_semantic_catalog,
+            semantic_catalog,
+        )
+    except ValueError:
+        compact_catalog_matches = False
+    if not compact_catalog_matches:
+        raise ValueError("QUERY_CONTRACT_SEMANTIC_CATALOG_MISMATCH")
 
 
 def _solve_frame(

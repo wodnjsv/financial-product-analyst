@@ -9,6 +9,7 @@ from financial_agent.contracts.enums import Cardinality, ReferenceMentionType
 from financial_agent.contracts.request import RequestContext
 
 from .catalog import SemanticCatalogSnapshot
+from .compact_catalog import compact_catalog_matches_snapshot
 from .prompt import ResolverPromptEnvelope
 from .types import (
     ChoiceState,
@@ -223,13 +224,7 @@ def build_hybrid_response_schema(view: ResolverViewV3) -> dict[str, object]:
 def _validate_hybrid_catalog(
     view: ResolverViewV3, catalog: SemanticCatalogSnapshot
 ) -> None:
-    compact_catalog = view.compact_semantic_catalog
-    if (
-        compact_catalog.source_catalog_hash != catalog.catalog_hash
-        or compact_catalog.source_overlay_hash != catalog.overlay_hash
-        or {card.semantic_id for card in compact_catalog.concepts}
-        != set(catalog.concepts_by_id)
-    ):
+    if not compact_catalog_matches_snapshot(view.compact_semantic_catalog, catalog):
         raise ResolverInvariantError("CATALOG_VERSION_MISMATCH")
 
 

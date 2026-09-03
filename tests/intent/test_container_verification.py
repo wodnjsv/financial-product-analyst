@@ -6,9 +6,12 @@ import json
 from pathlib import Path, PurePosixPath
 import shlex
 import subprocess
+import tomllib
 from typing import Any
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 
 from financial_agent.intent.evaluation import (
     CountMetric,
@@ -20,6 +23,7 @@ from financial_agent.intent.evaluation import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PYPROJECT = PROJECT_ROOT / "pyproject.toml"
 DOCKERFILE = PROJECT_ROOT / "docker" / "resolver-check.Dockerfile"
 COMPOSE = PROJECT_ROOT / "docker" / "postgres.compose.yml"
 DOCKERIGNORE = PROJECT_ROOT / ".dockerignore"
@@ -102,6 +106,20 @@ APPROVED_CMD_TOKENS = (
     "FINANCIAL_AGENT_TEST_DATABASE_URL",
     "fi",
 )
+
+
+def test_resolver_extra_declares_runtime_json_schema_validator() -> None:
+    """Catches service imports succeeding only in development environments."""
+    project = tomllib.loads(PYPROJECT.read_text("utf-8"))["project"]
+    resolver_dependencies = {
+        canonicalize_name(requirement.name): str(requirement.specifier)
+        for requirement in map(
+            Requirement,
+            project["optional-dependencies"]["resolver"],
+        )
+    }
+
+    assert resolver_dependencies["jsonschema"] == "<5,>=4.23"
 
 
 def _logical_dockerfile_lines(source: str) -> tuple[str, ...]:

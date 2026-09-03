@@ -278,6 +278,7 @@ def _v3_solver_inputs(
         exact_semantic_locks=locks,
     )
     proposal = IntentResolutionProposalV3(
+        proposal_schema_version="3.0",
         frames=(
             ProposedIntentFrameV3(
                 segment_ids=("s1",),
@@ -561,31 +562,29 @@ def test_invalid_dataset_default_never_completes_aum_rank(
 
 
 @pytest.mark.parametrize(
-    ("resolution_update", "reason_code"),
+    ("resolution_update", "error_code"),
     (
         (
             {"dataset_version": "dataset-v2"},
-            "SEMANTIC_DEFAULT_DATASET_PIN_MISMATCH",
+            "QUERY_CONTRACT_DATASET_PIN_MISMATCH",
         ),
         (
             {"active_dataset_manifest_hash": "e" * 64},
-            "SEMANTIC_DEFAULT_MANIFEST_PIN_MISMATCH",
+            "QUERY_CONTRACT_MANIFEST_PIN_MISMATCH",
         ),
     ),
 )
-def test_dataset_default_requires_matching_finalized_resolution_pin(
+def test_v3_solver_requires_matching_finalized_resolution_dataset_pins(
     resolution_update: dict[str, str],
-    reason_code: str,
+    error_code: str,
 ) -> None:
     inputs = _v3_default_inputs(_dataset_defaults(_as_of_default()))
     inputs["resolution"] = inputs["resolution"].model_copy(
         update=resolution_update
     )
 
-    result = solve_query_contracts(**inputs)
-
-    assert result.frames[0].complete_candidates == ()
-    assert result.frames[0].contract_readiness.reason_codes == (reason_code,)
+    with pytest.raises(ValueError, match=f"^{error_code}$"):
+        solve_query_contracts(**inputs)
 
 
 def test_dataset_default_conflicting_with_explicit_date_is_rejected() -> None:
@@ -747,6 +746,120 @@ def test_model_semantic_link_can_complete_fee_rank() -> None:
     }
     link = inputs["resolution"].semantic_links[0]
     assert model_sources == {link.semantic_link_id, link.mention_id}
+
+
+def test_v3_solver_rejects_resolution_and_view_manifest_mismatch() -> None:
+    """Catches a restored resolution being solved against a different V3 view."""
+    inputs = _v3_solver_inputs()
+    resolution_v3 = inputs["resolution"]
+    assert isinstance(resolution_v3, ValidatedIntentResolutionV3)
+    inputs["resolution"] = resolution_v3.model_copy(
+        update={
+            "build_manifest": resolution_v3.build_manifest.model_copy(
+                update={"prompt_version": "forged-resolution-prompt"}
+            )
+        }
+    )
+
+    with pytest.raises(ValueError, match="^QUERY_CONTRACT_BUILD_MANIFEST_MISMATCH$"):
+        solve_query_contracts(**inputs)
+
+
+@pytest.mark.parametrize(
+    "pin_name",
+    (
+        "schema_version",
+        "catalog_version",
+        "catalog_hash",
+        "ontology_hashes",
+        "overlay_version",
+        "overlay_hash",
+        "normalizer_version",
+        "candidate_policy_version",
+        "resolver_schema_version",
+        "prompt_version",
+        "adapter_version",
+    ),
+)
+def test_v3_solver_rejects_each_non_authoritative_build_manifest_pin(
+    pin_name: str,
+) -> None:
+    """Catches coordinated V3 source or component pins being self-consistent but wrong."""
+    inputs = _v3_solver_inputs()
+    view_v3 = inputs["view"]
+    resolution_v3 = inputs["resolution"]
+    assert isinstance(view_v3, ResolverViewV3)
+    assert isinstance(resolution_v3, ValidatedIntentResolutionV3)
+    manifest = view_v3.build_manifest
+    if pin_name == "ontology_hashes":
+        first, *remaining = manifest.ontology_hashes
+        value: object = (
+            first.model_copy(update={"sha256": "e" * 64}),
+            *remaining,
+        )
+    elif pin_name in {"catalog_hash", "overlay_hash"}:
+        value = "e" * 64
+    elif pin_name == "schema_version":
+        value = "9.0"
+    else:
+        value = f"forged-{pin_name}"
+    forged_manifest = manifest.model_copy(update={pin_name: value})
+    inputs["view"] = view_v3.model_copy(update={"build_manifest": forged_manifest})
+    inputs["resolution"] = resolution_v3.model_copy(
+        update={"build_manifest": forged_manifest}
+    )
+
+    with pytest.raises(ValueError, match="^QUERY_CONTRACT_BUILD_MANIFEST_MISMATCH$"):
+        solve_query_contracts(**inputs)
+
+
+@pytest.mark.parametrize(
+    "source_hash_field",
+    ("source_catalog_hash", "source_overlay_hash"),
+)
+def test_v3_solver_rejects_each_compact_catalog_provenance_mismatch(
+    source_hash_field: str,
+) -> None:
+    """Catches compact-card provenance claims diverging from the authority."""
+    inputs = _v3_solver_inputs()
+    view_v3 = inputs["view"]
+    assert isinstance(view_v3, ResolverViewV3)
+    forged_compact = view_v3.compact_semantic_catalog.model_copy(
+        update={source_hash_field: "e" * 64}
+    )
+    inputs["view"] = view_v3.model_copy(
+        update={"compact_semantic_catalog": forged_compact}
+    )
+
+    with pytest.raises(
+        ValueError, match="^QUERY_CONTRACT_SEMANTIC_CATALOG_MISMATCH$"
+    ):
+        solve_query_contracts(**inputs)
+
+
+def test_v3_solver_rejects_forged_compact_catalog_card_content() -> None:
+    """Catches self-claimed hashes and the right ID set hiding altered card content."""
+    inputs = _v3_solver_inputs()
+    view_v3 = inputs["view"]
+    assert isinstance(view_v3, ResolverViewV3)
+    original = view_v3.compact_semantic_catalog.concepts[0]
+    forged = original.model_copy(update={"preferred_label_ko": "위조된 의미"})
+    forged_compact = view_v3.compact_semantic_catalog.model_copy(
+        update={
+            "concepts": (
+                forged,
+                *view_v3.compact_semantic_catalog.concepts[1:],
+            )
+        }
+    )
+    inputs["view"] = view_v3.model_copy(
+        update={"compact_semantic_catalog": forged_compact}
+    )
+
+    with pytest.raises(
+        ValueError, match="^QUERY_CONTRACT_SEMANTIC_CATALOG_MISMATCH$"
+    ):
+        solve_query_contracts(**inputs)
 
 
 def test_ambiguous_model_semantic_link_is_diagnostic_only() -> None:

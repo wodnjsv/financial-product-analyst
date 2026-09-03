@@ -32,6 +32,7 @@ graph = [
 ]
 resolver = [
   "httpx>=0.28,<1",
+  "jsonschema>=4.23,<5",
 ]
 
 [tool.pytest.ini_options]

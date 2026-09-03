@@ -9,6 +9,8 @@ import json
 from time import perf_counter
 from typing import Protocol
 
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
+from jsonschema.validators import Draft202012Validator
 from pydantic import Field, ValidationError, model_validator
 
 from financial_agent.contracts.base import ContractModel
@@ -815,9 +817,15 @@ class IntentResolverService:
         prepared: PreparedHybridResolutionRequest,
         content: str,
     ) -> ValidatedIntentResolutionV3:
-        _reject_non_strict_json(content)
+        payload = _strict_json_object(content)
         try:
-            proposal = IntentResolutionProposalV3.model_validate_json(content)
+            Draft202012Validator(prepared.prompt.response_schema).validate(payload)
+        except JsonSchemaValidationError:
+            raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID) from None
+        try:
+            proposal = IntentResolutionProposalV3.model_validate_json(
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            )
         except ValidationError:
             raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID) from None
         draft = assemble_hybrid_proposal(
@@ -1432,7 +1440,7 @@ def _hybrid_entity_mentions(
     return tuple(mentions)
 
 
-def _reject_non_strict_json(content: str) -> None:
+def _strict_json_object(content: str) -> dict[str, object]:
     try:
         parsed = json.loads(
             content,
@@ -1443,6 +1451,11 @@ def _reject_non_strict_json(content: str) -> None:
             raise ValueError
     except (json.JSONDecodeError, TypeError, ValueError):
         raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID) from None
+    return parsed
+
+
+def _reject_non_strict_json(content: str) -> None:
+    _strict_json_object(content)
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:

@@ -16,7 +16,10 @@ from financial_agent.intent.catalog import load_catalog, load_hybrid_catalog
 from financial_agent.intent.clova import ModelInvocationResult
 from financial_agent.intent.draft import ProductFamilyChoice
 from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
-from financial_agent.intent.errors import ResolverContractError
+from financial_agent.intent.errors import (
+    MODEL_PROPOSAL_SCHEMA_INVALID,
+    ResolverContractError,
+)
 from financial_agent.intent.query_contract_registry import load_query_contract_registry
 from financial_agent.intent.query_contract_solver import (
     QueryContractCandidate,
@@ -477,6 +480,58 @@ async def test_hybrid_schema_repair_is_separate_and_precludes_judge() -> None:
     assert attempt.telemetry.axis_model_ms == 25
     assert attempt.telemetry.repair_ms == 25
     assert len(adapter.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_hybrid_missing_request_required_property_uses_one_repair_call() -> None:
+    """Catches the broad proposal model default bypassing adaptive-schema repair."""
+    context = _context("비용 부담이 작은 ETF 다섯 개")
+    adapter = _Adapter([])
+    service = _hybrid_service(adapter)
+    prepared = await service.prepare_hybrid(context)
+    valid = _hybrid_proposal(prepared)
+    missing_version = json.loads(valid)
+    missing_version.pop("proposal_schema_version")
+    adapter.responses.extend(
+        [
+            json.dumps(missing_version, ensure_ascii=False),
+            valid,
+        ]
+    )
+
+    attempt = await service.resolve_hybrid_query_contract_candidates(context)
+
+    assert attempt.telemetry.model_call_count == 2
+    assert attempt.telemetry.repair_used is True
+    assert attempt.telemetry.candidate_judge_used is False
+    assert len(adapter.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_hybrid_request_excluded_entity_branch_fails_as_schema_invalid() -> None:
+    """Catches a disabled branch reaching broad Pydantic/semantic validation."""
+    context = _context("비용 부담이 작은 ETF 다섯 개")
+    service = _hybrid_service(_Adapter([]))
+    prepared = await service.prepare_hybrid(context)
+    payload = json.loads(_hybrid_proposal(prepared))
+    payload["frames"][0]["entity_hints"] = [
+        {
+            "semantic_role": "frame_subject",
+            "relation_id": [],
+            "expected_entity_type_ids": ["FinancialProduct"],
+            "mention_id": [],
+            "candidate_entity_ids": [],
+            "selected_candidate_ids": [],
+        }
+    ]
+
+    with pytest.raises(ResolverContractError) as failure:
+        service.validate_hybrid_response(
+            prepared,
+            json.dumps(payload, ensure_ascii=False),
+        )
+
+    assert failure.value.code == MODEL_PROPOSAL_SCHEMA_INVALID
 
 
 @pytest.mark.asyncio
