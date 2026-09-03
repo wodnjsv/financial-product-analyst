@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-03
 
-**Status:** Approved direction; awaiting design-document review before implementation planning
+**Status:** Approved
 
 **Decision:** [ADR-0030](../decisions/ADR-0030-use-hybrid-full-catalog-semantic-linking.md)
 
