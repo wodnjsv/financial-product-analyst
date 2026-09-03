@@ -6,6 +6,7 @@ from pathlib import Path
 from pydantic import TypeAdapter
 
 from financial_agent.contracts.canonical import canonical_sha256
+from financial_agent.contracts.enums import ProductFamily
 from financial_agent.intent.query_contracts import (
     PlanReadiness,
     SolvedQueryContractCandidateV2,
@@ -22,7 +23,11 @@ from financial_agent.planning.physical_bindings import (
     load_physical_binding_registry,
     load_semantic_sql_policy_registry,
 )
-from financial_agent.planning.readiness import assess_plan_readiness
+from financial_agent.planning.readiness import (
+    PriorResultReadinessContext,
+    PriorResultReadinessSource,
+    assess_plan_readiness,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -917,11 +922,235 @@ def test_scope_entity_and_prior_result_binding_fail_closed() -> None:
         load_semantic_sql_policy_registry(PROJECT_ROOT),
     )
 
-    assert result.readiness is PlanReadiness.LIMITED
+    assert result.readiness is PlanReadiness.BLOCKED
     assert result.reason_codes == (
         "ENTITY_IDENTITY_UNVERIFIED",
-        "PRIOR_RESULT_BINDING_UNVERIFIED",
+        "PRIOR_RESULT_READINESS_CONTEXT_REQUIRED",
     )
+
+
+def _rank_contract(
+    *, family: str | None, prior: str | None = None, frame_id: str = "frame-1"
+):
+    payload = _common("rank", family or "domestic_etf")
+    payload["frame_id"] = frame_id
+    payload["scope"] = {
+        "product_family_ids": [family] if family else [],
+        "entity_refs": [],
+        "prior_result_binding": prior,
+    }
+    payload["qualifiers"] = {
+        "period_id": None,
+        "currency_id": None,
+        "unit_id": None,
+        "as_of_date": "2026-08-24",
+    }
+    payload["ordering"] = [{
+        "field_concept_id": "aum",
+        "direction": "desc",
+        "direction_policy_id": None,
+        "nulls_policy_id": "exclude_missing.v1",
+        "tie_break_policy_id": "stable-product-id.v1",
+    }]
+    payload["limit"] = 5 if prior is None else 1
+    payload["limit_policy_id"] = None
+    payload["predicate"] = None
+    return _validate(payload)
+
+
+def _prior_context(producer, consumer, assessment):
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+    return PriorResultReadinessContext(
+        dataset_version=_ACTIVE_DATASET_PIN.dataset_version,
+        dataset_pin=_ACTIVE_DATASET_PIN.manifest_hash,
+        binding_registry_version=bindings.registry_version,
+        binding_registry_hash=bindings.registry_hash,
+        policy_registry_version=policies.registry_version,
+        policy_registry_hash=policies.registry_hash,
+        sources=(
+            PriorResultReadinessSource(
+                binding_name="result-set-1",
+                producer_contract=producer,
+                producer_assessment=assessment,
+                consumer_frame_id=consumer.frame_id,
+                consumer_contract_hash=canonical_sha256(consumer),
+                product_family_ids=producer.scope.product_family_ids,
+            ),
+        ),
+    )
+
+
+def test_familyless_prior_scope_uses_authoritative_upstream_readiness_context() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+    producer = _rank_contract(family="domestic_etf")
+    producer_assessment = _assess_plan_readiness(producer, bindings, policies)
+    consumer = _rank_contract(
+        family=None, prior="result-set-1", frame_id="frame-2"
+    )
+
+    result = assess_plan_readiness(
+        consumer,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=_prior_context(producer, consumer, producer_assessment),
+    )
+
+    assert producer_assessment.readiness is PlanReadiness.EXECUTABLE
+    assert result.readiness is PlanReadiness.EXECUTABLE
+    assert result.binding_ids == ("domestic-etf-aum.v1",)
+
+
+def test_familyless_prior_scope_without_or_with_foreign_context_is_blocked() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+    consumer = _rank_contract(
+        family=None, prior="result-set-1", frame_id="frame-2"
+    )
+
+    missing = assess_plan_readiness(
+        consumer,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+    )
+    producer = _rank_contract(family="domestic_etf")
+    producer_assessment = _assess_plan_readiness(producer, bindings, policies)
+    foreign = _prior_context(producer, consumer, producer_assessment).model_copy(
+        update={"dataset_pin": "f" * 64}
+    )
+    mismatched = assess_plan_readiness(
+        consumer,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=foreign,
+    )
+    valid_context = _prior_context(producer, consumer, producer_assessment)
+    forged_source = valid_context.sources[0].model_copy(
+        update={"product_family_ids": (ProductFamily.PUBLIC_FUND,)}
+    )
+    forged = assess_plan_readiness(
+        consumer,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=valid_context.model_copy(
+            update={"sources": (forged_source,)}
+        ),
+    )
+
+    assert missing.readiness is PlanReadiness.BLOCKED
+    assert "PRIOR_RESULT_READINESS_CONTEXT_REQUIRED" in missing.reason_codes
+    assert mismatched.readiness is PlanReadiness.BLOCKED
+    assert "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH" in mismatched.reason_codes
+    assert forged.readiness is PlanReadiness.BLOCKED
+    assert "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH" in forged.reason_codes
+
+
+def _public_fund_prior_aggregate(*, representative: bool):
+    payload = _common("aggregate", "domestic_etf")
+    payload["frame_id"] = "frame-2"
+    payload["scope"] = {
+        "product_family_ids": [],
+        "entity_refs": [],
+        "prior_result_binding": "result-set-1",
+    }
+    payload["qualifiers"]["as_of_date"] = "2026-08-24"
+    payload["aggregation"] = {
+        "function_id": "sum",
+        "target_field_concept_id": "aum",
+        "count_population_id": None,
+        "group_by_field_concept_ids": [],
+        "bucket_policy_id": None,
+        "population_grain_id": (
+            "representative-product.v1" if representative else "source-product.v1"
+        ),
+        "dedup_policy_id": (
+            "public-fund-representative-share.v1"
+            if representative
+            else "no-dedup.v1"
+        ),
+    }
+    payload["predicate"] = None
+    return _validate(payload)
+
+
+def test_public_fund_prior_aggregate_requires_representative_policy_and_proof() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+    producer_payload = _common("lookup", "public_fund")
+    producer_payload["qualifiers"]["as_of_date"] = "2026-08-24"
+    producer_payload["projections"] = {
+        "field_concept_ids": ["aum"],
+        "default_profile_id": None,
+    }
+    producer = _validate(producer_payload)
+    producer_assessment = _assess_plan_readiness(producer, bindings, policies)
+    unsafe = _public_fund_prior_aggregate(representative=False)
+    safe = _public_fund_prior_aggregate(representative=True)
+
+    unsafe_result = assess_plan_readiness(
+        unsafe,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=_prior_context(producer, unsafe, producer_assessment),
+    )
+    unproved = assess_plan_readiness(
+        safe,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=_prior_context(producer, safe, producer_assessment),
+    )
+    proved = assess_plan_readiness(
+        safe,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=_prior_context(producer, safe, producer_assessment),
+        facts=_verified_population_facts(),
+    )
+
+    assert unsafe_result.readiness is PlanReadiness.LIMITED
+    assert "PUBLIC_FUND_REPRESENTATIVE_POLICY_REQUIRED" in unsafe_result.reason_codes
+    assert unproved.readiness is PlanReadiness.LIMITED
+    assert "PUBLIC_FUND_GRAIN_UNVERIFIED" in unproved.reason_codes
+    assert proved.readiness is PlanReadiness.EXECUTABLE
+
+
+def test_public_fund_prior_rank_inherits_upstream_family_policy() -> None:
+    bindings = load_physical_binding_registry(PROJECT_ROOT)
+    policies = load_semantic_sql_policy_registry(PROJECT_ROOT)
+    producer_payload = _common("lookup", "public_fund")
+    producer_payload["qualifiers"]["as_of_date"] = "2026-08-24"
+    producer_payload["projections"] = {
+        "field_concept_ids": ["aum"],
+        "default_profile_id": None,
+    }
+    producer = _validate(producer_payload)
+    producer_assessment = _assess_plan_readiness(producer, bindings, policies)
+    consumer = _rank_contract(
+        family=None,
+        prior="result-set-1",
+        frame_id="frame-2",
+    )
+
+    result = assess_plan_readiness(
+        consumer,
+        bindings,
+        policies,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_context=_prior_context(producer, consumer, producer_assessment),
+        facts=_verified_population_facts(),
+    )
+
+    assert producer_assessment.readiness is PlanReadiness.EXECUTABLE
+    assert result.readiness is PlanReadiness.LIMITED
+    assert "PUBLIC_FUND_GRAIN_UNVERIFIED" in result.reason_codes
 
 
 def test_unknown_comparison_group_basis_fails_closed() -> None:

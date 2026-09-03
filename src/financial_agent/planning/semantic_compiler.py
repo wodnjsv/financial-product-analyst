@@ -18,6 +18,7 @@ from financial_agent.contracts.enums import (
     AnswerDisposition,
     Cardinality,
     IntentType,
+    ProductFamily,
 )
 from financial_agent.intent.query_contract_solver import QueryContractCandidate
 from financial_agent.intent.query_contracts import (
@@ -32,6 +33,7 @@ from financial_agent.intent.query_contracts import (
     ResolvedQueryContractV2,
     SolvedQueryContractCandidateV2,
 )
+from financial_agent.intent.view import ActiveDatasetPin
 
 from .contracts import CompilationIssue, CompilationRoute
 from .logical_query import (
@@ -54,13 +56,22 @@ from .logical_query import (
     logical_task_id,
     logical_query_plan_id,
 )
-from .physical_bindings import PhysicalBindingRegistry, SemanticSqlPolicyRegistry
+from .physical_bindings import (
+    PhysicalBindingRegistry,
+    PhysicalReadinessFacts,
+    SemanticSqlPolicyRegistry,
+)
 from .primitive_contracts import (
     RELATION_CONCEPT_IDS,
     required_primitive_roles,
     validate_registry_primitive,
 )
-from .readiness import PlanReadinessResult
+from .readiness import (
+    PlanReadinessResult,
+    PriorResultReadinessContext,
+    PriorResultReadinessSource,
+    assess_plan_readiness,
+)
 from .registry import PlanningRegistry
 from .semantic_router import route_semantic_query
 
@@ -347,6 +358,101 @@ class SemanticPlanningCompiler:
         self._bindings = bindings
         self._policies = policies
         self._planning = planning
+
+    def assess_in_dependency_order(
+        self,
+        *,
+        selected_candidates: tuple[QueryContractCandidate, ...],
+        axis_readiness: tuple[AxisReadinessRecordV2, ...],
+        contract_readiness: tuple[ContractReadinessRecordV2, ...],
+        active_dataset_pin: ActiveDatasetPin,
+        prior_result_ownership: tuple[PriorResultOwnershipV2, ...] = (),
+        facts: PhysicalReadinessFacts | None = None,
+    ) -> tuple[SemanticReadinessAssessmentV2, ...]:
+        if not (
+            len(selected_candidates)
+            == len(axis_readiness)
+            == len(contract_readiness)
+        ):
+            raise ValueError("READINESS_INPUT_CARDINALITY_MISMATCH")
+        _validate_prior_result_ownership(
+            selected_candidates, prior_result_ownership
+        )
+        owners = {item.binding_id: item for item in prior_result_ownership}
+        candidates_by_frame = {
+            item.contract.frame_id: item for item in selected_candidates
+        }
+        plans_by_frame: dict[str, PlanReadinessResult] = {}
+        families_by_frame: dict[str, tuple[ProductFamily, ...]] = {}
+        assessments: list[SemanticReadinessAssessmentV2] = []
+        for candidate, axis, contract_gate in zip(
+            selected_candidates,
+            axis_readiness,
+            contract_readiness,
+            strict=True,
+        ):
+            semantic_contract = candidate.contract
+            prior_context = None
+            binding_name = semantic_contract.scope.prior_result_binding
+            if binding_name is not None:
+                owner = owners.get(binding_name)
+                if owner is None or owner.producer_frame_id not in plans_by_frame:
+                    raise ValueError("PRIOR_RESULT_READINESS_ORDER_MISMATCH")
+                producer = candidates_by_frame[owner.producer_frame_id].contract
+                producer_plan = plans_by_frame[owner.producer_frame_id]
+                prior_context = PriorResultReadinessContext(
+                    dataset_version=active_dataset_pin.dataset_version,
+                    dataset_pin=active_dataset_pin.manifest_hash,
+                    binding_registry_version=self._bindings.registry_version,
+                    binding_registry_hash=self._bindings.registry_hash,
+                    policy_registry_version=self._policies.registry_version,
+                    policy_registry_hash=self._policies.registry_hash,
+                    sources=(
+                        PriorResultReadinessSource(
+                            binding_name=binding_name,
+                            producer_contract=producer,
+                            producer_assessment=producer_plan,
+                            consumer_frame_id=semantic_contract.frame_id,
+                            consumer_contract_hash=canonical_sha256(
+                                semantic_contract
+                            ),
+                            product_family_ids=families_by_frame[
+                                owner.producer_frame_id
+                            ],
+                        ),
+                    ),
+                )
+            plan = assess_plan_readiness(
+                semantic_contract,
+                self._bindings,
+                self._policies,
+                active_dataset_pin=active_dataset_pin,
+                facts=facts,
+                prior_result_context=prior_context,
+            )
+            plans_by_frame[semantic_contract.frame_id] = plan
+            effective_families = semantic_contract.scope.product_family_ids
+            if not effective_families and prior_context is not None:
+                effective_families = prior_context.sources[0].product_family_ids
+            families_by_frame[semantic_contract.frame_id] = effective_families
+            assessments.append(
+                SemanticReadinessAssessmentV2(
+                    frame_id=semantic_contract.frame_id,
+                    candidate_id=candidate.candidate_id,
+                    contract_hash=canonical_sha256(semantic_contract),
+                    semantic_registry_pins=semantic_contract.registry_pins,
+                    binding_registry_version=self._bindings.registry_version,
+                    binding_registry_hash=self._bindings.registry_hash,
+                    physical_policy_registry_version=self._policies.registry_version,
+                    physical_policy_registry_hash=self._policies.registry_hash,
+                    planning_registry_version=self._planning.registry_version,
+                    planning_registry_hash=self._planning.registry_hash,
+                    axis=axis,
+                    contract=contract_gate,
+                    plan=plan,
+                )
+            )
+        return tuple(assessments)
 
     def compile(
         self,

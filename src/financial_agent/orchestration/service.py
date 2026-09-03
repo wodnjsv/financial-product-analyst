@@ -318,7 +318,7 @@ class Orchestrator:
                             self._executors.get(task.capability).execute(request),
                             timeout=min(remaining, task.budget_ms / 1000),
                         )
-                    validate_tool_result(request, result)
+                    result = validate_tool_result(request, result)
                 except asyncio.TimeoutError:
                     result = build_tool_result(
                         request,
@@ -330,8 +330,11 @@ class Orchestrator:
                         ExecutionAttempt(
                             task_id=task.task_id,
                             attempt_number=attempt_number,
-                            status=result.status,
-                            latency_ms=result.latency_ms,
+                            status=ToolStatus.PERMANENT_ERROR,
+                            latency_ms=max(
+                                0,
+                                int((self._clock() - attempt_started) * 1000),
+                            ),
                         )
                     )
                     return _TaskOutcome(

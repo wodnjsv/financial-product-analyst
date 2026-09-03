@@ -19,6 +19,12 @@ def validate_tool_result(
     request: ExecutorRequest,
     result: ToolResult,
 ) -> ToolResult:
+    try:
+        result = ToolResult.model_validate(
+            result.model_dump(mode="python", warnings=False)
+        )
+    except Exception as error:
+        raise ToolResultContractError("TOOL_RESULT_SCHEMA_INVALID") from error
     if result.task_id != request.task.task_id:
         raise ToolResultContractError("TOOL_RESULT_TASK_MISMATCH")
     if result.producer != f"executor:{request.task.capability.value}":

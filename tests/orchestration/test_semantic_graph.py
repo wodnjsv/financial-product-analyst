@@ -32,6 +32,7 @@ from tests.planning.test_semantic_compiler import (
     PLANNING,
     POLICIES,
     _assessment,
+    _actual_assessments,
     _base,
     _compile,
     _semantic_contract,
@@ -124,8 +125,6 @@ def sql_dependency_compilation():
             contract=candidate.contract.model_copy(
                 update={
                     "qualifiers": QueryQualifiersV2(
-                        currency_id="KRW",
-                        unit_id="KRW",
                         as_of_date=date(2026, 8, 24),
                     )
                 }
@@ -137,16 +136,19 @@ def sql_dependency_compilation():
     first = qualified(_rank("frame-1"))
     second = _rank("frame-2", "result-set-1")
     second = qualified(second)
+    ownership = (
+        PriorResultOwnershipV2(
+            binding_id="result-set-1",
+            producer_frame_id="frame-1",
+            cardinality="many",
+        ),
+    )
     return _compile(
         (first, second),
-        (_assessment(first), _assessment(second)),
-        prior_result_ownership=(
-            PriorResultOwnershipV2(
-                binding_id="result-set-1",
-                producer_frame_id="frame-1",
-                cardinality="many",
-            ),
+        _actual_assessments(
+            (first, second), prior_result_ownership=ownership
         ),
+        prior_result_ownership=ownership,
     )
 
 

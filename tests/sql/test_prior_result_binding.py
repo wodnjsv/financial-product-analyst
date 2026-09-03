@@ -1,11 +1,25 @@
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
+
 import pytest
 
 from financial_agent.contracts.canonical import canonical_sha256
-from financial_agent.contracts.enums import ResultType, ToolStatus
+from financial_agent.contracts.enums import Cardinality, ResultType, ToolStatus
 from financial_agent.contracts.execution import BindingValue, ToolResult
 from financial_agent.contracts.values import decode_contract_value, encode_contract_value
+from financial_agent.intent.query_contract_solver import QueryContractCandidate
+from financial_agent.intent.query_contracts import (
+    AxisReadiness,
+    AxisReadinessRecordV2,
+    ContractReadiness,
+    ContractReadinessRecordV2,
+)
+from financial_agent.planning.contracts import CompilationRoute
+from financial_agent.planning.semantic_compiler import (
+    PriorResultOwnershipV2,
+    SemanticPlanningCompiler,
+)
 from financial_agent.sql.compiler import SemanticSqlRuntimeBinder
 from financial_agent.sql.contracts import (
     CompiledSqlRequest,
@@ -18,6 +32,15 @@ from tests.orchestration.test_semantic_graph import (
     SQL_COMPILER,
     sql_dependency_compilation,
 )
+from tests.planning.test_plan_readiness import (
+    _ACTIVE_DATASET_PIN,
+    _common,
+    _public_fund_prior_aggregate,
+    _public_fund_representative_count,
+    _validate,
+    _verified_population_facts,
+)
+from tests.planning.test_semantic_compiler import BINDINGS, PLANNING, POLICIES
 from tests.sql.test_executor import FakeEngine
 
 
@@ -45,6 +68,68 @@ def _dependency_result(plan, binding) -> ToolResult:
     )
 
 
+def _public_prior_compilation(consumer_contract, *, facts=None):
+    producer_payload = _common("lookup", "public_fund")
+    producer_payload["qualifiers"]["as_of_date"] = "2026-08-24"
+    producer_payload["projections"] = {
+        "field_concept_ids": ["aum"],
+        "default_profile_id": None,
+    }
+    producer = QueryContractCandidate(
+        candidate_id="public-producer",
+        contract=_validate(producer_payload),
+    )
+    consumer = QueryContractCandidate(
+        candidate_id="public-consumer",
+        contract=consumer_contract,
+    )
+    ownership = (
+        PriorResultOwnershipV2(
+            binding_id="result-set-1",
+            producer_frame_id="frame-1",
+            cardinality=Cardinality.MANY,
+        ),
+    )
+    compiler = SemanticPlanningCompiler(BINDINGS, POLICIES, PLANNING)
+    complete_axis = tuple(
+        AxisReadinessRecordV2(
+            readiness=AxisReadiness.COMPLETE,
+            reason_codes=(),
+        )
+        for _ in range(2)
+    )
+    complete_contract = tuple(
+        ContractReadinessRecordV2(
+            readiness=ContractReadiness.COMPLETE,
+            reason_codes=(),
+        )
+        for _ in range(2)
+    )
+    assessments = compiler.assess_in_dependency_order(
+        selected_candidates=(producer, consumer),
+        axis_readiness=complete_axis,
+        contract_readiness=complete_contract,
+        active_dataset_pin=_ACTIVE_DATASET_PIN,
+        prior_result_ownership=ownership,
+        facts=facts,
+    )
+    compilation = compiler.compile(
+        request_key="e" * 64,
+        run_id="run-1",
+        dataset_version=_ACTIVE_DATASET_PIN.dataset_version,
+        dataset_pin=_ACTIVE_DATASET_PIN.manifest_hash,
+        cutoff_date=date(2026, 8, 24),
+        producer="semantic-query-compiler.v2",
+        created_at=datetime(2026, 8, 24, tzinfo=UTC),
+        resolution_id="resolution-1",
+        selected_candidates=(producer, consumer),
+        readiness_assessments=assessments,
+        primitive_ids=("lookup-products", "aggregate-products"),
+        prior_result_ownership=ownership,
+    )
+    return compilation, assessments
+
+
 def test_prior_result_compiles_deferred_then_binds_canonical_entity_ids() -> None:
     compilation = sql_dependency_compilation()
     plan = compilation.logical_query_plan
@@ -57,6 +142,10 @@ def test_prior_result_compiles_deferred_then_binds_canonical_entity_ids() -> Non
     assert tuple(
         item.id for item in outcome.request.render_manifest.binding_definitions
     ) == ("domestic-etf-aum.v1",)
+    assert tuple(
+        item.value
+        for item in outcome.request.render_manifest.effective_product_family_ids
+    ) == ("domestic_etf",)
     assert "product_family =" not in outcome.request.statement
     assert "identity-unit.v1" in outcome.request.applied_policy_ids
     deferred = tuple(
@@ -158,3 +247,65 @@ async def test_runner_rejects_deferred_request_before_database_access() -> None:
     with pytest.raises(SqlExecutionError, match="SQL_DEFERRED_PARAMETER_UNBOUND"):
         await ReadOnlySqlRunner(engine, SQL_COMPILER).execute(request, plan)
     assert engine.connect_count == 0
+
+
+def test_public_fund_prior_sum_requires_policy_then_compiles_representative_cte() -> None:
+    unsafe, unsafe_assessments = _public_prior_compilation(
+        _public_fund_prior_aggregate(representative=False),
+        facts=_verified_population_facts(),
+    )
+    safe, safe_assessments = _public_prior_compilation(
+        _public_fund_prior_aggregate(representative=True),
+        facts=_verified_population_facts(),
+    )
+
+    assert unsafe_assessments[1].plan.readiness.value == "limited"
+    assert unsafe.route is CompilationRoute.EXPLORE
+    assert unsafe.logical_query_plan is None
+    assert safe_assessments[1].plan.readiness.value == "executable"
+    assert safe.logical_query_plan is not None
+    compiler = type(SQL_COMPILER)(BINDINGS, POLICIES, PLANNING, _ACTIVE_DATASET_PIN)
+    request = compiler.compile_task(
+        safe.logical_query_plan,
+        safe.logical_query_plan.tasks[1].task_id,
+        readiness_facts=_verified_population_facts(),
+    ).request
+
+    assert request is not None
+    assert request.render_manifest.effective_product_family_ids == ("public_fund",)
+    assert "representative_product" in request.statement
+    assert "product_family =" not in request.statement
+
+
+def test_public_fund_prior_count_compiles_with_closed_manifest_lineage() -> None:
+    consumer = _public_fund_representative_count().model_copy(
+        update={
+            "frame_id": "frame-2",
+            "scope": _public_fund_representative_count().scope.model_copy(
+                update={
+                    "product_family_ids": (),
+                    "prior_result_binding": "result-set-1",
+                }
+            ),
+        }
+    )
+    compilation, assessments = _public_prior_compilation(
+        consumer,
+        facts=_verified_population_facts(),
+    )
+
+    assert assessments[1].plan.readiness.value == "executable"
+    assert compilation.logical_query_plan is not None
+    compiler = type(SQL_COMPILER)(BINDINGS, POLICIES, PLANNING, _ACTIVE_DATASET_PIN)
+    request = compiler.compile_task(
+        compilation.logical_query_plan,
+        compilation.logical_query_plan.tasks[1].task_id,
+        readiness_facts=_verified_population_facts(),
+    ).request
+
+    assert request is not None
+    assert request.render_manifest.binding_definitions == ()
+    assert request.render_manifest.count_lineage_metric_definition_refs == (
+        "organizer.prfd01n001.net_assets:2",
+    )
+    assert "representative_product" in request.statement

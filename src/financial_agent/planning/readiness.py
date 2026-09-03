@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field, ValidationError, model_validator
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
 from financial_agent.contracts.canonical import canonical_sha256
@@ -60,6 +60,55 @@ class PlanReadinessResult(ContractModel):
     unit_conversion_policy_ids: tuple[Identifier, ...]
 
 
+class PriorResultReadinessSource(ContractModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    binding_name: Identifier
+    producer_contract: SolvedQueryContractCandidateV2
+    producer_assessment: PlanReadinessResult
+    consumer_frame_id: Identifier
+    consumer_contract_hash: Sha256Hex
+    product_family_ids: tuple[ProductFamily, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        if self.producer_contract.frame_id == self.consumer_frame_id:
+            raise ValueError("PRIOR_RESULT_READINESS_SELF_REFERENCE")
+        if len(self.product_family_ids) != len(set(self.product_family_ids)):
+            raise ValueError("PRIOR_RESULT_READINESS_FAMILY_DUPLICATE")
+        if (
+            self.producer_assessment.frame_id != self.producer_contract.frame_id
+            or self.producer_assessment.contract_hash
+            != canonical_sha256(self.producer_contract)
+            or (
+                self.producer_contract.scope.product_family_ids
+                and self.product_family_ids
+                != self.producer_contract.scope.product_family_ids
+            )
+        ):
+            raise ValueError("PRIOR_RESULT_READINESS_PRODUCER_MISMATCH")
+        return self
+
+
+class PriorResultReadinessContext(ContractModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    dataset_version: Identifier
+    dataset_pin: Sha256Hex
+    binding_registry_version: Identifier
+    binding_registry_hash: Sha256Hex
+    policy_registry_version: Identifier
+    policy_registry_hash: Sha256Hex
+    sources: tuple[PriorResultReadinessSource, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_context(self):
+        names = tuple(item.binding_name for item in self.sources)
+        if len(names) != len(set(names)):
+            raise ValueError("PRIOR_RESULT_READINESS_SOURCE_DUPLICATE")
+        return self
+
+
 @dataclass(slots=True)
 class _Assessment:
     reasons: set[str] = field(default_factory=set)
@@ -82,6 +131,7 @@ def assess_plan_readiness(
     *,
     active_dataset_pin: ActiveDatasetPin,
     facts: PhysicalReadinessFacts | None = None,
+    prior_result_context: PriorResultReadinessContext | None = None,
 ) -> PlanReadinessResult:
     """Assess all semantic roles without changing the solved contract."""
 
@@ -100,18 +150,29 @@ def assess_plan_readiness(
     ):
         state.add("PHYSICAL_POLICY_REGISTRY_PIN_MISMATCH", PlanReadiness.BLOCKED)
     families = tuple(contract.scope.product_family_ids)
+    if contract.scope.prior_result_binding:
+        context_source = _prior_result_source(
+            contract,
+            prior_result_context,
+            bindings,
+            policies,
+            active_dataset_pin,
+            facts,
+            state,
+        )
+        if context_source is not None:
+            if families and families != context_source.product_family_ids:
+                state.add(
+                    "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+                    PlanReadiness.BLOCKED,
+                )
+            else:
+                families = context_source.product_family_ids
     if not families:
         state.add("PHYSICAL_SCOPE_FAMILY_REQUIRED", PlanReadiness.BLOCKED)
     known_entity_ids = facts.known_entity_ids if facts is not None else frozenset()
     if set(contract.scope.entity_refs) - known_entity_ids:
         state.add("ENTITY_IDENTITY_UNVERIFIED", PlanReadiness.LIMITED)
-    if contract.scope.prior_result_binding and (
-        facts is None
-        or contract.scope.prior_result_binding
-        not in facts.known_prior_result_binding_ids
-    ):
-        state.add("PRIOR_RESULT_BINDING_UNVERIFIED", PlanReadiness.LIMITED)
-
     field_roles: list[tuple[str, str, object | None]] = []
     policy_roles: list[tuple[str, SemanticSqlPolicyKind, str]] = []
     if contract.action_id is IntentType.LOOKUP:
@@ -268,6 +329,115 @@ def assess_plan_readiness(
         policy_ids=tuple(sorted(state.policy_ids)),
         unit_conversion_policy_ids=tuple(sorted(state.unit_conversion_policy_ids)),
     )
+
+
+def _prior_result_source(
+    contract: SolvedQueryContractCandidateV2,
+    context: PriorResultReadinessContext | None,
+    bindings: PhysicalBindingRegistry,
+    policies: SemanticSqlPolicyRegistry,
+    active_dataset_pin: ActiveDatasetPin,
+    facts: PhysicalReadinessFacts | None,
+    state: _Assessment,
+) -> PriorResultReadinessSource | None:
+    if context is None:
+        state.add(
+            "PRIOR_RESULT_READINESS_CONTEXT_REQUIRED",
+            PlanReadiness.BLOCKED,
+        )
+        return None
+    try:
+        context = PriorResultReadinessContext.model_validate(
+            context.model_dump(mode="python", warnings=False)
+        )
+    except (AttributeError, ValidationError):
+        state.add(
+            "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+            PlanReadiness.BLOCKED,
+        )
+        return None
+    if (
+        context.dataset_version != active_dataset_pin.dataset_version
+        or context.dataset_pin != active_dataset_pin.manifest_hash
+        or context.binding_registry_version != bindings.registry_version
+        or context.binding_registry_hash != bindings.registry_hash
+        or context.policy_registry_version != policies.registry_version
+        or context.policy_registry_hash != policies.registry_hash
+    ):
+        state.add(
+            "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+            PlanReadiness.BLOCKED,
+        )
+        return None
+    source = next(
+        (
+            item
+            for item in context.sources
+            if item.binding_name == contract.scope.prior_result_binding
+        ),
+        None,
+    )
+    if source is None or (
+        source.consumer_frame_id != contract.frame_id
+        or source.consumer_contract_hash != canonical_sha256(contract)
+    ):
+        state.add(
+            "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+            PlanReadiness.BLOCKED,
+        )
+        return None
+    producer_plan = source.producer_assessment
+    if (
+        producer_plan.dataset_version != context.dataset_version
+        or producer_plan.dataset_pin != context.dataset_pin
+        or producer_plan.binding_registry_version != context.binding_registry_version
+        or producer_plan.binding_registry_hash != context.binding_registry_hash
+        or producer_plan.policy_registry_version != context.policy_registry_version
+        or producer_plan.policy_registry_hash != context.policy_registry_hash
+        or producer_plan.contract_hash != canonical_sha256(source.producer_contract)
+        or (
+            source.producer_contract.scope.product_family_ids
+            and source.product_family_ids
+            != source.producer_contract.scope.product_family_ids
+        )
+    ):
+        state.add(
+            "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+            PlanReadiness.BLOCKED,
+        )
+        return None
+    if producer_plan.readiness is not PlanReadiness.EXECUTABLE:
+        state.add("PRIOR_RESULT_UPSTREAM_NOT_EXECUTABLE", PlanReadiness.BLOCKED)
+        return None
+    if source.producer_contract.scope.prior_result_binding is None:
+        expected_producer_plan = assess_plan_readiness(
+            source.producer_contract,
+            bindings,
+            policies,
+            active_dataset_pin=active_dataset_pin,
+            facts=facts,
+        )
+        if producer_plan != expected_producer_plan:
+            state.add(
+                "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+                PlanReadiness.BLOCKED,
+            )
+            return None
+    physical = tuple(
+        bindings.bindings_by_id.get(binding_id)
+        for binding_id in producer_plan.binding_ids
+    )
+    if any(item is None for item in physical) or any(
+        item.product_family_id not in source.product_family_ids
+        for item in physical
+        if item is not None
+    ):
+        state.add(
+            "PRIOR_RESULT_READINESS_CONTEXT_MISMATCH",
+            PlanReadiness.BLOCKED,
+        )
+        return None
+    return source
 
 
 def _collect_predicate(

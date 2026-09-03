@@ -110,6 +110,17 @@ class InvalidSemanticProducer(CapabilityExecutor):
             binding_values=(binding,),
             latency_ms=1,
         )
+        if self.mode == "raw-status":
+            draft = result.model_copy(
+                update={"status": "success", "result_hash": "0" * 64}
+            )
+            unhashed = draft.model_dump(mode="json", warnings=False)
+            unhashed.pop("result_hash")
+            return draft.model_copy(
+                update={
+                    "result_hash": canonical_sha256(unhashed)
+                }
+            )
         if self.mode == "foreign-producer":
             draft = result.model_copy(
                 update={"producer": "executor:foreign", "result_hash": "0" * 64}
@@ -296,6 +307,7 @@ async def test_semantic_dependency_publishes_typed_binding_before_consumer() -> 
         ("list-for-one", "one", "TOOL_RESULT_BINDING_VALUE_INVALID"),
         ("invalid-id", "many", "TOOL_RESULT_BINDING_VALUE_INVALID"),
         ("empty-many-with-rows", "many", "TOOL_RESULT_BINDING_VALUE_INVALID"),
+        ("raw-status", "many", "TOOL_RESULT_SCHEMA_INVALID"),
     ),
 )
 async def test_invalid_semantic_result_is_failed_before_publication_and_skips_consumer(

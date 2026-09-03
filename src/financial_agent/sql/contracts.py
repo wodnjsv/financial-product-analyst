@@ -10,10 +10,13 @@ from typing import Literal, TypeAlias
 from pydantic import ConfigDict, Field, ValidationError, model_validator
 
 from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
+from financial_agent.contracts.enums import ProductFamily
 from financial_agent.contracts.canonical import canonical_json_bytes, canonical_sha256
 from financial_agent.contracts.validation import require_unique_ids
 from financial_agent.contracts.values import ContractValue
+from financial_agent.intent.query_contracts import AggregationFunction
 from financial_agent.planning.logical_query import (
+    LogicalAggregateOperationV2,
     LogicalQueryPlanV2,
     LogicalQueryTaskV2,
     logical_task_semantic_hash,
@@ -156,6 +159,9 @@ class PhysicalSqlRenderManifest(_StrictModel):
     dataset_version: Identifier
     dataset_pin: Sha256Hex
     binding_definitions: tuple[PhysicalBindingDefinition, ...]
+    effective_product_family_ids: tuple[ProductFamily, ...] = Field(
+        min_length=1, strict=False
+    )
     readiness_facts: PhysicalReadinessFacts | None = None
     binding_registry_version: Identifier
     binding_registry_hash: Sha256Hex
@@ -189,6 +195,10 @@ class PhysicalSqlRenderManifest(_StrictModel):
             raise ValueError("SQL_MANIFEST_TEMPLATE_MISMATCH")
         binding_ids = tuple(item.id for item in self.binding_definitions)
         require_unique_ids(binding_ids, label="manifest physical bindings")
+        require_unique_ids(
+            tuple(item.value for item in self.effective_product_family_ids),
+            label="manifest effective product families",
+        )
         prior_only_scope = (
             self.logical_task.scope.prior_result_binding is not None
             and not self.logical_task.scope.product_family_ids
@@ -196,8 +206,21 @@ class PhysicalSqlRenderManifest(_StrictModel):
         )
         if not prior_only_scope and binding_ids != self.logical_task.binding_ids:
             raise ValueError("SQL_MANIFEST_BINDING_OWNERSHIP_MISMATCH")
-        if prior_only_scope and not binding_ids:
+        prior_only_count_lineage = (
+            prior_only_scope
+            and isinstance(self.logical_task.operation, LogicalAggregateOperationV2)
+            and self.logical_task.operation.aggregation.function_id
+            is AggregationFunction.COUNT
+            and bool(self.count_lineage_metric_definition_refs)
+        )
+        if prior_only_scope and not binding_ids and not prior_only_count_lineage:
             raise ValueError("SQL_MANIFEST_BINDING_OWNERSHIP_MISMATCH")
+        local_families = self.logical_task.scope.product_family_ids
+        if local_families:
+            if self.effective_product_family_ids != local_families:
+                raise ValueError("SQL_MANIFEST_SCOPE_FAMILY_MISMATCH")
+        elif self.logical_task.scope.prior_result_binding is None:
+            raise ValueError("SQL_MANIFEST_SCOPE_FAMILY_MISMATCH")
         if any(
             EXPECTED_BINDING_DEFINITION_HASHES.get(item.id)
             != canonical_sha256(item)

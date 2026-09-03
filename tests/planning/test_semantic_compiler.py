@@ -17,6 +17,7 @@ from financial_agent.intent.query_contracts import (
     ContractReadiness,
     ContractReadinessRecordV2,
     PlanReadiness,
+    QueryQualifiersV2,
     SolvedQueryContractCandidateV2,
 )
 from financial_agent.intent.view import ActiveDatasetPin
@@ -238,6 +239,30 @@ def _assessment(candidate: QueryContractCandidate, *, readiness=PlanReadiness.EX
         axis=AxisReadinessRecordV2(readiness=AxisReadiness.COMPLETE, reason_codes=()),
         contract=ContractReadinessRecordV2(readiness=ContractReadiness.COMPLETE, reason_codes=()),
         plan=plan,
+    )
+
+
+def _actual_assessments(candidates, *, prior_result_ownership=(), facts=None):
+    complete_axis = tuple(
+        AxisReadinessRecordV2(readiness=AxisReadiness.COMPLETE, reason_codes=())
+        for _ in candidates
+    )
+    complete_contract = tuple(
+        ContractReadinessRecordV2(
+            readiness=ContractReadiness.COMPLETE,
+            reason_codes=(),
+        )
+        for _ in candidates
+    )
+    return SemanticPlanningCompiler(
+        BINDINGS, POLICIES, PLANNING
+    ).assess_in_dependency_order(
+        selected_candidates=tuple(candidates),
+        axis_readiness=complete_axis,
+        contract_readiness=complete_contract,
+        active_dataset_pin=ACTIVE_DATASET_PIN,
+        prior_result_ownership=tuple(prior_result_ownership),
+        facts=facts,
     )
 
 
@@ -683,22 +708,39 @@ def test_finalization_rejects_foreign_readiness_evidence(mutation) -> None:
 def test_prior_result_scope_becomes_typed_dependency() -> None:
     first = _rank("frame-1")
     second = _rank("frame-2", "result-set-1")
+    first = QueryContractCandidate(
+        candidate_id=first.candidate_id,
+        contract=first.contract.model_copy(
+            update={"qualifiers": QueryQualifiersV2(as_of_date=date(2026, 8, 24))}
+        ),
+    )
+    second = QueryContractCandidate(
+        candidate_id=second.candidate_id,
+        contract=second.contract.model_copy(
+            update={"qualifiers": QueryQualifiersV2(as_of_date=date(2026, 8, 24))}
+        ),
+    )
+    ownership = (
+        PriorResultOwnershipV2(
+            binding_id="result-set-1",
+            producer_frame_id="frame-1",
+            cardinality="many",
+        ),
+    )
+    assessments = _actual_assessments(
+        (first, second), prior_result_ownership=ownership
+    )
     compilation = _compile(
         (first, second),
-        (_assessment(first), _assessment(second)),
-        prior_result_ownership=(
-            PriorResultOwnershipV2(
-                binding_id="result-set-1",
-                producer_frame_id="frame-1",
-                cardinality="many",
-            ),
-        ),
+        assessments,
+        prior_result_ownership=ownership,
     )
 
     plan = compilation.logical_query_plan
     assert plan is not None
     assert plan.dependencies[0].upstream_task_id == plan.tasks[0].task_id
     assert plan.tasks[1].prior_result_inputs[0].binding_id == "result-set-1"
+    assert plan.tasks[1].binding_ids == ("domestic-etf-aum.v1",)
 
 
 def test_limited_contract_has_no_executable_plan() -> None:

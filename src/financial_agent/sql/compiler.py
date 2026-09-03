@@ -106,6 +106,7 @@ class _Context:
     evidence_aliases: dict[str, sa.Alias]
     count_lineage_metric_definition_refs: tuple[str, ...]
     prior_result_entity_ids: tuple[str, ...] | None
+    scope_families: tuple[ProductFamily, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +213,7 @@ class SemanticSqlCompiler:
             binding_definitions = _effective_binding_definitions(
                 plan, task, self._bindings
             )
+            scope_families = _prior_scope_families(plan, task)
             applied_policy_ids = _effective_policy_ids(task, binding_definitions)
             self._validate_ownership(
                 plan,
@@ -231,9 +233,10 @@ class SemanticSqlCompiler:
                 observation_aliases={},
                 evidence_aliases={},
                 count_lineage_metric_definition_refs=_count_lineage_metric_definition_refs(
-                    task, self._bindings, readiness_facts
+                    task, self._bindings, readiness_facts, scope_families
                 ),
                 prior_result_entity_ids=None,
+                scope_families=scope_families,
             )
             rendered = _render_context(context)
             manifest_facts = (
@@ -247,6 +250,7 @@ class SemanticSqlCompiler:
                 dataset_version=plan.dataset_version,
                 dataset_pin=plan.dataset_pin,
                 binding_definitions=binding_definitions,
+                effective_product_family_ids=scope_families,
                 readiness_facts=manifest_facts,
                 binding_registry_version=plan.binding_registry_version,
                 binding_registry_hash=plan.binding_registry_hash,
@@ -688,8 +692,6 @@ def _effective_binding_definitions(
         return tuple(registry.bindings_by_id[item] for item in task.binding_ids)
     if task.scope.prior_result_binding is None:
         raise SqlCompileRejection("SQL_SINGLE_FAMILY_SCOPE_REQUIRED")
-    if task.binding_ids:
-        raise SqlCompileRejection("LOGICAL_BINDING_OWNERSHIP_MISMATCH")
     families = _prior_scope_families(plan, task)
     definitions = []
     for concept in _task_concepts(task):
@@ -701,12 +703,17 @@ def _effective_binding_definitions(
         verified = tuple(item for item in concept_definitions if item is not None)
         _compatible_metric_set(verified)
         definitions.extend(verified)
-    return tuple(
+    resolved = tuple(
         sorted(
             {item.id: item for item in definitions}.values(),
             key=lambda item: item.id,
         )
     )
+    if task.binding_ids and tuple(sorted(task.binding_ids)) != tuple(
+        item.id for item in resolved
+    ):
+        raise SqlCompileRejection("LOGICAL_BINDING_OWNERSHIP_MISMATCH")
+    return resolved
 
 
 def _effective_policy_ids(
@@ -751,6 +758,7 @@ def render_physical_sql_manifest(
             manifest.count_lineage_metric_definition_refs
         ),
         prior_result_entity_ids=manifest.prior_result_entity_ids,
+        scope_families=manifest.effective_product_family_ids,
     )
     try:
         return _render_context(context)
@@ -859,6 +867,16 @@ def _compile_statement(context: _Context):
         )
 
     operation = task.operation
+    if (
+        isinstance(operation, LogicalRankOperationV2)
+        and ProductFamily.PUBLIC_FUND in context.scope_families
+        and any(
+            definition.product_family_id is ProductFamily.PUBLIC_FUND
+            and definition.semantic_concept_id == "aum"
+            for definition in context.bindings.bindings_by_id.values()
+        )
+    ):
+        raise SqlCompileRejection("PUBLIC_FUND_GRAIN_UNVERIFIED")
     if isinstance(operation, LogicalLookupOperationV2):
         if operation.projections.default_profile_id is not None:
             raise SqlCompileRejection("PROJECTION_PROFILE_NOT_EXPANDED")
@@ -1128,8 +1146,15 @@ def _manifest_metric_ownerships(context: _Context, binding):
 def _aggregate(context, base, where, family, operation):
     spec = operation.aggregation
     joined_alias_names: set[str] = set()
-    is_public_representative = family is ProductFamily.PUBLIC_FUND and spec.population_grain_id == "representative-product.v1"
-    if family is ProductFamily.PUBLIC_FUND and not is_public_representative:
+    has_public_fund = ProductFamily.PUBLIC_FUND in context.scope_families
+    if has_public_fund and len(context.scope_families) != 1:
+        raise SqlCompileRejection("SQL_POLICY_FAMILY_MISMATCH")
+    is_public_representative = (
+        has_public_fund
+        and spec.population_grain_id == "representative-product.v1"
+        and spec.dedup_policy_id == "public-fund-representative-share.v1"
+    )
+    if has_public_fund and not is_public_representative:
         raise SqlCompileRejection("PUBLIC_FUND_REPRESENTATIVE_POLICY_REQUIRED")
     if is_public_representative:
         if spec.dedup_policy_id != "public-fund-representative-share.v1":
@@ -1700,7 +1725,9 @@ def _attach_count_population_lineage(
     return statement
 
 
-def _count_lineage_metric_definition_refs(task, bindings, facts) -> tuple[str, ...]:
+def _count_lineage_metric_definition_refs(
+    task, bindings, facts, scope_families=None
+) -> tuple[str, ...]:
     operation = task.operation
     if (
         not isinstance(operation, LogicalAggregateOperationV2)
@@ -1718,7 +1745,10 @@ def _count_lineage_metric_definition_refs(task, bindings, facts) -> tuple[str, .
                 for item in facts.public_fund_manifest.population_metric_ownerships
             )
         )
-    family = task.scope.product_family_ids[0]
+    families = scope_families or task.scope.product_family_ids
+    if len(families) != 1:
+        raise SqlCompileRejection("SQL_SINGLE_FAMILY_SCOPE_REQUIRED")
+    family = families[0]
     binding_ids = task.binding_ids or tuple(
         item.id
         for item in bindings.bindings_by_id.values()
