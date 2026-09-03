@@ -412,6 +412,61 @@ async def test_hybrid_unknown_semantic_id_uses_the_shared_repair_allowance() -> 
 
 
 @pytest.mark.asyncio
+async def test_hybrid_equal_candidates_use_one_offered_id_judge_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context("비용 부담이 작은 ETF 다섯 개")
+    adapter = _Adapter([])
+    service = _hybrid_service(adapter)
+    prepared = await service.prepare_hybrid(context)
+    proposal = _hybrid_proposal(prepared)
+    resolution_v3 = service.validate_hybrid_response(prepared, proposal)
+    solved = solve_query_contracts(
+        resolution=resolution_v3,
+        view=prepared.view,
+        exact_locks=prepared.view.exact_semantic_locks,
+        registry=load_query_contract_registry(PROJECT_ROOT),
+        semantic_catalog=load_hybrid_catalog(PROJECT_ROOT),
+    )
+    first = solved.frames[0].complete_candidates[0]
+    alternate = QueryContractCandidate(
+        candidate_id="query-contract-v3-alternate",
+        contract=first.contract,
+    )
+    ambiguous = QueryContractCandidateSet(
+        frames=(
+            solved.frames[0].model_copy(
+                update={
+                    "complete_candidates": (first, alternate),
+                    "contract_readiness": ContractReadinessRecordV2(
+                        readiness=ContractReadiness.AMBIGUOUS,
+                        reason_codes=(),
+                    ),
+                }
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        service_module, "solve_query_contracts", lambda **_kwargs: ambiguous
+    )
+    adapter.responses.extend(
+        [proposal, json.dumps({"candidate_id": alternate.candidate_id})]
+    )
+
+    attempt = await service.resolve_hybrid_query_contract_candidates(context)
+
+    assert attempt.telemetry.model_call_count == 2
+    assert attempt.telemetry.repair_used is False
+    assert attempt.telemetry.candidate_judge_used is True
+    assert attempt.telemetry.offered_candidate_count == 2
+    assert attempt.telemetry.complete_candidate_count == 1
+    assert tuple(
+        item.candidate_id for item in attempt.candidates.complete_candidates
+    ) == (alternate.candidate_id,)
+    assert len(adapter.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_exact_public_fund_family_replaces_an_hcx_family_omission() -> None:
     service = _service(_Adapter([_proposal()]))
     prepared = await service.prepare(_context("공모펀드 순자산 알려줘"))

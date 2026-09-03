@@ -211,6 +211,7 @@ def _v3_solver_inputs(
     state: str = "selected",
     family: ProductFamily = ProductFamily.DOMESTIC_ETF,
     exact_semantic_id: str | None = None,
+    unmapped: bool = False,
 ):
     question = "비용 부담이 작은 ETF 다섯 개"
     created_at = datetime(2026, 9, 3, tzinfo=UTC)
@@ -281,17 +282,31 @@ def _v3_solver_inputs(
                 ),
                 entity_type_ids=("FinancialProduct",),
                 semantic_links=(
-                    ProposedSemanticLinkV3(
-                        mention_id=mention.mention_id,
-                        state=state,
-                        semantic_ids=semantic_ids,
-                        reason_code="ambiguous" if state == "ambiguous" else "implicit",
-                    ),
+                    ()
+                    if unmapped
+                    else (
+                        ProposedSemanticLinkV3(
+                            mention_id=mention.mention_id,
+                            state=state,
+                            semantic_ids=semantic_ids,
+                            reason_code=(
+                                "ambiguous" if state == "ambiguous" else "implicit"
+                            ),
+                        ),
+                    )
                 ),
-                unmapped_mention_ids=(),
+                unmapped_mention_ids=(mention.mention_id,) if unmapped else (),
                 semantic_coverage=FrameSemanticCoverageV3(
-                    state=SemanticCoverageState.COVERED,
-                    reason=SemanticCoverageReason.NONE,
+                    state=(
+                        SemanticCoverageState.UNMAPPED
+                        if unmapped
+                        else SemanticCoverageState.COVERED
+                    ),
+                    reason=(
+                        SemanticCoverageReason.LEXICAL_OOD
+                        if unmapped
+                        else SemanticCoverageReason.NONE
+                    ),
                 ),
                 entity_hints=(),
                 produced_result_hints=(SourceRole.CANDIDATES,),
@@ -408,6 +423,20 @@ def test_unknown_model_semantic_link_makes_no_offer() -> None:
         item.reason_code == "MODEL_SEMANTIC_LINK_NOT_OFFERED"
         for item in result.frames[0].rejections
     )
+
+
+def test_v3_unmapped_intent_mention_never_becomes_a_field_offer() -> None:
+    inputs = _v3_solver_inputs(unmapped=True)
+
+    result = solve_query_contracts(**inputs)
+
+    assert inputs["resolution"].semantic_links == ()
+    assert result.complete_candidates == ()
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.readiness is ContractReadiness.BLOCKED
+    assert {item.reason_code for item in result.frames[0].rejections} == {
+        "FRAME_NOT_RESOLVED"
+    }
 
 
 def test_family_incompatible_model_semantic_link_has_stable_rejection() -> None:
