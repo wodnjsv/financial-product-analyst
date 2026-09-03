@@ -312,12 +312,19 @@ class Orchestrator:
                     latency_ms=0,
                 )
             else:
+                acquired = False
                 try:
-                    async with self._semaphore:
-                        result = await asyncio.wait_for(
-                            self._executors.get(task.capability).execute(request),
-                            timeout=min(remaining, task.budget_ms / 1000),
-                        )
+                    await asyncio.wait_for(
+                        self._semaphore.acquire(), timeout=remaining
+                    )
+                    acquired = True
+                    remaining = deadline - self._clock()
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError
+                    result = await asyncio.wait_for(
+                        self._executors.get(task.capability).execute(request),
+                        timeout=min(remaining, task.budget_ms / 1000),
+                    )
                     result = validate_tool_result(request, result)
                 except asyncio.TimeoutError:
                     result = build_tool_result(
@@ -369,6 +376,9 @@ class Orchestrator:
                             transient=False,
                         ),
                     )
+                finally:
+                    if acquired:
+                        self._semaphore.release()
             attempt_records.append(
                 ExecutionAttempt(
                     task_id=task.task_id,

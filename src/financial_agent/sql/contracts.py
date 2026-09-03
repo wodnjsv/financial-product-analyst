@@ -14,7 +14,7 @@ from financial_agent.contracts.enums import ProductFamily
 from financial_agent.contracts.canonical import canonical_json_bytes, canonical_sha256
 from financial_agent.contracts.validation import require_unique_ids
 from financial_agent.contracts.values import ContractValue
-from financial_agent.intent.query_contracts import AggregationFunction
+from financial_agent.intent.query_contracts import is_population_count
 from financial_agent.planning.logical_query import (
     LogicalAggregateOperationV2,
     LogicalQueryPlanV2,
@@ -209,8 +209,9 @@ class PhysicalSqlRenderManifest(_StrictModel):
         prior_only_count_lineage = (
             prior_only_scope
             and isinstance(self.logical_task.operation, LogicalAggregateOperationV2)
-            and self.logical_task.operation.aggregation.function_id
-            is AggregationFunction.COUNT
+            and is_population_count(
+                self.logical_task.operation.aggregation.function_id
+            )
             and bool(self.count_lineage_metric_definition_refs)
         )
         if prior_only_scope and not binding_ids and not prior_only_count_lineage:

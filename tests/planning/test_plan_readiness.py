@@ -1508,6 +1508,32 @@ def test_grouping_and_aggregate_operator_are_both_checked() -> None:
     )
 
 
+def test_grouped_distinct_population_count_preserves_grain_readiness() -> None:
+    payload = _common("aggregate", "domestic_etf")
+    payload["contract_variant_id"] = "aggregate.grouped.v2"
+    payload["result_shape"] = "grouped_table"
+    payload["aggregation"] = {
+        "function_id": "count_distinct",
+        "target_field_concept_id": None,
+        "count_population_id": "source-product.v1",
+        "group_by_field_concept_ids": ["product_risk_grade"],
+        "bucket_policy_id": None,
+        "population_grain_id": "source-product.v1",
+        "dedup_policy_id": "no-dedup.v1",
+    }
+    payload["predicate"] = None
+
+    result = _assess_plan_readiness(
+        _validate(payload),
+        load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+    )
+
+    assert result.readiness is PlanReadiness.EXPLORABLE
+    assert "COUNT_POPULATION_MISMATCH" not in result.reason_codes
+    assert result.reason_codes == ("PHYSICAL_BINDING_NOT_REGISTERED",)
+
+
 def test_readiness_returns_all_stable_reasons_across_roles() -> None:
     payload = _common("rank", "public_fund")
     payload["ordering"] = [

@@ -133,7 +133,10 @@ def test_family_rank_matrix_is_request_or_one_rejection(binding_id) -> None:
 @pytest.mark.parametrize("function", tuple(AggregationFunction))
 def test_family_aggregate_matrix_is_request_or_one_rejection(binding_id, function) -> None:
     binding = BINDINGS.bindings_by_id[binding_id]
-    if function is AggregationFunction.COUNT:
+    if function in {
+        AggregationFunction.COUNT,
+        AggregationFunction.COUNT_DISTINCT,
+    }:
         spec = AggregationSpecV2(
             function_id=function,
             count_population_id="source-product.v1",

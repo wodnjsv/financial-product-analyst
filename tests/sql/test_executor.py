@@ -223,7 +223,6 @@ def test_period_is_fail_closed_until_binding_and_lowering_are_registered() -> No
 @pytest.mark.parametrize(
     ("function_id", "shape"),
     (
-        (AggregationFunction.COUNT_DISTINCT, QueryResultShape.SINGLE_VALUE),
         (AggregationFunction.DISTRIBUTION, QueryResultShape.DISTRIBUTION),
     ),
 )

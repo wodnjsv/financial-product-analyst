@@ -20,6 +20,7 @@ from financial_agent.intent.query_contract_solver import (
     solve_query_contracts,
 )
 from financial_agent.intent.query_contracts import (
+    AggregationFunction,
     ContractReadiness,
     OrderingDirection,
     ProvenanceSourceKind,
@@ -272,6 +273,191 @@ def test_lookup_projects_an_explicit_relation_instead_of_default_product_profile
     assert projection.default_profile_id is None
 
 
+def test_hko_ctx_036_exact_manager_lock_preserves_requested_risk_grade() -> None:
+    resolver_view = _semantic_view("managedBy", "product_risk_grade").model_copy(
+        update={
+            "relation_definitions": (
+                ResolverViewRelationDefinition(
+                    relation_id="managedBy",
+                    definition_ko="상품을 운용하는 기관",
+                    allowed_product_families=(
+                        "domestic_bond",
+                        "domestic_etf",
+                        "overseas_etf",
+                        "public_fund",
+                    ),
+                    subject_ontology_types=("FinancialProduct",),
+                    compatible_subject_ontology_types=(
+                        "ETF",
+                        "FinancialProduct",
+                        "FundShareClass",
+                        "PublicFund",
+                        "RepresentativeFund",
+                    ),
+                    object_ontology_types=("AssetManager",),
+                    required_qualifiers=(),
+                ),
+            ),
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=_axis(IntentType.LOOKUP, family=ProductFamily.PUBLIC_FUND),
+        view=resolver_view,
+        exact_locks=(_lock("field", "managedBy"),),
+        registry=REGISTRY,
+    )
+
+    solved = result.frames[0]
+    assert solved.contract_readiness.readiness is ContractReadiness.COMPLETE
+    assert len(solved.complete_candidates) == 1
+    contract = solved.complete_candidates[0].contract
+    assert contract.projections.field_concept_ids == (
+        "managedBy",
+        "product_risk_grade",
+    )
+    assert {item.source_ref for item in contract.provenance} >= {
+        "lock-field-managedBy",
+        "mention-s1-1-2",
+    }
+
+
+def test_partial_exact_lookup_lock_never_accepts_a_missing_ambiguous_field_role() -> None:
+    source = _semantic_view("aum")
+    definitions = {item.concept_id: item for item in source.concept_definitions}
+    definitions["credit_grade"] = definitions["product_risk_grade"].model_copy(
+        update={"concept_id": "credit_grade"}
+    )
+    resolver_view = source.model_copy(
+        update={
+            "semantic_candidates": (
+                source.semantic_candidates[0],
+                ResolverViewSemanticCandidateGroup(
+                    mention_id="mention-s1-2-3",
+                    items=(
+                        ResolverViewSemanticCandidate(
+                            semantic_id="product_risk_grade",
+                            match_kind="ambiguous_alias",
+                            score=900_000,
+                        ),
+                        ResolverViewSemanticCandidate(
+                            semantic_id="credit_grade",
+                            match_kind="ambiguous_alias",
+                            score=850_000,
+                        ),
+                    ),
+                ),
+            ),
+            "concept_definitions": tuple(definitions.values()),
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=_axis(IntentType.LOOKUP),
+        view=resolver_view,
+        exact_locks=(_lock("field", "aum"),),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].contract_readiness.readiness is ContractReadiness.AMBIGUOUS
+    projections = {
+        item.contract.projections.field_concept_ids
+        for item in result.frames[0].complete_candidates
+    }
+    assert projections == {
+        ("aum", "credit_grade"),
+        ("aum", "product_risk_grade"),
+    }
+    assert all(len(item) == 2 for item in projections)
+
+
+def test_partial_exact_lock_blocks_when_another_requested_field_is_inapplicable() -> None:
+    source = _semantic_view("aum")
+    unavailable = source.concept_definitions[0].model_copy(
+        update={
+            "concept_id": "public_fund_only_metric",
+            "allowed_product_families": ("public_fund",),
+        }
+    )
+    resolver_view = source.model_copy(
+        update={
+            "semantic_candidates": (
+                source.semantic_candidates[0],
+                ResolverViewSemanticCandidateGroup(
+                    mention_id="mention-s1-2-3",
+                    items=(
+                        ResolverViewSemanticCandidate(
+                            semantic_id="public_fund_only_metric",
+                            match_kind="trigram",
+                            score=900_000,
+                        ),
+                    ),
+                ),
+            ),
+            "concept_definitions": (
+                *source.concept_definitions,
+                unavailable,
+            ),
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=_axis(IntentType.LOOKUP),
+        view=resolver_view,
+        exact_locks=(_lock("field", "aum"),),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.readiness is ContractReadiness.BLOCKED
+
+
+def test_compare_preserves_all_requested_metric_mentions() -> None:
+    source = _semantic_view("aum")
+    resolver_view = source.model_copy(
+        update={
+            "semantic_candidates": (
+                source.semantic_candidates[0],
+                ResolverViewSemanticCandidateGroup(
+                    mention_id="mention-s1-2-3",
+                    items=(
+                        ResolverViewSemanticCandidate(
+                            semantic_id="fee_rate",
+                            match_kind="ambiguous_alias",
+                            score=900_000,
+                        ),
+                        ResolverViewSemanticCandidate(
+                            semantic_id="product_risk_grade",
+                            match_kind="ambiguous_alias",
+                            score=850_000,
+                        ),
+                    ),
+                ),
+            )
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=_entity_axis(
+            action=IntentType.COMPARE,
+            candidate_groups=(("entity-a",), ("entity-b",)),
+        ),
+        view=resolver_view,
+        exact_locks=(_lock("field", "aum"),),
+        registry=REGISTRY,
+    )
+
+    metrics = {
+        item.contract.comparison.metric_concept_ids
+        for item in result.frames[0].complete_candidates
+    }
+    assert metrics == {
+        ("aum", "fee_rate"),
+        ("aum", "product_risk_grade"),
+    }
+    assert all(len(item) == 2 for item in metrics)
+
+
 def test_lookup_with_unresolved_semantic_requirement_never_uses_default_projection() -> None:
     source = _axis(IntentType.LOOKUP)
     source_frame = source.canonical_frames[0].model_copy(
@@ -440,15 +626,41 @@ def test_unknown_relation_exact_lock_fails_closed() -> None:
 
 
 def test_ambiguous_rank_candidates_have_content_derived_ids_and_dedupe_equivalents() -> None:
+    first_view = _semantic_view("aum", "fee_rate").model_copy(
+        update={
+            "semantic_candidates": (
+                ResolverViewSemanticCandidateGroup(
+                    mention_id="mention-s1-0-1",
+                    items=(
+                        ResolverViewSemanticCandidate(
+                            semantic_id="aum", match_kind="direct_alias", score=1_000_000
+                        ),
+                        ResolverViewSemanticCandidate(
+                            semantic_id="fee_rate", match_kind="direct_alias", score=1_000_000
+                        ),
+                    ),
+                ),
+            )
+        }
+    )
+    second_view = first_view.model_copy(
+        update={
+            "semantic_candidates": (
+                first_view.semantic_candidates[0].model_copy(
+                    update={"items": tuple(reversed(first_view.semantic_candidates[0].items))}
+                ),
+            )
+        }
+    )
     first = solve_query_contracts(
         resolution=_axis(),
-        view=_semantic_view("aum", "fee_rate", "aum"),
+        view=first_view,
         exact_locks=(),
         registry=REGISTRY,
     )
     second = solve_query_contracts(
         resolution=_axis(),
-        view=_semantic_view("fee_rate", "aum"),
+        view=second_view,
         exact_locks=(),
         registry=REGISTRY,
     )
@@ -857,15 +1069,24 @@ def test_role_bound_is_visible_and_never_truncated_to_unique() -> None:
 def test_complete_candidate_bound_is_visible() -> None:
     source = _semantic_view("aum")
     aum = next(item for item in source.concept_definitions if item.concept_id == "aum")
-    concept_ids = tuple(f"metric-{index}" for index in range(MAX_CANDIDATES_PER_ROLE))
+    concept_ids = tuple(f"metric-{index}" for index in range(10))
     source = source.model_copy(
         update={
             "semantic_candidates": tuple(
                 ResolverViewSemanticCandidateGroup(
-                    mention_id=f"mention-s1-{index}-{index + 1}",
-                    items=(ResolverViewSemanticCandidate(semantic_id=item, match_kind="trigram", score=900_000),),
+                    mention_id=f"mention-s1-{group_index}-{group_index + 1}",
+                    items=tuple(
+                        ResolverViewSemanticCandidate(
+                            semantic_id=item,
+                            match_kind="trigram",
+                            score=900_000,
+                        )
+                        for item in group
+                    ),
                 )
-                for index, item in enumerate(concept_ids)
+                for group_index, group in enumerate(
+                    (concept_ids[:5], concept_ids[5:])
+                )
             ),
             "concept_definitions": tuple(
                 aum.model_copy(update={"concept_id": item, "required_qualifiers": ()})
@@ -904,6 +1125,76 @@ def test_public_fund_aggregate_candidates_use_registered_population_policy() -> 
         item.contract.aggregation.dedup_policy_id
         for item in result.frames[0].complete_candidates
     } == {"public-fund-representative-share.v1"}
+
+
+def test_grouped_population_counts_need_only_the_grouping_field() -> None:
+    result = solve_query_contracts(
+        resolution=_axis(IntentType.AGGREGATE),
+        view=_semantic_view("product_risk_grade"),
+        exact_locks=(_lock("field", "product_risk_grade"),),
+        registry=REGISTRY,
+    )
+
+    grouped = {
+        (
+            item.contract.aggregation.function_id,
+            item.contract.aggregation.target_field_concept_id,
+            item.contract.aggregation.count_population_id,
+            item.contract.aggregation.group_by_field_concept_ids,
+        )
+        for item in result.frames[0].complete_candidates
+        if item.contract.contract_variant_id == "aggregate.grouped.v2"
+    }
+    assert grouped == {
+        (
+            AggregationFunction.COUNT,
+            None,
+            "source-product.v1",
+            ("product_risk_grade",),
+        ),
+        (
+            AggregationFunction.COUNT_DISTINCT,
+            None,
+            "source-product.v1",
+            ("product_risk_grade",),
+        ),
+    }
+
+
+def test_grouped_aggregate_assigns_measurable_target_and_categorical_group() -> None:
+    result = solve_query_contracts(
+        resolution=_axis(IntentType.AGGREGATE),
+        view=_semantic_view("aum", "product_risk_grade"),
+        exact_locks=(
+            _lock("field", "aum"),
+            _lock("field", "product_risk_grade", span="mention-s1-1-2"),
+        ),
+        registry=REGISTRY,
+    )
+
+    grouped = {
+        (
+            item.contract.aggregation.function_id,
+            item.contract.aggregation.target_field_concept_id,
+            item.contract.aggregation.group_by_field_concept_ids,
+        )
+        for item in result.frames[0].complete_candidates
+        if item.contract.contract_variant_id == "aggregate.grouped.v2"
+    }
+    assert {
+        (function, "aum", ("product_risk_grade",))
+        for function in (
+            AggregationFunction.SUM,
+            AggregationFunction.AVG,
+            AggregationFunction.MIN,
+            AggregationFunction.MAX,
+        )
+    } <= grouped
+    assert (
+        AggregationFunction.SUM,
+        "product_risk_grade",
+        ("aum",),
+    ) not in grouped
 
 
 def test_exact_second_period_filters_offered_qualifiers() -> None:

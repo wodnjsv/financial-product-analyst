@@ -31,11 +31,18 @@ def _ambiguous_candidates():
             "semantic_candidates": (
                 ResolverViewSemanticCandidateGroup(
                     mention_id="mention-s1-0-3",
-                    items=(ResolverViewSemanticCandidate(semantic_id="aum", match_kind="direct_alias", score=1_000_000),),
-                ),
-                ResolverViewSemanticCandidateGroup(
-                    mention_id="mention-s1-4-7",
-                    items=(ResolverViewSemanticCandidate(semantic_id="product_risk_grade", match_kind="trigram", score=900_000),),
+                    items=(
+                        ResolverViewSemanticCandidate(
+                            semantic_id="aum",
+                            match_kind="direct_alias",
+                            score=1_000_000,
+                        ),
+                        ResolverViewSemanticCandidate(
+                            semantic_id="product_risk_grade",
+                            match_kind="trigram",
+                            score=900_000,
+                        ),
+                    ),
                 ),
             )
         }

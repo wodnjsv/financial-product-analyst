@@ -10,7 +10,7 @@ from financial_agent.contracts.base import ContractModel, Identifier, Sha256Hex
 from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.enums import IntentType, ProductFamily
 from financial_agent.intent.query_contracts import (
-    AggregationFunction,
+    is_population_count,
     PlanReadiness,
     PredicateAllOfV2,
     PredicateAnyOfV2,
@@ -232,7 +232,7 @@ def assess_plan_readiness(
             (aggregation.population_grain_id, SemanticSqlPolicyKind.POPULATION_GRAIN, "SQL_POLICY_NOT_REGISTERED"),
             (aggregation.dedup_policy_id, SemanticSqlPolicyKind.DEDUPLICATION, "SQL_POLICY_NOT_REGISTERED"),
         ))
-        if aggregation.function_id is AggregationFunction.COUNT:
+        if is_population_count(aggregation.function_id):
             if aggregation.count_population_id != aggregation.population_grain_id:
                 state.add("COUNT_POPULATION_MISMATCH", PlanReadiness.BLOCKED)
             policy_roles.append((
@@ -621,7 +621,7 @@ def _assess_qualifiers(contract, bindings, state: _Assessment) -> None:
         requested.add(SemanticQualifierId.AS_OF)
     if (
         contract.action_id is IntentType.AGGREGATE
-        and contract.aggregation.function_id is AggregationFunction.COUNT
+        and is_population_count(contract.aggregation.function_id)
         and requested & {SemanticQualifierId.CURRENCY, SemanticQualifierId.UNIT}
     ):
         state.add("QUALIFIER_ACTION_UNSUPPORTED", PlanReadiness.BLOCKED)
@@ -671,7 +671,7 @@ def _assess_aggregate_grain(
                 PlanReadiness.LIMITED,
             )
     if (
-        aggregation.function_id is AggregationFunction.COUNT
+        is_population_count(aggregation.function_id)
         and ProductFamily.PUBLIC_FUND in families
     ):
         if (

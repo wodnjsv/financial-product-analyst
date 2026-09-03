@@ -154,7 +154,7 @@
   PostgreSQL runner, 기존 bounded Orchestrator 통합, `query_contract` 및
   `logical_query_plan` 불변 저장을 `0009`까지 구현했다. Graph·Search·Calculation
   production executor는 이 범위에 포함하지 않았다.
-- 2026-09-03 최종 V2 검증은 focused `636 passed`, broad offline `2267 passed,
+- 2026-09-03 최종 V2 검증은 focused `654 passed`, broad offline `2275 passed,
   1 expected skip, 463 deselected`다. 지원 프레임 구조 표현력은 `199/199`,
   미지원 reason coverage는 `10/10`, false-complete는 `0/10`이다. 그러나 계약
   role gold는 194개 필요 분모 중 43개만 측정 가능하고 151개가 불완전하므로,
@@ -170,9 +170,9 @@
   gate에 미달한다.
 - 승인된 HCX-007 16-case smoke에서 production one-axis provider success는 `16/16`,
   structured/semantic validity `11/16`, action exact `10/16`, family exact `11/16`,
-  complete contract `7/16`이지만, action·family와 predicate typed value, COUNT/SUM,
+  complete contract `4/16`이지만, action·family와 predicate typed value, COUNT/SUM,
   grouping, ordering, prior-result binding을 함께 고정한 대표 의미 계약은 `0/5`로
-  승격 gate에 실패했다. 24개 호출은 primary `16`, repair 시도 `8`, judge `0`이며
+  승격 gate에 실패했다. 25개 호출은 primary `16`, repair 시도 `8`, judge `1`이며
   모든 성공·실패 호출을 직접 계측한다. 세 축 병렬 challenger는 48호출 중 성공
   `40`, rate limit `8`, structured `11/16`, action exact `2/16`, family exact
   `6/16`으로 더 낮아 운영
@@ -229,8 +229,8 @@
 | --- | --- | --- |
 | 03 | 주최 측·공식 추가 데이터 수집, 표준화, 계보와 컷오프 검증 | current organizer 로컬 결정성 검증 완료; current KRX holdings 로컬 통합과 나머지 공식 source 동결 대기; NCP acceptance는 Stage 08로 이연 |
 | 04 | TTL·SHACL, PostgreSQL→Fuseki ABox, Keyword·Vector 투영과 데이터 버전 활성화 | Graph Phase 1 core 로컬 완료; Vector·실제 관계/문서·manifest 동일성·readiness/activation·NCP·23질문 커버리지 대기, Stage 04 미완료 |
-| 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | SQL 의미 계약 V2·결정론적 compiler 설계 승인, 작성 명세 검토·구현 계획 대기; production executor 미구현 |
-| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Phase 1 Resolver와 Phase 2 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator 로컬 경계 완료; SQL 의미 계약 V2 통합 설계 승인·구현 대기; Phase 1 승격 차단 유지 |
+| 05 | SQL·Graph·Keyword·Vector 통합 검색과 결정론적 금융 계산·유사도 | SQL 의미 계약 V2·결정론적 compiler·읽기 전용 RDB executor 로컬 구현 완료; PostgreSQL conformance는 미측정이고 public-fund 물리 gate는 `LIMITED`; Graph·Search·Calculation production executor는 범위 밖이며 Stage 05는 미완료 |
+| 06 | Intent Resolver, RequestContext·QueryPlan·ExecutionGraph, Orchestrator·Capability 실행 | Phase 1 Resolver, Phase 2 QueryPlan compiler·4경로 router, Phase 3 bounded Orchestrator와 SQL 의미 계약 V2 통합·artifact persistence 로컬 구현 완료; 불완전 gold와 낮은 candidate/live 정확도로 production promotion은 `deferred` |
 | 07 | Verifier, Claim Gate Registry, Answer Composer, Renderer와 검증된 응답 캐시 | 대기 |
 | 08 | 공식 `GET /answer`, NCP 이중화·Load Balancer·모니터링·복구 | 대기 |
 | 09 | 52개 종합 평가, 제출 동결, 공식 평가 운영과 종료 기록 | 대기 |
@@ -283,7 +283,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 40. ~~Stage 06 Phase 1 Intent Resolver의 온톨로지 기반 분류·한국어 문맥 해소·OOD·검증·평가 설계 승인~~ — 2026-08-31 완료; 상세 구현 계획과 런타임 변경은 별도 승인 대기
 41. ~~Stage 06 Phase 1 Intent Resolver 상세 구현·로컬 비라이브·PostgreSQL 검증~~ — 2026-09-01 완료; Linux/amd64 container 미실행, candidate recall 실패와 live 미측정 gate로 승격 차단
 42. ~~Stage 06 Phase 2 QueryPlan compiler·4경로 router와 Phase 3 bounded Orchestrator 로컬 구현·통합 검증~~ — 2026-09-02 완료; production executor와 답변 생성은 포함하지 않음
-43. ~~Stage 06 live HCX-007 16-case production/challenger benchmark~~ — 2026-09-03 완료; production provider `16/16`, complete contract `7/16`, representative exact `0/5`, challenger rate limit `8/48`, 승격 보류
+43. ~~Stage 06 live HCX-007 16-case production/challenger benchmark~~ — 2026-09-03 완료; production provider `16/16`, complete contract `4/16`, representative exact `0/5`, challenger rate limit `8/48`, 승격 보류
 44. ~~SQL 의미 계약 V2·결정론적 SQL compiler·RDB executor·artifact persistence 구현~~ — 2026-09-03 로컬 완료; 불완전 gold·PostgreSQL·public-fund physical gate는 보류
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.

@@ -1,4 +1,5 @@
 import asyncio
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -147,13 +148,18 @@ class RaisingExecutor(CapabilityExecutor):
         raise RuntimeError("executor implementation bug")
 
 
-def orchestrator(executors: ExecutorRegistry, *, deadline_ms: int = 5_000):
+def orchestrator(
+    executors: ExecutorRegistry,
+    *,
+    deadline_ms: int = 5_000,
+    max_concurrency: int = 4,
+):
     registry = load_planning_registry(PROJECT_ROOT)
     return Orchestrator(
         graph_compiler=ExecutionGraphCompiler(registry),
         executors=executors,
         hard_deadline_ms=deadline_ms,
-        max_concurrency=4,
+        max_concurrency=max_concurrency,
     )
 
 
@@ -257,6 +263,53 @@ def test_independent_lookup_tasks_run_concurrently() -> None:
 
     assert result.execution_outcome is ExecutionOutcome.COMPLETED
     assert lookup.max_active == 2
+
+
+def test_semaphore_queue_wait_is_inside_the_request_deadline() -> None:
+    lookup = RecordingExecutor(delay_seconds=0.04)
+    service = orchestrator(
+        ExecutorRegistry(
+            (
+                (Capability.RDB_LOOKUP, lookup),
+                (Capability.RANKING, RecordingExecutor()),
+            )
+        ),
+        deadline_ms=50,
+        max_concurrency=1,
+    )
+
+    started = time.monotonic()
+    result = asyncio.run(service.execute(parallel_compilation()))
+    elapsed = time.monotonic() - started
+
+    lookup_results = tuple(
+        item
+        for item in result.tool_results
+        if item.task_id.startswith("task:operation:")
+        and "lookup-products" in item.task_id
+    )
+    assert [item.status for item in lookup_results].count(ToolStatus.SUCCESS) == 1
+    assert [item.status for item in lookup_results].count(ToolStatus.TIMEOUT) == 1
+    assert elapsed < 0.09
+
+
+def test_expired_semaphore_wait_never_starts_the_queued_executor() -> None:
+    lookup = RecordingExecutor(delay_seconds=0.04)
+    result = asyncio.run(
+        orchestrator(
+            ExecutorRegistry(
+                (
+                    (Capability.RDB_LOOKUP, lookup),
+                    (Capability.RANKING, RecordingExecutor()),
+                )
+            ),
+            deadline_ms=5,
+            max_concurrency=1,
+        ).execute(parallel_compilation())
+    )
+
+    assert len(lookup.calls) == 1
+    assert result.execution_outcome is ExecutionOutcome.FAILED
 
 
 def test_optional_failure_is_completed_with_failures() -> None:

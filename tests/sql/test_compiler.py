@@ -255,6 +255,49 @@ def test_count_grouping_and_comparison_lowerings() -> None:
     assert "source_ids" in count.request.statement
     assert "evidence_ids" not in count.request.statement
 
+    distinct_count_plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT_DISTINCT,
+                count_population_id="source-product.v1",
+                population_grain_id="source-product.v1",
+                dedup_policy_id="no-dedup.v1",
+            )
+        ),
+        binding_ids=(),
+        policy_ids=("source-product.v1", "no-dedup.v1"),
+        qualifiers=QueryQualifiersV2(),
+    )
+    distinct_count = COMPILER.compile_task(
+        distinct_count_plan, distinct_count_plan.tasks[0].task_id
+    )
+    assert distinct_count.request is not None
+    assert "count(DISTINCT catalog.product.entity_id)" in distinct_count.request.statement
+
+    grouped_count_plan = make_plan(
+        LogicalAggregateOperationV2(
+            aggregation=AggregationSpecV2(
+                function_id=AggregationFunction.COUNT_DISTINCT,
+                count_population_id="source-product.v1",
+                group_by_field_concept_ids=("aum",),
+                population_grain_id="source-product.v1",
+                dedup_policy_id="no-dedup.v1",
+            )
+        ),
+        policy_ids=(
+            "source-product.v1",
+            "no-dedup.v1",
+            "identity-unit.v1",
+            "exclude_missing.v1",
+        ),
+        result_shape=QueryResultShape.GROUPED_TABLE,
+    )
+    grouped_count = COMPILER.compile_task(
+        grouped_count_plan, grouped_count_plan.tasks[0].task_id
+    )
+    assert grouped_count.request is not None
+    assert "GROUP BY" in grouped_count.request.statement
+
     grouped_plan = make_plan(
         LogicalAggregateOperationV2(
             aggregation=AggregationSpecV2(

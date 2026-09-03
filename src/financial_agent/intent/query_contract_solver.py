@@ -112,6 +112,7 @@ class QueryContractCandidateSet(ContractModel):
 @dataclass(frozen=True, slots=True)
 class _FieldOffer:
     concept: ResolverViewConcept
+    mention_id: str
     segment_id: str | None
     start_char: int | None
 
@@ -133,10 +134,24 @@ class _CandidateAccumulator:
     view: ResolverView
     registry: QueryContractRegistry
     frame: ValidatedIntentFrameV2
+    field_roles: tuple[tuple[str, tuple[str, ...]], ...]
     rejections: list[CandidateRejection]
     candidates: dict[str, QueryContractCandidate]
 
     def add(self, contract: SolvedQueryContractCandidateV2) -> None:
+        missing_role = _missing_requested_field_role(contract, self.field_roles)
+        if missing_role is not None:
+            mention_id, concept_ids = missing_role
+            self.rejections.append(
+                _rejection(
+                    self.frame,
+                    contract.contract_variant_id,
+                    f"field.{mention_id}",
+                    concept_ids,
+                    "REQUESTED_FIELD_ROLE_MISSING",
+                )
+            )
+            return
         if not _contract_policies_valid(
             contract, self.registry, self.frame, self.rejections
         ):
@@ -320,7 +335,7 @@ def _solve_frame(
         )
     if not qualifier_options:
         return _frame_result(frame.frame_id, (), tuple(rejections))
-    fields, field_bound, field_evidence_present = _field_offers(
+    fields, field_bound, field_evidence_present, requested_field_roles = _field_offers(
         frame, view, exact_locks, scopes[0], rejections, variants[0].id
     )
     if field_bound:
@@ -361,6 +376,7 @@ def _solve_frame(
         view=view,
         registry=registry,
         frame=frame,
+        field_roles=requested_field_roles,
         rejections=rejections,
         candidates={},
     )
@@ -538,51 +554,77 @@ def _field_offers(
     scope: QueryScopeV2,
     rejections: list[CandidateRejection],
     variant_id: str,
-) -> tuple[tuple[_FieldOffer, ...], bool, bool]:
+) -> tuple[
+    tuple[_FieldOffer, ...],
+    bool,
+    bool,
+    tuple[tuple[str, tuple[str, ...]], ...],
+]:
     concepts = _offered_concepts(view)
     relations = {item.relation_id: item for item in view.relation_definitions}
     locked = tuple(lock for lock in locks if lock.role == "field")
-    offers: dict[str, _FieldOffer] = {}
-    if locked:
-        for lock in locked:
-            concept = concepts.get(lock.canonical_id)
-            if concept is None:
-                rejections.append(
-                    _rejection(frame, variant_id, "field", (lock.canonical_id,), "EXACT_LOCK_NOT_OFFERED")
-                )
-                continue
-            offers[concept.concept_id] = _FieldOffer(
-                concept=concept,
-                segment_id=_source_segment(lock.evidence_span_ids[0], view),
-                start_char=_source_start(lock.evidence_span_ids[0], view),
-            )
-    else:
-        for group in view.semantic_candidates:
-            segment_id = _source_segment(group.mention_id, view)
-            if segment_id is not None and segment_id not in frame.segment_ids:
-                continue
-            for candidate in sorted(
-                group.items,
-                key=lambda item: (
-                    _MATCH_PRIORITY.get(item.match_kind, 99), -item.score, item.semantic_id
-                ),
-            ):
-                concept = concepts.get(candidate.semantic_id)
-                if concept is None or concept.kind not in {
-                    "metric",
-                    "attribute",
-                    "document_topic",
-                    "relation",
-                }:
-                    continue
-                offers.setdefault(
-                    concept.concept_id,
-                    _FieldOffer(
-                        concept=concept,
-                        segment_id=segment_id,
-                        start_char=_source_start(group.mention_id, view),
+    offers: dict[tuple[str, str], _FieldOffer] = {}
+    mentioned_locks: set[str] = set()
+    for group in view.semantic_candidates:
+        segment_id = _source_segment(group.mention_id, view)
+        if segment_id is not None and segment_id not in frame.segment_ids:
+            continue
+        owned_locks = tuple(
+            lock for lock in locked if group.mention_id in lock.evidence_span_ids
+        )
+        mentioned_locks.update(lock.lock_id for lock in owned_locks)
+        candidate_ids = (
+            tuple(lock.canonical_id for lock in owned_locks)
+            if owned_locks
+            else tuple(
+                item.semantic_id
+                for item in sorted(
+                    group.items,
+                    key=lambda item: (
+                        _MATCH_PRIORITY.get(item.match_kind, 99),
+                        -item.score,
+                        item.semantic_id,
                     ),
                 )
+            )
+        )
+        for concept_id in candidate_ids:
+            concept = concepts.get(concept_id)
+            if concept is None or concept.kind not in {
+                "metric",
+                "attribute",
+                "document_topic",
+                "relation",
+            }:
+                continue
+            offers.setdefault(
+                (group.mention_id, concept.concept_id),
+                _FieldOffer(
+                    concept=concept,
+                    mention_id=group.mention_id,
+                    segment_id=segment_id,
+                    start_char=_source_start(group.mention_id, view),
+                ),
+            )
+    for lock in locked:
+        if lock.lock_id in mentioned_locks:
+            continue
+        concept = concepts.get(lock.canonical_id)
+        if concept is None:
+            rejections.append(
+                _rejection(frame, variant_id, "field", (lock.canonical_id,), "EXACT_LOCK_NOT_OFFERED")
+            )
+            continue
+        mention_id = lock.evidence_span_ids[0]
+        offers.setdefault(
+            (mention_id, concept.concept_id),
+            _FieldOffer(
+                concept=concept,
+                mention_id=mention_id,
+                segment_id=_source_segment(mention_id, view),
+                start_char=_source_start(mention_id, view),
+            ),
+        )
 
     families = {item.value for item in scope.product_family_ids}
     applicable: list[_FieldOffer] = []
@@ -614,20 +656,108 @@ def _field_offers(
             )
         else:
             applicable.append(offer)
-    applicable.sort(key=lambda item: item.concept.concept_id)
-    return (
-        tuple(applicable[:MAX_CANDIDATES_PER_ROLE]),
-        len(applicable) > MAX_CANDIDATES_PER_ROLE,
-        bool(offers),
+    applicable.sort(
+        key=lambda item: (
+            item.segment_id or "",
+            item.start_char if item.start_char is not None else -1,
+            item.mention_id,
+            item.concept.concept_id,
+        )
     )
+    requested_roles = _field_roles(tuple(offers.values()))
+    return (
+        tuple(applicable),
+        len(requested_roles) > MAX_CANDIDATES_PER_ROLE
+        or any(
+            len(concept_ids) > MAX_CANDIDATES_PER_ROLE
+            for _, concept_ids in requested_roles
+        ),
+        bool(offers),
+        requested_roles,
+    )
+
+
+def _field_roles(
+    fields: tuple[_FieldOffer, ...],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    roles: dict[str, list[str]] = {}
+    for field in fields:
+        concept_ids = roles.setdefault(field.mention_id, [])
+        if field.concept.concept_id not in concept_ids:
+            concept_ids.append(field.concept.concept_id)
+    return tuple(
+        (mention_id, tuple(concept_ids))
+        for mention_id, concept_ids in roles.items()
+    )
+
+
+def _field_combinations(
+    fields: tuple[_FieldOffer, ...],
+):
+    offers_by_key = {
+        (field.mention_id, field.concept.concept_id): field for field in fields
+    }
+    groups = tuple(
+        tuple(offers_by_key[(mention_id, concept_id)] for concept_id in concept_ids)
+        for mention_id, concept_ids in _field_roles(fields)
+    )
+    seen: set[tuple[str, ...]] = set()
+    for choices in product(*groups):
+        concept_ids = tuple(item.concept.concept_id for item in choices)
+        if len(set(concept_ids)) != len(choices) or concept_ids in seen:
+            continue
+        seen.add(concept_ids)
+        yield choices
+
+
+def _missing_requested_field_role(
+    contract: SolvedQueryContractCandidateV2,
+    field_roles: tuple[tuple[str, tuple[str, ...]], ...],
+) -> tuple[str, tuple[str, ...]] | None:
+    selected_values = {
+        str(value)
+        for _, value in _semantic_leaves(contract.model_dump(mode="json"))
+        if value is not None
+    }
+    return next(
+        (
+            (mention_id, concept_ids)
+            for mention_id, concept_ids in field_roles
+            if not selected_values.intersection(concept_ids)
+        ),
+        None,
+    )
+
+
+def _aggregate_target_compatible(
+    concept: ResolverViewConcept,
+    function: AggregationFunction,
+) -> bool:
+    if concept.kind != "metric":
+        return False
+    numeric = {
+        SemanticValueKind.INTEGER.value,
+        SemanticValueKind.DECIMAL.value,
+    }
+    if function in {AggregationFunction.SUM, AggregationFunction.AVG}:
+        return concept.value_kind in numeric
+    if function in {AggregationFunction.MIN, AggregationFunction.MAX}:
+        return concept.value_kind in {
+            *numeric,
+            SemanticValueKind.DATE.value,
+            SemanticValueKind.DATETIME.value,
+        }
+    return False
 
 
 def _lookup(frame, variant_id, scope, qualifiers, fields, pins):
     if fields:
         projections = tuple(
-            ProjectionSpecV2(field_concept_ids=(offer.concept.concept_id,))
-            for offer in fields
-            if offer.concept.kind != "document_topic"
+            ProjectionSpecV2(
+                field_concept_ids=tuple(offer.concept.concept_id for offer in choices)
+            )
+            for choices in _field_combinations(fields)
+            if all(offer.concept.kind != "document_topic" for offer in choices)
         )
     else:
         projections = (ProjectionSpecV2(default_profile_id="default-product-projection.v1"),)
@@ -830,13 +960,15 @@ def _compare(frame, variant_id, scope, qualifiers, fields, pins):
             comparison=ComparisonSpecV2(
                 subject_refs=subjects,
                 group_basis_id=group_basis,
-                metric_concept_ids=(field.concept.concept_id,),
+                metric_concept_ids=tuple(
+                    field.concept.concept_id for field in field_choices
+                ),
                 basis_policy_id="same-definition-period-unit.v1",
                 normalization_policy_id=("approved-cross-family.v1" if cross_family else None),
             ),
         )
-        for field in fields
-        if field.concept.kind in {"metric", "attribute"}
+        for field_choices in _field_combinations(fields)
+        if all(field.concept.kind in {"metric", "attribute"} for field in field_choices)
     )
 
 
@@ -853,14 +985,15 @@ def _aggregate(
     def generated():
         for predicate in predicates:
             if variant_id == "aggregate.scalar.v2":
-                for field in usable:
-                    for function in (
-                        AggregationFunction.SUM,
-                        AggregationFunction.AVG,
-                        AggregationFunction.MIN,
-                        AggregationFunction.MAX,
-                        AggregationFunction.COUNT_DISTINCT,
-                    ):
+                for function in (
+                    AggregationFunction.SUM,
+                    AggregationFunction.AVG,
+                    AggregationFunction.MIN,
+                    AggregationFunction.MAX,
+                ):
+                    for field in usable:
+                        if not _aggregate_target_compatible(field.concept, function):
+                            continue
                         yield _AggregateQueryContractCandidateV2(
                             **_base(
                                 frame, variant_id, scope, qualifiers,
@@ -887,19 +1020,33 @@ def _aggregate(
                     ),
                     predicate=predicate,
                 )
+                yield _AggregateQueryContractCandidateV2(
+                    **_base(
+                        frame, variant_id, scope, qualifiers,
+                        QueryResultShape.SINGLE_VALUE, pins,
+                    ),
+                    aggregation=AggregationSpecV2(
+                        function_id=AggregationFunction.COUNT_DISTINCT,
+                        count_population_id=grain,
+                        population_grain_id=grain,
+                        dedup_policy_id=dedup,
+                    ),
+                    predicate=predicate,
+                )
             elif variant_id == "aggregate.grouped.v2":
-                for target in usable:
-                    for grouping in usable:
-                        if target.concept.concept_id == grouping.concept.concept_id:
-                            continue
+                for grouping in usable:
+                    for function in (
+                        AggregationFunction.COUNT,
+                        AggregationFunction.COUNT_DISTINCT,
+                    ):
                         yield _AggregateQueryContractCandidateV2(
                             **_base(
                                 frame, variant_id, scope, qualifiers,
                                 QueryResultShape.GROUPED_TABLE, pins,
                             ),
                             aggregation=AggregationSpecV2(
-                                function_id=AggregationFunction.SUM,
-                                target_field_concept_id=target.concept.concept_id,
+                                function_id=function,
+                                count_population_id=grain,
                                 group_by_field_concept_ids=(
                                     grouping.concept.concept_id,
                                 ),
@@ -908,6 +1055,34 @@ def _aggregate(
                             ),
                             predicate=predicate,
                         )
+                for function in (
+                    AggregationFunction.SUM,
+                    AggregationFunction.AVG,
+                    AggregationFunction.MIN,
+                    AggregationFunction.MAX,
+                ):
+                    for target in usable:
+                        if not _aggregate_target_compatible(target.concept, function):
+                            continue
+                        for grouping in usable:
+                            if target.concept.concept_id == grouping.concept.concept_id:
+                                continue
+                            yield _AggregateQueryContractCandidateV2(
+                                **_base(
+                                    frame, variant_id, scope, qualifiers,
+                                    QueryResultShape.GROUPED_TABLE, pins,
+                                ),
+                                aggregation=AggregationSpecV2(
+                                    function_id=function,
+                                    target_field_concept_id=target.concept.concept_id,
+                                    group_by_field_concept_ids=(
+                                        grouping.concept.concept_id,
+                                    ),
+                                    population_grain_id=grain,
+                                    dedup_policy_id=dedup,
+                                ),
+                                predicate=predicate,
+                            )
             elif variant_id == "aggregate.distribution.v2":
                 for field in usable:
                     yield _AggregateQueryContractCandidateV2(

@@ -113,14 +113,14 @@ domain-OOD coverage.
 | Structured / validated result | `11/16` | `11/16` axis bundles |
 | Action exact | `10/16` | `2/16` |
 | Product-family exact | `11/16` | `6/16` |
-| Complete query contract | `7/16` | not applicable; challenger extracts axes only |
+| Complete query contract | `4/16` | not applicable; challenger extracts axes only |
 | Representative contract exact | `0/5` groups | not applicable; challenger extracts axes only |
-| Provider calls / successful calls | `24 / 24` | `48 / 40` |
-| Call types | primary `16`, repair `8`, judge `0` | action `16`, family `16`, tag `16` |
+| Provider calls / successful calls | `25 / 25` | `48 / 40` |
+| Call types | primary `16`, repair `8`, judge `1` | action `16`, family `16`, tag `16` |
 | Repair attempted | `8` | `0` |
-| Judge used | `0` | `0` |
-| Input / output tokens | `145,826 / 18,132` | `4,889 / 266` |
-| p50 / p95 provider-call latency | `14,553 / 18,145 ms` | `647 / 853 ms` |
+| Judge used | `1` | `0` |
+| Input / output tokens | `146,794 / 17,962` | `4,889 / 265` |
+| p50 / p95 provider-call latency | `13,692 / 18,008 ms` | `613 / 812 ms` |
 | Rate-limited calls | `0` | `8` |
 
 Production semantic failures were `MODEL_PROPOSAL_SCHEMA_INVALID=4` and
@@ -133,10 +133,10 @@ responses even with ten seconds between three-call bundles;
 the within-case three-way concurrency remains coupled to the provider limit.
 The challenger is both less accurate and less reliable, so the production
 one-axis default is unchanged. The canonical promotion-report hash is
-`f964282abb9683b519cba36d87cc5456af7c0ede7fc61860960219e21889d50c`;
+`444997b2c3f0c904deaebe35fb3a104695b0f9e79a98068db204b27e271c60b0`;
 the complete sanitized file SHA-256 is
-`fdcae7f0f7de7b3148bf1814f6c047ff7b029e4e3da42212d62fb281c3aca725`
-(embedded pre-write payload hash `dfe2fa13df3b454aa3595e6436b15098caf05eb1bacb9c20c7ab36f4cef3ecec`).
+`6433e87ad0e34f5123a35c88470035562c6a7dd6831288d45714ed7e8be6e867`
+(embedded pre-write payload hash `28ce3088aef92c5b87843ccc2309f4ed9dce643a01c0da193860285a5f5ce7dc`).
 Raw provider outputs remained under `/private/tmp`; no credential, request
 header, or raw payload entered Git.
 
@@ -147,9 +147,9 @@ declared development, storage, resolver, graph, and ingestion dependencies.
 
 | Check | Result |
 | --- | --- |
-| New fail-closed report tests | `41 passed in 0.73s` |
-| Focused semantic/query-contract/SQL/orchestration suite | `636 passed in 9.04s` |
-| Broad offline suite with all external markers excluded | `2267 passed, 1 expected PostgreSQL skip, 463 deselected in 48.57s` |
+| New fail-closed report tests | `41 passed in 0.78s` |
+| Focused semantic/query-contract/SQL/orchestration suite | `654 passed in 9.76s` |
+| Broad offline suite with all external markers excluded | `2275 passed, 1 expected PostgreSQL skip, 463 deselected in 50.02s` |
 | Deterministic intent evaluator | exit `0`; recall@5 `123/196`, reproducibility `155/155` |
 | Alembic heads/history | one head `0009`; parent `0008` |
 | Fresh import probes | Intent Resolver, contracts, planning, and artifact repository import cleanly |

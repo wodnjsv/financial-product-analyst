@@ -13,7 +13,11 @@ from financial_agent.contracts.base import ContractModel, Identifier
 from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.execution import Exclusion, ResultField, ResultRow, ResultWarning
 from financial_agent.contracts.values import encode_contract_value
-from financial_agent.intent.query_contracts import AggregationFunction, SemanticValueKind
+from financial_agent.intent.query_contracts import (
+    AggregationFunction,
+    SemanticValueKind,
+    is_population_count,
+)
 from financial_agent.planning.logical_query import (
     LogicalAggregateOperationV2,
     LogicalCompareOperationV2,
@@ -159,7 +163,7 @@ def map_sql_rows(
             lineage,
             empty_count=(
                 isinstance(operation, LogicalAggregateOperationV2)
-                and operation.aggregation.function_id is AggregationFunction.COUNT
+                and is_population_count(operation.aggregation.function_id)
                 and row.get("aggregate_value") == 0
             ),
         )
@@ -215,7 +219,7 @@ def _field_descriptors(
             and operation.aggregation.function_id is not AggregationFunction.DISTRIBUTION
             else ()
         )
-        if operation.aggregation.function_id is AggregationFunction.COUNT:
+        if is_population_count(operation.aggregation.function_id):
             target = (("product_count", "aggregate_value"),)
         concepts = (*grouped, *target)
     else:  # Compiler currently authorizes only these SQL operation variants.
@@ -265,7 +269,7 @@ def _expected_columns(
 
     group_count = len(operation.aggregation.group_by_field_concept_ids)
     columns = {f"group_{index}" for index in range(group_count)}
-    if operation.aggregation.function_id is AggregationFunction.COUNT:
+    if is_population_count(operation.aggregation.function_id):
         columns.update({"aggregate_value", "product_ids"})
         requested = set(request.evidence_projection_ids)
         if EvidenceLocator.METRIC_DEFINITION in requested:
@@ -300,7 +304,7 @@ def _expected_columns(
                 "applicable_dates",
             }
         )
-    if group_count or operation.aggregation.function_id is not AggregationFunction.COUNT:
+    if group_count or not is_population_count(operation.aggregation.function_id):
         columns.update({"evidence_ids", "source_ids"})
     return columns
 
@@ -377,7 +381,7 @@ def _validate_physical_metadata(request, row, descriptors) -> None:
                 raise SqlResultMappingError("RETURNED_SOURCE_IDS_MALFORMED")
         return
     spec = operation.aggregation
-    if spec.function_id is AggregationFunction.COUNT:
+    if is_population_count(spec.function_id):
         return
     target = spec.target_field_concept_id
     if target is None:
@@ -518,7 +522,7 @@ def _collect_manifest_relation_lineage(request, target: set[str]) -> None:
     operation = request.render_manifest.logical_task.operation
     if (
         isinstance(operation, LogicalAggregateOperationV2)
-        and operation.aggregation.function_id is AggregationFunction.COUNT
+        and is_population_count(operation.aggregation.function_id)
     ):
         return
     if facts is None or facts.public_fund_manifest is None:
@@ -540,7 +544,7 @@ def _validate_count_lineage(
     operation = request.render_manifest.logical_task.operation
     if not (
         isinstance(operation, LogicalAggregateOperationV2)
-        and operation.aggregation.function_id is AggregationFunction.COUNT
+        and is_population_count(operation.aggregation.function_id)
     ):
         return
     requested = set(request.evidence_projection_ids)
@@ -639,7 +643,7 @@ def _validate_evidence_categories(request, rows, lineage: set[str]) -> None:
     operation = request.render_manifest.logical_task.operation
     if (
         isinstance(operation, LogicalAggregateOperationV2)
-        and operation.aggregation.function_id is AggregationFunction.COUNT
+        and is_population_count(operation.aggregation.function_id)
         and len(rows) == 1
         and rows[0].get("aggregate_value") == 0
     ):

@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-02
 
-**Status:** Written specification; user review pending
+**Status:** Approved; locally implemented and verified
 
 **Decision:** [ADR-0029](../decisions/ADR-0029-use-semantic-query-contracts-and-deterministic-sql-compilation.md)
 

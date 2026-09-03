@@ -23,7 +23,11 @@ from financial_agent.db.schema.evidence import (
 from financial_agent.db.schema.observation import observation_record
 from financial_agent.db.schema.relation import relation_record
 from financial_agent.intent.view import ActiveDatasetPin
-from financial_agent.intent.query_contracts import AggregationFunction, OrderingDirection
+from financial_agent.intent.query_contracts import (
+    AggregationFunction,
+    OrderingDirection,
+    is_population_count,
+)
 from financial_agent.planning.logical_query import (
     LogicalAggregateOperationV2,
     LogicalCompareOperationV2,
@@ -776,8 +780,9 @@ def _render_context(context: _Context) -> RenderedPhysicalSql:
     if consumed_binding_ids != set(context.bindings.bindings_by_id):
         if (
             isinstance(context.task.operation, LogicalAggregateOperationV2)
-            and context.task.operation.aggregation.function_id
-            is AggregationFunction.COUNT
+            and is_population_count(
+                context.task.operation.aggregation.function_id
+            )
             and any(
                 value is not None
                 for value in (
@@ -1196,7 +1201,7 @@ def _aggregate(context, base, where, family, operation):
             ),
         )
 
-    if spec.function_id is AggregationFunction.COUNT:
+    if is_population_count(spec.function_id):
         id_expression = representative.c.entity_id if is_public_representative else product.c.entity_id
         aggregate_expression = sa.func.count(sa.distinct(id_expression))
         selected = [
@@ -1216,7 +1221,7 @@ def _aggregate(context, base, where, family, operation):
         ownerships = _manifest_metric_ownerships(context, binding)
         if (
             is_public_representative
-            and spec.function_id is AggregationFunction.COUNT
+            and is_population_count(spec.function_id)
         ):
             if not ownerships:
                 raise SqlCompileRejection("PUBLIC_FUND_VERIFIED_PROOF_REQUIRED")
@@ -1351,7 +1356,7 @@ def _aggregate(context, base, where, family, operation):
     statement = sa.select(*selected).select_from(base).where(*where)
     if groups:
         statement = statement.group_by(*groups)
-    if spec.function_id is AggregationFunction.COUNT and (
+    if is_population_count(spec.function_id) and (
         not groups or is_public_representative
     ):
         statement = _attach_count_population_lineage(
@@ -1371,7 +1376,7 @@ def _aggregate(context, base, where, family, operation):
             evidence_aliases=tuple(context.evidence_aliases.values()),
             observation_aliases=(
                 tuple(group_observation_aliases)
-                if spec.function_id is AggregationFunction.COUNT
+                if is_population_count(spec.function_id)
                 else ()
             ),
         )
@@ -1742,7 +1747,7 @@ def _count_lineage_metric_definition_refs(
     operation = task.operation
     if (
         not isinstance(operation, LogicalAggregateOperationV2)
-        or operation.aggregation.function_id is not AggregationFunction.COUNT
+        or not is_population_count(operation.aggregation.function_id)
     ):
         return ()
     if (
@@ -1939,7 +1944,7 @@ def _qualifier_filters(context: _Context):
     if any(value is not None for value in requested.values()) and not bindings:
         if (
             isinstance(context.task.operation, LogicalAggregateOperationV2)
-            and context.task.operation.aggregation.function_id is AggregationFunction.COUNT
+            and is_population_count(context.task.operation.aggregation.function_id)
         ):
             raise SqlCompileRejection("COUNT_QUALIFIER_BINDING_REQUIRED")
         raise SqlCompileRejection("QUALIFIER_BINDING_REQUIRED")

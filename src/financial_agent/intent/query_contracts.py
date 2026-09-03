@@ -88,6 +88,13 @@ class AggregationFunction(str, Enum):
     DISTRIBUTION = "distribution"
 
 
+def is_population_count(function_id: AggregationFunction) -> bool:
+    return function_id in {
+        AggregationFunction.COUNT,
+        AggregationFunction.COUNT_DISTINCT,
+    }
+
+
 class AggregationBucketPolicyId(str, Enum):
     EQUAL_WIDTH_10 = "equal-width-10.v1"
 
@@ -261,9 +268,9 @@ class AggregationSpecV2(_StrictContractModel):
         _require_unique(self.group_by_field_concept_ids, "DUPLICATE_GROUP_BY_ID")
         if bool(self.target_field_concept_id) == bool(self.count_population_id):
             raise ValueError("AGGREGATION_TARGET_OR_COUNT_POPULATION_REQUIRED")
-        if self.function_id is AggregationFunction.COUNT and self.target_field_concept_id:
+        if is_population_count(self.function_id) and self.target_field_concept_id:
             raise ValueError("COUNT_POPULATION_REQUIRED")
-        if self.function_id is not AggregationFunction.COUNT and self.count_population_id:
+        if not is_population_count(self.function_id) and self.count_population_id:
             raise ValueError("AGGREGATION_TARGET_REQUIRED")
         return self
 
