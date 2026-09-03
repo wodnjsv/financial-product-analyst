@@ -160,6 +160,33 @@ def test_risk_grade_keeps_both_semantic_candidates(snapshot) -> None:
     ]
 
 
+def test_v4_preferred_label_is_a_request_local_v2_candidate(snapshot) -> None:
+    """Catches V4 Korean labels being loaded but remaining unusable by V2."""
+    question = "잔여일수 알려줘"
+    created_at = datetime(2026, 9, 4, tzinfo=timezone.utc)
+    context = RequestContext(
+        request_key=build_request_key("v4-label", question, "dataset-v1", "1.0"),
+        run_id="run-v4-label",
+        dataset_version="dataset-v1",
+        producer="test",
+        created_at=created_at,
+        question_id="v4-label",
+        question=question,
+        segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+        deadline_at=created_at + timedelta(seconds=10),
+    )
+
+    result = generate_semantic_candidates(normalize_request(context), snapshot)
+
+    assert result.candidate_policy_version == (
+        "semantic-candidates-v2-preferred-label-trigram-0.50"
+    )
+    assert [(item.semantic_id, item.match_kind) for item in _items_for(result, "잔여일수")] == [
+        ("remaining_days", "group_alias")
+    ]
+    assert result.total_count < len(snapshot.concepts_by_id)
+
+
 def test_semantic_candidate_limits_keep_exact_candidates_first() -> None:
     """Catches a global limit dropping exact candidates or six-way mention groups."""
     aliases = {"collision": tuple(f"metric-{index}" for index in range(6))}

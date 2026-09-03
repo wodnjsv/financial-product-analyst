@@ -100,7 +100,7 @@ EXPECTED_FAMILIES_BY_CONCEPT = {
 }
 
 V2_CATALOG_HASH = "c1e88ebd353e6306e8f61f4bef31d23fbed802adf4811a8ea287e40dbde73076"
-V2_OVERLAY_HASH = "6b80ee8afa7a53110bcdd4c0ee1a88a9b3da96c09855757fdaf1e9f5c6a0b307"
+V2_OVERLAY_HASH = "ae2a7216009fe32c7c3393f54e1c5986cde2db750f54b170b1f1f50896ee9441"
 
 
 def copy_catalog_and_ontology_without_tests(destination: Path) -> Path:
@@ -110,7 +110,7 @@ def copy_catalog_and_ontology_without_tests(destination: Path) -> Path:
         target = destination / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
-    for name in ("semantic-query-catalog.v1.json", "korean-nlu-overlay.v3.json"):
+    for name in ("semantic-query-catalog.v1.json", "korean-nlu-overlay.v4.json"):
         source = PROJECT_ROOT / "config" / "intent" / name
         target = destination / "config" / "intent" / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -136,13 +136,14 @@ def test_v2_catalog_and_overlay_hashes_remain_pinned() -> None:
     assert snapshot.overlay_hash == V2_OVERLAY_HASH
 
 
-def test_hybrid_labels_and_disambiguation_do_not_change_v2_alias_locks() -> None:
+def test_v2_and_hybrid_loaders_share_the_v4_language_overlay() -> None:
     v2 = load_catalog(PROJECT_ROOT)
     hybrid = load_hybrid_catalog(PROJECT_ROOT)
 
+    assert v2.overlay_version == hybrid.overlay_version == "korean-nlu-overlay.v4"
     assert hybrid.alias_candidates == v2.alias_candidates
     assert hybrid.alias_kinds == v2.alias_kinds
-    assert hybrid.preferred_labels_by_semantic_id["nav"] == "순자산가치"
+    assert v2.preferred_labels_by_semantic_id["nav"] == "순자산가치"
     assert all(
         label not in hybrid.alias_candidates
         or (
@@ -171,7 +172,7 @@ def test_catalog_uses_frozen_runtime_axes() -> None:
     assert set(snapshot.action_ids) == {item.value for item in IntentType}
 
 
-def test_v3_overlay_covers_every_runtime_axis_once() -> None:
+def test_v4_overlay_covers_every_runtime_axis_once() -> None:
     snapshot = load_catalog(PROJECT_ROOT)
 
     assert tuple(snapshot.axis_definitions) == tuple(

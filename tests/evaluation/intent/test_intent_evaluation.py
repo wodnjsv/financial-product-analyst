@@ -1690,7 +1690,7 @@ def test_hybrid_deterministic_cli_separates_hint_quality_from_selectability(
     report = _load_json(output)
     assert report["mode"] == "hybrid-deterministic"
     metrics = report["metrics"]["hybrid_v3"]
-    assert metrics["hint_recall_at_5"]["numerator"] == 123
+    assert metrics["hint_recall_at_5"]["numerator"] == 134
     assert metrics["hint_recall_at_5"]["denominator"] == 196
     assert metrics["compact_catalog_selectability"]["numerator"] == 196
     assert metrics["compact_catalog_selectability"]["denominator"] == 196
@@ -1714,7 +1714,7 @@ def test_hybrid_deterministic_cli_separates_hint_quality_from_selectability(
     assert metrics["provider"]["provider_success"]["status"] == "unmeasured"
 
 
-def test_v2_deterministic_baseline_remains_123_of_196_with_positional_mode(
+def test_v2_deterministic_v4_overlay_reaches_134_of_196_with_positional_mode(
     tmp_path: Path,
 ) -> None:
     output = _report_path(tmp_path, "v2-positional")
@@ -1729,7 +1729,7 @@ def test_v2_deterministic_baseline_remains_123_of_196_with_positional_mode(
 
     assert result.returncode == 0, result.stderr
     metric = _load_json(output)["metrics"]["candidate"]["recall_at_5"]
-    assert (metric["numerator"], metric["denominator"]) == (123, 196)
+    assert (metric["numerator"], metric["denominator"]) == (134, 196)
 
 
 def test_cli_refuses_fixture_overwrite_and_live_execution() -> None:

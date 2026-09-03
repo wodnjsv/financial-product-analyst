@@ -34,13 +34,13 @@ from .resolution import ContractFileHash, ResolverBuildManifest
 
 
 NORMALIZER_VERSION = "intent-normalizer-v1"
-CANDIDATE_POLICY_VERSION = "intent-candidate-v2"
+CANDIDATE_POLICY_VERSION = "intent-candidate-v3"
 RESOLVER_SCHEMA_VERSION = "2.0"
 PROMPT_VERSION = "intent-resolver-ko-v5-axis-only"
 ADAPTER_VERSION = "clova-chat-v3-proposal-v2"
 
 HYBRID_RESOLVER_SCHEMA_VERSION = "3.0"
-HYBRID_CANDIDATE_POLICY_VERSION = "intent-hints-v3"
+HYBRID_CANDIDATE_POLICY_VERSION = "intent-hints-v4"
 HYBRID_PROMPT_VERSION = "intent-resolver-ko-v6-full-catalog"
 HYBRID_ADAPTER_VERSION = "clova-chat-v3-proposal-v3"
 

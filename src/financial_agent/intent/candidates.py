@@ -23,7 +23,9 @@ MATCH_PRIORITY = {
     "ambiguous_alias": 3,
     "trigram": 4,
 }
-SEMANTIC_CANDIDATE_POLICY_VERSION = "semantic-candidates-v1-trigram-0.50"
+SEMANTIC_CANDIDATE_POLICY_VERSION = (
+    "semantic-candidates-v2-preferred-label-trigram-0.50"
+)
 TRIGRAM_THRESHOLD_SCORE = 500_000
 MAX_CANDIDATES_PER_MENTION = 5
 MAX_SEMANTIC_CANDIDATES = 80
@@ -204,7 +206,11 @@ def _mention_sort_key(
 def _exact_mentions(
     segment: NormalizedSegment, catalog: SemanticCatalogSnapshot
 ) -> tuple[Mention, ...]:
-    surfaces = set(catalog.alias_candidates) | _semantic_ids(catalog)
+    surfaces = (
+        set(catalog.alias_candidates)
+        | set(catalog.preferred_labels_by_semantic_id.values())
+        | _semantic_ids(catalog)
+    )
     spans: set[tuple[int, int]] = set()
     text = segment.normalized_text
     for surface in surfaces:
@@ -236,6 +242,15 @@ def _exact_matches(
                 semantic_id,
                 match_kind,
                 f"overlay:{alias_text}",
+            )
+    for semantic_id, preferred_label in sorted(
+        catalog.preferred_labels_by_semantic_id.items()
+    ):
+        if normalized_text == "".join(preferred_label.lower().split()):
+            yield (
+                semantic_id,
+                "group_alias",
+                f"overlay-preferred:{semantic_id}",
             )
 
 

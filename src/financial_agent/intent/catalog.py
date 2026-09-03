@@ -23,8 +23,8 @@ from financial_agent.graph.contract import (
 
 
 _CATALOG_PATH = Path("config/intent/semantic-query-catalog.v1.json")
-_OVERLAY_PATH = Path("config/intent/korean-nlu-overlay.v3.json")
-_HYBRID_OVERLAY_PATH = Path("config/intent/korean-nlu-overlay.v4.json")
+_OVERLAY_PATH = Path("config/intent/korean-nlu-overlay.v4.json")
+_HYBRID_OVERLAY_PATH = _OVERLAY_PATH
 _CONCEPT_KINDS = Literal["attribute", "metric", "relation", "document_topic"]
 _ALIAS_KINDS = Literal["direct", "ambiguous", "group"]
 _SH = Namespace("http://www.w3.org/ns/shacl#")
@@ -148,7 +148,7 @@ def load_catalog(project_root: Path) -> SemanticCatalogSnapshot:
 
 
 def load_hybrid_catalog(project_root: Path) -> SemanticCatalogSnapshot:
-    """Load the V4 model-facing overlay without changing the V2 catalog path."""
+    """Load the shared V4 overlay for the shadow hybrid resolver."""
     root = project_root.resolve()
     return compile_catalog(
         (root / _CATALOG_PATH).read_bytes(),

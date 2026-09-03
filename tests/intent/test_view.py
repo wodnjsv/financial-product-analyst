@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -319,10 +320,13 @@ def test_v3_view_rejects_exact_lock_projection_without_a_mention_span(v3_inputs)
         build_resolver_view_v3(**inputs)
 
 
-def test_hybrid_manifest_rejects_v2_overlay_or_version_pins() -> None:
+def test_hybrid_manifest_rejects_legacy_overlay_or_version_pins() -> None:
     """Catches a V3 resolver build being pinned to legacy catalog inputs."""
+    legacy_overlay = replace(
+        load_catalog(PROJECT_ROOT), overlay_version="korean-nlu-overlay.v3"
+    )
     with pytest.raises(ResolverInvariantError, match="CATALOG_VERSION_MISMATCH"):
-        build_hybrid_manifest(load_catalog(PROJECT_ROOT), hybrid_manifest_versions())
+        build_hybrid_manifest(legacy_overlay, hybrid_manifest_versions())
     versions = hybrid_manifest_versions() | {"prompt_version": "intent-resolver-ko-v5-axis-only"}
     with pytest.raises(ResolverInvariantError, match="CATALOG_VERSION_MISMATCH"):
         build_hybrid_manifest(load_hybrid_catalog(PROJECT_ROOT), versions)
@@ -337,7 +341,7 @@ def test_hybrid_version_constants_match_the_shadow_v3_contract() -> None:
         HYBRID_ADAPTER_VERSION,
     ) == (
         "3.0",
-        "intent-hints-v3",
+        "intent-hints-v4",
         "intent-resolver-ko-v6-full-catalog",
         "clova-chat-v3-proposal-v3",
     )
@@ -491,6 +495,7 @@ def test_manifest_uses_the_complete_catalog_and_graph_contract(
         sorted(snapshot.ontology_hashes.items())
     )
     assert manifest.normalizer_version == NORMALIZER_VERSION
+    assert CANDIDATE_POLICY_VERSION == "intent-candidate-v3"
     assert manifest.candidate_policy_version == CANDIDATE_POLICY_VERSION
     assert manifest.resolver_schema_version == RESOLVER_SCHEMA_VERSION
     assert manifest.prompt_version == PROMPT_VERSION

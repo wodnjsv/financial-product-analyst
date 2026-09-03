@@ -491,7 +491,7 @@ def test_offline_hybrid_report_never_calls_provider_even_with_credentials(
     paths = {item["path_id"]: item for item in payload["resolver_paths"]}
     assert set(paths) == {"deterministic-v2", "hybrid-deterministic-v3"}
     assert paths["deterministic-v2"]["hint_recall_at_5"] == {
-        "successes": 123,
+        "successes": 134,
         "total": 196,
     }
     assert paths["hybrid-deterministic-v3"]["compact_catalog_selectability"][
@@ -917,7 +917,7 @@ def test_static_repository_evidence_is_pinned_and_truthfully_deferred() -> None:
         successes=43, total=43
     )
     assert evidence.adr_candidate_recall_at_5 == CountEvidence(
-        successes=123, total=196
+        successes=134, total=196
     )
     assert next(
         gate for gate in report.gates if gate.name == "adr_candidate_recall_at_5"
