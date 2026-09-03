@@ -231,6 +231,7 @@ These defaults prevent unsafe assumptions and may be superseded by a later accep
 The approved top-level architecture is a bounded, conditionally parallel execution graph controlled by a deterministic application orchestrator.
 
 - One HyperCLOVA X Intent Resolver component uses one bounded structured model call to produce an internal intent-resolution draft; deterministic catalog·ontology·context validation and compilation then produce the schema-validated, domain-neutral `QueryPlan`.
+- The Intent Resolver receives the complete generated compact semantic catalog. Deterministic Korean candidates are exact locks or advisory hints, not an exhaustive model choice set; HCX links server-owned source spans to registered semantic IDs, and deterministic validation retains exclusive control of execution meaning.
 - The orchestrator compiles the plan into a typed `ExecutionGraph`, routes only the required Capability Executors, and runs independent work concurrently.
 - Product-family Capability modules own family-specific fields, rules, ontology mappings, and allowed operations. They are not LLM Agents in the approved baseline.
 - A deterministic data engine performs retrieval, filtering, sorting, ranking, aggregation, similarity scoring, and supported financial calculations.
@@ -257,6 +258,7 @@ Accepted and superseded decisions live in `docs/planning/decisions/`. Each recor
 - [ADR-0018: Keep the Minimal Ontology with Canonical Multi-Role Products](decisions/ADR-0018-keep-minimal-ontology-with-canonical-multi-role-products.md)
 - [ADR-0021: Amend the Minimal Ontology for Question-Contract Semantics](decisions/ADR-0021-amend-minimal-ontology-for-question-contract-semantics.md)
 - [ADR-0022: Use Ontology-Grounded Intent Resolution](decisions/ADR-0022-use-ontology-grounded-intent-resolution.md)
+- [ADR-0030: Use Hybrid Full-Catalog Semantic Linking](decisions/ADR-0030-use-hybrid-full-catalog-semantic-linking.md)
 
 ## 14. Change Procedure
 
