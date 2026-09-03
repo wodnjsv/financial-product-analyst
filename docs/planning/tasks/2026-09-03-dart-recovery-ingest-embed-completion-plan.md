@@ -47,7 +47,7 @@
 - Consumes: Alembic head `0009`, the `document.document_source_artifact` foreign key, and `EmbeddingModelContract`.
 - Produces: a clean canonical `financial_agent_test` full-suite run with no cross-test model or dataset state.
 
-- [ ] **Step 1: Add or adjust tests so the known regressions fail independently**
+- [x] **Step 1: Add or adjust tests so the known regressions fail independently**
 
 Use a test-only model contract in the recovery repository fixture rather than the production model identity:
 
@@ -63,19 +63,19 @@ RECOVERY_TEST_MODEL = replace(
 
 Make the foundation cleanup exercise deletion when a source-artifact row exists. Current-head assertions must derive or expect `0009`; explicit historical migration tests that intentionally upgrade or downgrade to `0008` remain unchanged.
 
-- [ ] **Step 2: Verify the isolated failures**
+- [x] **Step 2: Verify the isolated failures**
 
 Run the affected tests against a freshly initialized canonical database. Expected before the fix: model contract mismatch, source-artifact FK truncation failure, and `0008`/manifest drift failures.
 
-- [ ] **Step 3: Apply the minimal isolation and current-head corrections**
+- [x] **Step 3: Apply the minimal isolation and current-head corrections**
 
 Add `document.document_source_artifact` before its referenced document rows in `_truncate_foundation_tables`. Replace only current-head literals with `0009` or `_expected_alembic_head()` as appropriate. Change `MigrationVerificationReport.alembic_head` to the actual head. Regenerate the reviewed database-object manifest from a clean `0009` database using `scripts/export_database_objects.py`; do not hand-edit generated object definitions.
 
-- [ ] **Step 4: Run migration, repository, and full-suite verification**
+- [x] **Step 4: Run migration, repository, and full-suite verification**
 
 Expected final result on a fresh `financial_agent_test`: all local tests pass except explicitly gated NCP/object-storage/real-source tests, which remain skipped.
 
-- [ ] **Step 5: Commit the verified regression repair**
+- [x] **Step 5: Commit the verified regression repair**
 
 ```text
 fix: restore database test isolation at migration 0009
@@ -94,7 +94,7 @@ fix: restore database test isolation at migration 0009
 - Consumes: `DartRecoverySelection` and the existing full-run failure report.
 - Produces: sanitized aggregate reason/family counts plus a local-only review inventory for exact manager and name analysis.
 
-- [ ] **Step 1: Write a failing report test**
+- [x] **Step 1: Write a failing report test**
 
 Assert that a missing-only report accounts for the full actionable population before `--limit` is applied:
 
@@ -106,19 +106,19 @@ assert report.actionable_target_family_counts == (
 assert report.selected_target_count == len(report.indexed_target_ids) + len(report.failed_targets)
 ```
 
-- [ ] **Step 2: Verify the test fails for any unaccounted disposition**
+- [x] **Step 2: Verify the test fails for any unaccounted disposition**
 
 Mutation check: removing a failure or counting a completed/non-applicable target as actionable must fail the test.
 
-- [ ] **Step 3: Add only aggregate production reporting**
+- [x] **Step 3: Add only aggregate production reporting**
 
 Keep names, organizer codes, candidate filings, and local paths out of the persisted run report. Generate any detailed target/candidate inspection as an ignored local artifact under `/private/tmp` using existing public DART and organizer identities.
 
-- [ ] **Step 4: Reconcile the local diagnostic against the verified baseline**
+- [x] **Step 4: Reconcile the local diagnostic against the verified baseline**
 
 Require exactly 5,117 actionable targets and the ten residual reason groups recorded in this plan before changing matching behavior.
 
-- [ ] **Step 5: Commit only reusable report/test changes**
+- [x] **Step 5: Commit only reusable report/test changes**
 
 ```text
 test: close DART recovery disposition accounting
@@ -138,7 +138,7 @@ test: close DART recovery disposition accounting
 - Consumes: 32 exact `or_co_xtn_itt_cd` values, official KOFIA manager identity, and exact OpenDART corporation identity.
 - Produces: reviewed `PublicFundManagerBinding` entries or explicit unresolved-code dispositions.
 
-- [ ] **Step 1: Classify all 32 codes using official evidence**
+- [x] **Step 1: Classify all 32 codes using official evidence**
 
 For each code, record one of: exact manager and DART corporation match; official manager without DART corporation; missing/placeholder (`99999999` included); conflicting managers; or no official evidence. Do not infer from a fund name.
 
@@ -167,6 +167,12 @@ Rebuild the organizer-derived dataset reproducibly; do not patch active rows. Re
 feat: add reviewed residual public-fund managers
 ```
 
+**Outcome:** The official audit found no additional exact binding that could be
+added safely. Of the original 90 public-manager codes, 59 resolve through KOFIA
+and 57 also have an exact DART corporation; the 32 residual codes remain
+explicitly unresolved. No registry or organizer-derived dataset was changed,
+so Steps 2-5 were not applicable.
+
 ---
 
 ### Task 4: Recover deterministic product names and correction lineages
@@ -179,27 +185,27 @@ feat: add reviewed residual public-fund managers
 - Consumes: one verified publisher, organizer canonical/member names, DART `report_nm`, receipt date/number, and correction markers.
 - Produces: one exact current cutoff-eligible filing lineage or a precise ambiguity reason.
 
-- [ ] **Step 1: Derive literal fixtures from real residual variants**
+- [x] **Step 1: Derive literal fixtures from real residual variants**
 
 Choose the smallest representative fixtures for Unicode/whitespace, balanced wrapper, reviewed report boilerplate, and explicit share-class differences. Each fixture must preserve the full DART response shape used by the adapter.
 
-- [ ] **Step 2: Write failing normalization and negative tests**
+- [x] **Step 2: Write failing normalization and negative tests**
 
 Assert accepted variants resolve only within one publisher. Add negative tests for substring-only, edit-distance-only, cross-publisher, two normalized names, and unrecognized suffixes.
 
-- [ ] **Step 3: Implement one conservative identity function**
+- [x] **Step 3: Implement one conservative identity function**
 
 Extend `_normalize_product_identity` only with transformations approved by ADR-0033. Keep `_matches_all_share_classes` explicit and bounded; do not add a similarity score.
 
-- [ ] **Step 4: Write failing correction-lineage tests**
+- [x] **Step 4: Write failing correction-lineage tests**
 
 Cover latest valid correction before cutoff, withdrawn latest filing, competing report identities, after-cutoff correction, and unresolved correction order.
 
-- [ ] **Step 5: Select a filing only when one lineage is deterministic**
+- [x] **Step 5: Select a filing only when one lineage is deterministic**
 
 Group by normalized product identity and document type, then apply cutoff and correction state. Preserve `dart_product_metadata_ambiguous` or `dart_correction_state_unresolved` whenever more than one valid current lineage remains.
 
-- [ ] **Step 6: Run the DART adapter and batch suites and commit**
+- [x] **Step 6: Run the DART adapter and batch suites and commit**
 
 ```text
 fix: resolve exact DART product and correction identities
@@ -246,6 +252,13 @@ Before adding an OCR dependency or remote OCR provider, verify an approved local
 fix: recover bounded DART attachment and section variants
 ```
 
+**Outcome:** No attachment or section rule was broadened without a reviewed
+literal variant. The local runtime has no approved OCR capability, so the 34
+text-layer failures remain explicit rather than uploading PDF images under the
+embedding-only NCP authorization. The other attachment and section failures are
+also retained as precise unresolved dispositions for a separately approved
+source-specific recovery pass.
+
 ---
 
 ### Task 6: Run canaries and the complete missing-only DART ingestion
@@ -258,23 +271,23 @@ fix: recover bounded DART attachment and section variants
 - Consumes: the corrected full suite, reviewed mappings, deterministic filing rules, DART API key, and publisher aliases.
 - Produces: newly committed documents/chunks plus an accounted unresolved residual.
 
-- [ ] **Step 1: Reconcile the protected baseline**
+- [x] **Step 1: Reconcile the protected baseline**
 
 Require `eligible=37629`, `exact=37629`, and zero missing, duplicate, stale, orphan, or wrong-dimension embeddings.
 
-- [ ] **Step 2: Run one ETF, one public-fund, and one recovered-content canary**
+- [x] **Step 2: Run one ETF, one public-fund, and one recovered-content canary**
 
 Each canary must account for its target, persist/read back any successful corpus, delete the exact PDF, and leave all protected vectors unchanged.
 
-- [ ] **Step 3: Check capacity and start the full missing-only run**
+- [x] **Step 3: Check capacity and start the full missing-only run**
 
 Require adequate free disk for PostgreSQL growth while keeping PDF accumulation near zero. Run only the 5,117 applicable missing targets; ETNs, private funds, and completed products must issue no requests.
 
-- [ ] **Step 4: Resume safely across DART quota boundaries**
+- [x] **Step 4: Resume safely across DART quota boundaries**
 
 Reruns must skip newly completed targets. Never restart the original full 15,571-target corpus.
 
-- [ ] **Step 5: Reconcile every target and PDF**
+- [x] **Step 5: Reconcile every target and PDF**
 
 Require `selected = indexed + failed`, zero unaccounted targets, and no retained temporary PDFs. Record aggregate counts only in tracked documentation.
 
@@ -290,22 +303,43 @@ Require `selected = indexed + failed`, zero unaccounted targets, and no retained
 - Consumes: newly committed public DART chunks with no exact current-model embedding.
 - Produces: one finite 1,024-dimensional local PostgreSQL vector per new chunk hash.
 
-- [ ] **Step 1: Run embedding preflight**
+- [x] **Step 1: Run embedding preflight**
 
 Record exact old, new eligible, and missing counts. Any stale, orphan, duplicate, or wrong-dimension row stops the build.
 
-- [ ] **Step 2: Run one new-chunk NCP canary**
+- [x] **Step 2: Run one new-chunk NCP canary**
 
 Verify model identity, input template, token count, 1,024 dimensions, and local persistence without changing an old row.
 
-- [ ] **Step 3: Run the resumable full delta build**
+- [x] **Step 3: Run the resumable full delta build**
 
 Use ADR-0032 backoff. Re-read missing hashes after every pause and commit completed batches idempotently.
 
-- [ ] **Step 4: Run final reconciliation and retrieval samples**
+- [x] **Step 4: Run final reconciliation and retrieval samples**
 
 Require exact embeddings equal eligible chunks, with zero missing, duplicate, stale, orphan, or wrong dimension. Run bounded real Top-5 retrieval samples across newly covered ETF and public-fund products.
 
-- [ ] **Step 5: Inspect, document, and commit results**
+- [x] **Step 5: Inspect, document, and commit results**
 
 Verify no file under `data/`, no organizer workbook/PDF, no credential, local report, embedding, or database file is staged. Record only aggregate coverage and unresolved reasons.
+
+## Final Execution Result
+
+- The full missing-only run accounted for all 5,117 selected targets: 256 were
+  indexed and 4,861 retained an explicit unresolved reason.
+- The run committed 2,520 approved Claim chunks. It captured and then deleted
+  389,698,786 bytes of PDFs; 256 PDFs were deleted and none were quarantined or
+  retained in the run directory.
+- Residual reasons are: product-name mismatch 2,917; product metadata ambiguity
+  1,012; manager binding missing 597; approved section missing 177; attachment
+  missing 113; text layer missing 34; correction state unresolved 6;
+  representative identifier unavailable 3; ambiguous attachment 1; invalid PDF
+  1.
+- The final local vector corpus contains 40,149 eligible chunks and 40,149 exact
+  current-model embeddings. Missing, duplicate, stale, orphan, and
+  wrong-dimension counts are all zero. Embedding storage is 256,335,872 bytes.
+- Real Top-5 retrieval verification passed for one newly covered domestic ETF
+  and one newly covered public fund: all four risk/strategy vector and fused
+  retrieval checks passed.
+- Final verification: 1,820 tests passed and 15 explicitly gated integration
+  tests were skipped.

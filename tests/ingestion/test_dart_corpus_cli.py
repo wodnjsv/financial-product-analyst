@@ -472,6 +472,9 @@ async def test_missing_only_run_discovers_only_actionable_recovery_targets(
         ("domestic_etf", 1),
         ("public_fund", 1),
     )
+    assert report.selected_target_count == (
+        len(report.indexed_target_ids) + len(report.failed_targets)
+    )
     assert report.failed_targets == (
         ("public_fund:missing-public", "document_not_found"),
     )
