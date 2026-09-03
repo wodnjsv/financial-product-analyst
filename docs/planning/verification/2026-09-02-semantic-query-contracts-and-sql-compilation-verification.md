@@ -26,7 +26,9 @@ independent ADR-0022 deterministic candidate recall is also below threshold at
 | --- | --- |
 | 52 core questions | `03de130a2a67fd21e782e81ba10524d6a6e769494cfeedc95b05b584ae3618a2` |
 | 160-case / 209-frame held-out set | `bd40481c57975d66a84a98005b771761c023ae5461cbd3c232508522bbf4c7de` |
-| Seven hand-adjudicated cases in five representative semantic groups | `919bba39be62a062df3c124e0bba6a98bd6f78e6556103af9ef9617a530893f9` |
+| Five accepted prior-failure semantic contracts | `16e3097ee17a26a2df8dd2418ac0eacd3baecc1a44f4ab6fc1a16de527f66f38` |
+| Supported per-action population | `b592ab53537497d85136b03a69a61aae82c884b68231995a03601cf3809140c8` |
+| Unsupported per-action population | `b3acfa3fd9d77079b5aa67985db65e958e5afc71af8b6474903f047a2261d323` |
 | Semantic catalog | `c1e88ebd353e6306e8f61f4bef31d23fbed802adf4811a8ea287e40dbde73076` |
 | Query contract registry | `06c2f97da35f07ccaa237e0a63a7d2d9a8a2c14040dd2e09e97d0bcb86d88baf` |
 | Query operator registry | `d9f1775b563cea24b0b8eaa1e79d9bd864df9defa483ad17aec0738af88f53ba` |
@@ -38,24 +40,28 @@ independent ADR-0022 deterministic candidate recall is also below threshold at
 The promotion report revalidates these exact hash sets and the `52 / 160 / 209`
 counts. Missing metrics, zero denominators, changed pins, incomplete populations,
 contradictory live counters, and non-canonical serialization are covered by
-fail-closed tests. The representative source fixes action and product-family
-axes together with predicate field/operator/typed-value pairings, multi-atom
-structure, COUNT versus SUM, grouping, ordering/limit, and prior-result context
-binding. All five groups must match exactly; complete-candidate existence alone
-cannot pass.
+fail-closed tests. The representative source fixes exactly `fee-screen`,
+`public-aum-sum`, `overseas-aum-rank`, `domestic-return-rank`, and
+`bond-risk-screen`. It pins the action and product-family axes together with the
+complete applicable contract roles: predicate field/operator/typed value, SUM
+target plus public-fund population grain/de-duplication policy, and rank
+field/direction/limit/period. All five cases must match exactly;
+complete-candidate existence alone cannot pass. Supported and unsupported
+denominators are also pinned for every action, so shifting cases between action
+buckets while preserving the aggregate total is rejected.
 
 ## Static semantic coverage
 
-| Action | Representable / supported |
-| --- | ---: |
-| `lookup` | `55/55` |
-| `screen` | `14/14` |
-| `rank` | `70/70` |
-| `compare` | `28/28` |
-| `aggregate` | `11/11` |
-| `calculate` | `5/5` structurally representable; recipe remains intentionally unavailable |
-| `similar` | `10/10` |
-| `explain` | `6/6` |
+| Action | Representable / supported | Unsupported |
+| --- | ---: | ---: |
+| `lookup` | `55/55` | `3` |
+| `screen` | `14/14` | `3` |
+| `rank` | `70/70` | `2` |
+| `compare` | `28/28` | `2` |
+| `aggregate` | `11/11` | `0` |
+| `calculate` | `5/5` structurally representable; recipe remains intentionally unavailable | `0` |
+| `similar` | `10/10` | `0` |
+| `explain` | `6/6` | `0` |
 
 The 199 supported frames partition into 43 measured contract-role frames, 151
 unmeasured frames with incomplete gold roles, and 5 intentionally blocked
@@ -95,41 +101,42 @@ The authorized live run occurred only after offline suites passed. It used
 HCX-007, thinking `none`, temperature `0`, top-P `0.1`, top-K `1`, maximum
 completion tokens `4096`, repetition penalty `1.0`, seed `42`, and the existing
 55-second request deadline. There was no artificial 20-second cutoff. The 16
-cases included the seven questions in the five pinned representative groups,
-plus exact-family, numeric-screen, cross-family, lexical-OOD, domain-OOD, and
-other rank/screen coverage.
+cases included the five pinned prior-failure questions, plus exact-family,
+multiple-predicate, qualitative-rank, numeric-screen, COUNT/SUM,
+grouped-aggregate, cross-family, prior-result-context, lexical-OOD, and
+domain-OOD coverage.
 
 | Metric | Production one-axis | Parallel three-axis challenger |
 | --- | ---: | ---: |
 | Cases | `16` | `16` |
 | Provider success | `16/16` | `12/16` complete three-call bundles |
-| Structured / validated result | `12/16` | `11/16` axis bundles |
-| Action exact | `11/16` | `2/16` |
-| Product-family exact | `12/16` | `5/16` |
+| Structured / validated result | `11/16` | `11/16` axis bundles |
+| Action exact | `10/16` | `2/16` |
+| Product-family exact | `11/16` | `6/16` |
 | Complete query contract | `7/16` | not applicable; challenger extracts axes only |
 | Representative contract exact | `0/5` groups | not applicable; challenger extracts axes only |
-| Provider calls / successful calls | `23 / 23` | `48 / 40` |
-| Call types | primary `16`, repair `7`, judge `0` | action `16`, family `16`, tag `16` |
-| Repair attempted | `7` | `0` |
+| Provider calls / successful calls | `24 / 24` | `48 / 40` |
+| Call types | primary `16`, repair `8`, judge `0` | action `16`, family `16`, tag `16` |
+| Repair attempted | `8` | `0` |
 | Judge used | `0` | `0` |
-| Input / output tokens | `139,282 / 17,503` | `4,927 / 256` |
-| p50 / p95 provider-call latency | `12,508 / 19,170 ms` | `653 / 3,435 ms` |
+| Input / output tokens | `145,826 / 18,132` | `4,889 / 266` |
+| p50 / p95 provider-call latency | `14,553 / 18,145 ms` | `647 / 853 ms` |
 | Rate-limited calls | `0` | `8` |
 
-Production semantic failures were `MODEL_PROPOSAL_SCHEMA_INVALID=3` and
+Production semantic failures were `MODEL_PROPOSAL_SCHEMA_INVALID=4` and
 `MODEL_INVALID_FRAME_REFERENCE=1`. Every attempted provider call is now counted,
 including repair or judge calls belonging to a failed case; the repair count is
-therefore the seven attempted repair calls, not an inference from successful
+therefore the eight attempted repair calls, not an inference from successful
 resolver returns. The challenger had four incomplete provider bundles and one
 structured schema-invalid bundle, and received eight `MODEL_RATE_LIMITED`
 responses even with ten seconds between three-call bundles;
 the within-case three-way concurrency remains coupled to the provider limit.
 The challenger is both less accurate and less reliable, so the production
 one-axis default is unchanged. The canonical promotion-report hash is
-`fc701640fff09a214c3b05c55ab0d77bf20bb23182215fd07bafbdee859f2d17`;
+`f964282abb9683b519cba36d87cc5456af7c0ede7fc61860960219e21889d50c`;
 the complete sanitized file SHA-256 is
-`b1198bfd98b9ef661302f5db54f14d33bc91f7d298303bb5d474dc2484886294`
-(embedded pre-write payload hash `aaac002680b542476871a876377a9d0afe1cd7cfc6bd97d549e7c04274f83d91`).
+`fdcae7f0f7de7b3148bf1814f6c047ff7b029e4e3da42212d62fb281c3aca725`
+(embedded pre-write payload hash `dfe2fa13df3b454aa3595e6436b15098caf05eb1bacb9c20c7ab36f4cef3ecec`).
 Raw provider outputs remained under `/private/tmp`; no credential, request
 header, or raw payload entered Git.
 
@@ -140,9 +147,9 @@ declared development, storage, resolver, graph, and ingestion dependencies.
 
 | Check | Result |
 | --- | --- |
-| New fail-closed report tests | `37 passed in 0.74s` |
-| Focused semantic/query-contract/SQL/orchestration suite | `632 passed in 9.02s` |
-| Broad offline suite with all external markers excluded | `2263 passed, 1 expected PostgreSQL skip, 463 deselected in 48.30s` |
+| New fail-closed report tests | `41 passed in 0.73s` |
+| Focused semantic/query-contract/SQL/orchestration suite | `636 passed in 9.04s` |
+| Broad offline suite with all external markers excluded | `2267 passed, 1 expected PostgreSQL skip, 463 deselected in 48.57s` |
 | Deterministic intent evaluator | exit `0`; recall@5 `123/196`, reproducibility `155/155` |
 | Alembic heads/history | one head `0009`; parent `0008` |
 | Fresh import probes | Intent Resolver, contracts, planning, and artifact repository import cleanly |

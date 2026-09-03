@@ -20,6 +20,8 @@ from scripts.run_semantic_query_benchmark import (
     parse_challenger_axis_payload,
     REPRESENTATIVE_CASE_EXPECTATIONS,
     REPRESENTATIVE_EXPECTATION_HASH,
+    SUPPORTED_ACTION_POPULATION_HASH,
+    UNSUPPORTED_ACTION_POPULATION_HASH,
     _parser,
     REQUEST_DEADLINE_SECONDS,
 )
@@ -47,6 +49,8 @@ def _source_hashes() -> dict[str, str]:
         "core": SHA_A,
         "heldout": SHA_B,
         "representative_contract_expectations": REPRESENTATIVE_EXPECTATION_HASH,
+        "supported_action_population": SUPPORTED_ACTION_POPULATION_HASH,
+        "unsupported_action_population": UNSUPPORTED_ACTION_POPULATION_HASH,
     }
 
 
@@ -102,6 +106,16 @@ def _evidence() -> PromotionEvidence:
                 "screen": 14,
                 "similar": 10,
             }.items()
+        },
+        per_action_unsupported={
+            "aggregate": 0,
+            "calculate": 0,
+            "compare": 2,
+            "explain": 0,
+            "lookup": 3,
+            "rank": 2,
+            "screen": 3,
+            "similar": 0,
         },
         supported_representability=CountEvidence(successes=199, total=199),
         unsupported_reason_coverage=CountEvidence(successes=10, total=10),
@@ -210,6 +224,30 @@ def test_representative_expectation_hash_cannot_be_self_pinned() -> None:
         PromotionEvidence.model_validate_json(json.dumps(payload))
 
 
+@pytest.mark.parametrize("population", ("supported", "unsupported"))
+def test_per_action_population_buckets_cannot_shift_with_same_total(
+    population: str,
+) -> None:
+    payload = _evidence().model_dump(mode="json")
+    if population == "supported":
+        payload["per_action_representability"]["lookup"] = {
+            "successes": 54,
+            "total": 54,
+        }
+        payload["per_action_representability"]["screen"] = {
+            "successes": 15,
+            "total": 15,
+        }
+        reason = "SUPPORTED_ACTION_POPULATION_MISMATCH"
+    else:
+        payload["per_action_unsupported"]["compare"] = 1
+        payload["per_action_unsupported"]["lookup"] = 4
+        reason = "UNSUPPORTED_ACTION_POPULATION_MISMATCH"
+
+    with pytest.raises(ValidationError, match=reason):
+        PromotionEvidence.model_validate_json(json.dumps(payload))
+
+
 def test_count_changes_are_rejected_fail_closed() -> None:
     evidence = _evidence().model_copy(
         update={"counts": _counts().model_copy(update={"heldout_frames": 208})}
@@ -265,6 +303,41 @@ def test_live_path_rejects_contradictory_metrics(updates: dict[str, object]) -> 
         LivePathEvidence.model_validate(payload)
 
 
+def test_challenger_complete_bundles_require_three_successful_calls_each() -> None:
+    payload = {
+        **_live().model_dump(mode="json"),
+        "path_id": "parallel_three_axis_challenger",
+        "provider_success": {"successes": 16, "total": 16},
+        "structured_validity": {"successes": 16, "total": 16},
+        "representative_contract_exact": None,
+        "provider_calls": 48,
+        "successful_provider_calls": 47,
+        "call_type_counts": {
+            "challenger_action": 16,
+            "challenger_family": 16,
+            "challenger_tag": 16,
+        },
+        "provider_error_counts": {"MODEL_PROVIDER_ERROR": 1},
+    }
+
+    with pytest.raises(ValidationError, match="LIVE_CHALLENGER_BUNDLE_ACCOUNTING_MISMATCH"):
+        LivePathEvidence.model_validate(payload)
+
+
+def test_production_cannot_attempt_more_than_one_repair_or_judge_per_case() -> None:
+    payload = _live().model_dump(mode="json")
+    payload.update(
+        repair_count=9,
+        judge_count=8,
+        provider_calls=33,
+        successful_provider_calls=33,
+        call_type_counts={"primary": 16, "repair": 9, "judge": 8},
+    )
+
+    with pytest.raises(ValidationError, match="LIVE_PRODUCTION_RECOVERY_COUNT_INVALID"):
+        LivePathEvidence.model_validate(payload)
+
+
 @pytest.mark.parametrize(
     ("axis", "payload"),
     (
@@ -303,6 +376,16 @@ def test_representative_contract_gate_requires_all_five_authoritative_groups() -
     assert len(REPRESENTATIVE_EXPECTATION_HASH) == 64
 
 
+def test_representative_contract_population_is_exactly_the_accepted_five() -> None:
+    assert set(REPRESENTATIVE_CASE_EXPECTATIONS) == {
+        "fee-screen",
+        "public-aum-sum",
+        "overseas-aum-rank",
+        "domestic-return-rank",
+        "bond-risk-screen",
+    }
+
+
 def test_representative_contract_gate_rejects_unpinned_population_members() -> None:
     observations = _authoritative_observations()
     observations["not-authoritative"] = observations["fee-screen"]
@@ -314,11 +397,10 @@ def test_representative_contract_gate_rejects_unpinned_population_members() -> N
     ("case_id", "mutation"),
     (
         ("fee-screen", lambda value: value["contracts"][0]["predicate"].update(operator_id="gt")),
-        ("multi-predicate", lambda value: value["contracts"][0]["predicate"]["children"].pop()),
-        ("count", lambda value: value["contracts"][0]["aggregation"].update(function_id="sum")),
-        ("sum", lambda value: value["contracts"][0]["aggregation"].update(function_id="count")),
-        ("grouped-aggregate", lambda value: value["contracts"][0]["aggregation"].update(group_by_field_concept_ids=[])),
-        ("prior-result", lambda value: value["contracts"][1]["scope"].update(prior_result_binding=None)),
+        ("public-aum-sum", lambda value: value["contracts"][0]["aggregation"].update(dedup_policy_id="no-dedup.v1")),
+        ("overseas-aum-rank", lambda value: value["contracts"][0]["ordering"][0].update(field_concept_id="fee_rate")),
+        ("domestic-return-rank", lambda value: value["contracts"][0]["qualifiers"].update(period_id=None)),
+        ("bond-risk-screen", lambda value: value["contracts"][0]["predicate"].update(field_concept_id="product_risk_grade")),
     ),
 )
 def test_representative_gate_rejects_wrong_or_missing_contract_roles(

@@ -63,6 +63,32 @@ LIVE_BASE_URL = "https://clovastudio.stream.ntruss.com"
 LIVE_DATASET_VERSION = "synthetic-semantic-query-benchmark-v1"
 LIVE_CASE_COUNT = 16
 REQUEST_DEADLINE_SECONDS = 55.0
+SUPPORTED_ACTION_POPULATION: Mapping[str, int] = {
+    "aggregate": 11,
+    "calculate": 5,
+    "compare": 28,
+    "explain": 6,
+    "lookup": 55,
+    "rank": 70,
+    "screen": 14,
+    "similar": 10,
+}
+UNSUPPORTED_ACTION_POPULATION: Mapping[str, int] = {
+    "aggregate": 0,
+    "calculate": 0,
+    "compare": 2,
+    "explain": 0,
+    "lookup": 3,
+    "rank": 2,
+    "screen": 3,
+    "similar": 0,
+}
+SUPPORTED_ACTION_POPULATION_HASH = hashlib.sha256(
+    canonical_json_bytes(SUPPORTED_ACTION_POPULATION)
+).hexdigest()
+UNSUPPORTED_ACTION_POPULATION_HASH = hashlib.sha256(
+    canonical_json_bytes(UNSUPPORTED_ACTION_POPULATION)
+).hexdigest()
 
 
 class StrictModel(BaseModel):
@@ -195,6 +221,8 @@ class LivePathEvidence(StrictModel):
                 raise ValueError("LIVE_JUDGE_CALL_COUNT_MISMATCH")
             if set(self.call_type_counts) - {"primary", "repair", "judge"}:
                 raise ValueError("LIVE_CALL_TYPE_INVALID")
+            if self.repair_count + self.judge_count > self.case_count:
+                raise ValueError("LIVE_PRODUCTION_RECOVERY_COUNT_INVALID")
         else:
             expected = {"challenger_action", "challenger_family", "challenger_tag"}
             if set(self.call_type_counts) != expected or any(
@@ -203,6 +231,14 @@ class LivePathEvidence(StrictModel):
                 raise ValueError("LIVE_CHALLENGER_CALL_COUNT_MISMATCH")
             if self.repair_count or self.judge_count:
                 raise ValueError("LIVE_CHALLENGER_EXTRA_CALL_INVALID")
+            complete_bundles = self.provider_success.successes
+            failed_calls = self.provider_calls - self.successful_provider_calls
+            incomplete_bundles = self.case_count - complete_bundles
+            if (
+                complete_bundles * 3 > self.successful_provider_calls
+                or incomplete_bundles > failed_calls
+            ):
+                raise ValueError("LIVE_CHALLENGER_BUNDLE_ACCOUNTING_MISMATCH")
         if self.provider_calls and (
             self.p50_latency_ms is None
             or self.p95_latency_ms is None
@@ -217,6 +253,7 @@ class PromotionEvidence(StrictModel):
     registry_hashes: Mapping[str, str]
     counts: SemanticQueryCounts
     per_action_representability: Mapping[str, CountEvidence]
+    per_action_unsupported: Mapping[str, int]
     supported_representability: CountEvidence
     unsupported_reason_coverage: CountEvidence
     false_complete: CountEvidence
@@ -241,6 +278,8 @@ class PromotionEvidence(StrictModel):
             "core",
             "heldout",
             "representative_contract_expectations",
+            "supported_action_population",
+            "unsupported_action_population",
         }:
             raise ValueError("SOURCE_HASH_SET_INVALID")
         if set(self.registry_hashes) != {
@@ -255,6 +294,13 @@ class PromotionEvidence(StrictModel):
             raise ValueError("REGISTRY_HASH_SET_INVALID")
         if set(self.per_action_representability) != set(ACTION_IDS):
             raise ValueError("PER_ACTION_COVERAGE_INCOMPLETE")
+        if {
+            action: evidence.total
+            for action, evidence in self.per_action_representability.items()
+        } != dict(SUPPORTED_ACTION_POPULATION):
+            raise ValueError("SUPPORTED_ACTION_POPULATION_MISMATCH")
+        if dict(self.per_action_unsupported) != dict(UNSUPPORTED_ACTION_POPULATION):
+            raise ValueError("UNSUPPORTED_ACTION_POPULATION_MISMATCH")
         if sum(item.total for item in self.per_action_representability.values()) != self.counts.supported_frames:
             raise ValueError("PER_ACTION_DENOMINATOR_MISMATCH")
         if sum(item.successes for item in self.per_action_representability.values()) != self.supported_representability.successes:
@@ -272,6 +318,13 @@ class PromotionEvidence(StrictModel):
             != REPRESENTATIVE_EXPECTATION_HASH
         ):
             raise ValueError("REPRESENTATIVE_EXPECTATION_HASH_MISMATCH")
+        if (
+            self.source_hashes["supported_action_population"]
+            != SUPPORTED_ACTION_POPULATION_HASH
+            or self.source_hashes["unsupported_action_population"]
+            != UNSUPPORTED_ACTION_POPULATION_HASH
+        ):
+            raise ValueError("ACTION_POPULATION_HASH_MISMATCH")
         if any(not _is_sha256(value) for value in self.registry_hashes.values()):
             raise ValueError("REGISTRY_HASH_INVALID")
         if set(self.readiness_distribution) - {
@@ -308,6 +361,7 @@ class SemanticQueryPromotionReport(StrictModel):
     registry_hashes: Mapping[str, str]
     counts: SemanticQueryCounts
     per_action_representability: Mapping[str, CountEvidence]
+    per_action_unsupported: Mapping[str, int]
     readiness_distribution: Mapping[str, int]
     live_paths: tuple[LivePathEvidence, ...]
     gates: tuple[PromotionGate, ...]
@@ -421,6 +475,7 @@ def build_promotion_report(
         per_action_representability=dict(
             sorted(evidence.per_action_representability.items())
         ),
+        per_action_unsupported=dict(sorted(evidence.per_action_unsupported.items())),
         readiness_distribution=dict(sorted(evidence.readiness_distribution.items())),
         live_paths=tuple(sorted(evidence.live_paths, key=lambda item: item.path_id)),
         gates=tuple(gates),
@@ -548,6 +603,16 @@ def collect_static_evidence(project_root: Path) -> PromotionEvidence:
     unsupported = [item for item in heldout if item["support_status"] == "unsupported"]
     by_action_total: Counter[str] = Counter()
     by_action_represented: Counter[str] = Counter()
+    heldout_frames_by_case = {
+        case["case_id"]: case["expected_frames"]
+        for case in heldout_dataset.model_dump(mode="json")["cases"]
+    }
+    by_action_unsupported: Counter[str] = Counter()
+    for requirement in unsupported:
+        frame = heldout_frames_by_case[requirement["case_id"]][
+            requirement["frame_ordinal"]
+        ]
+        by_action_unsupported.update(frame["action_ids"])
     for requirement in supported:
         action = requirement["action_id"]
         by_action_total[action] += 1
@@ -564,6 +629,8 @@ def collect_static_evidence(project_root: Path) -> PromotionEvidence:
             "core": snapshot.core_source_hash,
             "heldout": snapshot.heldout_source_hash,
             "representative_contract_expectations": REPRESENTATIVE_EXPECTATION_HASH,
+            "supported_action_population": SUPPORTED_ACTION_POPULATION_HASH,
+            "unsupported_action_population": UNSUPPORTED_ACTION_POPULATION_HASH,
         },
         registry_hashes={
             "physical_bindings": bindings.registry_hash,
@@ -588,6 +655,10 @@ def collect_static_evidence(project_root: Path) -> PromotionEvidence:
             action: CountEvidence(
                 successes=by_action_represented[action], total=by_action_total[action]
             )
+            for action in ACTION_IDS
+        },
+        per_action_unsupported={
+            action: by_action_unsupported[action]
             for action in ACTION_IDS
         },
         supported_representability=CountEvidence(
@@ -659,16 +730,16 @@ def _scope(*families: str, prior: str | None = None) -> dict[str, object]:
     }
 
 
-def _qualifiers() -> dict[str, object]:
+def _qualifiers(*, period: str | None = None) -> dict[str, object]:
     return {
-        "period_id": None,
+        "period_id": period,
         "currency_id": None,
         "unit_id": None,
         "as_of_date": None,
     }
 
 
-def _value(decimal: str, unit: str) -> dict[str, object]:
+def _value(decimal: str, unit: str | None) -> dict[str, object]:
     return {
         "kind": "decimal",
         "string": None,
@@ -682,7 +753,9 @@ def _value(decimal: str, unit: str) -> dict[str, object]:
     }
 
 
-def _atom(field: str, operator: str, decimal: str, unit: str) -> dict[str, object]:
+def _atom(
+    field: str, operator: str, decimal: str, unit: str | None
+) -> dict[str, object]:
     return {
         "node_type": "atom",
         "field_concept_id": field,
@@ -719,6 +792,8 @@ def _aggregate_contract(
     target: str | None = None,
     count_population: str | None = None,
     group_by: tuple[str, ...] = (),
+    population_grain: str = "source-product.v1",
+    dedup_policy: str = "no-dedup.v1",
 ) -> dict[str, object]:
     grouped = bool(group_by)
     return {
@@ -734,78 +809,46 @@ def _aggregate_contract(
             "count_population_id": count_population,
             "group_by_field_concept_ids": list(group_by),
             "bucket_policy_id": None,
-            "population_grain_id": "source-product.v1",
-            "dedup_policy_id": "no-dedup.v1",
+            "population_grain_id": population_grain,
+            "dedup_policy_id": dedup_policy,
         },
         "predicate": None,
     }
 
 
-_fee_screen = _screen_contract(("public_fund",), _atom("fee_rate", "lte", "1", "percent"))
-_multi_predicate = _screen_contract(
-    ("overseas_etf",),
-    {
-        "node_type": "all_of",
-        "children": [
-            _atom("fee_rate", "lte", "0.5", "percent"),
-            _atom("aum", "gte", "100", "krw"),
-        ],
-    },
-)
-_prior_first = {
-    **_contract_base(
-        "rank.ordering.v2",
-        "rank",
-        ("domestic_etf", "overseas_etf"),
-        "top_k",
-    ),
-    "ordering": [{
-        "field_concept_id": "aum",
-        "direction": "desc",
-        "direction_policy_id": None,
-        "nulls_policy_id": "exclude_missing.v1",
-        "tie_break_policy_id": "stable-product-id.v1",
-    }],
-    "limit": 5,
-    "limit_policy_id": None,
-    "predicate": None,
-}
-_prior_second = {
-    **_contract_base(
-        "rank.ordering.v2", "rank", (), "top_k", prior="producer-frame-0"
-    ),
-    "ordering": [{
-        "field_concept_id": "trailing_1y_historical_cumulative_return",
-        "direction": "desc",
-        "direction_policy_id": None,
-        "nulls_policy_id": "exclude_missing.v1",
-        "tie_break_policy_id": "stable-product-id.v1",
-    }],
-    "limit": 1,
-    "limit_policy_id": None,
-    "predicate": None,
-}
-_qualitative_rank = {
-    **_contract_base(
-        "rank.ordering.v2",
-        "rank",
-        ("domestic_etf", "overseas_etf"),
-        "top_k",
-    ),
-    "ordering": [{
-        "field_concept_id": "fee_rate",
-        "direction": "asc",
-        "direction_policy_id": None,
-        "nulls_policy_id": "exclude_missing.v1",
-        "tie_break_policy_id": "stable-product-id.v1",
-    }],
-    "limit": 5,
-    "limit_policy_id": None,
-    "predicate": None,
-}
+def _rank_contract(
+    family: str,
+    field: str,
+    limit: int,
+    *,
+    period: str | None = None,
+) -> dict[str, object]:
+    contract = _contract_base(
+        "rank.ordering.v2", "rank", (family,), "top_k"
+    )
+    contract["qualifiers"] = _qualifiers(period=period)
+    contract.update({
+        "ordering": [{
+            "field_concept_id": field,
+            "direction": "desc",
+            "direction_policy_id": None,
+            "nulls_policy_id": "exclude_missing.v1",
+            "tie_break_policy_id": "stable-product-id.v1",
+        }],
+        "limit": limit,
+        "limit_policy_id": None,
+        "predicate": None,
+    })
+    return contract
 
-# This hand-adjudicated population is deliberately small but complete: every one of
-# the five named groups and every semantic role below is authoritative and hashed.
+
+_fee_screen = _screen_contract(
+    ("public_fund",), _atom("fee_rate", "lte", "1", "percent")
+)
+
+
+# These are exactly the five previously accepted failures, with every semantic
+# role authoritative and hashed. This gate is not a general smoke-case score.
 REPRESENTATIVE_CASE_EXPECTATIONS: Mapping[str, object] = {
     "fee-screen": {
         "actions": ["screen"],
@@ -813,63 +856,51 @@ REPRESENTATIVE_CASE_EXPECTATIONS: Mapping[str, object] = {
         "contracts": [_fee_screen],
         "context_links": [],
     },
-    "multi-predicate": {
-        "actions": ["screen"],
-        "families": ["overseas_etf"],
-        "contracts": [_multi_predicate],
-        "context_links": [],
-    },
-    "count": {
+    "public-aum-sum": {
         "actions": ["aggregate"],
-        "families": ["domestic_etf"],
-        "contracts": [_aggregate_contract("domestic_etf", "count", count_population="source-product.v1")],
-        "context_links": [],
-    },
-    "sum": {
-        "actions": ["aggregate"],
-        "families": ["overseas_etf"],
-        "contracts": [_aggregate_contract("overseas_etf", "sum", target="aum")],
-        "context_links": [],
-    },
-    "grouped-aggregate": {
-        "actions": ["aggregate"],
-        "families": ["domestic_etf"],
+        "families": ["public_fund"],
         "contracts": [_aggregate_contract(
-            "domestic_etf",
-            "count",
-            count_population="source-product.v1",
-            group_by=("product_risk_grade",),
+            "public_fund",
+            "sum",
+            target="aum",
+            population_grain="representative-product.v1",
+            dedup_policy="public-fund-representative-share.v1",
         )],
         "context_links": [],
     },
-    "qualitative-rank": {
+    "overseas-aum-rank": {
         "actions": ["rank"],
-        "families": ["domestic_etf", "overseas_etf"],
-        "contracts": [_qualitative_rank],
+        "families": ["overseas_etf"],
+        "contracts": [_rank_contract("overseas_etf", "aum", 5)],
         "context_links": [],
     },
-    "prior-result": {
-        "actions": ["rank", "rank"],
-        "families": ["domestic_etf", "overseas_etf"],
-        "contracts": [_prior_first, _prior_second],
-        "context_links": [{
-            "link_type": "consume_result_set",
-            "source_role": "top_k_products",
-            "selector": ["all"],
-            "producer_frame_ordinal": 0,
-            "consumer_frame_ordinal": 1,
-            "target_kind": ["result_set"],
-            "target_cardinality": ["many"],
-            "target_slot_kind": ["entity"],
-        }],
+    "domestic-return-rank": {
+        "actions": ["rank"],
+        "families": ["domestic_etf"],
+        "contracts": [_rank_contract(
+            "domestic_etf",
+            "trailing_1y_historical_cumulative_return",
+            3,
+            period="P1Y",
+        )],
+        "context_links": [],
+    },
+    "bond-risk-screen": {
+        "actions": ["screen"],
+        "families": ["domestic_bond"],
+        "contracts": [_screen_contract(
+            ("domestic_bond",),
+            _atom("credit_grade", "lte", "3", None),
+        )],
+        "context_links": [],
     },
 }
 REPRESENTATIVE_GROUPS = (
-    ("fee-screen", "multi-predicate"),
-    ("count", "sum"),
-    ("grouped-aggregate",),
-    ("prior-result",),
-    ("qualitative-rank",),
+    ("fee-screen",),
+    ("public-aum-sum",),
+    ("overseas-aum-rank",),
+    ("domestic-return-rank",),
+    ("bond-risk-screen",),
 )
 REPRESENTATIVE_EXPECTATION_HASH = hashlib.sha256(
     canonical_json_bytes(REPRESENTATIVE_CASE_EXPECTATIONS)

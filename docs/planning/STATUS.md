@@ -154,7 +154,7 @@
   PostgreSQL runner, 기존 bounded Orchestrator 통합, `query_contract` 및
   `logical_query_plan` 불변 저장을 `0009`까지 구현했다. Graph·Search·Calculation
   production executor는 이 범위에 포함하지 않았다.
-- 2026-09-03 최종 V2 검증은 focused `632 passed`, broad offline `2263 passed,
+- 2026-09-03 최종 V2 검증은 focused `636 passed`, broad offline `2267 passed,
   1 expected skip, 463 deselected`다. 지원 프레임 구조 표현력은 `199/199`,
   미지원 reason coverage는 `10/10`, false-complete는 `0/10`이다. 그러나 계약
   role gold는 194개 필요 분모 중 43개만 측정 가능하고 151개가 불완전하므로,
@@ -169,20 +169,22 @@
   reproducibility `155/155`, recall@5 `123/196` (`62.76%`)로 승인된 `>=99%`
   gate에 미달한다.
 - 승인된 HCX-007 16-case smoke에서 production one-axis provider success는 `16/16`,
-  structured/semantic validity `12/16`, action exact `11/16`, family exact `12/16`,
+  structured/semantic validity `11/16`, action exact `10/16`, family exact `11/16`,
   complete contract `7/16`이지만, action·family와 predicate typed value, COUNT/SUM,
   grouping, ordering, prior-result binding을 함께 고정한 대표 의미 계약은 `0/5`로
-  승격 gate에 실패했다. 23개 호출은 primary `16`, repair 시도 `7`, judge `0`이며
+  승격 gate에 실패했다. 24개 호출은 primary `16`, repair 시도 `8`, judge `0`이며
   모든 성공·실패 호출을 직접 계측한다. 세 축 병렬 challenger는 48호출 중 성공
   `40`, rate limit `8`, structured `11/16`, action exact `2/16`, family exact
-  `5/16`으로 더 낮아 운영
+  `6/16`으로 더 낮아 운영
   기본값을 변경하지 않는다. complete-population first-pass/frame/context/OOD
   metric은 여전히 미측정이고 default promotion은 fail-closed/deferred 상태다.
   exact-lock precision·compile success·byte equivalence는 권위 있는 완전 분모가
   정의되지 않아 양의 부분집합 결과와 무관하게 `unmeasured`다. Promotion evidence는
-  frozen v3 SHA와 대표 의미 계약 SHA `919bba39…893f9` 및 complete
-  population에 결합되며, role-required frame evidence가 비어 있거나 부분
-  denominator/coverage이면 `unmeasured`다.
+  frozen v3 SHA와 정확히 다섯 prior-failure 계약 SHA `16e3097e…f66f38`,
+  action별 supported/unsupported population SHA `b592ab53…140c8` /
+  `b3acfa3f…1d323`에 결합된다. role-required frame evidence가 비어 있거나
+  부분 denominator/coverage이면 `unmeasured`이며, action 간 분모 이동도
+  aggregate 합계가 같더라도 거부한다.
   `model_copy`·`model_construct`로 우회 생성된 기존 증거도 exact type·stored field
   keys·strict JSON 재검증을 통과하지 못하면 판정 전에 예외로 차단한다.
 - 이 호스트에는 Docker 계열 runtime이 없어 Linux/amd64 build/run/Compose는
@@ -281,7 +283,7 @@ Stage 03은 [경량 데이터 수집·표준화 설계](specs/2026-08-20-stage-0
 40. ~~Stage 06 Phase 1 Intent Resolver의 온톨로지 기반 분류·한국어 문맥 해소·OOD·검증·평가 설계 승인~~ — 2026-08-31 완료; 상세 구현 계획과 런타임 변경은 별도 승인 대기
 41. ~~Stage 06 Phase 1 Intent Resolver 상세 구현·로컬 비라이브·PostgreSQL 검증~~ — 2026-09-01 완료; Linux/amd64 container 미실행, candidate recall 실패와 live 미측정 gate로 승격 차단
 42. ~~Stage 06 Phase 2 QueryPlan compiler·4경로 router와 Phase 3 bounded Orchestrator 로컬 구현·통합 검증~~ — 2026-09-02 완료; production executor와 답변 생성은 포함하지 않음
-43. ~~Stage 06 live HCX-007 16-case production/challenger benchmark~~ — 2026-09-03 완료; production provider `16/16`, complete contract `6/16`, challenger rate limit `8/48`, 승격 보류
+43. ~~Stage 06 live HCX-007 16-case production/challenger benchmark~~ — 2026-09-03 완료; production provider `16/16`, complete contract `7/16`, representative exact `0/5`, challenger rate limit `8/48`, 승격 보류
 44. ~~SQL 의미 계약 V2·결정론적 SQL compiler·RDB executor·artifact persistence 구현~~ — 2026-09-03 로컬 완료; 불완전 gold·PostgreSQL·public-fund physical gate는 보류
 
 이 순서를 바꾸거나 상위 아키텍처를 바꾸는 경우 사전 승인과 해당 ADR 또는 설계 문서 갱신이 필요하다.
