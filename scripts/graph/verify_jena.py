@@ -394,6 +394,7 @@ def _run_cli_queries(
             "tdb2_query",
             [
                 str(tdbquery),
+                "--optimize=false",
                 "--loc",
                 str(tdb2_location),
                 "--query",

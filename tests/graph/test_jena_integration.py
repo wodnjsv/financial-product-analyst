@@ -61,7 +61,9 @@ def _require_exact_runtime() -> tuple[Path, Path]:
     return Path(os.environ["JENA_HOME"]), Path(os.environ["FUSEKI_HOME"])
 
 
-def _synthetic_batch() -> GraphProjectionBatch:
+def _synthetic_batch(
+    relations: tuple[tuple[str, str, str, str], ...] = RELATIONS,
+) -> GraphProjectionBatch:
     entities = (
         EntityProjection(VERSION, "product/etf", ("FinancialProduct", "ETF", "DomesticETF")),
         EntityProjection(VERSION, "product/bond", ("FinancialProduct", "Bond", "DomesticBond")),
@@ -83,7 +85,7 @@ def _synthetic_batch() -> GraphProjectionBatch:
     )
     sources = tuple(
         SourceProjection(VERSION, f"source/{index}", "organization/publisher")
-        for index in range(1, len(RELATIONS) + 1)
+        for index in range(1, len(relations) + 1)
     )
     evidences = tuple(
         EvidenceProjection(
@@ -97,7 +99,7 @@ def _synthetic_batch() -> GraphProjectionBatch:
             None,
             "eligible",
         )
-        for index in range(1, len(RELATIONS) + 1)
+        for index in range(1, len(relations) + 1)
     )
     relations = tuple(
         RelationProjection(
@@ -124,13 +126,15 @@ def _synthetic_batch() -> GraphProjectionBatch:
             else (),
         )
         for index, (predicate_id, subject_id, object_id, relation_id) in enumerate(
-            RELATIONS, start=1
+            relations, start=1
         )
     )
     return GraphProjectionBatch(VERSION, CUTOFF, entities, sources, evidences, relations)
 
 
-def _expected_bindings() -> dict[str, object]:
+def _expected_bindings(
+    relations: tuple[tuple[str, str, str, str], ...] = RELATIONS,
+) -> dict[str, object]:
     return {
         "cutoff_date": CUTOFF.isoformat(),
         "dataset_version": VERSION,
@@ -140,16 +144,21 @@ def _expected_bindings() -> dict[str, object]:
                     "dataset_version": VERSION,
                     "evidence_id": f"evidence/{index}",
                     "object_id": object_id,
-                    "predicate_id": predicate_id,
+                    "predicate_id": row_predicate,
                     "relation_assertion_id": relation_id,
                     "subject_id": subject_id,
                     "valid_from": "2026-08-01",
                     "valid_to": "2026-08-24",
                 }
+                for index, (
+                    row_predicate,
+                    subject_id,
+                    object_id,
+                    relation_id,
+                ) in enumerate(relations, start=1)
+                if row_predicate == predicate_id
             ]
-            for index, (predicate_id, subject_id, object_id, relation_id) in enumerate(
-                RELATIONS, start=1
-            )
+            for predicate_id in verify_jena.QUERY_IDS
         },
     }
 
@@ -158,16 +167,17 @@ def _run_verifier(
     tmp_path: Path,
     *,
     environment_overrides: dict[str, str] | None = None,
+    relations: tuple[tuple[str, str, str, str], ...] = RELATIONS,
 ) -> subprocess.CompletedProcess[str]:
     jena_home, fuseki_home = _require_exact_runtime()
-    artifacts = build_graph_artifacts(_synthetic_batch())
+    artifacts = build_graph_artifacts(_synthetic_batch(relations))
     data_path = tmp_path / "data.nq"
     evidence_path = tmp_path / "evidence.nq"
     expected_path = tmp_path / "expected-bindings.json"
     data_path.write_bytes(artifacts.data_nquads)
     evidence_path.write_bytes(artifacts.evidence_nquads)
     expected_path.write_text(
-        json.dumps(_expected_bindings(), ensure_ascii=False, sort_keys=True),
+        json.dumps(_expected_bindings(relations), ensure_ascii=False, sort_keys=True),
         encoding="utf-8",
     )
     environment = os.environ.copy()
@@ -218,6 +228,23 @@ def test_verified_jena_tdb2_and_read_only_fuseki(tmp_path: Path) -> None:
     assert summary["fuseki_query"] == "pass"
     assert summary["update_surface"] == "blocked"
     assert summary["admin_surface"] == "blocked"
+
+
+@pytest.mark.jena_integration
+def test_zero_row_approved_predicate_is_verified_by_tdb2_and_fuseki(
+    tmp_path: Path,
+) -> None:
+    """Catches Jena's optimizer crashing instead of returning an empty result."""
+    without_holdings = tuple(
+        relation for relation in RELATIONS if relation[0] != "holdsSecurity"
+    )
+
+    result = _run_verifier(tmp_path, relations=without_holdings)
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    summary = _summary(result)
+    assert summary["tdb2_query"] == "pass"
+    assert summary["fuseki_query"] == "pass"
 
 
 @pytest.mark.jena_integration
