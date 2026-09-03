@@ -337,7 +337,91 @@ def test_multi_class_public_fund_is_actionable_until_every_member_is_embedded() 
     assert complete.actionable_inventory.targets == ()
 
 
-def test_recovery_selection_rejects_mixed_applicable_and_non_applicable_members() -> None:
+def test_recovery_selection_filters_private_members_from_mixed_public_target() -> None:
+    rows = (
+        _row(
+            "class-a",
+            family="public_fund",
+            identifier_scheme="PRFD_ITM_NO",
+            identifier_value="PF-A",
+            representative_entity_id="representative",
+            representative_name="Representative",
+        ),
+        _row(
+            "class-b",
+            family="public_fund",
+            identifier_scheme="PRFD_ITM_NO",
+            identifier_value="PF-B",
+            representative_entity_id="representative",
+            representative_name="Representative",
+        ),
+    )
+    inventory = build_organizer_dart_inventory("organizer-v1", CUTOFF, rows)
+
+    selection = select_dart_recovery_targets(
+        inventory,
+        (
+            DartRecoveryProductState("class-a", "fund_prospectus", False),
+            DartRecoveryProductState(
+                "class-b", "private_fund_not_applicable", True
+            ),
+        ),
+    )
+
+    selected = selection.actionable_inventory.targets
+    assert len(selected) == 1
+    assert selected[0].member_entity_ids == ("class-a",)
+    assert selected[0].member_entity_names == (
+        ("class-a", "Canonical class-a"),
+    )
+    assert selected[0].identifiers == (("class-a", "PRFD_ITM_NO", "PF-A"),)
+    assert selected[0].manager_bindings == (("manager-one", "Manager One"),)
+    assert selection.not_applicable_member_reason_counts == (
+        ("private_fund_not_applicable", 1),
+    )
+
+
+def test_mixed_public_target_completion_uses_only_retained_public_members() -> None:
+    rows = (
+        _row(
+            "class-a",
+            family="public_fund",
+            identifier_scheme="PRFD_ITM_NO",
+            identifier_value="PF-A",
+            representative_entity_id="representative",
+            representative_name="Representative",
+        ),
+        _row(
+            "class-b",
+            family="public_fund",
+            identifier_scheme="PRFD_ITM_NO",
+            identifier_value="PF-B",
+            representative_entity_id="representative",
+            representative_name="Representative",
+        ),
+    )
+    inventory = build_organizer_dart_inventory("organizer-v1", CUTOFF, rows)
+
+    selection = select_dart_recovery_targets(
+        inventory,
+        (
+            DartRecoveryProductState("class-a", "fund_prospectus", True),
+            DartRecoveryProductState(
+                "class-b", "private_fund_not_applicable", False
+            ),
+        ),
+    )
+
+    assert selection.actionable_inventory.targets == ()
+    assert selection.already_embedded_target_ids == (
+        "public_fund:representative",
+    )
+    assert selection.not_applicable_member_reason_counts == (
+        ("private_fund_not_applicable", 1),
+    )
+
+
+def test_recovery_selection_rejects_unsupported_mixed_scopes() -> None:
     rows = (
         _row(
             "class-a",
@@ -363,7 +447,7 @@ def test_recovery_selection_rejects_mixed_applicable_and_non_applicable_members(
             inventory,
             (
                 DartRecoveryProductState("class-a", "fund_prospectus", True),
-                DartRecoveryProductState("class-b", "private_fund_not_applicable", True),
+                DartRecoveryProductState("class-b", "etn_not_applicable", True),
             ),
         )
 

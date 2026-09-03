@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal
@@ -346,8 +347,19 @@ async def test_missing_only_run_discovers_only_actionable_recovery_targets(
     private_fund = target(
         "public_fund:private", "public_fund", "private-fund"
     )
-    missing = target(
-        "public_fund:missing-public", "public_fund", "missing-public"
+    missing = replace(
+        target(
+            "public_fund:missing-public", "public_fund", "missing-public"
+        ),
+        member_entity_ids=("missing-public", "private-member"),
+        member_entity_names=(
+            ("missing-public", "Missing Public"),
+            ("private-member", "Private Member"),
+        ),
+        identifiers=(
+            ("missing-public", "ISIN", "missing-public"),
+            ("private-member", "ISIN", "private-member"),
+        ),
     )
     inventory = OrganizerDartInventory(
         dataset_version="documents-building-v1",
@@ -366,6 +378,9 @@ async def test_missing_only_run_discovers_only_actionable_recovery_targets(
         ),
         DartRecoveryProductState(
             "missing-public", "fund_prospectus", False
+        ),
+        DartRecoveryProductState(
+            "private-member", "private_fund_not_applicable", False
         ),
     )
 
@@ -388,12 +403,18 @@ async def test_missing_only_run_discovers_only_actionable_recovery_targets(
         lambda **_kwargs: DartPublisherReconciliation((), (), "a" * 64),
     )
     requested_target_keys: tuple[str, ...] = ()
+    requested_member_entity_ids: tuple[str, ...] = ()
 
     def discover(**kwargs: object) -> DartBatchDiscoveryResult:
-        nonlocal requested_target_keys
+        nonlocal requested_target_keys, requested_member_entity_ids
         selected_inventory = kwargs["inventory"]
         requested_target_keys = tuple(
             item.target_key for item in selected_inventory.targets
+        )
+        requested_member_entity_ids = tuple(
+            member_id
+            for item in selected_inventory.targets
+            for member_id in item.member_entity_ids
         )
         return DartBatchDiscoveryResult(
             dispositions=tuple(
@@ -430,10 +451,15 @@ async def test_missing_only_run_discovers_only_actionable_recovery_targets(
     report = await _run_dart_corpus(configuration)
 
     assert requested_target_keys == ("public_fund:missing-public",)
+    assert requested_member_entity_ids == ("missing-public",)
     assert report.already_embedded_target_count == 1
     assert report.not_applicable_target_count == 2
     assert report.not_applicable_reason_counts == (
         ("etn_not_applicable", 1),
+        ("private_fund_not_applicable", 1),
+    )
+    assert report.excluded_not_applicable_member_count == 1
+    assert report.excluded_not_applicable_member_reason_counts == (
         ("private_fund_not_applicable", 1),
     )
     assert report.failed_targets == (
@@ -760,6 +786,10 @@ def test_report_contains_only_sanitized_counts_ids_hashes_and_reason_codes(
             ("etn_not_applicable", 1),
             ("private_fund_not_applicable", 1),
         ),
+        excluded_not_applicable_member_count=3,
+        excluded_not_applicable_member_reason_counts=(
+            ("private_fund_not_applicable", 3),
+        ),
     )
 
     report_hash = _write_dart_corpus_report(report, destination)
@@ -775,6 +805,10 @@ def test_report_contains_only_sanitized_counts_ids_hashes_and_reason_codes(
     assert written["not_applicable_reason_counts"] == [
         ["etn_not_applicable", 1],
         ["private_fund_not_applicable", 1],
+    ]
+    assert written["excluded_not_applicable_member_count"] == 3
+    assert written["excluded_not_applicable_member_reason_counts"] == [
+        ["private_fund_not_applicable", 3],
     ]
 
 

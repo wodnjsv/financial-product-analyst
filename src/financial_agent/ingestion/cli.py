@@ -246,6 +246,10 @@ class _DartCorpusRunReport:
     already_embedded_target_count: int = 0
     not_applicable_target_count: int = 0
     not_applicable_reason_counts: tuple[tuple[str, int], ...] = ()
+    excluded_not_applicable_member_count: int = 0
+    excluded_not_applicable_member_reason_counts: tuple[
+        tuple[str, int], ...
+    ] = ()
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -1481,6 +1485,10 @@ async def _run_dart_corpus(
     already_embedded_target_count = 0
     not_applicable_target_count = 0
     not_applicable_reason_counts: tuple[tuple[str, int], ...] = ()
+    excluded_not_applicable_member_count = 0
+    excluded_not_applicable_member_reason_counts: tuple[
+        tuple[str, int], ...
+    ] = ()
     if configuration.missing_only:
         recovery_selection = select_dart_recovery_targets(
             full_inventory,
@@ -1500,6 +1508,13 @@ async def _run_dart_corpus(
         )
         not_applicable_target_count = sum(
             count for _, count in not_applicable_reason_counts
+        )
+        excluded_not_applicable_member_reason_counts = (
+            recovery_selection.not_applicable_member_reason_counts
+        )
+        excluded_not_applicable_member_count = sum(
+            count
+            for _, count in excluded_not_applicable_member_reason_counts
         )
     else:
         recovery_inventory = full_inventory
@@ -1554,6 +1569,12 @@ async def _run_dart_corpus(
                 already_embedded_target_count=already_embedded_target_count,
                 not_applicable_target_count=not_applicable_target_count,
                 not_applicable_reason_counts=not_applicable_reason_counts,
+                excluded_not_applicable_member_count=(
+                    excluded_not_applicable_member_count
+                ),
+                excluded_not_applicable_member_reason_counts=(
+                    excluded_not_applicable_member_reason_counts
+                ),
             )
         selected_manager_ids = {
             manager_id
@@ -1730,6 +1751,12 @@ async def _run_dart_corpus(
             already_embedded_target_count=already_embedded_target_count,
             not_applicable_target_count=not_applicable_target_count,
             not_applicable_reason_counts=not_applicable_reason_counts,
+            excluded_not_applicable_member_count=(
+                excluded_not_applicable_member_count
+            ),
+            excluded_not_applicable_member_reason_counts=(
+                excluded_not_applicable_member_reason_counts
+            ),
         )
     finally:
         await engine.dispose()

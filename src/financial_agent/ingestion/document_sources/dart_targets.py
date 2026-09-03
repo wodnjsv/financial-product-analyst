@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 import hashlib
@@ -29,6 +30,7 @@ class DartRecoverySelection:
     actionable_inventory: OrganizerDartInventory
     already_embedded_target_ids: tuple[str, ...]
     not_applicable_targets: tuple[tuple[str, str], ...]
+    not_applicable_member_reason_counts: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,9 +249,47 @@ def select_dart_recovery_targets(
     actionable: list[OrganizerDartTarget] = []
     embedded: list[str] = []
     not_applicable: list[tuple[str, str]] = []
+    excluded_not_applicable_member_reasons: list[str] = []
     for target in inventory.targets:
         members = tuple(state_by_id[item] for item in target.member_entity_ids)
         scopes = {item.product_scope for item in members}
+        if (
+            target.product_family == "public_fund"
+            and scopes == {"fund_prospectus", "private_fund_not_applicable"}
+        ):
+            retained_ids = tuple(
+                member.entity_id
+                for member in members
+                if member.product_scope == "fund_prospectus"
+            )
+            retained_id_set = set(retained_ids)
+            selected_target = replace(
+                target,
+                member_entity_ids=retained_ids,
+                member_entity_names=tuple(
+                    item
+                    for item in target.member_entity_names
+                    if item[0] in retained_id_set
+                ),
+                identifiers=tuple(
+                    item
+                    for item in target.identifiers
+                    if item[0] in retained_id_set
+                ),
+            )
+            excluded_not_applicable_member_reasons.extend(
+                member.product_scope
+                for member in members
+                if member.product_scope == "private_fund_not_applicable"
+            )
+            if all(
+                state_by_id[entity_id].has_exact_embedding
+                for entity_id in retained_ids
+            ):
+                embedded.append(target.target_key)
+            else:
+                actionable.append(selected_target)
+            continue
         if len(scopes) == 1:
             scope = next(iter(scopes))
             if scope in {"etn_not_applicable", "private_fund_not_applicable"}:
@@ -267,6 +307,9 @@ def select_dart_recovery_targets(
         actionable_inventory=replace(inventory, targets=tuple(actionable)),
         already_embedded_target_ids=tuple(sorted(embedded)),
         not_applicable_targets=tuple(sorted(not_applicable)),
+        not_applicable_member_reason_counts=tuple(
+            sorted(Counter(excluded_not_applicable_member_reasons).items())
+        ),
     )
 
 
