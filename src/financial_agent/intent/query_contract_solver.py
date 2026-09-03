@@ -44,6 +44,7 @@ from .query_contracts import (
     SimilaritySpecV2,
     SolvedQueryContractCandidateV2,
     TypedSemanticValue,
+    query_contract_candidate_id,
     _AggregateQueryContractCandidateV2,
     _CompareQueryContractCandidateV2,
     _ExplainQueryContractCandidateV2,
@@ -140,10 +141,7 @@ class _CandidateAccumulator:
             contract, self.registry, self.frame, self.rejections
         ):
             return
-        semantic_content = contract.model_dump(
-            mode="json", exclude={"frame_id", "provenance", "registry_pins"}
-        )
-        digest = canonical_sha256(semantic_content)
+        candidate_id = query_contract_candidate_id(contract)
         enriched = contract.model_copy(
             update={
                 "provenance": _resolved_input_provenance(
@@ -151,19 +149,19 @@ class _CandidateAccumulator:
                 )
             }
         )
-        existing = self.candidates.get(digest)
+        existing = self.candidates.get(candidate_id)
         if existing is not None:
             merged = _merge_provenance(
                 existing.contract.provenance, enriched.provenance
             )
-            self.candidates[digest] = existing.model_copy(
+            self.candidates[candidate_id] = existing.model_copy(
                 update={"contract": existing.contract.model_copy(update={"provenance": merged})}
             )
             return
         if len(self.candidates) >= MAX_COMPLETE_CANDIDATES_PER_FRAME:
             raise _CandidateBoundReached("complete_contract")
-        self.candidates[digest] = QueryContractCandidate(
-            candidate_id=f"query-contract-{digest}", contract=enriched
+        self.candidates[candidate_id] = QueryContractCandidate(
+            candidate_id=candidate_id, contract=enriched
         )
 
     def ordered(self) -> tuple[QueryContractCandidate, ...]:

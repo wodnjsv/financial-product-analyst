@@ -24,6 +24,7 @@ from financial_agent.intent.query_contracts import (
     OrderingDirection,
     ProvenanceSourceKind,
     QueryOperatorId,
+    query_contract_candidate_id,
 )
 from financial_agent.intent.types import (
     EntitySemanticRole,
@@ -476,6 +477,9 @@ def test_candidate_id_ignores_evidence_source_but_provenance_preserves_exact_loc
 
     exact_candidate = exact.frames[0].complete_candidates[0]
     assert exact_candidate.candidate_id == offered.frames[0].complete_candidates[0].candidate_id
+    assert exact_candidate.candidate_id == query_contract_candidate_id(
+        exact_candidate.contract
+    )
     field_provenance = next(
         item
         for item in exact_candidate.contract.provenance

@@ -41,7 +41,10 @@ from financial_agent.intent.resolution import (
     ValidatedIntentResolution,
     ValidatedIntentResolutionV2,
 )
-from financial_agent.intent.query_contracts import ResolvedQueryContractSetV2
+from financial_agent.intent.query_contracts import (
+    ResolvedQueryContractSetV2,
+    query_contract_candidate_id,
+)
 from financial_agent.planning.logical_query import LogicalQueryPlanV2
 from tests.fixtures.db.synthetic_dataset import (
     CREATED_AT,
@@ -524,6 +527,60 @@ def test_query_contract_fixture_rejects_divergent_pins_and_ownership(
     target[path[-1]] = value
 
     with pytest.raises(ValueError, match=message):
+        ResolvedQueryContractSetV2.model_validate_json(json.dumps(payload))
+
+
+def test_query_contract_fixture_candidate_id_is_deterministic_and_round_trips(
+) -> None:
+    artifact = ResolvedQueryContractSetV2.model_validate_json(
+        (V2_FIXTURE_ROOT / "query_contract.json").read_bytes()
+    )
+    contract = artifact.contracts[0]
+
+    assert artifact.judge_provenance[0].selected_candidate_id == (
+        query_contract_candidate_id(contract)
+    )
+    assert ResolvedQueryContractSetV2.model_validate_json(
+        canonical_json_bytes(artifact)
+    ) == artifact
+    assert query_contract_candidate_id(
+        contract.model_copy(
+            update={
+                "provenance": contract.provenance[:1],
+                "axis_readiness": contract.axis_readiness.model_copy(
+                    update={"reason_codes": ("different-audit-reason",)}
+                ),
+            }
+        )
+    ) == query_contract_candidate_id(contract)
+
+
+@pytest.mark.parametrize(
+    "selected_candidate_id",
+    ("arbitrary-candidate", "query-contract-" + "0" * 64),
+)
+def test_query_contract_fixture_rejects_arbitrary_candidate_id(
+    selected_candidate_id: str,
+) -> None:
+    payload = _v2_fixture_payload("query_contract.json")
+    payload["judge_provenance"][0]["selected_candidate_id"] = selected_candidate_id
+
+    with pytest.raises(ValueError, match="CONTRACT_SELECTION_CANDIDATE_MISMATCH"):
+        ResolvedQueryContractSetV2.model_validate_json(json.dumps(payload))
+
+
+def test_query_contract_fixture_rejects_candidate_id_for_different_contract(
+) -> None:
+    artifact = ResolvedQueryContractSetV2.model_validate_json(
+        (V2_FIXTURE_ROOT / "query_contract.json").read_bytes()
+    )
+    other_contract = artifact.contracts[0].model_copy(update={"limit": 6})
+    payload = artifact.model_dump(mode="json")
+    payload["judge_provenance"][0]["selected_candidate_id"] = (
+        query_contract_candidate_id(other_contract)
+    )
+
+    with pytest.raises(ValueError, match="CONTRACT_SELECTION_CANDIDATE_MISMATCH"):
         ResolvedQueryContractSetV2.model_validate_json(json.dumps(payload))
 
 

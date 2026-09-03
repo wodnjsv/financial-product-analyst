@@ -652,6 +652,14 @@ class ResolvedQueryContractSetV2(RuntimeArtifact):
         _require_unique(frame_ids, "DUPLICATE_FRAME_ID")
         if tuple(item.frame_id for item in self.judge_provenance) != frame_ids:
             raise ValueError("CONTRACT_SELECTION_OWNERSHIP_MISMATCH")
+        if any(
+            provenance.selected_candidate_id
+            != query_contract_candidate_id(contract)
+            for contract, provenance in zip(
+                self.contracts, self.judge_provenance, strict=True
+            )
+        ):
+            raise ValueError("CONTRACT_SELECTION_CANDIDATE_MISMATCH")
         if tuple(item.frame_id for item in self.readiness) != frame_ids:
             raise ValueError("CONTRACT_READINESS_OWNERSHIP_MISMATCH")
         if any(
@@ -680,6 +688,22 @@ def resolved_query_contract_set_id(
     return "query-contract-bundle-" + canonical_sha256(
         ResolvedQueryContractBundleV2(contracts=contracts)
     )
+
+
+def query_contract_candidate_id(contract: QueryContractSemanticBaseV2) -> str:
+    """Return the canonical ID shared by solved and resolved contracts."""
+    semantic_content = contract.model_dump(
+        mode="json",
+        exclude={
+            "frame_id",
+            "provenance",
+            "registry_pins",
+            "axis_readiness",
+            "contract_readiness",
+            "plan_readiness",
+        },
+    )
+    return "query-contract-" + canonical_sha256(semantic_content)
 
 
 def predicate_atom_count(predicate: PredicateNodeV2) -> int:
