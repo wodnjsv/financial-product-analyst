@@ -370,6 +370,7 @@ def test_recovery_selection_filters_private_members_from_mixed_public_target() -
 
     selected = selection.actionable_inventory.targets
     assert len(selected) == 1
+    assert selected[0].product_family == "public_fund"
     assert selected[0].member_entity_ids == ("class-a",)
     assert selected[0].member_entity_names == (
         ("class-a", "Canonical class-a"),

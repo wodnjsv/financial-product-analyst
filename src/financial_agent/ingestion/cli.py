@@ -250,6 +250,7 @@ class _DartCorpusRunReport:
     excluded_not_applicable_member_reason_counts: tuple[
         tuple[str, int], ...
     ] = ()
+    actionable_target_family_counts: tuple[tuple[str, int], ...] = ()
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -1489,12 +1490,21 @@ async def _run_dart_corpus(
     excluded_not_applicable_member_reason_counts: tuple[
         tuple[str, int], ...
     ] = ()
+    actionable_target_family_counts: tuple[tuple[str, int], ...] = ()
     if configuration.missing_only:
         recovery_selection = select_dart_recovery_targets(
             full_inventory,
             recovery_states,
         )
         recovery_inventory = recovery_selection.actionable_inventory
+        actionable_target_family_counts = tuple(
+            sorted(
+                Counter(
+                    target.product_family
+                    for target in recovery_inventory.targets
+                ).items()
+            )
+        )
         already_embedded_target_count = len(
             recovery_selection.already_embedded_target_ids
         )
@@ -1575,6 +1585,7 @@ async def _run_dart_corpus(
                 excluded_not_applicable_member_reason_counts=(
                     excluded_not_applicable_member_reason_counts
                 ),
+                actionable_target_family_counts=actionable_target_family_counts,
             )
         selected_manager_ids = {
             manager_id
@@ -1757,6 +1768,7 @@ async def _run_dart_corpus(
             excluded_not_applicable_member_reason_counts=(
                 excluded_not_applicable_member_reason_counts
             ),
+            actionable_target_family_counts=actionable_target_family_counts,
         )
     finally:
         await engine.dispose()

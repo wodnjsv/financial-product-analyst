@@ -361,11 +361,14 @@ async def test_missing_only_run_discovers_only_actionable_recovery_targets(
             ("private-member", "ISIN", "private-member"),
         ),
     )
+    second_missing = target(
+        "domestic_etf:missing-etf", "domestic_etf", "missing-etf"
+    )
     inventory = OrganizerDartInventory(
         dataset_version="documents-building-v1",
         cutoff_date=date(2026, 8, 24),
-        product_count=4,
-        targets=(completed, etn, private_fund, missing),
+        product_count=5,
+        targets=(completed, etn, private_fund, missing, second_missing),
         inventory_hash="a" * 64,
     )
     states = (
@@ -381,6 +384,9 @@ async def test_missing_only_run_discovers_only_actionable_recovery_targets(
         ),
         DartRecoveryProductState(
             "private-member", "private_fund_not_applicable", False
+        ),
+        DartRecoveryProductState(
+            "missing-etf", "fund_prospectus", False
         ),
     )
 
@@ -461,6 +467,10 @@ async def test_missing_only_run_discovers_only_actionable_recovery_targets(
     assert report.excluded_not_applicable_member_count == 1
     assert report.excluded_not_applicable_member_reason_counts == (
         ("private_fund_not_applicable", 1),
+    )
+    assert report.actionable_target_family_counts == (
+        ("domestic_etf", 1),
+        ("public_fund", 1),
     )
     assert report.failed_targets == (
         ("public_fund:missing-public", "document_not_found"),
@@ -790,6 +800,10 @@ def test_report_contains_only_sanitized_counts_ids_hashes_and_reason_codes(
         excluded_not_applicable_member_reason_counts=(
             ("private_fund_not_applicable", 3),
         ),
+        actionable_target_family_counts=(
+            ("domestic_etf", 4),
+            ("public_fund", 11),
+        ),
     )
 
     report_hash = _write_dart_corpus_report(report, destination)
@@ -809,6 +823,10 @@ def test_report_contains_only_sanitized_counts_ids_hashes_and_reason_codes(
     assert written["excluded_not_applicable_member_count"] == 3
     assert written["excluded_not_applicable_member_reason_counts"] == [
         ["private_fund_not_applicable", 3],
+    ]
+    assert written["actionable_target_family_counts"] == [
+        ["domestic_etf", 4],
+        ["public_fund", 11],
     ]
 
 
