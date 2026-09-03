@@ -35,6 +35,7 @@ from financial_agent.db.schema.catalog import entity
 from financial_agent.db.schema.operations import (
     dataset_version as dataset_version_table,
 )
+from financial_agent.embeddings.contracts import APPROVED_MODEL
 from financial_agent.documents import (
     DocumentRole,
     DocumentSourceAuditEntry,
@@ -104,6 +105,7 @@ from financial_agent.ingestion.document_sources.dart_targets import (
     OrganizerDartInventory,
     OrganizerDartTarget,
     build_organizer_dart_inventory,
+    select_dart_recovery_targets,
 )
 from financial_agent.ingestion.document_sources.registered import (
     RegisteredDocumentSourceAdapter,
@@ -211,6 +213,7 @@ class _DartCorpusConfiguration:
     report_path: Path
     limit: int | None
     target_key: str | None
+    missing_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,6 +243,9 @@ class _DartCorpusRunReport:
     quarantined_pdf_count: int
     quarantined_bytes: int
     discarded_failed_artifacts: tuple[tuple[str, str, int, str], ...] = ()
+    already_embedded_target_count: int = 0
+    not_applicable_target_count: int = 0
+    not_applicable_reason_counts: tuple[tuple[str, int], ...] = ()
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -292,6 +298,7 @@ def _parser() -> argparse.ArgumentParser:
     dart_selection = dart_corpus.add_mutually_exclusive_group()
     dart_selection.add_argument("--limit", type=int)
     dart_selection.add_argument("--target-key")
+    dart_corpus.add_argument("--missing-only", action="store_true")
     capacity = commands.add_parser("measure-stage03b-capacity")
     capacity.add_argument("--full-holdings", required=True, type=int)
     capacity.add_argument("--sample-products", default=100, type=int)
@@ -349,6 +356,7 @@ def _load_dart_corpus_configuration(
         report_path=report_path,
         limit=limit,
         target_key=target_key,
+        missing_only=arguments.missing_only,
     )
 
 
@@ -1248,6 +1256,10 @@ async def _load_dart_corpus_inventory(
                 configuration.dataset_version,
                 _DOCUMENT_SOURCE_CUTOFF,
             )
+            recovery_states = await repository.list_dart_recovery_states(
+                configuration.dataset_version,
+                APPROVED_MODEL,
+            )
     except Exception:
         await engine.dispose()
         raise
@@ -1276,7 +1288,7 @@ async def _load_dart_corpus_inventory(
     except Exception:
         await engine.dispose()
         raise
-    return engine, inventory, institution_identifiers
+    return engine, inventory, institution_identifiers, recovery_states
 
 
 def _limited_dart_inventory(
@@ -1460,9 +1472,35 @@ async def _run_dart_corpus(
         engine,
         full_inventory,
         institution_identifiers,
+        recovery_states,
     ) = await _load_dart_corpus_inventory(configuration)
+    already_embedded_target_count = 0
+    not_applicable_target_count = 0
+    not_applicable_reason_counts: tuple[tuple[str, int], ...] = ()
+    if configuration.missing_only:
+        recovery_selection = select_dart_recovery_targets(
+            full_inventory,
+            recovery_states,
+        )
+        recovery_inventory = recovery_selection.actionable_inventory
+        already_embedded_target_count = len(
+            recovery_selection.already_embedded_target_ids
+        )
+        not_applicable_reason_counts = tuple(
+            sorted(
+                Counter(
+                    reason
+                    for _, reason in recovery_selection.not_applicable_targets
+                ).items()
+            )
+        )
+        not_applicable_target_count = sum(
+            count for _, count in not_applicable_reason_counts
+        )
+    else:
+        recovery_inventory = full_inventory
     inventory = _limited_dart_inventory(
-        full_inventory,
+        recovery_inventory,
         configuration.limit,
         configuration.target_key,
     )
@@ -1509,6 +1547,9 @@ async def _run_dart_corpus(
                 deleted_bytes=0,
                 quarantined_pdf_count=quarantined_count,
                 quarantined_bytes=quarantined_bytes,
+                already_embedded_target_count=already_embedded_target_count,
+                not_applicable_target_count=not_applicable_target_count,
+                not_applicable_reason_counts=not_applicable_reason_counts,
             )
         selected_manager_ids = {
             manager_id
@@ -1682,6 +1723,9 @@ async def _run_dart_corpus(
             discarded_failed_artifacts=tuple(
                 sorted(discarded_failed_artifacts)
             ),
+            already_embedded_target_count=already_embedded_target_count,
+            not_applicable_target_count=not_applicable_target_count,
+            not_applicable_reason_counts=not_applicable_reason_counts,
         )
     finally:
         await engine.dispose()

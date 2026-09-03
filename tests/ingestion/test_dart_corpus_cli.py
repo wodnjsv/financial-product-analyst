@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -19,20 +20,32 @@ from financial_agent.ingestion.cli import (
     _write_dart_corpus_report,
 )
 from financial_agent.ingestion.document_sources.dart_targets import (
+    DartRecoveryProductState,
     OrganizerDartInventory,
     OrganizerDartTarget,
 )
+from financial_agent.ingestion.document_sources.dart_batch import (
+    DartBatchDiscoveryResult,
+    DartTargetDiscoveryDisposition,
+)
+from financial_agent.ingestion.document_sources.dart_publishers import (
+    DartPublisherReconciliation,
+)
+from financial_agent.documents import SourceAuditStatus
 
 
 def _arguments(
     limit: str | None = None,
     target_key: str | None = None,
+    missing_only: bool = False,
 ):
     values = ["ingest-dart-corpus"]
     if limit is not None:
         values.extend(("--limit", limit))
     if target_key is not None:
         values.extend(("--target-key", target_key))
+    if missing_only:
+        values.append("--missing-only")
     return _parser().parse_args(values)
 
 
@@ -128,6 +141,38 @@ def test_configuration_accepts_one_exact_target_key(
 
     assert configuration.target_key == "domestic_etf:product-one"
     assert configuration.limit is None
+
+
+@pytest.mark.parametrize(
+    ("limit", "target_key"),
+    ((None, None), ("1", None), (None, "public_fund:product-one")),
+)
+def test_configuration_accepts_missing_only_with_each_selection_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit: str | None,
+    target_key: str | None,
+) -> None:
+    _environment(monkeypatch, tmp_path)
+
+    configuration = _load_dart_corpus_configuration(
+        _arguments(limit, target_key, missing_only=True)
+    )
+
+    assert configuration.missing_only is True
+    assert configuration.limit == (int(limit) if limit is not None else None)
+    assert configuration.target_key == target_key
+
+
+def test_configuration_defaults_missing_only_to_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _environment(monkeypatch, tmp_path)
+
+    configuration = _load_dart_corpus_configuration(_arguments())
+
+    assert configuration.missing_only is False
 
 
 def test_parser_rejects_limit_and_target_key_together() -> None:
@@ -236,7 +281,7 @@ async def test_blocked_only_run_makes_no_dart_request(
             return None
 
     async def load(_configuration: object):
-        return Engine(), inventory, {}
+        return Engine(), inventory, {}, ()
 
     monkeypatch.setattr(
         "financial_agent.ingestion.cli._load_dart_corpus_inventory",
@@ -266,6 +311,126 @@ async def test_blocked_only_run_makes_no_dart_request(
     assert report.requested_publisher_count == 0
     assert report.failed_targets == (
         ("public_fund:blocked", "representative_identifier_unavailable"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_missing_only_run_discovers_only_actionable_recovery_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def target(
+        key: str,
+        family: Literal["domestic_etf", "public_fund"],
+        member: str,
+    ) -> OrganizerDartTarget:
+        return OrganizerDartTarget(
+            target_key=key,
+            product_family=family,
+            representative_entity_id=member,
+            canonical_name=member,
+            member_entity_ids=(member,),
+            identifiers=((member, "ISIN", member),),
+            manager_bindings=(("manager-one", "Manager One"),),
+        )
+
+    completed = target("public_fund:complete", "public_fund", "complete")
+    etn = target("domestic_etf:etn", "domestic_etf", "etn")
+    private_fund = target(
+        "public_fund:private", "public_fund", "private-fund"
+    )
+    missing = target(
+        "public_fund:missing-public", "public_fund", "missing-public"
+    )
+    inventory = OrganizerDartInventory(
+        dataset_version="documents-building-v1",
+        cutoff_date=date(2026, 8, 24),
+        product_count=4,
+        targets=(completed, etn, private_fund, missing),
+        inventory_hash="a" * 64,
+    )
+    states = (
+        DartRecoveryProductState(
+            "complete", "fund_prospectus", True
+        ),
+        DartRecoveryProductState("etn", "etn_not_applicable", False),
+        DartRecoveryProductState(
+            "private-fund", "private_fund_not_applicable", False
+        ),
+        DartRecoveryProductState(
+            "missing-public", "fund_prospectus", False
+        ),
+    )
+
+    class Engine:
+        async def dispose(self) -> None:
+            return None
+
+    async def load(_configuration: object):
+        return Engine(), inventory, {}, states
+
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli._load_dart_corpus_inventory", load
+    )
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli.fetch_dart_corporation_codes",
+        lambda *_args: b"synthetic-corporation-codes",
+    )
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli.reconcile_dart_publishers",
+        lambda **_kwargs: DartPublisherReconciliation((), (), "a" * 64),
+    )
+    requested_target_keys: tuple[str, ...] = ()
+
+    def discover(**kwargs: object) -> DartBatchDiscoveryResult:
+        nonlocal requested_target_keys
+        selected_inventory = kwargs["inventory"]
+        requested_target_keys = tuple(
+            item.target_key for item in selected_inventory.targets
+        )
+        return DartBatchDiscoveryResult(
+            dispositions=tuple(
+                DartTargetDiscoveryDisposition(
+                    target_key=item.target_key,
+                    member_entity_ids=item.member_entity_ids,
+                    status=SourceAuditStatus.DOCUMENT_NOT_FOUND,
+                    reason_code="document_not_found",
+                    candidates=(),
+                    resolved_product_name=None,
+                )
+                for item in selected_inventory.targets
+            ),
+            requested_publisher_codes=(),
+            rejected_filings=(),
+        )
+
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli.discover_dart_candidates_by_publisher",
+        discover,
+    )
+    configuration = _DartCorpusConfiguration(
+        database_url="postgresql+psycopg://unused",
+        dataset_version="documents-building-v1",
+        dart_api_key="secret",
+        temp_root=tmp_path / "run",
+        publisher_aliases={},
+        report_path=tmp_path / "report.json",
+        limit=1,
+        target_key=None,
+        missing_only=True,
+    )
+
+    report = await _run_dart_corpus(configuration)
+
+    assert requested_target_keys == ("public_fund:missing-public",)
+    assert report.already_embedded_target_count == 1
+    assert report.not_applicable_target_count == 2
+    assert report.not_applicable_reason_counts == (
+        ("etn_not_applicable", 1),
+        ("private_fund_not_applicable", 1),
+    )
+    assert report.failed_targets == (
+        ("public_fund:missing-public", "document_not_found"),
     )
 
 
@@ -355,6 +520,12 @@ def test_report_contains_only_sanitized_counts_ids_hashes_and_reason_codes(
         deleted_bytes=1_024,
         quarantined_pdf_count=0,
         quarantined_bytes=0,
+        already_embedded_target_count=1,
+        not_applicable_target_count=2,
+        not_applicable_reason_counts=(
+            ("etn_not_applicable", 1),
+            ("private_fund_not_applicable", 1),
+        ),
     )
 
     report_hash = _write_dart_corpus_report(report, destination)
@@ -363,7 +534,14 @@ def test_report_contains_only_sanitized_counts_ids_hashes_and_reason_codes(
     assert len(report_hash) == 64
     assert "SYNTHETIC-SECRET" not in payload
     assert "추종지수의 변동" not in payload
-    assert json.loads(payload)["inventory_hash"] == "a" * 64
+    written = json.loads(payload)
+    assert written["inventory_hash"] == "a" * 64
+    assert written["already_embedded_target_count"] == 1
+    assert written["not_applicable_target_count"] == 2
+    assert written["not_applicable_reason_counts"] == [
+        ["etn_not_applicable", 1],
+        ["private_fund_not_applicable", 1],
+    ]
 
 
 def test_failed_pdf_records_identity_then_is_deleted(tmp_path: Path) -> None:
