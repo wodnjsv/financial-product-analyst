@@ -20,6 +20,8 @@ import time
 from typing import Any, Literal, Mapping
 import uuid
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -42,13 +44,18 @@ from financial_agent.intent.evaluation import (
     validate_hybrid_semantic_link_authority,
 )
 from financial_agent.intent.errors import ModelInvocationError, ResolverContractError
+from financial_agent.intent.hybrid_proposal import IntentResolutionProposalV3
 from financial_agent.intent.query_contract_registry import (
     PolicyKind,
     assess_requirement_representability,
     load_query_contract_registry,
 )
 from financial_agent.intent.query_contract_judge import QueryContractJudgePromptEnvelope
-from financial_agent.intent.service import IntentResolverService
+from financial_agent.intent.service import (
+    IntentResolverService,
+    PreparedHybridResolutionRequest,
+)
+from financial_agent.intent.resolution import ValidatedIntentResolutionV3
 from financial_agent.intent.query_contracts import (
     AxisReadiness,
     AxisReadinessRecordV2,
@@ -1143,7 +1150,15 @@ def _representative_observation(attempt: object) -> dict[str, object]:
             for family in frame.product_family_choice.selected_ids
         }),
         "contracts": contracts,
-        "context_links": [{
+        "context_links": _context_link_observation(resolution),
+    }
+
+
+def _context_link_observation(resolution: object) -> list[dict[str, object]]:
+    frames = resolution.canonical_frames  # type: ignore[attr-defined]
+    frame_ordinals = {frame.frame_id: frame.ordinal for frame in frames}
+    return [
+        {
             "link_type": link.link_type.value,
             "source_role": link.source_role.value,
             "selector": [item.value for item in link.selector],
@@ -1152,8 +1167,9 @@ def _representative_observation(attempt: object) -> dict[str, object]:
             "target_kind": [item.value for item in link.target_kind],
             "target_cardinality": [item.value for item in link.target_cardinality],
             "target_slot_kind": [item.value for item in link.target_slot_kind],
-        } for link in resolution.context_links],
-    }
+        }
+        for link in resolution.context_links  # type: ignore[attr-defined]
+    ]
 
 
 class _EmptyEntityRepository:
@@ -1170,6 +1186,7 @@ class _ProviderCallRecord:
     prompt_tokens: int
     completion_tokens: int
     error_code: str | None
+    hybrid_structured_valid: bool | None = None
 
 
 class _RecordingAdapter:
@@ -1205,6 +1222,9 @@ class _RecordingAdapter:
             prompt_tokens=int(result.usage.get("promptTokens", 0)),
             completion_tokens=int(result.usage.get("completionTokens", 0)),
             error_code=None,
+            hybrid_structured_valid=_hybrid_structured_validity(
+                envelope, result.content
+            ),
         ))
         _append_raw(
             self.raw_path,
@@ -1265,6 +1285,26 @@ def _call_type(envelope: object) -> str:
     if "Apply this correction only:" in str(getattr(envelope, "system_message", "")):
         return "repair"
     return "primary"
+
+
+def _hybrid_structured_validity(
+    envelope: object,
+    content: str,
+) -> bool | None:
+    """Validate an actual V3 response against its exact request schema."""
+
+    schema = getattr(envelope, "response_schema", None)
+    if not isinstance(schema, dict):
+        return None
+    version_schema = schema.get("properties", {}).get("proposal_schema_version", {})
+    if version_schema.get("enum") != ["3.0"]:
+        return None
+    try:
+        parse_strict_json(content.encode("utf-8"), IntentResolutionProposalV3)
+        Draft202012Validator(schema).validate(json.loads(content))
+    except (JsonSchemaValidationError, ValueError):
+        return False
+    return True
 
 
 def parse_challenger_axis_payload(content: str, axis: str) -> tuple[str, ...]:
@@ -1392,7 +1432,7 @@ def _build_hybrid_live_service(adapter: object) -> IntentResolverService:
             "adapter_version": HYBRID_ADAPTER_VERSION,
         },
     )
-    return IntentResolverService(
+    return _ObservedHybridIntentResolverService(
         adapter=adapter,  # type: ignore[arg-type]
         entity_repository=_EmptyEntityRepository(),
         catalog=catalog,
@@ -1400,6 +1440,34 @@ def _build_hybrid_live_service(adapter: object) -> IntentResolverService:
         active_dataset_pin=_live_dataset_pin(),
         query_contract_registry=load_query_contract_registry(PROJECT_ROOT),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _HybridValidationObservation:
+    question_id: str
+    resolution: ValidatedIntentResolutionV3
+
+
+class _ObservedHybridIntentResolverService(IntentResolverService):
+    """Expose successful production V3 validation before downstream solving."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.hybrid_validation_observations: list[_HybridValidationObservation] = []
+
+    def validate_hybrid_response(
+        self,
+        prepared: PreparedHybridResolutionRequest,
+        content: str,
+    ) -> ValidatedIntentResolutionV3:
+        resolution = super().validate_hybrid_response(prepared, content)
+        self.hybrid_validation_observations.append(
+            _HybridValidationObservation(
+                question_id=prepared.context.question_id,
+                resolution=resolution,
+            )
+        )
+        return resolution
 
 
 def _load_hybrid_semantic_link_cases() -> tuple[HybridSemanticLinkCase, ...]:
@@ -1417,6 +1485,48 @@ def _choice_values(choice: object) -> tuple[str, ...]:
     return tuple(
         getattr(item, "value", item)
         for item in getattr(choice, "selected_ids", ())
+    )
+
+
+def _validated_hybrid_resolution(
+    service: IntentResolverService,
+    observation_start: int,
+    question_id: str,
+    attempt: object | None,
+) -> ValidatedIntentResolutionV3 | None:
+    observations = getattr(service, "hybrid_validation_observations", ())
+    matching = tuple(
+        observation.resolution
+        for observation in observations[observation_start:]
+        if observation.question_id == question_id
+    )
+    if matching:
+        return matching[-1]
+    resolution = None if attempt is None else getattr(attempt, "resolution", None)
+    return resolution if isinstance(resolution, ValidatedIntentResolutionV3) else None
+
+
+def _structured_stage_counts(records: object) -> tuple[int, int]:
+    case_records = tuple(records)  # type: ignore[arg-type]
+    first_pass_valid = any(
+        record.call_type == "primary" and record.hybrid_structured_valid is True
+        for record in case_records
+    )
+    repaired_valid = any(
+        record.call_type == "repair" and record.hybrid_structured_valid is True
+        for record in case_records
+    )
+    return int(first_pass_valid), int(repaired_valid)
+
+
+def _is_ood_false_fast(resolution: ValidatedIntentResolutionV3) -> bool:
+    return (
+        resolution.resolution_status.value == "resolved"
+        and not resolution.issues
+        and all(
+            frame.semantic_coverage[0].state.value == "covered"
+            for frame in resolution.canonical_frames
+        )
     )
 
 
@@ -1487,17 +1597,21 @@ async def _run_hybrid_path(
     for index, case in enumerate(_LIVE_CASES):
         context = _request_context(case)
         case_record = len(adapter.records)  # type: ignore[attr-defined]
+        observation_start = len(
+            getattr(service, "hybrid_validation_observations", ())
+        )
+        attempt = None
         if case.case_id in REPRESENTATIVE_CASE_EXPECTATIONS:
             representative_attempts += 1
         try:
             attempt = await service.resolve_hybrid_query_contract_candidates(context)
         except (ModelInvocationError, ResolverContractError, ValueError) as error:
             semantic_errors[getattr(error, "code", type(error).__name__)] += 1
-        else:
-            repaired = attempt.telemetry.repair_used
-            first_pass_valid += int(not repaired)
-            repaired_valid += int(repaired)
-            frames = attempt.resolution.canonical_frames
+        resolution = _validated_hybrid_resolution(
+            service, observation_start, context.question_id, attempt
+        )
+        if resolution is not None:
+            frames = resolution.canonical_frames
             actions = tuple(
                 action
                 for frame in frames
@@ -1516,21 +1630,25 @@ async def _run_hybrid_path(
             family_match = families == tuple(sorted(case.families))
             action_hits += int(action_match)
             family_hits += int(family_match)
+            if case.case_id in REPRESENTATIVE_CASE_EXPECTATIONS:
+                expected_context = REPRESENTATIVE_CASE_EXPECTATIONS[case.case_id][
+                    "context_links"
+                ]
+                context_hits += int(
+                    _context_link_observation(resolution) == expected_context
+                )
+        if attempt is not None:
             ready = _has_planning_readiness(attempt, compiler)
             planning_ready_count += int(ready)
             if case.case_id in REPRESENTATIVE_CASE_EXPECTATIONS:
                 observation = _representative_observation(attempt)
                 observations[case.case_id] = observation
-                expected_context = REPRESENTATIVE_CASE_EXPECTATIONS[case.case_id][
-                    "context_links"
-                ]
-                context_match = observation["context_links"] == expected_context
-                context_hits += int(context_match)
+        case_records = adapter.records[case_record:]  # type: ignore[attr-defined]
+        first_valid, repair_valid = _structured_stage_counts(case_records)
+        first_pass_valid += first_valid
+        repaired_valid += repair_valid
         provider_successes += int(
-            any(
-                record.success
-                for record in adapter.records[case_record:]  # type: ignore[attr-defined]
-            )
+            any(record.success for record in case_records)
         )
         if paced and index + 1 < len(_LIVE_CASES):
             await asyncio.sleep(interval)
@@ -1540,16 +1658,20 @@ async def _run_hybrid_path(
     for index, case in enumerate(hybrid_cases):
         context = _request_context(case)  # type: ignore[arg-type]
         case_record = len(adapter.records)  # type: ignore[attr-defined]
+        observation_start = len(
+            getattr(service, "hybrid_validation_observations", ())
+        )
+        attempt = None
         semantic_denominator += len(case.expected_semantic_ids)
         try:
             attempt = await service.resolve_hybrid_query_contract_candidates(context)
         except (ModelInvocationError, ResolverContractError, ValueError) as error:
             semantic_errors[getattr(error, "code", type(error).__name__)] += 1
-        else:
-            repaired = attempt.telemetry.repair_used
-            first_pass_valid += int(not repaired)
-            repaired_valid += int(repaired)
-            frames = attempt.resolution.canonical_frames
+        resolution = _validated_hybrid_resolution(
+            service, observation_start, context.question_id, attempt
+        )
+        if resolution is not None:
+            frames = resolution.canonical_frames
             actions = tuple(
                 action
                 for frame in frames
@@ -1572,7 +1694,7 @@ async def _run_hybrid_path(
                 sorted(
                     {
                         semantic_id
-                        for link in attempt.resolution.semantic_links
+                        for link in resolution.semantic_links
                         for semantic_id in link.semantic_ids
                     }
                 )
@@ -1587,19 +1709,21 @@ async def _run_hybrid_path(
                 == case.expected_coverage_state
                 for frame in frames
             )
-            ready = _has_planning_readiness(attempt, compiler)
-            false_fast += int(case.expected_ood and ready)
+            false_fast += int(
+                case.expected_ood and _is_ood_false_fast(resolution)
+            )
             frame_hits += int(
                 action_match
                 and family_match
                 and semantic_match
                 and coverage_match
             )
+        case_records = adapter.records[case_record:]  # type: ignore[attr-defined]
+        first_valid, repair_valid = _structured_stage_counts(case_records)
+        first_pass_valid += first_valid
+        repaired_valid += repair_valid
         provider_successes += int(
-            any(
-                record.success
-                for record in adapter.records[case_record:]  # type: ignore[attr-defined]
-            )
+            any(record.success for record in case_records)
         )
         if paced and index + 1 < len(hybrid_cases):
             await asyncio.sleep(interval)

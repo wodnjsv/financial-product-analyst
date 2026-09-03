@@ -504,9 +504,15 @@ def test_offline_hybrid_report_never_calls_provider_even_with_credentials(
 
 
 class _SyntheticHybridRecordingAdapter:
-    def __init__(self, *, invalid_primary: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        invalid_primary: bool = False,
+        ood_coverage_state: str | None = None,
+    ) -> None:
         self.records: list[object] = []
         self.invalid_primary = invalid_primary
+        self.ood_coverage_state = ood_coverage_state
 
     async def invoke(self, envelope: object, timeout_seconds: float):
         call_type = benchmark_module._call_type(envelope)
@@ -523,7 +529,12 @@ class _SyntheticHybridRecordingAdapter:
             view = payload["view"]
             question = payload["context"]["question"]
             is_link_fixture = "비용 부담" in question
-            mention_text = "비용 부담" if is_link_fixture else "총보수"
+            is_ood_fixture = "ESG 등급" in question
+            mention_text = (
+                "ESG 등급"
+                if is_ood_fixture
+                else "비용 부담" if is_link_fixture else "총보수"
+            )
             mention_id = next(
                 item["mention_id"]
                 for item in view["mention_spans"]["items"]
@@ -539,7 +550,9 @@ class _SyntheticHybridRecordingAdapter:
                             "action_choice": {
                                 "state": "selected",
                                 "selected_ids": [
-                                    "rank" if is_link_fixture else "screen"
+                                    "rank"
+                                    if is_link_fixture or is_ood_fixture
+                                    else "screen"
                                 ],
                                 "evidence_ids": [],
                                 "reason_code": "explicit",
@@ -548,25 +561,43 @@ class _SyntheticHybridRecordingAdapter:
                                 "state": "selected",
                                 "selected_ids": (
                                     ["domestic_etf", "overseas_etf"]
-                                    if is_link_fixture
+                                    if is_link_fixture or is_ood_fixture
                                     else ["public_fund"]
                                 ),
                                 "evidence_ids": [],
                                 "reason_code": "explicit",
                             },
                             "entity_type_ids": ["FinancialProduct"],
-                            "semantic_links": [
-                                {
-                                    "mention_id": mention_id,
-                                    "state": "selected",
-                                    "semantic_ids": ["fee_rate"],
-                                    "reason_code": "implicit",
-                                }
-                            ],
-                            "unmapped_mention_ids": [],
+                            "semantic_links": (
+                                []
+                                if is_ood_fixture
+                                else [
+                                    {
+                                        "mention_id": mention_id,
+                                        "state": "selected",
+                                        "semantic_ids": ["fee_rate"],
+                                        "reason_code": "implicit",
+                                    }
+                                ]
+                            ),
+                            "unmapped_mention_ids": (
+                                [mention_id]
+                                if is_ood_fixture
+                                and self.ood_coverage_state == "unmapped"
+                                else []
+                            ),
                             "semantic_coverage": {
-                                "state": "covered",
-                                "reason": "none",
+                                "state": (
+                                    self.ood_coverage_state
+                                    if is_ood_fixture
+                                    else "covered"
+                                ),
+                                "reason": (
+                                    "lexical_ood"
+                                    if is_ood_fixture
+                                    and self.ood_coverage_state == "unmapped"
+                                    else "none"
+                                ),
                             },
                             "entity_hints": [],
                             "produced_result_hints": ["candidates"],
@@ -591,6 +622,9 @@ class _SyntheticHybridRecordingAdapter:
                 prompt_tokens=11,
                 completion_tokens=7,
                 error_code=None,
+                hybrid_structured_valid=benchmark_module._hybrid_structured_validity(
+                    envelope, content
+                ),
             )
         )
         return benchmark_module.ModelInvocationResult(
@@ -668,6 +702,51 @@ async def test_opt_in_live_hybrid_path_executes_v3_and_emits_runtime_metrics(
 
 
 @pytest.mark.asyncio
+async def test_hybrid_structured_validity_uses_request_specific_schema() -> None:
+    hybrid_case = benchmark_module._load_hybrid_semantic_link_cases()[0]
+    adapter = _SyntheticHybridRecordingAdapter()
+    service = benchmark_module._build_hybrid_live_service(adapter)
+    prepared = await service.prepare_hybrid(
+        benchmark_module._request_context(hybrid_case)
+    )
+    response = await adapter.invoke(prepared.prompt, timeout_seconds=1)
+    missing_required_version = json.loads(response.content)
+    del missing_required_version["proposal_schema_version"]
+
+    assert benchmark_module._hybrid_structured_validity(
+        prepared.prompt,
+        json.dumps(missing_required_version),
+    ) is False
+
+
+def test_candidate_judge_response_is_never_repaired_structured_validity() -> None:
+    records = (
+        benchmark_module._ProviderCallRecord(
+            call_id=1,
+            call_type="primary",
+            success=True,
+            elapsed_ms=10,
+            prompt_tokens=1,
+            completion_tokens=1,
+            error_code=None,
+            hybrid_structured_valid=True,
+        ),
+        benchmark_module._ProviderCallRecord(
+            call_id=2,
+            call_type="judge",
+            success=True,
+            elapsed_ms=10,
+            prompt_tokens=1,
+            completion_tokens=1,
+            error_code=None,
+            hybrid_structured_valid=True,
+        ),
+    )
+
+    assert benchmark_module._structured_stage_counts(records) == (1, 0)
+
+
+@pytest.mark.asyncio
 async def test_hybrid_runtime_keeps_repair_and_judge_accounting_distinct(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -690,6 +769,95 @@ async def test_hybrid_runtime_keeps_repair_and_judge_accounting_distinct(
     assert path.metrics.repaired_structured_validity.denominator == 1
     assert path.metrics.provider.repair_calls == 1
     assert path.metrics.provider.candidate_judge_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_hybrid_primary_validity_survives_downstream_solver_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hybrid_case = benchmark_module._load_hybrid_semantic_link_cases()[0]
+    monkeypatch.setattr(benchmark_module, "_LIVE_CASES", ())
+    import financial_agent.intent.service as service_module
+
+    monkeypatch.setattr(
+        service_module,
+        "solve_query_contracts",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("FORCED_SOLVER_FAILURE")),
+    )
+    adapter = _SyntheticHybridRecordingAdapter()
+
+    path = await benchmark_module._run_hybrid_path(
+        benchmark_module._build_hybrid_live_service(adapter),
+        adapter,
+        paced=False,
+        interval=0,
+        hybrid_cases=(hybrid_case,),
+    )
+
+    assert path.metrics.first_pass_structured_validity.numerator == 1
+    assert path.metrics.repaired_structured_validity.denominator == 0
+
+
+@pytest.mark.asyncio
+async def test_hybrid_repair_validity_survives_downstream_solver_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hybrid_case = benchmark_module._load_hybrid_semantic_link_cases()[0]
+    monkeypatch.setattr(benchmark_module, "_LIVE_CASES", ())
+    import financial_agent.intent.service as service_module
+
+    monkeypatch.setattr(
+        service_module,
+        "solve_query_contracts",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("FORCED_SOLVER_FAILURE")),
+    )
+    adapter = _SyntheticHybridRecordingAdapter(invalid_primary=True)
+
+    path = await benchmark_module._run_hybrid_path(
+        benchmark_module._build_hybrid_live_service(adapter),
+        adapter,
+        paced=False,
+        interval=0,
+        hybrid_cases=(hybrid_case,),
+    )
+
+    assert path.metrics.first_pass_structured_validity.numerator == 0
+    assert path.metrics.repaired_structured_validity.numerator == 1
+    assert path.metrics.repaired_structured_validity.denominator == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("coverage_state", "expected_false_fast"),
+    (("covered", 1), ("unmapped", 0)),
+)
+async def test_hybrid_ood_false_fast_uses_validated_resolver_state_when_planning_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    coverage_state: str,
+    expected_false_fast: int,
+) -> None:
+    ood_case = benchmark_module._load_hybrid_semantic_link_cases()[-1]
+    monkeypatch.setattr(benchmark_module, "_LIVE_CASES", ())
+    import financial_agent.intent.service as service_module
+
+    monkeypatch.setattr(
+        service_module,
+        "solve_query_contracts",
+        lambda **_kwargs: (_ for _ in ()).throw(ValueError("FORCED_SOLVER_FAILURE")),
+    )
+    adapter = _SyntheticHybridRecordingAdapter(
+        ood_coverage_state=coverage_state
+    )
+
+    path = await benchmark_module._run_hybrid_path(
+        benchmark_module._build_hybrid_live_service(adapter),
+        adapter,
+        paced=False,
+        interval=0,
+        hybrid_cases=(ood_case,),
+    )
+
+    assert path.metrics.ood_false_fast_rate.numerator == expected_false_fast
 
 
 def test_default_benchmark_payload_is_byte_identical_without_hybrid_opt_in(
