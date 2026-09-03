@@ -2,7 +2,9 @@
 
 **Measured:** 2026-09-04 KST
 
-**Implementation commit:** `d2f143a0d83f62f65b53edd869a41993ef19745e`
+**Initial implementation commit:** `d2f143a0d83f62f65b53edd869a41993ef19745e`
+
+**Final-review hardening commit:** `1dbae145a02ac6a581fb91b6750450c1a5dde0fd`
 
 **Status:** implementation verified locally; V3 is shadow-only; promotion failed
 closed and remains deferred
@@ -17,6 +19,13 @@ authoritative top-level exact-lock promotion gate remains unmeasured. The narrow
 V3 suite, the full Intent Resolver/evaluation suite, the environment-corrected
 broad offline suite, compilation, and V2/V3 schema freshness checks pass. V2
 remains the default resolver.
+
+The final-review hardening commit adds exact request-specific JSON Schema
+validation at the V3 runtime boundary, canonical compact-catalog comparison
+against a fresh authoritative projection, case-normalized physical-token
+validation on restored compact models, coordinated V3 solver pin checks, and
+closed runtime schema-version dispatch. These boundary changes do not alter
+the V2 default, enable V3 routing, or add a model call.
 
 V3 is **not promoted**. The authorized HCX-007 V3 shadow run measured first-pass
 structured validity `5/21`, repaired structured validity `0/16`, Action exact
@@ -188,7 +197,7 @@ that fail-closed outcome. It does not infer a pass from a partial denominator,
 a deterministic subset, the V2 live gate, or the absence of a false-fast result
 in one OOD case.
 
-## Reproducible verification commands
+## Initial reproducible verification commands
 
 All local commands used the repository virtual environment on implementation
 commit `d2f143a0d83f62f65b53edd869a41993ef19745e`.
@@ -215,6 +224,30 @@ corrected command is the accepted environment-aware broad gate: the hybrid
 Intent Resolver does not modify the separately provisioned Jena/Fuseki runtime,
 and those 13 cases are deselected alongside NCP, live, and PostgreSQL
 integration tests rather than reported as product regressions.
+
+## Final-review hardening verification
+
+The following commands were rerun from commit
+`1dbae145a02ac6a581fb91b6750450c1a5dde0fd`. They supersede the local test
+counts above for code-regression evidence only; the offline and authorized live
+quality measurements remain the historical pre-hardening evidence and were not
+recomputed.
+
+| Command | Result |
+| --- | --- |
+| `.venv/bin/pytest tests/intent/test_compact_catalog.py tests/intent/test_mention_spans.py tests/intent/test_hybrid_proposal.py tests/intent/test_hybrid_prompt.py tests/intent/test_hybrid_assembler.py tests/intent/test_query_contract_solver.py tests/intent/test_query_contract_service.py -q` | `166 passed in 1.57s` |
+| `.venv/bin/pytest tests/intent tests/evaluation/intent tests/evaluation/query_contract tests/planning -q` | `1031 passed in 30.85s` |
+| `.venv/bin/pytest -m "not ncp and not live and not postgres and not jena_integration" -q` | `2459 passed, 13 skipped, 451 deselected in 58.81s` |
+| `.venv/bin/python -m compileall -q src scripts tests` | exit `0` |
+| `.venv/bin/python scripts/export_intent_schemas.py --check --schema-version 1.0 --output-dir schemas/intent/v1` | exit `0` |
+| `.venv/bin/python scripts/export_intent_schemas.py --check --schema-version 2.0 --output-dir schemas/intent/v2` | exit `0` |
+| `.venv/bin/python scripts/export_intent_schemas.py --check --schema-version 3.0 --output-dir schemas/intent/v3` | exit `0` |
+| `git diff --cached --check` | exit `0` before the implementation commit |
+
+The 13 skips are explicit database, NCP, Object Storage, current official-source,
+and organizer-data opt-ins. PostgreSQL, Jena integration, NCP, and live provider
+tests remain deliberately outside this offline gate. No HCX call was made during
+hardening verification, so the promotion decision remains `deferred`.
 
 ## Report integrity
 
@@ -243,8 +276,9 @@ closeout. Neither sanitized aggregate is committed.
 
 ## Security and repository boundary
 
-The final audit is limited to the verification document, planning status, and
-implementation plan. It checks that no `.env`, credential, raw HCX payload,
-organizer workbook/PDF, `data/` path, database, Parquet file, generated report,
-or runtime log is staged. No runtime default, deployment, merge, or push is part
-of this verification task.
+The final-review audit covered only the boundary implementation, regression
+tests, regenerated V3 proposal schema, resolver dependency metadata, this
+verification document, and planning status. No `.env`, credential, raw HCX
+payload, organizer workbook/PDF, `data/` path, database, Parquet file, generated
+report, or runtime log was staged. No runtime default, deployment, merge, or
+push is part of this verification task.
