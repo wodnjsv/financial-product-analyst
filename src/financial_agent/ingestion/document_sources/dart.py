@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 import json
 import re
 from typing import BinaryIO
+import unicodedata
 from urllib.parse import urlencode, urljoin, urlparse
 from zoneinfo import ZoneInfo
 
@@ -719,7 +720,7 @@ def _parse_filing(item: object, *, binding: _Binding) -> _Filing:
         correction_state = "withdrawn"
     elif any(marker in _UNRESOLVED_MARKERS for marker in markers):
         correction_state = "unresolved"
-    elif "정" in rm:
+    elif not markers and "정" in rm:
         correction_state = "superseded"
     return _Filing(
         corp_name=corp_name,
@@ -945,7 +946,9 @@ def _normalize_whitespace(value: str) -> str:
 
 
 def _normalize_product_identity(value: str) -> str:
-    return "".join(value.split())
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = normalized.translate(str.maketrans({"[": "(", "]": ")"}))
+    return "".join(normalized.split())
 
 
 def _url(endpoint: str, **parameters: str) -> str:

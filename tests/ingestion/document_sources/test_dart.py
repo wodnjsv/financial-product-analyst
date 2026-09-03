@@ -324,6 +324,27 @@ def test_dart_resolves_complete_correction_chain_to_current_submission() -> None
     ]
 
 
+def test_dart_treats_latest_resolved_correction_as_current_when_rm_is_corrected() -> None:
+    adapter, _ = _adapter(
+        [
+            _filing("20260801000001", "20260801", rm="정"),
+            _filing(
+                "20260820000123",
+                "20260820",
+                report_name="[기재정정] 투자설명서(집합투자증권)",
+                rm="정",
+            ),
+        ]
+    )
+
+    result = adapter.discover(_target(), _context())
+
+    assert result.status is SourceAuditStatus.ELIGIBLE
+    assert [item.accession_or_receipt_id for item in result.candidates] == [
+        "20260820000123"
+    ]
+
+
 @pytest.mark.parametrize("marker", ("정정명령부과", "정정제출요구"))
 def test_dart_rejects_unresolved_correction_order_or_request(marker: str) -> None:
     adapter, _ = _adapter(
@@ -554,6 +575,34 @@ def test_dart_product_identity_allows_whitespace_presence_only_difference() -> N
 
     result = adapter.discover(
         _publisher_target(canonical_name=target_name),
+        _context(),
+    )
+
+    assert result.status is SourceAuditStatus.ELIGIBLE
+    assert result.candidates[0].accession_or_receipt_id == "20260805000047"
+
+
+def test_dart_product_identity_allows_equivalent_asset_type_wrappers() -> None:
+    adapter, _ = _adapter(
+        [
+            _filing(
+                "20260805000047",
+                "20260805",
+                corp_name="한빛자산운용",
+                report_name=(
+                    "투자설명서(집합투자증권)"
+                    "(하나1Q미국배당TOP30증권상장지수투자신탁[주식])"
+                ),
+            )
+        ]
+    )
+
+    result = adapter.discover(
+        _publisher_target(
+            canonical_name=(
+                "하나 1Q 미국배당TOP30증권상장지수투자신탁(주식)"
+            )
+        ),
         _context(),
     )
 
