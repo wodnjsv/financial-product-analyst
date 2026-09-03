@@ -1,14 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import MappingProxyType
 
 import pytest
 
+from financial_agent.contracts.canonical import build_request_key
 from financial_agent.contracts.enums import IntentType, ProductFamily
-from financial_agent.intent.axis_locks import ExactSemanticLock
+from financial_agent.contracts.request import RequestContext, Segment
+from financial_agent.intent.axis_locks import (
+    ExactSemanticLock,
+    build_exact_semantic_locks,
+)
+from financial_agent.intent.candidates import (
+    MAX_CANDIDATES_PER_MENTION,
+    generate_semantic_candidates,
+)
+from financial_agent.intent.catalog import load_catalog
 from financial_agent.intent.draft import EntityHintV2
+from financial_agent.intent.literals import extract_literals
+from financial_agent.intent.normalization import normalize_request
 from financial_agent.intent.proposal import FrameSemanticCoverage
 from financial_agent.intent.query_contract_registry import (
     PolicyKind,
@@ -34,17 +47,26 @@ from financial_agent.intent.types import (
     SemanticCoverageState,
 )
 from financial_agent.intent.view import (
+    ADAPTER_VERSION,
+    CANDIDATE_POLICY_VERSION,
+    NORMALIZER_VERSION,
+    PROMPT_VERSION,
+    RESOLVER_SCHEMA_VERSION,
+    ActiveDatasetPin,
     ResolverViewConcept,
     ResolverViewLiteralCandidate,
     ResolverViewRelationDefinition,
     ResolverViewSemanticCandidate,
     ResolverViewSemanticCandidateGroup,
+    build_manifest,
+    build_resolver_view,
 )
 from tests.planning.fixtures import frame, resolution, view
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REGISTRY = load_query_contract_registry(PROJECT_ROOT)
+CATALOG = load_catalog(PROJECT_ROOT)
 
 
 def _axis(action: IntentType = IntentType.RANK, *, family: ProductFamily = ProductFamily.DOMESTIC_ETF):
@@ -113,6 +135,54 @@ def _lock(role: str, canonical_id: str, *, span: str = "mention-s1-0-1"):
         evidence_span_ids=(span,),
         source="literal" if role == "literal" else "direct_alias" if role == "field" else "canonical",
     )
+
+
+def _candidate_pipeline(question: str):
+    created_at = datetime(2026, 9, 3, tzinfo=UTC)
+    context = RequestContext(
+        request_key=build_request_key("solver-pipeline", question, "dataset-v1", "1.0"),
+        run_id="run-solver-pipeline",
+        dataset_version="dataset-v1",
+        producer="test",
+        created_at=created_at,
+        question_id="solver-pipeline",
+        question=question,
+        segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+        deadline_at=created_at + timedelta(seconds=55),
+    )
+    normalized = normalize_request(context)
+    literals = extract_literals(normalized)
+    candidates = generate_semantic_candidates(normalized, CATALOG)
+    locks = build_exact_semantic_locks(
+        normalized,
+        CATALOG,
+        semantic_candidates=candidates,
+        literals=literals,
+    )
+    resolver_view = build_resolver_view(
+        context=context,
+        normalized=normalized,
+        literals=literals,
+        semantic_candidates=candidates,
+        entity_candidates={},
+        manifest=build_manifest(
+            CATALOG,
+            {
+                "normalizer_version": NORMALIZER_VERSION,
+                "candidate_policy_version": CANDIDATE_POLICY_VERSION,
+                "resolver_schema_version": RESOLVER_SCHEMA_VERSION,
+                "prompt_version": PROMPT_VERSION,
+                "adapter_version": ADAPTER_VERSION,
+            },
+        ),
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version="dataset-v1",
+            manifest_hash="a" * 64,
+        ),
+        catalog=CATALOG,
+        exact_semantic_locks=locks,
+    )
+    return resolver_view, locks
 
 
 def _literal(
@@ -320,6 +390,66 @@ def test_hko_ctx_036_exact_manager_lock_preserves_requested_risk_grade() -> None
         "lock-field-managedBy",
         "mention-s1-1-2",
     }
+
+
+@pytest.mark.parametrize(
+    ("question", "family", "concept_id"),
+    (
+        ("공모펀드 자산운용사를 알려줘", ProductFamily.PUBLIC_FUND, "managedBy"),
+        (
+            "2026-08-24 기준 순자산총액을 알려줘",
+            ProductFamily.DOMESTIC_ETF,
+            "aum",
+        ),
+    ),
+)
+def test_nested_exact_aliases_for_one_concept_form_one_requested_role(
+    question: str,
+    family: ProductFamily,
+    concept_id: str,
+) -> None:
+    resolver_view, locks = _candidate_pipeline(question)
+
+    result = solve_query_contracts(
+        resolution=_axis(IntentType.LOOKUP, family=family),
+        view=resolver_view,
+        exact_locks=locks,
+        registry=REGISTRY,
+    )
+
+    solved = result.frames[0]
+    assert solved.contract_readiness.readiness is ContractReadiness.COMPLETE
+    assert len(solved.complete_candidates) == 1
+    contract = solved.complete_candidates[0].contract
+    assert contract.projections.field_concept_ids == (concept_id,)
+    matching_mentions = {
+        group.mention_id
+        for group in resolver_view.semantic_candidates
+        if any(item.semantic_id == concept_id for item in group.items)
+    }
+    matching_locks = {
+        lock.lock_id
+        for lock in locks
+        if lock.role == "field" and lock.canonical_id == concept_id
+    }
+    assert len(matching_mentions) >= 2
+    provenance_refs = {item.source_ref for item in contract.provenance}
+    assert matching_mentions <= provenance_refs
+    assert matching_locks <= provenance_refs
+
+
+def test_disjoint_repeated_aliases_do_not_collapse_into_one_requested_role() -> None:
+    resolver_view, locks = _candidate_pipeline("AUM과 AUM을 알려줘")
+
+    result = solve_query_contracts(
+        resolution=_axis(IntentType.LOOKUP),
+        view=resolver_view,
+        exact_locks=locks,
+        registry=REGISTRY,
+    )
+
+    assert result.frames[0].complete_candidates == ()
+    assert result.frames[0].contract_readiness.readiness is ContractReadiness.BLOCKED
 
 
 def test_partial_exact_lookup_lock_never_accepts_a_missing_ambiguous_field_role() -> None:
@@ -1272,6 +1402,137 @@ def test_similarity_exact_limit_never_falls_back_to_default() -> None:
     )
 
     assert {item.contract.similarity.limit for item in result.complete_candidates} == {7}
+
+
+def test_similarity_ambiguous_mention_enumerates_separate_dimension_choices() -> None:
+    source = _semantic_view("aum", "fee_rate").model_copy(
+        update={
+            "semantic_candidates": (
+                ResolverViewSemanticCandidateGroup(
+                    mention_id="mention-s1-0-3",
+                    items=(
+                        ResolverViewSemanticCandidate(
+                            semantic_id="aum",
+                            match_kind="ambiguous_alias",
+                            score=900_000,
+                        ),
+                        ResolverViewSemanticCandidate(
+                            semantic_id="fee_rate",
+                            match_kind="ambiguous_alias",
+                            score=850_000,
+                        ),
+                    ),
+                ),
+            )
+        }
+    )
+    reversed_view = source.model_copy(
+        update={
+            "semantic_candidates": (
+                source.semantic_candidates[0].model_copy(
+                    update={"items": tuple(reversed(source.semantic_candidates[0].items))}
+                ),
+            )
+        }
+    )
+
+    first = solve_query_contracts(
+        resolution=_entity_axis(
+            action=IntentType.SIMILAR,
+            candidate_groups=(("entity-anchor",),),
+        ),
+        view=source,
+        exact_locks=(),
+        registry=REGISTRY,
+    )
+    second = solve_query_contracts(
+        resolution=_entity_axis(
+            action=IntentType.SIMILAR,
+            candidate_groups=(("entity-anchor",),),
+        ),
+        view=reversed_view,
+        exact_locks=(),
+        registry=REGISTRY,
+    )
+
+    assert first.model_dump_json() == second.model_dump_json()
+    assert first.frames[0].contract_readiness.readiness is ContractReadiness.AMBIGUOUS
+    assert {
+        item.contract.similarity.dimension_concept_ids
+        for item in first.frames[0].complete_candidates
+    } == {("aum",), ("fee_rate",)}
+    assert all(
+        "mention-s1-0-3" in {item.source_ref for item in candidate.contract.provenance}
+        for candidate in first.frames[0].complete_candidates
+    )
+
+
+def test_similarity_disjoint_dimension_mentions_combine_explicit_dimensions() -> None:
+    result = solve_query_contracts(
+        resolution=_entity_axis(
+            action=IntentType.SIMILAR,
+            candidate_groups=(("entity-anchor",),),
+        ),
+        view=_semantic_view("aum", "fee_rate"),
+        exact_locks=(
+            _lock("field", "aum"),
+            _lock("field", "fee_rate", span="mention-s1-1-2"),
+        ),
+        registry=REGISTRY,
+    )
+
+    solved = result.frames[0]
+    assert solved.contract_readiness.readiness is ContractReadiness.COMPLETE
+    assert len(solved.complete_candidates) == 1
+    contract = solved.complete_candidates[0].contract
+    assert contract.similarity.dimension_concept_ids == ("aum", "fee_rate")
+    assert {"mention-s1-0-1", "mention-s1-1-2"} <= {
+        item.source_ref for item in contract.provenance
+    }
+
+
+def test_similarity_ambiguous_dimension_choices_remain_role_bounded() -> None:
+    source = _semantic_view("aum")
+    aum = next(item for item in source.concept_definitions if item.concept_id == "aum")
+    concept_ids = tuple(f"similarity-metric-{index}" for index in range(5))
+    resolver_view = source.model_copy(
+        update={
+            "semantic_candidates": (
+                ResolverViewSemanticCandidateGroup(
+                    mention_id="mention-s1-0-3",
+                    items=tuple(
+                        ResolverViewSemanticCandidate(
+                            semantic_id=concept_id,
+                            match_kind="ambiguous_alias",
+                            score=900_000 - index,
+                        )
+                        for index, concept_id in enumerate(concept_ids)
+                    ),
+                ),
+            ),
+            "concept_definitions": tuple(
+                aum.model_copy(update={"concept_id": concept_id})
+                for concept_id in concept_ids
+            ),
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=_entity_axis(
+            action=IntentType.SIMILAR,
+            candidate_groups=(("entity-anchor",),),
+        ),
+        view=resolver_view,
+        exact_locks=(),
+        registry=REGISTRY,
+    )
+
+    dimensions = {
+        item.contract.similarity.dimension_concept_ids
+        for item in result.frames[0].complete_candidates
+    }
+    assert dimensions == {(concept_id,) for concept_id in concept_ids}
+    assert len(dimensions) == MAX_CANDIDATES_PER_MENTION
 
 
 @pytest.mark.parametrize("action", [IntentType.RANK, IntentType.SIMILAR])

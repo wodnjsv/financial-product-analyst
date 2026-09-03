@@ -63,7 +63,12 @@ from .types import (
     SemanticCoverageState,
     SlotKind,
 )
-from .view import ResolverView, ResolverViewConcept, ResolverViewLiteralCandidate
+from .view import (
+    ResolverView,
+    ResolverViewConcept,
+    ResolverViewLiteralCandidate,
+    ResolverViewSemanticCandidateGroup,
+)
 
 
 MAX_CANDIDATES_PER_ROLE = 8
@@ -115,6 +120,7 @@ class _FieldOffer:
     mention_id: str
     segment_id: str | None
     start_char: int | None
+    end_char: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,21 +571,22 @@ def _field_offers(
     locked = tuple(lock for lock in locks if lock.role == "field")
     offers: dict[tuple[str, str], _FieldOffer] = {}
     mentioned_locks: set[str] = set()
-    for group in view.semantic_candidates:
-        segment_id = _source_segment(group.mention_id, view)
-        if segment_id is not None and segment_id not in frame.segment_ids:
-            continue
+    for role_id, groups in _coalesced_field_groups(frame, view, concepts):
+        mention_ids = {group.mention_id for group in groups}
+        segment_id = _source_segment(role_id, view)
         owned_locks = tuple(
-            lock for lock in locked if group.mention_id in lock.evidence_span_ids
+            lock
+            for lock in locked
+            if mention_ids.intersection(lock.evidence_span_ids)
         )
         mentioned_locks.update(lock.lock_id for lock in owned_locks)
         candidate_ids = (
-            tuple(lock.canonical_id for lock in owned_locks)
+            tuple(dict.fromkeys(lock.canonical_id for lock in owned_locks))
             if owned_locks
             else tuple(
                 item.semantic_id
                 for item in sorted(
-                    group.items,
+                    (item for group in groups for item in group.items),
                     key=lambda item: (
                         _MATCH_PRIORITY.get(item.match_kind, 99),
                         -item.score,
@@ -598,12 +605,13 @@ def _field_offers(
             }:
                 continue
             offers.setdefault(
-                (group.mention_id, concept.concept_id),
+                (role_id, concept.concept_id),
                 _FieldOffer(
                     concept=concept,
-                    mention_id=group.mention_id,
+                    mention_id=role_id,
                     segment_id=segment_id,
-                    start_char=_source_start(group.mention_id, view),
+                    start_char=_source_start(role_id, view),
+                    end_char=_source_end(role_id, view),
                 ),
             )
     for lock in locked:
@@ -623,6 +631,7 @@ def _field_offers(
                 mention_id=mention_id,
                 segment_id=_source_segment(mention_id, view),
                 start_char=_source_start(mention_id, view),
+                end_char=_source_end(mention_id, view),
             ),
         )
 
@@ -660,6 +669,7 @@ def _field_offers(
         key=lambda item: (
             item.segment_id or "",
             item.start_char if item.start_char is not None else -1,
+            item.end_char if item.end_char is not None else -1,
             item.mention_id,
             item.concept.concept_id,
         )
@@ -674,6 +684,97 @@ def _field_offers(
         ),
         bool(offers),
         requested_roles,
+    )
+
+
+def _coalesced_field_groups(
+    frame: ValidatedIntentFrameV2,
+    view: ResolverView,
+    concepts: dict[str, ResolverViewConcept],
+) -> tuple[tuple[str, tuple[ResolverViewSemanticCandidateGroup, ...]], ...]:
+    groups = tuple(
+        sorted(
+            (
+                group
+                for group in view.semantic_candidates
+                if (
+                    _source_segment(group.mention_id, view) is None
+                    or _source_segment(group.mention_id, view) in frame.segment_ids
+                )
+                and any(item.semantic_id in concepts for item in group.items)
+            ),
+            key=lambda group: (
+                _source_segment(group.mention_id, view) or "",
+                _source_start(group.mention_id, view) or -1,
+                _source_end(group.mention_id, view) or -1,
+                group.mention_id,
+            ),
+        )
+    )
+    components: list[list[ResolverViewSemanticCandidateGroup]] = []
+    for group in groups:
+        matching = [
+            index
+            for index, component in enumerate(components)
+            if any(
+                _same_overlapping_field_mention(group, item, view)
+                for item in component
+            )
+        ]
+        if not matching:
+            components.append([group])
+        else:
+            merged = [group]
+            for index in reversed(matching):
+                merged.extend(components.pop(index))
+            components.append(
+                sorted(
+                    merged,
+                    key=lambda item: (
+                        _source_start(item.mention_id, view) or -1,
+                        _source_end(item.mention_id, view) or -1,
+                        item.mention_id,
+                    ),
+                )
+            )
+    components.sort(
+        key=lambda component: (
+            _source_segment(component[0].mention_id, view) or "",
+            _source_start(component[0].mention_id, view) or -1,
+            _source_end(component[0].mention_id, view) or -1,
+            component[0].mention_id,
+        )
+    )
+    return tuple(
+        (component[0].mention_id, tuple(component))
+        for component in components
+    )
+
+
+def _same_overlapping_field_mention(
+    left: ResolverViewSemanticCandidateGroup,
+    right: ResolverViewSemanticCandidateGroup,
+    view: ResolverView,
+) -> bool:
+    left_ids = {item.semantic_id for item in left.items}
+    right_ids = {item.semantic_id for item in right.items}
+    if len(left_ids) != 1 or left_ids != right_ids:
+        return False
+    left_segment = _source_segment(left.mention_id, view)
+    right_segment = _source_segment(right.mention_id, view)
+    left_start = _source_start(left.mention_id, view)
+    right_start = _source_start(right.mention_id, view)
+    left_end = _source_end(left.mention_id, view)
+    right_end = _source_end(right.mention_id, view)
+    return (
+        left_segment is not None
+        and left_segment == right_segment
+        and left_start is not None
+        and right_start is not None
+        and left_end is not None
+        and right_end is not None
+        and left_start < right_end
+        and right_start < left_end
     )
 
 
@@ -1112,10 +1213,12 @@ def _similar(
         anchors = (scope.prior_result_binding,)
     if len(anchors) != 1:
         return ()
-    dimensions = tuple(
-        item.concept.concept_id for item in fields if item.concept.kind in {"metric", "attribute"}
+    dimension_choices = tuple(
+        tuple(item.concept.concept_id for item in choices)
+        for choices in _field_combinations(fields)
+        if all(item.concept.kind in {"metric", "attribute"} for item in choices)
     )
-    if not dimensions:
+    if not dimension_choices:
         return ()
     offered_limits = _literal_role_values(
         frame,
@@ -1151,6 +1254,7 @@ def _similar(
             coverage_threshold="1",
             limit=limit,
         )
+        for dimensions in dimension_choices
         for limit in limits
     )
     return (
@@ -1963,3 +2067,14 @@ def _source_start(source_ref: str, view: ResolverView) -> int | None:
         return evidence.start_char
     numbers = re.findall(r"-(\d+)(?=-|$)", source_ref)
     return int(numbers[-2] if len(numbers) >= 2 else numbers[0]) if numbers else None
+
+
+def _source_end(source_ref: str, view: ResolverView) -> int | None:
+    literal = next((item for item in view.literal_candidates if item.literal_id == source_ref), None)
+    if literal is not None:
+        return literal.end_char
+    evidence = next((item for item in view.evidence_candidates if item.evidence_id == source_ref), None)
+    if evidence is not None:
+        return evidence.end_char
+    numbers = re.findall(r"-(\d+)(?=-|$)", source_ref)
+    return int(numbers[-1]) if numbers else None

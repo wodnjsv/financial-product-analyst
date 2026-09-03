@@ -154,7 +154,7 @@
   PostgreSQL runner, 기존 bounded Orchestrator 통합, `query_contract` 및
   `logical_query_plan` 불변 저장을 `0009`까지 구현했다. Graph·Search·Calculation
   production executor는 이 범위에 포함하지 않았다.
-- 2026-09-03 최종 V2 검증은 focused `654 passed`, broad offline `2275 passed,
+- 2026-09-03 최종 V2 검증은 focused `660 passed`, broad offline `2281 passed,
   1 expected skip, 463 deselected`다. 지원 프레임 구조 표현력은 `199/199`,
   미지원 reason coverage는 `10/10`, false-complete는 `0/10`이다. 그러나 계약
   role gold는 194개 필요 분모 중 43개만 측정 가능하고 151개가 불완전하므로,

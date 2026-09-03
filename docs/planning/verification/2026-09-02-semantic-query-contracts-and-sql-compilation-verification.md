@@ -106,6 +106,11 @@ multiple-predicate, qualitative-rank, numeric-screen, COUNT/SUM,
 grouped-aggregate, cross-family, prior-result-context, lexical-OOD, and
 domain-OOD coverage.
 
+The final overlapping-alias coalescing changed the candidate shape for
+`fee-screen`, `exact-family`, `multi-predicate`, `numeric-screen`, and
+`cross-family`, so this evidence was rerun once against the final solver. No
+fixed live case exercises the separately corrected `similar` ambiguity path.
+
 | Metric | Production one-axis | Parallel three-axis challenger |
 | --- | ---: | ---: |
 | Cases | `16` | `16` |
@@ -119,8 +124,8 @@ domain-OOD coverage.
 | Call types | primary `16`, repair `8`, judge `1` | action `16`, family `16`, tag `16` |
 | Repair attempted | `8` | `0` |
 | Judge used | `1` | `0` |
-| Input / output tokens | `146,794 / 17,962` | `4,889 / 265` |
-| p50 / p95 provider-call latency | `13,692 / 18,008 ms` | `613 / 812 ms` |
+| Input / output tokens | `146,793 / 17,959` | `4,885 / 263` |
+| p50 / p95 provider-call latency | `12,625 / 18,227 ms` | `606 / 3,064 ms` |
 | Rate-limited calls | `0` | `8` |
 
 Production semantic failures were `MODEL_PROPOSAL_SCHEMA_INVALID=4` and
@@ -133,10 +138,10 @@ responses even with ten seconds between three-call bundles;
 the within-case three-way concurrency remains coupled to the provider limit.
 The challenger is both less accurate and less reliable, so the production
 one-axis default is unchanged. The canonical promotion-report hash is
-`444997b2c3f0c904deaebe35fb3a104695b0f9e79a98068db204b27e271c60b0`;
+`efe53d7f59accbf629cf05755de09c01a4808e39b637911d59b54a2fadf14606`;
 the complete sanitized file SHA-256 is
-`6433e87ad0e34f5123a35c88470035562c6a7dd6831288d45714ed7e8be6e867`
-(embedded pre-write payload hash `28ce3088aef92c5b87843ccc2309f4ed9dce643a01c0da193860285a5f5ce7dc`).
+`6bf627ec056dcd01c599a8cb63fc404d4bb82e9891d355384209d5c81b242ec6`
+(embedded pre-write payload hash `352590a9ff1b4d58d223a3e9d72fc3b2788a5ed823a238c27f0320569148902c`).
 Raw provider outputs remained under `/private/tmp`; no credential, request
 header, or raw payload entered Git.
 
@@ -147,9 +152,9 @@ declared development, storage, resolver, graph, and ingestion dependencies.
 
 | Check | Result |
 | --- | --- |
-| New fail-closed report tests | `41 passed in 0.78s` |
-| Focused semantic/query-contract/SQL/orchestration suite | `654 passed in 9.76s` |
-| Broad offline suite with all external markers excluded | `2275 passed, 1 expected PostgreSQL skip, 463 deselected in 50.02s` |
+| New fail-closed report tests | `41 passed in 0.82s` |
+| Focused semantic/query-contract/SQL/orchestration suite | `660 passed in 9.65s` |
+| Broad offline suite with all external markers excluded | `2281 passed, 1 expected PostgreSQL skip, 463 deselected in 49.50s` |
 | Deterministic intent evaluator | exit `0`; recall@5 `123/196`, reproducibility `155/155` |
 | Alembic heads/history | one head `0009`; parent `0008` |
 | Fresh import probes | Intent Resolver, contracts, planning, and artifact repository import cleanly |
