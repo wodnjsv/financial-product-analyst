@@ -1,4 +1,4 @@
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import Field, model_validator
 
@@ -15,6 +15,7 @@ from .draft import (
     ActionChoice,
     EntityHintV2,
     ProductFamilyChoice,
+    SemanticLinkDraftV3,
     SlotAssignment,
     validate_v2_entity_hint_ownership,
 )
@@ -188,6 +189,7 @@ class ValidatedIntentResolution(RuntimeArtifact):
 
 
 class ValidatedIntentResolutionV2(ValidatedIntentResolution):
+    resolver_schema_version: ClassVar[str] = "2.0"
     canonical_frames: Annotated[
         tuple[ValidatedIntentFrameV2, ...], Field(min_length=1, max_length=16)
     ]
@@ -195,7 +197,35 @@ class ValidatedIntentResolutionV2(ValidatedIntentResolution):
 
     @model_validator(mode="after")
     def validate_v2_provenance(self) -> "ValidatedIntentResolutionV2":
-        if self.build_manifest.resolver_schema_version != "2.0":
-            raise ValueError("v2 validated resolutions require resolver schema version 2.0")
+        expected = type(self).resolver_schema_version
+        if self.build_manifest.resolver_schema_version != expected:
+            raise ValueError(
+                f"{expected} validated resolutions require resolver schema version {expected}"
+            )
         validate_v2_entity_hint_ownership(self.canonical_frames, self.entity_hints)
+        return self
+
+
+class ValidatedSemanticLinkV3(SemanticLinkDraftV3):
+    pass
+
+
+class ValidatedIntentResolutionV3(ValidatedIntentResolutionV2):
+    resolver_schema_version: ClassVar[str] = "3.0"
+    semantic_links: tuple[ValidatedSemanticLinkV3, ...]
+
+    @model_validator(mode="after")
+    def validate_v3_semantic_links(self) -> "ValidatedIntentResolutionV3":
+        require_unique_ids(
+            (link.semantic_link_id for link in self.semantic_links),
+            label="validated semantic links",
+        )
+        frames = {frame.frame_id for frame in self.canonical_frames}
+        if any(link.frame_id not in frames for link in self.semantic_links):
+            raise ValueError("validated semantic link frame references must exist")
+        owners = tuple(
+            (link.frame_id, link.mention_id) for link in self.semantic_links
+        )
+        if len(set(owners)) != len(owners):
+            raise ValueError("each validated frame mention may have one semantic link")
         return self

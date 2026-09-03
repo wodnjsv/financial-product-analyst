@@ -26,13 +26,17 @@ from financial_agent.intent.draft import (
     IntentFrameDraftV2,
     IntentResolutionDraft,
     IntentResolutionDraftV2,
+    IntentResolutionDraftV3,
     ProductFamilyChoice,
     ReferenceHint,
     SlotAssignment,
     SlotMutation,
 )
 from financial_agent.intent.proposal import FrameSemanticCoverage
-from financial_agent.intent.resolution import ValidatedIntentResolutionV2
+from financial_agent.intent.resolution import (
+    ValidatedIntentResolutionV2,
+    ValidatedIntentResolutionV3,
+)
 from financial_agent.intent.errors import ResolverContractError
 from financial_agent.intent.resolution import ContractFileHash, ResolverBuildManifest
 from financial_agent.intent.types import (
@@ -54,6 +58,9 @@ from financial_agent.intent.validation import validate_semantics
 from financial_agent.intent.view import ActiveDatasetPin, ResolverView
 
 from .view_fixtures import complete_axis_definitions, complete_entity_type_ids
+from .test_hybrid_assembler import _inputs as _hybrid_inputs
+from .test_hybrid_assembler import _proposal as _hybrid_proposal
+from financial_agent.intent.hybrid_assembler import assemble_hybrid_proposal
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -209,6 +216,35 @@ def _state(
         resolution_status=ResolutionStatus.RESOLVED,
         issues=(),
         validation_events=(),
+    )
+
+
+def _as_v3_state(state: SemanticValidationState) -> SemanticValidationState:
+    covered = FrameSemanticCoverage(
+        state=SemanticCoverageState.COVERED,
+        reason=SemanticCoverageReason.NONE,
+        evidence_ids=(),
+    )
+    frames = tuple(
+        IntentFrameDraftV2(**frame.model_dump(), semantic_coverage=(covered,))
+        for frame in state.draft.intent_frames
+    )
+    draft = IntentResolutionDraftV3(
+        evidence_spans=state.draft.evidence_spans,
+        intent_frames=frames,
+        entity_hints=(),
+        reference_hints=state.draft.reference_hints,
+        context_link_hints=state.draft.context_link_hints,
+        slot_mutations=state.draft.slot_mutations,
+        semantic_flag_hints=state.draft.semantic_flag_hints,
+        frame_limit_exceeded=state.draft.frame_limit_exceeded,
+        semantic_links=(),
+    )
+    return replace(
+        state,
+        draft=draft,
+        canonical_frames=frames,
+        reference_output_enabled=True,
     )
 
 
@@ -541,6 +577,135 @@ def test_forward_link_is_contract_failure(context_inputs: ContextInputs) -> None
 
     with pytest.raises(ResolverContractError, match="INVALID_CONTEXT_GRAPH"):
         _finalize(state, context_inputs)
+
+
+@pytest.mark.parametrize("use_v3", (False, True))
+def test_prior_result_link_is_backward_and_cardinality_safe_in_v2_and_v3(
+    context_inputs: ContextInputs, use_v3: bool
+) -> None:
+    """Catches V3 bypassing the existing prior-result graph rules."""
+    state = _state(
+        frames=(
+            _frame("f1", 0, roles=(SourceRole.CANDIDATES,)),
+            _frame("f2", 1),
+        ),
+        references=(_reference(),),
+        links=(
+            _link(
+                link_type=ContextLinkType.CONSUME_RESULT_SET,
+                role=SourceRole.CANDIDATES,
+                selector=(Selector.ALL,),
+            ),
+        ),
+    )
+    if use_v3:
+        state = _as_v3_state(state)
+
+    result = validate_context_graph(state)
+
+    assert result.context_links[0].producer_frame_id == "f1"
+    assert result.context_links[0].consumer_frame_id == "f2"
+
+
+@pytest.mark.parametrize("use_v3", (False, True))
+def test_correction_mutation_keeps_backward_source_rules_in_v2_and_v3(
+    context_inputs: ContextInputs, use_v3: bool
+) -> None:
+    """Catches V3 accepting a correction sourced from a later frame."""
+    state = _state(
+        frames=(
+            _frame("f1", 0),
+            _frame("f2", 1, slots=(_slot("slot-f2", SlotKind.METRIC, "aum"),)),
+        ),
+        mutations=(
+            _mutation(
+                SlotMutationKind.UPDATE,
+                consumer="f1",
+                source=("f2",),
+            ),
+        ),
+    )
+    if use_v3:
+        state = _as_v3_state(state)
+
+    with pytest.raises(ResolverContractError, match="INVALID_CONTEXT_GRAPH"):
+        validate_context_graph(state)
+
+
+def test_v3_disabled_reference_output_rejects_reference_graph() -> None:
+    """Catches disabled V3 context branches reaching existing graph validation."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    state = validate_semantics(draft, context, normalized, view, catalog)
+    reference = _reference(candidates=(draft.intent_frames[0].frame_id,))
+    corrupted = draft.model_copy(update={"reference_hints": (reference,)})
+
+    with pytest.raises(ResolverContractError, match="MODEL_OUTPUT_DISABLED"):
+        validate_context_graph(replace(state, draft=corrupted))
+
+
+def test_v3_finalization_preserves_semantic_link_provenance(
+    context_inputs: ContextInputs,
+) -> None:
+    """Catches finalization flattening a V3 semantic link into V2 fields."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    state = validate_semantics(draft, context, normalized, view, catalog)
+    metadata = context_inputs.metadata.model_copy(
+        update={
+            "build_manifest": view.build_manifest,
+            "active_dataset_manifest_hash": view.active_dataset_pin.manifest_hash,
+        }
+    )
+
+    resolution = finalize_resolution(validate_context_graph(state), metadata)
+
+    assert isinstance(resolution, ValidatedIntentResolutionV3)
+    assert resolution.semantic_links[0].mention_id == mention_id
+    assert resolution.semantic_links[0].semantic_ids == ("fee_rate",)
+
+
+def test_v2_resolution_rejects_v3_manifest(
+    context_inputs: ContextInputs,
+) -> None:
+    """Catches broadening the V2 version guard to accept hybrid artifacts."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    state = validate_semantics(draft, context, normalized, view, catalog)
+    metadata = context_inputs.metadata.model_copy(
+        update={"build_manifest": view.build_manifest}
+    )
+    resolution = finalize_resolution(validate_context_graph(state), metadata)
+    payload = resolution.model_dump(exclude={"semantic_links"})
+
+    with pytest.raises(ValueError, match="2.0 validated resolutions"):
+        ValidatedIntentResolutionV2.model_validate(payload)
+
+
+def test_v3_resolution_rejects_v2_manifest(
+    context_inputs: ContextInputs,
+) -> None:
+    """Catches weakening V3 provenance to accept a legacy build manifest."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    state = validate_semantics(draft, context, normalized, view, catalog)
+    metadata = context_inputs.metadata.model_copy(
+        update={"build_manifest": view.build_manifest}
+    )
+    resolution = finalize_resolution(validate_context_graph(state), metadata)
+    payload = resolution.model_dump()
+    payload["build_manifest"]["resolver_schema_version"] = "2.0"
+
+    with pytest.raises(ValueError, match="3.0 validated resolutions"):
+        ValidatedIntentResolutionV3.model_validate(payload)
 
 
 def test_cycle_is_contract_failure(context_inputs: ContextInputs) -> None:

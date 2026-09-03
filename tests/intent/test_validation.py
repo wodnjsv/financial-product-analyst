@@ -22,6 +22,7 @@ from financial_agent.intent.draft import (
     IntentFrameDraftV2,
     IntentResolutionDraft,
     IntentResolutionDraftV2,
+    IntentResolutionDraftV3,
     ProductFamilyChoice,
     SemanticFlagHint,
     SlotAssignment,
@@ -50,6 +51,9 @@ from financial_agent.intent.validation import (
     VALIDATION_STAGES,
     validate_semantics,
 )
+from .test_hybrid_assembler import _inputs as _hybrid_inputs
+from .test_hybrid_assembler import _proposal as _hybrid_proposal
+from financial_agent.intent.hybrid_assembler import assemble_hybrid_proposal
 from financial_agent.intent.view import (
     ActiveDatasetPin,
     ResolverView,
@@ -497,6 +501,35 @@ def test_managed_by_accepts_asset_manager_as_relation_object(
     assert draft.entity_hints[0].semantic_role is EntitySemanticRole.RELATION_OBJECT
     assert draft.entity_hints[0].relation_id == ("managedBy",)
     assert draft.entity_hints[0].expected_entity_type_ids == ("AssetManager",)
+
+
+def test_v3_validation_accepts_registered_unhinted_semantic_link() -> None:
+    """Catches V2 candidate-gated validation leaking into the V3 path."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    view = view.model_copy(update={"semantic_candidates": ()})
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+
+    state = validate_semantics(draft, context, normalized, view, catalog)
+
+    assert isinstance(state.draft, IntentResolutionDraftV3)
+    assert state.resolution_status is ResolutionStatus.RESOLVED
+
+
+def test_v3_validation_rejects_unknown_semantic_id_after_assembly() -> None:
+    """Catches a corrupted canonical draft bypassing compact-catalog validation."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    link = draft.semantic_links[0].model_copy(
+        update={"semantic_ids": ("unknown-semantic",)}
+    )
+    draft = draft.model_copy(update={"semantic_links": (link,)})
+
+    with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_ID"):
+        validate_semantics(draft, context, normalized, view, catalog)
 
 
 @pytest.mark.parametrize(

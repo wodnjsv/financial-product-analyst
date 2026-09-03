@@ -12,6 +12,7 @@ from .draft import (
     IntentFrameDraft,
     IntentFrameDraftV2,
     IntentResolutionDraftV2,
+    IntentResolutionDraftV3,
     ReferenceHint,
     SlotMutation,
 )
@@ -24,6 +25,8 @@ from .resolution import (
     ValidatedIntentFrameV2,
     ValidatedIntentResolution,
     ValidatedIntentResolutionV2,
+    ValidatedIntentResolutionV3,
+    ValidatedSemanticLinkV3,
     ValidatedSlotMutation,
     ValidationEvent,
 )
@@ -99,6 +102,12 @@ _SET_SELECTORS = frozenset({Selector.ALL, Selector.TOP_N, Selector.EACH, Selecto
 def validate_context_graph(state: SemanticValidationState) -> ContextValidationState:
     """Validate only explicit, backward context dependencies and slot mutations."""
 
+    if not state.reference_output_enabled and (
+        state.draft.reference_hints
+        or state.draft.context_link_hints
+        or state.draft.slot_mutations
+    ):
+        raise ResolverContractError("MODEL_OUTPUT_DISABLED")
     frames_by_id = {frame.frame_id: frame for frame in state.canonical_frames}
     references_by_id = {hint.reference_id: hint for hint in state.draft.reference_hints}
     blocked_reference_ids = _validate_reference_targets(
@@ -136,7 +145,11 @@ def validate_context_graph(state: SemanticValidationState) -> ContextValidationS
 def finalize_resolution(
     context_state: ContextValidationState,
     metadata: ResolutionFinalizationMetadata,
-) -> ValidatedIntentResolution | ValidatedIntentResolutionV2:
+) -> (
+    ValidatedIntentResolution
+    | ValidatedIntentResolutionV2
+    | ValidatedIntentResolutionV3
+):
     """Freeze context validation into the richer, immutable internal artifact."""
 
     mutations_by_frame: dict[str, list[ValidatedSlotMutation]] = {}
@@ -158,10 +171,22 @@ def finalize_resolution(
         )
         for frame in context_state.semantic_state.canonical_frames
     )
-    is_v2 = isinstance(context_state.semantic_state.draft, IntentResolutionDraftV2)
-    if is_v2 and metadata.build_manifest.resolver_schema_version != "2.0":
+    draft = context_state.semantic_state.draft
+    is_v3 = isinstance(draft, IntentResolutionDraftV3)
+    is_v2 = isinstance(draft, IntentResolutionDraftV2)
+    if (
+        is_v2
+        and metadata.build_manifest.resolver_schema_version
+        != draft.resolver_schema_version
+    ):
         raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
-    resolution_type = ValidatedIntentResolutionV2 if is_v2 else ValidatedIntentResolution
+    resolution_type = (
+        ValidatedIntentResolutionV3
+        if is_v3
+        else ValidatedIntentResolutionV2
+        if is_v2
+        else ValidatedIntentResolution
+    )
     resolution_payload: dict[str, object] = {
         "request_key": metadata.request_key,
         "run_id": metadata.run_id,
@@ -182,7 +207,12 @@ def finalize_resolution(
         "invalid_attempt_hashes": (),
     }
     if is_v2:
-        resolution_payload["entity_hints"] = context_state.semantic_state.draft.entity_hints
+        resolution_payload["entity_hints"] = draft.entity_hints
+    if is_v3:
+        resolution_payload["semantic_links"] = tuple(
+            ValidatedSemanticLinkV3(**link.model_dump())
+            for link in draft.semantic_links
+        )
     return resolution_type(**resolution_payload)
 
 

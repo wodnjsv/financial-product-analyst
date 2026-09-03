@@ -15,6 +15,8 @@ from .draft import (
     IntentFrameDraftV2,
     IntentResolutionDraft,
     IntentResolutionDraftV2,
+    IntentResolutionDraftV3,
+    SemanticLinkDraftV3,
     validate_v2_entity_hint_ownership,
 )
 from .evidence import EvidenceSourceKind
@@ -33,6 +35,7 @@ from .types import (
 from .view import (
     ResolverView,
     ResolverViewEntityCandidate,
+    ResolverViewV3,
     validate_resolver_view_catalog,
 )
 
@@ -105,6 +108,7 @@ class SemanticValidationState:
     validation_events: tuple[ValidationEvent, ...]
     literal_kinds_by_id: tuple[tuple[str, str], ...] = ()
     offered_target_mention_ids: tuple[str, ...] = ()
+    reference_output_enabled: bool = True
 
 
 def validate_semantics(
@@ -124,13 +128,37 @@ def validate_semantics(
     validate_resolver_view_catalog(view, catalog)
     offered = _offered(view)
     _validate_offered_ids(draft, context, offered, catalog)
-    _validate_evidence_spans(draft, context)
-    _validate_applicability(draft, catalog, offered.concept_ids, offered.relation_ids)
-    _validate_ontology_relations(draft, catalog, offered.relation_ids)
+    if isinstance(draft, IntentResolutionDraftV3):
+        _validate_v3_offered_ids_and_exact_locks(draft, view, catalog)
+        _validate_evidence_spans(draft, context)
+        _validate_v3_semantic_coverage(draft, view)
+        _validate_v3_applicability(draft, catalog)
+        _validate_v3_relation_endpoints(draft, view, catalog)
+    else:
+        _validate_evidence_spans(draft, context)
+        _validate_applicability(draft, catalog, offered.concept_ids, offered.relation_ids)
+        _validate_ontology_relations(draft, catalog, offered.relation_ids)
     _validate_literal_types(draft, normalized, view, offered)
     _validate_v2_semantic_coverage(draft, view, catalog)
 
     canonical_frames = tuple(_canonical_frame(frame) for frame in draft.intent_frames)
+    if isinstance(draft, IntentResolutionDraftV3):
+        draft = draft.model_copy(
+            update={
+                "intent_frames": canonical_frames,
+                "semantic_links": tuple(
+                    sorted(
+                        draft.semantic_links,
+                        key=lambda item: (
+                            item.frame_id,
+                            item.mention_id,
+                            item.semantic_ids,
+                            item.semantic_link_id,
+                        ),
+                    )
+                ),
+            }
+        )
     issues = _issues(draft)
     final_tags = derive_semantic_tags(draft, catalog, normalized=normalized, view=view)
     return SemanticValidationState(
@@ -152,7 +180,206 @@ def validate_semantics(
                 }
             )
         ),
+        reference_output_enabled=(
+            view.reference_output_enabled
+            if isinstance(view, ResolverViewV3)
+            else True
+        ),
     )
+
+
+def _validate_v3_offered_ids_and_exact_locks(
+    draft: IntentResolutionDraftV3,
+    view: ResolverView,
+    catalog: SemanticCatalogSnapshot,
+) -> None:
+    if not isinstance(view, ResolverViewV3):
+        raise ResolverContractError("MODEL_SCHEMA_INVALID")
+    if view.build_manifest.resolver_schema_version != draft.resolver_schema_version:
+        raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+    if not view.entity_output_enabled and draft.entity_hints:
+        raise ResolverContractError("MODEL_OUTPUT_DISABLED")
+    if not view.reference_output_enabled and (
+        draft.reference_hints or draft.context_link_hints or draft.slot_mutations
+    ):
+        raise ResolverContractError("MODEL_OUTPUT_DISABLED")
+    mentions = {item.mention_id: item for item in view.mention_spans.items}
+    registered = set(catalog.concepts_by_id)
+    if {
+        card.semantic_id for card in view.compact_semantic_catalog.concepts
+    } != registered:
+        raise ResolverContractError("MODEL_UNKNOWN_ID")
+    frames = {frame.frame_id: frame for frame in draft.intent_frames}
+    spans = {span.span_id: span for span in draft.evidence_spans}
+    links_by_mention: dict[str, list[SemanticLinkDraftV3]] = {}
+    owners: set[tuple[str, str]] = set()
+    for link in draft.semantic_links:
+        mention = mentions.get(link.mention_id)
+        frame = frames.get(link.frame_id)
+        if mention is None or frame is None or not set(link.semantic_ids) <= registered:
+            raise ResolverContractError("MODEL_UNKNOWN_ID")
+        if mention.segment_id not in frame.segment_ids:
+            raise ResolverContractError("MODEL_UNKNOWN_ID")
+        owner = (link.frame_id, link.mention_id)
+        if owner in owners or (
+            link.state == "selected" and len(link.semantic_ids) != 1
+        ) or (
+            link.state == "ambiguous"
+            and (
+                len(link.semantic_ids) < 2
+                or len(set(link.semantic_ids)) != len(link.semantic_ids)
+            )
+        ):
+            raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+        owners.add(owner)
+        if len(link.evidence_span_ids) != 1:
+            raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+        span = spans.get(link.evidence_span_ids[0])
+        if span is None or (
+            span.segment_id,
+            span.start_char,
+            span.end_char,
+            span.text,
+        ) != (
+            mention.segment_id,
+            mention.start_char,
+            mention.end_char,
+            mention.text,
+        ):
+            raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+        links_by_mention.setdefault(link.mention_id, []).append(link)
+    for projection in view.exact_lock_projections:
+        if projection.role == "field":
+            links = links_by_mention.get(projection.mention_id, ())
+            if not links or any(
+                link.state != "selected"
+                or link.semantic_ids != (projection.canonical_semantic_id,)
+                for link in links
+            ):
+                raise ResolverContractError("MODEL_EXACT_LOCK_CONFLICT")
+        elif not any(
+            projection.canonical_semantic_id in frame.product_family_choice.selected_ids
+            and mentions[projection.mention_id].segment_id in frame.segment_ids
+            for frame in draft.intent_frames
+        ):
+            raise ResolverContractError("MODEL_EXACT_LOCK_CONFLICT")
+
+
+def _validate_v3_semantic_coverage(
+    draft: IntentResolutionDraftV3, view: ResolverViewV3
+) -> None:
+    mentions_by_coordinates = {
+        (item.segment_id, item.start_char, item.end_char, item.text): item.mention_id
+        for item in view.mention_spans.items
+    }
+    spans = {span.span_id: span for span in draft.evidence_spans}
+    links_by_frame: dict[str, list[SemanticLinkDraftV3]] = {}
+    for link in draft.semantic_links:
+        links_by_frame.setdefault(link.frame_id, []).append(link)
+    for frame in draft.intent_frames:
+        coverage = frame.semantic_coverage[0]
+        linked_evidence = {
+            evidence_id
+            for link in links_by_frame.get(frame.frame_id, ())
+            for evidence_id in link.evidence_span_ids
+        }
+        unmapped_evidence = set(coverage.evidence_ids)
+        if linked_evidence & unmapped_evidence:
+            raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+        for evidence_id in unmapped_evidence:
+            span = spans.get(evidence_id)
+            if span is None or (
+                span.segment_id, span.start_char, span.end_char, span.text
+            ) not in mentions_by_coordinates:
+                raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+        if coverage.state is SemanticCoverageState.COVERED:
+            valid = coverage.reason is SemanticCoverageReason.NONE and not unmapped_evidence
+        else:
+            valid = (
+                coverage.reason is not SemanticCoverageReason.NONE
+                and bool(unmapped_evidence)
+            )
+        if not valid:
+            raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
+
+
+def _validate_v3_applicability(
+    draft: IntentResolutionDraftV3, catalog: SemanticCatalogSnapshot
+) -> None:
+    frames = {frame.frame_id: frame for frame in draft.intent_frames}
+    for link in draft.semantic_links:
+        frame = frames[link.frame_id]
+        families = set(frame.product_family_choice.selected_ids)
+        for semantic_id in link.semantic_ids:
+            concept = catalog.concepts_by_id[semantic_id]
+            allowed_types = (
+                set(concept.subject_ontology_types)
+                if concept.kind == "relation"
+                else set(concept.allowed_ontology_types)
+            )
+            if not families <= set(concept.allowed_product_families) or not all(
+                _type_is_compatible(type_id, allowed_types, catalog)
+                for type_id in frame.entity_type_ids
+            ):
+                raise ResolverContractError("MODEL_INAPPLICABLE_CONCEPT")
+
+
+def _validate_v3_relation_endpoints(
+    draft: IntentResolutionDraftV3,
+    view: ResolverViewV3,
+    catalog: SemanticCatalogSnapshot,
+) -> None:
+    relations_by_frame: dict[str, set[str]] = {}
+    for link in draft.semantic_links:
+        relations_by_frame.setdefault(link.frame_id, set()).update(
+            semantic_id
+            for semantic_id in link.semantic_ids
+            if catalog.concepts_by_id[semantic_id].kind == "relation"
+        )
+    candidates = {
+        group.mention_id: {item.entity_id: item for item in group.items}
+        for group in view.entity_candidates
+    }
+    hints = {hint.entity_hint_id: hint for hint in draft.entity_hints}
+    for frame in draft.intent_frames:
+        relation_ids = relations_by_frame.get(frame.frame_id, set())
+        if relation_ids and not frame.entity_type_ids:
+            raise ResolverContractError("MODEL_INVALID_RELATION")
+        for hint_id in frame.entity_hint_ids:
+            hint = hints[hint_id]
+            if hint.mention_id:
+                offered = candidates[hint.mention_id[0]]
+                if any(
+                    not any(
+                        _type_is_compatible(
+                            actual,
+                            set(hint.expected_entity_type_ids),
+                            catalog,
+                        )
+                        for actual in offered[entity_id].ontology_type_ids
+                    )
+                    for entity_id in hint.selected_candidate_ids
+                ):
+                    raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
+            if hint.semantic_role is EntitySemanticRole.FRAME_SUBJECT:
+                _validate_frame_subject_hint(frame, hint, catalog)
+                continue
+            if len(hint.relation_id) != 1 or hint.relation_id[0] not in relation_ids:
+                raise ResolverContractError("MODEL_INVALID_RELATION")
+            relation = catalog.concepts_by_id[hint.relation_id[0]]
+            allowed = set(relation.object_ontology_types)
+            if not all(
+                _type_is_compatible(item, allowed, catalog)
+                for item in hint.expected_entity_type_ids
+            ):
+                raise ResolverContractError("MODEL_INVALID_RELATION")
+            if hint.mention_id:
+                for entity_id in hint.selected_candidate_ids:
+                    if not any(
+                        _type_is_compatible(item, allowed, catalog)
+                        for item in offered[entity_id].ontology_type_ids
+                    ):
+                        raise ResolverContractError("MODEL_INVALID_RELATION")
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,9 +493,10 @@ def _validate_offered_ids(
             allowed_entity_ids = frozenset(candidates)
             _require_subset(hint.candidate_entity_ids, allowed_entity_ids)
             _require_subset(hint.selected_candidate_ids, hint.candidate_entity_ids)
-            _validate_selected_entity_types(
-                hint, candidates, catalog
-            )
+            if isinstance(draft, IntentResolutionDraftV3):
+                _validate_selected_entity_type_ids(hint, candidates, catalog)
+            else:
+                _validate_selected_entity_types(hint, candidates, catalog)
         else:
             if hint.candidate_entity_ids or hint.selected_candidate_ids:
                 raise ResolverContractError("MODEL_UNKNOWN_ID")
@@ -334,6 +562,19 @@ def _validate_selected_entity_types(
             for candidate_type in candidate_types
         ):
             raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
+
+
+def _validate_selected_entity_type_ids(
+    hint: EntityHint,
+    candidates: dict[str, ResolverViewEntityCandidate],
+    catalog: SemanticCatalogSnapshot,
+) -> None:
+    if any(
+        candidate_type not in catalog.class_ancestor_ids
+        for entity_id in hint.selected_candidate_ids
+        for candidate_type in candidates[entity_id].ontology_type_ids
+    ):
+        raise ResolverContractError("MODEL_UNKNOWN_ID")
 
 
 def _require_subset(values: object, allowed: object) -> None:
@@ -534,9 +775,11 @@ def _validate_v2_semantic_coverage(
     view: ResolverView,
     catalog: SemanticCatalogSnapshot,
 ) -> None:
-    if not isinstance(draft, IntentResolutionDraftV2):
+    if not isinstance(draft, IntentResolutionDraftV2) or isinstance(
+        draft, IntentResolutionDraftV3
+    ):
         return
-    if view.build_manifest.resolver_schema_version != "2.0":
+    if view.build_manifest.resolver_schema_version != draft.resolver_schema_version:
         raise ResolverContractError("MODEL_INVALID_SEMANTIC_COVERAGE")
     evidence_by_id = {item.evidence_id: item for item in view.evidence_candidates}
     draft_evidence_ids = {span.span_id for span in draft.evidence_spans}
@@ -796,6 +1039,16 @@ def _exact_policy_cue_tags(
 
 def _issues(draft: IntentResolutionDraft) -> tuple[ResolutionIssue, ...]:
     records: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = []
+    if isinstance(draft, IntentResolutionDraftV3):
+        records.extend(
+            (
+                "AMBIGUITY_UNRESOLVED",
+                (link.frame_id, link.semantic_link_id),
+                link.evidence_span_ids,
+            )
+            for link in draft.semantic_links
+            if link.state == "ambiguous"
+        )
     for frame in draft.intent_frames:
         if isinstance(frame, IntentFrameDraftV2):
             coverage = frame.semantic_coverage[0]

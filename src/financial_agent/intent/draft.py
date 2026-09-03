@@ -1,4 +1,4 @@
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 from pydantic import Field, model_validator
 
@@ -210,6 +210,7 @@ class IntentResolutionDraft(ContractModel):
 
 
 class IntentResolutionDraftV2(IntentResolutionDraft):
+    resolver_schema_version: ClassVar[str] = "2.0"
     intent_frames: Annotated[
         tuple[IntentFrameDraftV2, ...], Field(min_length=1, max_length=16)
     ]
@@ -218,6 +219,52 @@ class IntentResolutionDraftV2(IntentResolutionDraft):
     @model_validator(mode="after")
     def validate_entity_hint_ownership(self) -> "IntentResolutionDraftV2":
         validate_v2_entity_hint_ownership(self.intent_frames, self.entity_hints)
+        return self
+
+
+class SemanticLinkDraftV3(ContractModel):
+    semantic_link_id: Identifier
+    frame_id: Identifier
+    mention_id: Identifier
+    semantic_ids: Annotated[tuple[Identifier, ...], Field(min_length=1)]
+    state: Literal["selected", "ambiguous"]
+    evidence_span_ids: Annotated[tuple[Identifier, ...], Field(min_length=1)]
+    reason_code: Identifier
+
+    @model_validator(mode="after")
+    def validate_cardinality(self) -> "SemanticLinkDraftV3":
+        if self.state == "selected" and len(self.semantic_ids) != 1:
+            raise ValueError("selected semantic link requires exactly one semantic ID")
+        if self.state == "ambiguous" and (
+            len(self.semantic_ids) < 2
+            or len(set(self.semantic_ids)) != len(self.semantic_ids)
+        ):
+            raise ValueError("ambiguous semantic link requires distinct semantic IDs")
+        return self
+
+
+class IntentResolutionDraftV3(IntentResolutionDraftV2):
+    resolver_schema_version: ClassVar[str] = "3.0"
+    semantic_links: tuple[SemanticLinkDraftV3, ...]
+
+    @model_validator(mode="after")
+    def validate_semantic_link_ownership(self) -> "IntentResolutionDraftV3":
+        require_unique_ids(
+            (link.semantic_link_id for link in self.semantic_links),
+            label="semantic links",
+        )
+        frames = {frame.frame_id for frame in self.intent_frames}
+        evidence = {span.span_id for span in self.evidence_spans}
+        linked_mentions: set[tuple[str, str]] = set()
+        for link in self.semantic_links:
+            if link.frame_id not in frames:
+                raise ValueError("semantic link frame references must exist")
+            if not set(link.evidence_span_ids) <= evidence:
+                raise ValueError("semantic link evidence references must exist")
+            owner = (link.frame_id, link.mention_id)
+            if owner in linked_mentions:
+                raise ValueError("each frame mention may have one semantic link")
+            linked_mentions.add(owner)
         return self
 
 
