@@ -24,7 +24,7 @@ from financial_agent.intent.context import (
     finalize_resolution,
     validate_context_graph,
 )
-from financial_agent.intent.draft import EntityHintV2
+from financial_agent.intent.draft import EntityHintV2, SlotAssignment
 from financial_agent.intent.hybrid_assembler import assemble_hybrid_proposal
 from financial_agent.intent.hybrid_proposal import (
     FrameSemanticCoverageV3,
@@ -57,12 +57,18 @@ from financial_agent.intent.semantic_defaults import (
     SemanticAsOfDefaultV1,
     load_semantic_default_policy_registry,
 )
+from financial_agent.intent.resolution import (
+    ValidatedIntentResolutionV3,
+    ValidatedSlotMutation,
+)
 from financial_agent.intent.types import (
     ChoiceState,
     EntitySemanticRole,
     ResolutionStatus,
     SemanticCoverageReason,
     SemanticCoverageState,
+    SlotKind,
+    SlotMutationKind,
     SourceRole,
 )
 from financial_agent.intent.validation import validate_semantics
@@ -78,6 +84,7 @@ from financial_agent.intent.view import (
     ResolverViewRelationDefinition,
     ResolverViewSemanticCandidate,
     ResolverViewSemanticCandidateGroup,
+    ResolverViewV3,
     build_hybrid_manifest,
     build_manifest,
     build_resolver_view,
@@ -362,10 +369,11 @@ def _literal(
     start: int,
     text: str | None = None,
     currency: str | None = None,
+    segment_id: str = "s1",
 ) -> ResolverViewLiteralCandidate:
     return ResolverViewLiteralCandidate(
         literal_id=literal_id,
-        segment_id="s1",
+        segment_id=segment_id,
         kind=kind,
         original_text=text or value,
         start_char=start,
@@ -412,6 +420,71 @@ def _v3_default_inputs(
         "semantic_default_registry": SEMANTIC_DEFAULT_REGISTRY,
         "dataset_semantic_defaults": defaults,
     }
+
+
+def _with_carried_date(
+    inputs: dict[str, object],
+    *,
+    source_value_id: str = "date-context",
+) -> dict[str, object]:
+    resolution_v3 = inputs["resolution"]
+    assert isinstance(resolution_v3, ValidatedIntentResolutionV3)
+    consumer = resolution_v3.canonical_frames[0]
+    source_frame_id = "frame-v3-context-source"
+    source = consumer.model_copy(
+        update={
+            "frame_id": source_frame_id,
+            "ordinal": 0,
+            "segment_ids": ("context-segment",),
+            "evidence_span_ids": ("context-date-evidence",),
+            "slot_assignments": (
+                SlotAssignment(
+                    slot_assignment_id="slot-context-date",
+                    slot_kind=SlotKind.DATE_SCOPE,
+                    value_ids=(source_value_id,),
+                    evidence_span_ids=("context-date-evidence",),
+                    reason_code="explicit",
+                ),
+            ),
+            "slot_mutations": (),
+        }
+    )
+    carried = consumer.model_copy(
+        update={
+            "ordinal": 1,
+            "slot_mutations": (
+                ValidatedSlotMutation(
+                    slot_mutation_id="mutation-context-date",
+                    consumer_frame_id=consumer.frame_id,
+                    slot_kind=SlotKind.DATE_SCOPE,
+                    mutation_kind=SlotMutationKind.CARRYOVER,
+                    source_frame_id=(source_frame_id,),
+                ),
+            ),
+        }
+    )
+    inputs["resolution"] = ValidatedIntentResolutionV3.model_validate(
+        resolution_v3.model_copy(
+            update={"canonical_frames": (source, carried)}
+        ).model_dump(mode="python")
+    )
+    view_v3 = inputs["view"]
+    assert isinstance(view_v3, ResolverViewV3)
+    inputs["view"] = view_v3.model_copy(
+        update={
+            "literal_candidates": (
+                *view_v3.literal_candidates,
+                _literal(
+                    "date-context",
+                    kind="date",
+                    value="2026-08-20",
+                    start=0,
+                    segment_id="context-segment",
+                ),
+            )
+        }
+    )
+    return inputs
 
 
 def test_verified_dataset_date_completes_aum_rank() -> None:
@@ -535,6 +608,127 @@ def test_dataset_default_conflicting_with_explicit_date_is_rejected() -> None:
     assert result.frames[0].complete_candidates == ()
     assert result.frames[0].contract_readiness.reason_codes == (
         "SEMANTIC_DEFAULT_AS_OF_CONFLICT",
+    )
+
+
+def test_carried_date_precedes_matching_registry_default_without_default_provenance() -> None:
+    inputs = _with_carried_date(
+        _v3_default_inputs(
+            _dataset_defaults(_as_of_default(value=date(2026, 8, 20)))
+        )
+    )
+
+    result = solve_query_contracts(**inputs)
+
+    contract = result.frames[1].complete_candidates[0].contract
+    assert contract.qualifiers.as_of_date == date(2026, 8, 20)
+    assert not any(
+        item.source_kind is ProvenanceSourceKind.REGISTRY_DEFAULT
+        and item.semantic_input_id.startswith("qualifiers.as_of_date")
+        for item in contract.provenance
+    )
+
+
+def test_carried_date_precedes_differing_registry_default() -> None:
+    inputs = _with_carried_date(
+        _v3_default_inputs(
+            _dataset_defaults(_as_of_default(value=date(2026, 8, 21)))
+        )
+    )
+
+    result = solve_query_contracts(**inputs)
+
+    contract = result.frames[1].complete_candidates[0].contract
+    assert contract.qualifiers.as_of_date == date(2026, 8, 20)
+    assert not any(
+        item.source_kind is ProvenanceSourceKind.REGISTRY_DEFAULT
+        and item.semantic_input_id.startswith("qualifiers.as_of_date")
+        for item in contract.provenance
+    )
+
+
+def test_unresolvable_carried_date_fails_closed_before_registry_default() -> None:
+    inputs = _with_carried_date(
+        _v3_default_inputs(_dataset_defaults(_as_of_default())),
+        source_value_id="date-context-missing",
+    )
+
+    result = solve_query_contracts(**inputs)
+
+    solved = result.frames[1]
+    assert solved.complete_candidates == ()
+    assert solved.contract_readiness.reason_codes == (
+        "REQUIRED_QUALIFIER_MISSING",
+    )
+
+
+def test_v2_solver_does_not_adopt_the_v3_contextual_default_change() -> None:
+    source_resolution = _axis()
+    original = source_resolution.canonical_frames[0]
+    source_frame_id = "frame-v2-context-source"
+    source = original.model_copy(
+        update={
+            "frame_id": source_frame_id,
+            "ordinal": 0,
+            "segment_ids": ("context-segment",),
+            "slot_assignments": (
+                SlotAssignment(
+                    slot_assignment_id="slot-v2-context-date",
+                    slot_kind=SlotKind.DATE_SCOPE,
+                    value_ids=("date-v2-context",),
+                    evidence_span_ids=("context-date-evidence",),
+                    reason_code="explicit",
+                ),
+            ),
+        }
+    )
+    consumer = original.model_copy(
+        update={
+            "ordinal": 1,
+            "slot_mutations": (
+                ValidatedSlotMutation(
+                    slot_mutation_id="mutation-v2-context-date",
+                    consumer_frame_id=original.frame_id,
+                    slot_kind=SlotKind.DATE_SCOPE,
+                    mutation_kind=SlotMutationKind.CARRYOVER,
+                    source_frame_id=(source_frame_id,),
+                ),
+            ),
+        }
+    )
+    source_resolution = source_resolution.model_copy(
+        update={"canonical_frames": (source, consumer)}
+    )
+    resolver_view = _semantic_view("aum")
+    aum = resolver_view.concept_definitions[0].model_copy(
+        update={"required_qualifiers": ("as_of",)}
+    )
+    resolver_view = resolver_view.model_copy(
+        update={
+            "concept_definitions": (aum, *resolver_view.concept_definitions[1:]),
+            "literal_candidates": (
+                *resolver_view.literal_candidates,
+                _literal(
+                    "date-v2-context",
+                    kind="date",
+                    value="2026-08-20",
+                    start=0,
+                    segment_id="context-segment",
+                ),
+            ),
+        }
+    )
+
+    result = solve_query_contracts(
+        resolution=source_resolution,
+        view=resolver_view,
+        exact_locks=(_lock("field", "aum"),),
+        registry=REGISTRY,
+    )
+
+    assert result.frames[1].complete_candidates == ()
+    assert result.frames[1].contract_readiness.reason_codes == (
+        "REQUIRED_QUALIFIER_MISSING",
     )
 
 

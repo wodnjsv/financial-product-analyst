@@ -73,6 +73,7 @@ from .types import (
     ResolutionStatus,
     SemanticCoverageState,
     SlotKind,
+    SlotMutationKind,
 )
 from .view import (
     ResolverView,
@@ -395,7 +396,7 @@ def _solve_frame(
         return _frame_result(frame.frame_id, (), tuple(rejections))
     try:
         qualifier_options, qualifier_states = _qualifier_options(
-            frame, view, exact_locks, rejections, variants[0].id
+            resolution, frame, view, exact_locks, rejections, variants[0].id
         )
     except _CandidateBoundReached as error:
         return _frame_result(
@@ -1485,6 +1486,7 @@ def _pins(registry: QueryContractRegistry) -> QueryRegistryPinsV2:
 
 
 def _qualifier_options(
+    resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
     frame: ValidatedIntentFrameV2,
     view: ResolverView,
     locks: tuple[ExactSemanticLock, ...],
@@ -1527,6 +1529,18 @@ def _qualifier_options(
                 if (value := value_of(item)) is not None
             )
         )
+        contextual = False
+        if (
+            role_id == "qualifier.as_of"
+            and not values
+            and isinstance(resolution, ValidatedIntentResolutionV3)
+        ):
+            carried_dates, contextual = _carried_date_literals(
+                resolution, frame, view
+            )
+            values = tuple(
+                dict.fromkeys(item.canonical_value for item in carried_dates)
+            )
         if exact and len(values) > 1:
             rejections.append(
                 _rejection(
@@ -1541,7 +1555,15 @@ def _qualifier_options(
         if len(values) > MAX_CANDIDATES_PER_ROLE:
             raise _CandidateBoundReached(role_id)
         states[role_id.removeprefix("qualifier.")] = (
-            "missing" if not values else "resolved" if len(values) == 1 else "ambiguous"
+            "context_resolved"
+            if contextual and len(values) == 1
+            else "context_unresolved"
+            if contextual
+            else "missing"
+            if not values
+            else "resolved"
+            if len(values) == 1
+            else "ambiguous"
         )
         role_values[role_id] = values or (None,)
 
@@ -1565,6 +1587,52 @@ def _qualifier_options(
     return tuple(options.values()), states
 
 
+def _carried_date_literals(
+    resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
+    frame: ValidatedIntentFrameV2,
+    view: ResolverView | ResolverViewV3,
+) -> tuple[tuple[ResolverViewLiteralCandidate, ...], bool]:
+    mutations = tuple(
+        mutation
+        for mutation in frame.slot_mutations
+        if mutation.slot_kind is SlotKind.DATE_SCOPE
+        and mutation.mutation_kind is SlotMutationKind.CARRYOVER
+    )
+    if not mutations:
+        return (), False
+    if len(mutations) != 1 or len(mutations[0].source_frame_id) != 1:
+        return (), True
+    source_frame_id = mutations[0].source_frame_id[0]
+    source = next(
+        (
+            candidate
+            for candidate in resolution.canonical_frames
+            if candidate.frame_id == source_frame_id
+            and candidate.ordinal < frame.ordinal
+        ),
+        None,
+    )
+    if source is None:
+        return (), True
+    assignments = tuple(
+        assignment
+        for assignment in source.slot_assignments
+        if assignment.slot_kind is SlotKind.DATE_SCOPE
+    )
+    if len(assignments) != 1 or len(assignments[0].value_ids) != 1:
+        return (), True
+    literal = next(
+        (
+            candidate
+            for candidate in view.literal_candidates
+            if candidate.literal_id == assignments[0].value_ids[0]
+            and candidate.kind == "date"
+        ),
+        None,
+    )
+    return ((literal,) if literal is not None else ()), True
+
+
 def _apply_as_of_semantic_default(
     *,
     resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
@@ -1586,6 +1654,8 @@ def _apply_as_of_semantic_default(
         if {"as_of", "as_of_date"} & set(field.concept.required_qualifiers)
     )
     if not as_of_fields or dataset_semantic_defaults is None:
+        return unchanged
+    if qualifier_states.get("as_of", "").startswith("context_"):
         return unchanged
     if semantic_default_registry is None:
         return _AsOfDefaultResult(
@@ -1711,7 +1781,7 @@ def _fields_with_complete_qualifiers(
         for raw_qualifier in field.concept.required_qualifiers:
             qualifier = aliases.get(raw_qualifier, raw_qualifier)
             state = qualifier_states.get(qualifier, "missing")
-            if state == "resolved":
+            if state in {"resolved", "context_resolved"}:
                 continue
             rejections.append(
                 _rejection(
