@@ -129,30 +129,56 @@ to the V2 `production_one_axis` path and is `16/16 pass`; it must not be read as
 V3 provider evidence. V3's separately recorded shadow result is `19/21` and
 does not satisfy a 100% provider-success promotion requirement.
 
-## Promotion gates
+## V3 design and ADR promotion gates
+
+This table accounts for every gate in the accepted hybrid design and ADR-0030.
+A measured subset below threshold is shown, but it does not replace the complete
+authoritative denominator: the gate remains `unmeasured` and therefore blocks
+promotion.
+
+| Gate | Threshold / required evidence | Exact evidence | Fail-closed status |
+| --- | --- | --- | --- |
+| Registered compact-catalog selectability | `100%` of registered held-out concepts | deterministic V3 `196/196` | `pass` |
+| Preserved required mention spans | `100%` of required source spans | deterministic V3 `253/253` | `pass` |
+| Exact-lock precision | `100%` on the authoritative lock denominator | deterministic V3 `140/140` with authoritative denominator `140` | `pass` |
+| Requested semantic-link recall | `>=99%` on all `196` held-out requested concept occurrences | live V3 subset `0/4`; offline report has no predictions for the `196`-occurrence denominator | `unmeasured`; measured subset is below threshold |
+| First-pass structured validity | `>=99%` on all `155` authoritative cases | live V3 subset `5/21` | `unmeasured`; measured subset is below threshold |
+| Held-out joint-frame exact | `>=90%` on all `155` authoritative cases | live V3 representative subset `0/5` | `unmeasured`; measured subset is below threshold |
+| Held-out context-link exact | `>=95%` on all `155` authoritative cases | live V3 representative subset `1/5` | `unmeasured`; measured subset is below threshold |
+| Supported complete-contract exact | `>=95%` on the complete `194`-frame gold denominator | live V3 representative subset `0/5`; only `43/194` contract-role gold frames are adjudicated offline | `unmeasured`; measured subset is below threshold |
+| OOD false-fast | `<=2%` on all `54` authoritative OOD cases | live V3 `0/1`; offline report has no live prediction for the `54`-case denominator | `unmeasured`; one case cannot promote |
+| Unknown semantic-ID acceptance | `0` | `0` accepted across 5 adversarial assembler, validator, solver, and service checks | `pass` |
+| Physical-schema tokens in HCX prompts or outputs | `0` | `0` exposed across 4 compact-catalog and prompt boundary checks | `pass` |
+| Live outcome separation | provider, schema, semantic, contract, and latency evidence reported separately | V2 production/challenger and V3 shadow are separate paths; V3 records `38` calls, `5/21` first-pass validity, `0/5` semantic/contract exact, and `18,706 / 50,547 ms` p50/p95 | `pass` for accounting only; metric values do not pass promotion |
+| Five representative contracts scored independently | five per-case outcomes without cross-case failure multiplication | V2 production reports `2/5`; V3 complete-contract exact reports `0/5` | `pass` for accounting only; exactness values do not pass promotion |
+| V3 provider success | `100%` for the measured shadow population | `19/21` cases; `30/38` calls succeeded | `fail` |
+
+The repaired structured-validity stage is separately measured at `0/16`; it is
+not substituted for the first-pass gate. Action and ProductFamily exact are each
+`3/21`, semantic-link exact is `0/5`, planning readiness is `0/16`, and these
+stage outcomes reinforce rather than relax the fail-closed decision.
+
+## Preserved report and downstream gates
+
+The sanitized promotion report also retains earlier semantic-query and physical
+execution gates. They remain part of the overall `deferred` result even where
+ADR-0030 supersedes candidate recall at five as the V3 selectability gate.
 
 | Gate | Threshold | Evidence | Status |
 | --- | --- | --- | --- |
 | Supported representability | `100%` | `199/199` | `pass` |
 | Unsupported reason coverage | `100%` | `10/10` | `pass` |
 | False-complete unsupported | `0` | `0/10` | `pass` |
-| Exact-lock precision | `100%` authoritative complete population | positive subset is not accepted by the top-level gate | `unmeasured` |
 | Complete-contract candidate recall | `>=99%` over `194` | observed `43/43`; 151 gold frames incomplete | `unmeasured` |
 | Decoupled contract exact match | `>=95%` over `194` | observed `43/43`; 151 gold frames incomplete | `unmeasured` |
 | Executable deterministic compile success | `100%` authoritative population | authoritative population undefined | `unmeasured` |
 | Byte equivalence | `100%` authoritative population | authoritative population undefined | `unmeasured` |
-| Legacy ADR candidate recall at 5 | `>=99%` | `123/196` | `fail` |
-| Full-population first-pass validity | `>=99%` over `155` | V3 live subset `5/21` | `unmeasured` top-level and below threshold on measured subset |
-| Full-population joint-frame exact | `>=90%` over `155` | V3 live representative subset `0/5` | `unmeasured` top-level and below threshold on measured subset |
-| Full-population context-link exact | `>=95%` over `155` | V3 live representative subset `1/5` | `unmeasured` top-level and below threshold on measured subset |
-| OOD false-fast | `<=2%` over complete OOD population | V3 live `0/1`; complete population absent | `unmeasured` |
+| Legacy candidate recall at 5 | diagnostic under ADR-0030; retained report threshold `>=99%` | `123/196` | report records `fail`; not V3 selectability |
 | PostgreSQL conformance | `100%` | no approved URL configured | `unmeasured` |
 | Public-fund physical definition | verified | fee and representative-grain definitions absent | `unmeasured` |
 | V2 production provider success | `100%` over 16-case path | `16/16` | `pass` |
 | V2 representative contract exact | `5/5` | `2/5` | `fail` |
 | V2 representative population integrity | `true` | `false` | `fail` |
-| V3 shadow provider success | `100%` | `19/21` | below threshold |
-| V3 shadow complete-contract exact | `100%` representative set | `0/5` | below threshold |
 
 The sanitized report's overall status is `deferred`. This verification preserves
 that fail-closed outcome. It does not infer a pass from a partial denominator,
@@ -168,8 +194,10 @@ commit `d2f143a0d83f62f65b53edd869a41993ef19745e`.
 | --- | --- |
 | `.venv/bin/pytest tests/intent/test_compact_catalog.py tests/intent/test_mention_spans.py tests/intent/test_hybrid_proposal.py tests/intent/test_hybrid_prompt.py tests/intent/test_hybrid_assembler.py tests/intent/test_query_contract_solver.py tests/intent/test_query_contract_service.py -q` | `139 passed in 1.15s` |
 | `.venv/bin/pytest tests/intent tests/evaluation/intent tests/evaluation/query_contract -q` | `806 passed in 21.74s` |
-| `.venv/bin/pytest -m "not ncp and not live and not postgres" -q` | `2419 passed, 13 skipped, 438 deselected, 13 failed`; every failure was `jena_integration` because `RUN_JENA_INTEGRATION`, Jena `6.0.0`, and Fuseki `6.0.0` were absent |
+| `.venv/bin/pytest -m "not ncp and not live and not postgres" -q` | `2419 passed, 13 skipped, 438 deselected, 13 failed`; all 13 `jena_integration` cases stopped because `RUN_JENA_INTEGRATION != 1` |
 | `.venv/bin/pytest -m "not ncp and not live and not postgres and not jena_integration" -q` | `2419 passed, 13 skipped, 451 deselected in 56.65s` |
+| Unknown semantic-ID acceptance boundary checks | `5 passed in 0.43s`; `0` unknown IDs accepted |
+| Physical-schema exposure boundary checks | `4 passed in 0.25s`; `0` forbidden tokens/fields exposed |
 | `.venv/bin/python -m compileall -q src scripts tests` | exit `0` |
 | `.venv/bin/python scripts/export_intent_schemas.py --check --schema-version 2.0 --output-dir schemas/intent/v2` | exit `0` |
 | `.venv/bin/python scripts/export_intent_schemas.py --check --schema-version 3.0 --output-dir schemas/intent/v3` | exit `0` |
@@ -177,11 +205,13 @@ commit `d2f143a0d83f62f65b53edd869a41993ef19745e`.
 | `.venv/bin/python scripts/run_semantic_query_benchmark.py --offline --include-hybrid-v3 --sanitized-report /private/tmp/hybrid-semantic-query-offline.json` | exit `0`; `overall_status=deferred` |
 
 The unadjusted broad command is retained verbatim because it is the plan's exact
-command and did not pass in this environment. The corrected command is the
-accepted environment-aware broad gate: the hybrid Intent Resolver does not
-modify the separately provisioned Jena/Fuseki runtime, and the 13 Jena tests are
-deselected alongside NCP, live, and PostgreSQL integration tests rather than
-reported as product regressions.
+command and did not pass in this environment. Each Jena case stopped at its
+opt-in precondition: `RUN_JENA_INTEGRATION` and the Jena/Fuseki runtime variables
+were unset, so actual binary presence and versions were **not evaluated**. The
+corrected command is the accepted environment-aware broad gate: the hybrid
+Intent Resolver does not modify the separately provisioned Jena/Fuseki runtime,
+and those 13 cases are deselected alongside NCP, live, and PostgreSQL
+integration tests rather than reported as product regressions.
 
 ## Report integrity
 

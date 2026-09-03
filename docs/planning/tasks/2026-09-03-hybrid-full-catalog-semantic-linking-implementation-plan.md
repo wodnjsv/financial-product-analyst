@@ -978,13 +978,12 @@ Run: `.venv/bin/python scripts/run_semantic_query_benchmark.py --offline --inclu
 Expected: every available offline gate is explicitly `pass`, `fail`, or
 `unmeasured`; V3 remains non-default if any required gate is fail or unmeasured.
 
-- [x] **Step 6: Run the paced HCX-007 shadow comparison only if offline gates permit it**
+- [x] **Step 6: Inspect and integrity-verify the already-authorized HCX-007 shadow comparison**
 
-Load `NCP_CLOVA_STUDIO_API` without printing it. Run:
-
-```bash
-RUN_CLOVA_INTEGRATION=1 .venv/bin/python scripts/run_semantic_query_benchmark.py --model HCX-007 --paced --include-hybrid-v3 --sanitized-report /private/tmp/hybrid-semantic-query-live.json
-```
+Inspect the existing sanitized report at
+`/private/tmp/hybrid-semantic-query-live-verified.json`, revalidate its exact
+fields, and recompute its embedded canonical report hash. Do not repeat provider
+calls and do not read, copy, hash, or stage the protected raw-response file.
 
 Expected: V2 and V3 paths are reported separately with primary, repair, judge,
 provider, token, p50, p95, schema, semantic, contract, and OOD metrics. Raw
@@ -995,8 +994,10 @@ responses remain mode `0600` under `/private/tmp` and are never staged.
 The new verification document records commit SHA, source/config hashes, exact
 commands, counts, gate results, unavailable denominators, live-call totals, and
 remaining limitations. Update `STATUS.md` to `implemented, shadow-only` only when
-the code and offline suite pass. Do not state that V3 is promoted unless every
-gate passes and the user separately approves promotion.
+the code and offline suite pass. It explicitly accounts for every design/ADR V3
+promotion gate; missing or partial denominators remain `unmeasured`. Do not state
+that V3 is promoted unless every gate passes and the user separately approves
+promotion.
 
 - [x] **Step 8: Inspect and commit only verified task paths**
 

@@ -146,7 +146,7 @@
 **상태: Phase 1-3 및 SQL 의미 계약 V2→결정론적 RDB 실행·저장 로컬 구현 완료; hybrid V3는 implemented, shadow-only; promotion은 fail-closed deferred**
 
 - 2026-09-03 [ADR-0030](decisions/ADR-0030-use-hybrid-full-catalog-semantic-linking.md)으로 request-local 후보를 HCX의 전체 선택지로 사용하던 경계를 폐기하고, 전체 compact semantic catalog와 의미 중립 mention span을 제공하는 hybrid semantic linking 방향을 승인했다. deterministic candidate는 exact lock 또는 advisory hint로 유지한다. hybrid V3 구현과 로컬 검증은 완료했지만 V2는 계속 기본값이며, 모든 gate 통과와 별도 사용자 승인 전까지 V3는 shadow-only다.
-- 2026-09-04 hybrid V3 최종 검증은 narrow `139 passed`, Intent Resolver·evaluation `806 passed`, Jena 환경 의존 suite를 명시적으로 제외한 broad offline `2419 passed, 13 skipped, 451 deselected`다. 계획의 원래 broad 명령은 이 호스트에 `RUN_JENA_INTEGRATION`·Jena/Fuseki `6.0.0`이 없어 Jena 전용 13건만 실패했으며, 제품 회귀로 간주하지 않았다. compileall과 V2/V3 schema freshness도 통과했다.
+- 2026-09-04 hybrid V3 최종 검증은 narrow `139 passed`, Intent Resolver·evaluation `806 passed`, Jena 환경 의존 suite를 명시적으로 제외한 broad offline `2419 passed, 13 skipped, 451 deselected`다. 계획의 원래 broad 명령에서는 `RUN_JENA_INTEGRATION != 1`이어서 Jena 전용 13건이 모두 opt-in precondition에서 중단됐다. Jena/Fuseki runtime 변수도 설정되지 않아 실제 binary 존재 여부와 버전은 평가하지 않았다. compileall과 V2/V3 schema freshness도 통과했다.
 - 승인된 HCX-007 V3 shadow 21-case는 first-pass validity `5/21`, repair validity `0/16`, Action/ProductFamily exact 각각 `3/21`, semantic-link exact `0/5`, complete-contract exact `0/5`, provider success `19/21`이었다. OOD false-fast는 `0/1`이지만 완전 분모가 아니며 PostgreSQL도 미측정이다. offline/live report hash는 각각 `620f1ca0…9353a`, `4796116b…eccc`이고, 실측 결과는 승격 기준에 크게 미달하므로 promotion은 fail-closed `deferred`다.
 
 - 온톨로지 기반 semantic catalog, 한국어 정규화·literal·candidate·bounded view,
