@@ -537,7 +537,7 @@ def insert_document_search_corpus(
             "document-product-update",
             "product-update",
             "subject_product",
-            "issuer",
+            "regulator_disclosure",
             "product-update-chunk",
             "[1,0,0]",
         ),

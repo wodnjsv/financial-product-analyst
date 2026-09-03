@@ -11,6 +11,11 @@ from financial_agent.contracts import encode_contract_value
 from financial_agent.ingestion.identity import AuthoritativeIdentityIndex
 from financial_agent.ingestion.models import MappedRow, MappingIssue, SourceSpec
 
+from .asset_managers import (
+    append_asset_manager_catalog_records,
+    resolve_public_fund_asset_manager,
+)
+
 from .common import (
     classify_value,
     make_record_hash,
@@ -27,7 +32,9 @@ _SOURCE_CODE = "PRFD01N001"
 _SOURCE_FILE = "prfd01n001_data.xlsx"
 _SOURCE_ID = stable_id("source", _SOURCE_CODE, _SOURCE_FILE)
 _MISSING_VALUES = frozenset({None, "", "NULL"})
-_REPRESENTATIVE_SENTINELS = frozenset({"KR0000000000", "000000000000"})
+_REPRESENTATIVE_SENTINELS = frozenset(
+    {"KR0000000000", "000000000000", "WTREWRWE"}
+)
 _IDENTIFIER_SENTINELS: Mapping[str, frozenset[str]] = {
     "fss_itm_no": frozenset({"000000000000"}),
     "ksd_itm_no": frozenset({"KR0000000000", "000000000000"}),
@@ -129,7 +136,7 @@ SPEC = SourceSpec(
     expected_row_count=23_676,
     natural_key=("itm_no",),
     parser_version="1",
-    mapping_version="2",
+    mapping_version="4",
 )
 
 IGNORED_COLUMNS: Mapping[str, str] = {}
@@ -351,6 +358,12 @@ def _normalized_token(value: object) -> str:
     return normalize_name(str(value))
 
 
+def _representative_is_placeholder(value: str) -> bool:
+    return value in _REPRESENTATIVE_SENTINELS or (
+        bool(value) and set(value) == {"0"}
+    )
+
+
 def _identifier_value(column: str, value: object) -> str | None:
     token = _normalized_token(value).upper()
     if token in {"", "NULL"} or token in _IDENTIFIER_SENTINELS.get(
@@ -388,7 +401,9 @@ def analyze_public_fund_rows(
         if ksd is not None:
             ksd_owners[ksd].add(item)
         representative = _normalized_token(row.get("rptt_ksd_itm_no")).upper()
-        if representative not in {"", "NULL"} | _REPRESENTATIVE_SENTINELS:
+        if representative not in {"", "NULL"} and not _representative_is_placeholder(
+            representative
+        ):
             references[item] = representative
 
     graph: dict[str, str] = {}
@@ -496,8 +511,11 @@ def _text_result(
 ) -> tuple[str, object | None, str | None]:
     text = raw if isinstance(raw, str) or raw is None else str(raw)
     placeholders = _IDENTIFIER_SENTINELS.get(column, frozenset())
-    if column == "rptt_ksd_itm_no":
-        placeholders = _REPRESENTATIVE_SENTINELS
+    normalized_text = _normalized_token(text)
+    if column == "rptt_ksd_itm_no" and _representative_is_placeholder(
+        normalized_text.upper()
+    ):
+        placeholders = frozenset({normalized_text})
     status, normalized, reason = classify_value(
         text,
         missing_values=_MISSING_VALUES,
@@ -805,13 +823,14 @@ def _append_standard_relation(
     object_name: str,
     applicable_date: date | None,
     institution_kind: str | None = None,
+    object_id_override: str | None = None,
 ) -> None:
     object_key = (
         f"{institution_kind}:{object_name}"
         if object_type == "institution" and institution_kind is not None
         else object_name
     )
-    object_id = stable_id(object_type, _SOURCE_CODE, object_key)
+    object_id = object_id_override or stable_id(object_type, _SOURCE_CODE, object_key)
     records_by_table["catalog.entity"].append(
         _with_record_hash(
             {
@@ -1293,6 +1312,17 @@ def map_row(
             "or_co_xtn_itt_cd", row.get("or_co_xtn_itt_cd")
         )
         if manager_status == "present" and isinstance(manager_name, str):
+            reviewed_manager = resolve_public_fund_asset_manager(
+                row.get("rptt_ksd_itm_no"),
+                row.get("or_co_xtn_itt_cd"),
+            )
+            manager_id = None
+            if reviewed_manager is not None:
+                manager_name = reviewed_manager.canonical_name
+                manager_id = append_asset_manager_catalog_records(
+                    records_by_table,
+                    identity=reviewed_manager,
+                )
             _append_standard_relation(
                 records_by_table,
                 row_number=row_number,
@@ -1305,6 +1335,7 @@ def map_row(
                 object_name=manager_name,
                 applicable_date=date_values["fd_daily_bas_dt"],
                 institution_kind="asset_manager",
+                object_id_override=manager_id,
             )
             relation_consumed.add("or_co_xtn_itt_cd")
 

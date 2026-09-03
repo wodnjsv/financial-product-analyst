@@ -363,7 +363,7 @@ def test_resolver_view_offers_complete_sorted_catalog_entity_types(
     catalog = resolver_inputs["catalog"]
 
     assert view.entity_type_ids == tuple(sorted(catalog.entity_type_ids))
-    assert len(view.entity_type_ids) == 20
+    assert len(view.entity_type_ids) == 21
     assert offered_entity_type_ids(view) == view.entity_type_ids
 
 

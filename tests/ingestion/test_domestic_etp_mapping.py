@@ -223,13 +223,82 @@ def test_etf_uses_canonical_identity_and_promotes_only_eligible_identifiers() ->
         ("PREF01_PD_ITM_NO_MA", "SYN-ETP-MA-001", False),
         ("REFINITIV_RIC", "SYNETF.KS", False),
     }
-    assert {item["alias_text"] for item in records(mapped, "catalog.alias")} == {
+    assert {
+        item["alias_text"]
+        for item in records(mapped, "catalog.alias")
+        if item["entity_id"] == product["entity_id"]
+    } == {
         "SYN-ETF",
         "SYNETF",
     }
     assert len(relations(mapped, "managedBy")) == 1
     assert len(relations(mapped, "issuedBy")) == 0
     assert len(relations(mapped, "tracksIndex")) == 1
+
+
+def test_reviewed_bilingual_manager_uses_one_canonical_dart_identity() -> None:
+    mapped = _map(
+        synthetic_etp_row()
+        | {
+            "cu_fund_mgmt_co": "삼성",
+            "ref_fund_mgmt_co": "Samsung Asset Management Co Ltd",
+        }
+    )
+
+    managed_by = relations(mapped, "managedBy")
+    assert len(managed_by) == 1
+    manager_id = managed_by[0]["object_id"]
+    manager = next(
+        item
+        for item in records(mapped, "catalog.entity")
+        if item["entity_id"] == manager_id
+    )
+    assert manager["canonical_name"] == "삼성자산운용"
+    assert {
+        (item["scheme"], item["identifier_value"])
+        for item in records(mapped, "catalog.identifier")
+        if item["entity_id"] == manager_id
+    } == {("DART_CORP_CODE", "00260453")}
+    assert {
+        item["alias_text"]
+        for item in records(mapped, "catalog.alias")
+        if item["entity_id"] == manager_id
+    } == {"삼성", "Samsung Asset Management Co Ltd"}
+    assert (
+        evidence(mapped, "cu_fund_mgmt_co")["normalized_value"]["value"]
+        == manager_id
+    )
+    assert (
+        evidence(mapped, "ref_fund_mgmt_co")["normalized_value"]["value"]
+        == manager_id
+    )
+
+
+def test_malformed_korean_manager_is_evidence_but_not_an_institution_alias() -> None:
+    malformed = (
+        "삼성KODEX레버리지증권상장지수투자신탁[주식-파생형]"
+    )
+    mapped = _map(
+        synthetic_etp_row()
+        | {
+            "cu_fund_mgmt_co": malformed,
+            "ref_fund_mgmt_co": "Samsung Asset Management Co Ltd",
+        }
+    )
+
+    managed_by = relations(mapped, "managedBy")
+    assert len(managed_by) == 1
+    manager_id = managed_by[0]["object_id"]
+    assert {
+        item["alias_text"]
+        for item in records(mapped, "catalog.alias")
+        if item["entity_id"] == manager_id
+    } == {"Samsung Asset Management Co Ltd"}
+    assert evidence(mapped, "cu_fund_mgmt_co")["raw_value_repr"] is not None
+    assert (
+        evidence(mapped, "ref_fund_mgmt_co")["normalized_value"]["value"]
+        == manager_id
+    )
 
 
 def test_etn_uses_issued_by_and_never_managed_by() -> None:
@@ -336,7 +405,8 @@ def test_zero_is_preserved_and_blank_portfolio_value_is_missing() -> None:
 def test_conflicting_organizer_relation_sources_preserve_evidence_but_no_relation() -> None:
     row = synthetic_etp_row() | {
         "ref_base_index": "OTHER INDEX",
-        "ref_fund_mgmt_co": "다른 자산운용",
+        "cu_fund_mgmt_co": "삼성",
+        "ref_fund_mgmt_co": "Mirae Asset Global Investments Co Ltd",
     }
 
     mapped = _map(row)

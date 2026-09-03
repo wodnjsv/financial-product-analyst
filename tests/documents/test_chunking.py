@@ -204,6 +204,23 @@ def test_exposes_section_and_document_budget_review_without_truncation() -> None
     assert result.chunks[-1].exact_text == "- risk-20"
 
 
+def test_exposes_selected_token_budget_review_without_truncation() -> None:
+    result = chunk_document_sections(
+        context(),
+        (section(("Principal Risks",), "one two three four five six"),),
+        counter=WhitespaceTokenCounter(),
+        target_min=0,
+        target_max=10,
+        selected_token_soft_limit=5,
+    )
+
+    assert result.coverage_status is CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET
+    assert result.reason_code == "soft_selected_token_limit_exceeded"
+    assert result.observed_selected_token_count == 6
+    assert result.counter_identity == "WhitespaceTokenCounter"
+    assert result.chunks[0].exact_text == "one two three four five six"
+
+
 def test_is_deterministic_and_does_not_mix_document_contexts() -> None:
     sections = (
         section(("Investment Objective",), "objective", character_start=100),

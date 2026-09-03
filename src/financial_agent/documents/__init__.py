@@ -12,12 +12,37 @@ from .models import (
     SEARCHABLE_SECTION_TYPES,
     SectionType,
 )
+from .pdf_extraction import (
+    ExtractedPdfDocument,
+    PdfExtractionError,
+    PdfPageLayout,
+    PdfTableRow,
+    PdfTextLine,
+    assemble_pdf_sections,
+    extract_pdf_sections,
+    read_pdf_layout,
+)
 from .policy import (
     admit_document,
     binding_roles_for_document_role,
     document_types_for_role,
     publisher_roles_for_document_role,
     select_canonical_document,
+)
+from .source_manifest import (
+    DocumentSourceAuditEntry,
+    DocumentSourceAuditReport,
+    DocumentSourceAttempt,
+    DocumentSourceCandidate,
+    DocumentSourceTarget,
+    SourceAuditStatus,
+    SourceAuthorityTier,
+    validate_document_source_report,
+    write_document_source_report,
+)
+from .section_selection import (
+    SectionSelectionResult,
+    select_canonical_claim_sections,
 )
 
 __all__ = [
@@ -28,12 +53,31 @@ __all__ = [
     "DocumentChunkDraft",
     "DocumentCoverageDraft",
     "DocumentRole",
+    "DocumentSourceAuditEntry",
+    "DocumentSourceAuditReport",
+    "DocumentSourceAttempt",
+    "DocumentSourceCandidate",
+    "DocumentSourceTarget",
+    "ExtractedPdfDocument",
+    "PdfExtractionError",
+    "PdfPageLayout",
+    "PdfTableRow",
+    "PdfTextLine",
     "PublisherRole",
     "SEARCHABLE_SECTION_TYPES",
     "SectionType",
+    "SectionSelectionResult",
+    "SourceAuditStatus",
+    "SourceAuthorityTier",
     "admit_document",
     "binding_roles_for_document_role",
+    "assemble_pdf_sections",
+    "extract_pdf_sections",
     "document_types_for_role",
     "publisher_roles_for_document_role",
+    "read_pdf_layout",
     "select_canonical_document",
+    "select_canonical_claim_sections",
+    "validate_document_source_report",
+    "write_document_source_report",
 ]

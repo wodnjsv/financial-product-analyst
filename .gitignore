@@ -13,6 +13,7 @@
 *.pem
 secrets/
 credentials/
+api.txt
 
 # Organizer-provided competition materials
 data/
@@ -47,3 +48,5 @@ build/
 tmp/
 output/
 outputs/
+document-source-audit*.json
+document-source-locators*.json

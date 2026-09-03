@@ -302,6 +302,7 @@ async def test_entity_search_batches_mentions_and_pins_dataset(
     assert result["m1"][0].ontology_type_ids == (
         "DomesticETF",
         "ETF",
+        "ExchangeTradedProduct",
         "FinancialProduct",
         "FundShareClass",
     )
@@ -375,6 +376,7 @@ async def test_repository_types_survive_view_and_semantic_validation(
     assert candidate.ontology_type_ids == (
         "DomesticETF",
         "ETF",
+        "ExchangeTradedProduct",
         "FinancialProduct",
         "FundShareClass",
     )

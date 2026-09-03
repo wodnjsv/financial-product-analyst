@@ -10,6 +10,10 @@ from financial_agent.contracts import encode_contract_value
 from financial_agent.ingestion.identity import AuthoritativeIdentityIndex
 from financial_agent.ingestion.models import MappedRow, MappingIssue, SourceSpec
 
+from .asset_managers import (
+    append_asset_manager_catalog_records,
+    resolve_etf_asset_manager,
+)
 from .common import (
     classify_value,
     make_record_hash,
@@ -797,13 +801,16 @@ def _append_relation(
     object_name: str,
     source_columns: tuple[tuple[str, object, date | None], ...],
     institution_kind: str | None = None,
+    object_id_override: str | None = None,
 ) -> None:
     object_key = (
         f"{institution_kind}:{object_name}"
         if object_type == "institution" and institution_kind is not None
         else object_name
     )
-    object_id = stable_id(object_type, _SOURCE_CODE, object_key)
+    object_id = object_id_override or stable_id(
+        object_type, _SOURCE_CODE, object_key
+    )
     records_by_table["catalog.entity"].append(
         _with_record_hash(
             {
@@ -1181,35 +1188,16 @@ def map_row(
             column: _text_result(column, row.get(column)) for column in manager_columns
         }
         if group_value == "ETF":
-            present_managers = {
-                column: value
-                for column, (status, value, _) in manager_results.items()
-                if status == "present" and isinstance(value, str)
-            }
-            if len(set(present_managers.values())) > 1:
-                for column in manager_columns:
-                    status, normalized, reason = manager_results[column]
-                    _append_relation_fallback(
-                        records_by_table,
-                        issues,
-                        row_number=row_number,
-                        record_key=record_key,
-                        product_id=product_id,
-                        column=column,
-                        row=row,
-                        status=status,
-                        normalized=normalized,
-                        reason=reason,
-                        applicable_date=(
-                            date_values["cu_upt_dt"]
-                            if column == "cu_fund_mgmt_co"
-                            else date_values["ref_base_dt"]
-                        ),
-                        conflict=True,
-                    )
-                    relation_consumed.add(column)
-            elif present_managers:
-                object_name = next(iter(present_managers.values()))
+            manager_resolution = resolve_etf_asset_manager(
+                manager_results["cu_fund_mgmt_co"][1],
+                manager_results["ref_fund_mgmt_co"][1],
+            )
+            if manager_resolution.identity is not None:
+                manager_id = append_asset_manager_catalog_records(
+                    records_by_table,
+                    identity=manager_resolution.identity,
+                    accepted_aliases=manager_resolution.accepted_aliases,
+                )
                 source_columns = tuple(
                     (
                         column,
@@ -1218,8 +1206,7 @@ def map_row(
                         if column == "cu_fund_mgmt_co"
                         else date_values["ref_base_dt"],
                     )
-                    for column in manager_columns
-                    if column in present_managers
+                    for column in manager_resolution.supporting_fields
                 )
                 _append_relation(
                     records_by_table,
@@ -1228,11 +1215,33 @@ def map_row(
                     product_id=product_id,
                     predicate_id="managedBy",
                     object_type="institution",
-                    object_name=object_name,
+                    object_name=manager_resolution.identity.canonical_name,
                     source_columns=source_columns,
                     institution_kind="asset_manager",
+                    object_id_override=manager_id,
                 )
-                relation_consumed.update(present_managers)
+                relation_consumed.update(manager_resolution.supporting_fields)
+            for column in manager_resolution.fallback_fields:
+                status, normalized, reason = manager_results[column]
+                _append_relation_fallback(
+                    records_by_table,
+                    issues,
+                    row_number=row_number,
+                    record_key=record_key,
+                    product_id=product_id,
+                    column=column,
+                    row=row,
+                    status=status,
+                    normalized=normalized,
+                    reason=reason,
+                    applicable_date=(
+                        date_values["cu_upt_dt"]
+                        if column == "cu_fund_mgmt_co"
+                        else date_values["ref_base_dt"]
+                    ),
+                    conflict=manager_resolution.status == "conflict",
+                )
+                relation_consumed.add(column)
         else:
             status, normalized, _ = manager_results["cu_fund_mgmt_co"]
             if status == "present" and isinstance(normalized, str):

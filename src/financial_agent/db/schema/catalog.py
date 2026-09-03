@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 
 from financial_agent.db.metadata import metadata
+from financial_agent.entity_types import ENTITY_TYPES
 
 
 SHA256_PATTERN = "^[0-9a-f]{64}$"
@@ -26,8 +27,7 @@ entity = sa.Table(
     ),
     sa.PrimaryKeyConstraint("dataset_version", "entity_id", name="pk_entity"),
     sa.CheckConstraint(
-        "entity_type IN "
-        "('product','security','company','institution','index','theme')",
+        "entity_type IN (" + ",".join(f"'{value}'" for value in ENTITY_TYPES) + ")",
         name="entity_type",
     ),
     sa.CheckConstraint(

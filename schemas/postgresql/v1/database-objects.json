@@ -156,6 +156,15 @@
     },
     {
       "schema": "operations",
+      "name": "lock_building_dataset",
+      "identity_arguments": "p_dataset_version text",
+      "definition": "CREATE OR REPLACE FUNCTION operations.lock_building_dataset(p_dataset_version text)\n RETURNS boolean\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'operations', 'pg_temp'\nAS $function$\n        DECLARE\n            current_status text;\n        BEGIN\n            IF p_dataset_version IS NULL\n               OR pg_catalog.btrim(p_dataset_version) = '' THEN\n                RETURN false;\n            END IF;\n\n            SELECT dataset.status\n              INTO current_status\n              FROM operations.dataset_version AS dataset\n             WHERE dataset.dataset_version = p_dataset_version\n             FOR SHARE;\n\n            RETURN current_status IS NOT DISTINCT FROM 'building';\n        END\n        $function$",
+      "configuration": [
+        "search_path=pg_catalog, operations, pg_temp"
+      ]
+    },
+    {
+      "schema": "operations",
       "name": "record_dataset_readiness",
       "identity_arguments": "p_dataset_version text, p_component text, p_validation_run_id text, p_component_manifest_hash character, p_validated_at timestamp with time zone, p_validator_version text",
       "definition": "CREATE OR REPLACE FUNCTION operations.record_dataset_readiness(p_dataset_version text, p_component text, p_validation_run_id text, p_component_manifest_hash character, p_validated_at timestamp with time zone, p_validator_version text)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'operations', 'pg_temp'\nAS $function$\n        DECLARE\n            dataset_record operations.dataset_version%ROWTYPE;\n            validation_record operations.dataset_validation_run%ROWTYPE;\n        BEGIN\n            SELECT validation.*\n              INTO validation_record\n              FROM operations.dataset_validation_run AS validation\n             WHERE validation.validation_run_id = p_validation_run_id\n               AND validation.dataset_version = p_dataset_version\n             FOR SHARE;\n            IF NOT FOUND OR validation_record.status IS DISTINCT FROM 'pass' THEN\n                RAISE EXCEPTION 'SUCCESSFUL_VALIDATION_REQUIRED'\n                    USING ERRCODE = '23503';\n            END IF;\n\n            SELECT dataset.*\n              INTO dataset_record\n              FROM operations.dataset_version AS dataset\n             WHERE dataset.dataset_version = p_dataset_version\n             FOR SHARE;\n            IF NOT FOUND THEN\n                RAISE EXCEPTION 'DATASET_NOT_FOUND'\n                    USING ERRCODE = 'P0002';\n            END IF;\n            IF dataset_record.status NOT IN ('building','validated') THEN\n                RAISE EXCEPTION 'DATASET_NOT_READY_FOR_COMPONENT'\n                    USING ERRCODE = '55000';\n            END IF;\n            IF validation_record.dataset_manifest_hash IS DISTINCT FROM\n               dataset_record.manifest_hash THEN\n                RAISE EXCEPTION 'DATASET_MANIFEST_MISMATCH'\n                    USING ERRCODE = '23514';\n            END IF;\n\n            INSERT INTO operations.dataset_readiness (\n                dataset_version,\n                component,\n                validation_run_id,\n                validation_status,\n                dataset_manifest_hash,\n                component_manifest_hash,\n                validated_at,\n                validator_version\n            ) VALUES (\n                p_dataset_version,\n                p_component,\n                p_validation_run_id,\n                'pass',\n                dataset_record.manifest_hash,\n                p_component_manifest_hash,\n                p_validated_at,\n                p_validator_version\n            );\n        END\n        $function$",
@@ -312,6 +321,12 @@
       "table": "document_record",
       "name": "reject_document_record_nonbuilding_mutation",
       "definition": "CREATE TRIGGER reject_document_record_nonbuilding_mutation BEFORE INSERT OR DELETE OR UPDATE ON document.document_record FOR EACH ROW EXECUTE FUNCTION operations.reject_nonbuilding_dataset_mutation()"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "reject_document_source_artifact_nonbuilding_mutation",
+      "definition": "CREATE TRIGGER reject_document_source_artifact_nonbuilding_mutation BEFORE INSERT OR DELETE OR UPDATE ON document.document_source_artifact FOR EACH ROW EXECUTE FUNCTION operations.reject_nonbuilding_dataset_mutation()"
     },
     {
       "schema": "evidence",
@@ -874,6 +889,102 @@
       "definition": "CHECK (record_hash ~ '^[0-9a-f]{64}$'::text)"
     },
     {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_attachment_locator",
+      "definition": "CHECK (attachment_locator ~ '^https://dart[.]fss[.]or[.]kr/'::text AND strpos(attachment_locator, 'rcp_no='::text || receipt_id::text) > 0)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_byte_count",
+      "definition": "CHECK (byte_count > 0)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_discarded_at",
+      "definition": "CHECK (discarded_at IS NULL OR verified_at IS NOT NULL AND discarded_at >= verified_at)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_extraction_version",
+      "definition": "CHECK (extraction_version <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_filing_locator",
+      "definition": "CHECK (filing_locator ~ '^https://dart[.]fss[.]or[.]kr/'::text AND strpos(filing_locator, 'rcpNo='::text || receipt_id::text) > 0)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_media_type",
+      "definition": "CHECK (media_type = 'application/pdf'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_original_filename",
+      "definition": "CHECK (original_filename <> ''::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_page_count",
+      "definition": "CHECK (page_count > 0)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_persisted_at",
+      "definition": "CHECK (persisted_at >= downloaded_at)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_receipt_id",
+      "definition": "CHECK (receipt_id ~ '^[0-9]{14}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_record_hash",
+      "definition": "CHECK (record_hash ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_retention_disposition",
+      "definition": "CHECK (retention_disposition = ANY (ARRAY['pending_delete'::text, 'delete_authorized'::text, 'metadata_only_deleted'::text, 'quarantined'::text]))"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_retention_state",
+      "definition": "CHECK (retention_disposition = 'pending_delete'::text AND verified_at IS NULL AND discarded_at IS NULL OR retention_disposition = 'delete_authorized'::text AND verified_at IS NOT NULL AND discarded_at IS NULL OR retention_disposition = 'metadata_only_deleted'::text AND verified_at IS NOT NULL AND discarded_at IS NOT NULL OR retention_disposition = 'quarantined'::text AND discarded_at IS NULL)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_source_checksum",
+      "definition": "CHECK (source_checksum ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_text_checksum",
+      "definition": "CHECK (text_checksum ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "document",
+      "table": "document_source_artifact",
+      "name": "ck_document_source_artifact_verified_at",
+      "definition": "CHECK (verified_at IS NULL OR verified_at >= persisted_at)"
+    },
+    {
       "schema": "evidence",
       "table": "atomic_claim",
       "name": "ck_atomic_claim_claim_hash",
@@ -1332,12 +1443,6 @@
     {
       "schema": "operations",
       "table": "request_artifact",
-      "name": "ck_request_artifact_semantic_query_contract_object_id",
-      "definition": "CHECK ((artifact_type <> ALL (ARRAY['query_contract'::text, 'logical_query_plan'::text])) OR contract_object_id IS NOT NULL AND contract_object_id ~ '[^[:space:]]'::text)"
-    },
-    {
-      "schema": "operations",
-      "table": "request_artifact",
       "name": "ck_request_artifact_payload_hash",
       "definition": "CHECK (payload_hash ~ '^[0-9a-f]{64}$'::text)"
     },
@@ -1346,6 +1451,12 @@
       "table": "request_artifact",
       "name": "ck_request_artifact_request_key",
       "definition": "CHECK (request_key ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "schema": "operations",
+      "table": "request_artifact",
+      "name": "ck_request_artifact_semantic_query_contract_object_id",
+      "definition": "CHECK ((artifact_type <> ALL (ARRAY['query_contract'::text, 'logical_query_plan'::text])) OR contract_object_id IS NOT NULL AND contract_object_id ~ '[^[:space:]]'::text)"
     },
     {
       "schema": "operations",
@@ -1580,6 +1691,12 @@
     {
       "object_type": "function",
       "schema": "operations",
+      "name": "lock_building_dataset(p_dataset_version text)",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "function",
+      "schema": "operations",
       "name": "record_dataset_readiness(p_dataset_version text, p_component text, p_validation_run_id text, p_component_manifest_hash character, p_validated_at timestamp with time zone, p_validator_version text)",
       "owner": "fa_migration"
     },
@@ -1719,6 +1836,12 @@
       "object_type": "table",
       "schema": "document",
       "name": "document_record",
+      "owner": "fa_migration"
+    },
+    {
+      "object_type": "table",
+      "schema": "document",
+      "name": "document_source_artifact",
       "owner": "fa_migration"
     },
     {
@@ -2841,6 +2964,90 @@
     {
       "schema": "document",
       "name": "document_record",
+      "grantee": "fa_runtime",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_build",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_build",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_build",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_build",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "DELETE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "INSERT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "REFERENCES",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "SELECT",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "TRIGGER",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "TRUNCATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
+      "grantee": "fa_migration",
+      "privilege": "UPDATE",
+      "grantable": false
+    },
+    {
+      "schema": "document",
+      "name": "document_source_artifact",
       "grantee": "fa_runtime",
       "privilege": "SELECT",
       "grantable": false
@@ -5366,6 +5573,22 @@
       "name": "finish_request_run",
       "identity_arguments": "p_run_id text, p_execution_outcome text, p_verification_status text, p_answer_disposition text, p_http_status smallint, p_final_verification_report_id text, p_terminal_failure_code text, p_finished_at timestamp with time zone",
       "grantee": "fa_runtime",
+      "privilege": "EXECUTE",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "lock_building_dataset",
+      "identity_arguments": "p_dataset_version text",
+      "grantee": "fa_build",
+      "privilege": "EXECUTE",
+      "grantable": false
+    },
+    {
+      "schema": "operations",
+      "name": "lock_building_dataset",
+      "identity_arguments": "p_dataset_version text",
+      "grantee": "fa_migration",
       "privilege": "EXECUTE",
       "grantable": false
     },

@@ -15,7 +15,13 @@ def test_projection_preserves_independent_etf_and_share_class_roles() -> None:
         product_family="domestic_etf",
         identifier_schemes=("PRFD_ITM_NO",),
         product_type_facts=(ProductTypeFact("present", "ETF", "text"),),
-    ) == ("DomesticETF", "ETF", "FinancialProduct", "FundShareClass")
+    ) == (
+        "DomesticETF",
+        "ETF",
+        "ExchangeTradedProduct",
+        "FinancialProduct",
+        "FundShareClass",
+    )
 
 
 def test_projection_preserves_storage_subtype_and_relation_roles() -> None:

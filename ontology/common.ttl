@@ -41,7 +41,7 @@ fp:SourceRecord a owl:Class .
 
 fp:managedBy a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain fp:FinancialProduct ; rdfs:range fp:AssetManager .
 fp:issuedBy a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:FinancialProduct fp:Security ) ] ; rdfs:range fp:Issuer .
-fp:tracksIndex a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:ETF fp:PublicFund ) ] ; rdfs:range fp:Index .
+fp:tracksIndex a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:ExchangeTradedProduct fp:PublicFund ) ] ; rdfs:range fp:Index .
 fp:holdsSecurity a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain [ a owl:Class ; owl:unionOf ( fp:ETF fp:PublicFund ) ] ; rdfs:range fp:Security .
 fp:containsSecurity a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain fp:Index ; rdfs:range fp:Security .
 fp:securityOfCompany a owl:ObjectProperty, fp:DomainPredicate ; rdfs:domain fp:EquitySecurity ; rdfs:range fp:Company .

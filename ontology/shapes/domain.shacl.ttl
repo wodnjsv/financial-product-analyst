@@ -67,7 +67,7 @@ fp:IssuedByAssertionShape a sh:NodeShape ;
 
 fp:TracksIndexAssertionShape a sh:NodeShape ;
   sh:target [ a sh:SPARQLTarget ; sh:select "SELECT ?this WHERE { ?this <urn:ontology:financial-product:v1#predicate> <urn:ontology:financial-product:v1#tracksIndex> . }" ] ;
-  sh:property [ sh:path fp:subject ; sh:or ( [ sh:class fp:ETF ] [ sh:class fp:PublicFund ] ) ] ;
+  sh:property [ sh:path fp:subject ; sh:or ( [ sh:class fp:ExchangeTradedProduct ] [ sh:class fp:PublicFund ] ) ] ;
   sh:property [ sh:path fp:object ; sh:class fp:Index ] .
 
 fp:HoldsSecurityAssertionShape a sh:NodeShape ;

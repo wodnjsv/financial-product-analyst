@@ -78,6 +78,25 @@ This gate requires no external service and covers RDFLib parsing, pySHACL,
 projection determinism, manifest behavior, the shared SPARQL queries, and the
 read-only client.
 
+## Build a real local Graph snapshot
+
+Choose a new or empty output directory outside the repository. The command
+reads one explicit PostgreSQL dataset, builds and validates both N-Quads
+artifacts, and publishes the directory only after all local validation passes.
+
+```bash
+financial-agent-graph-build \
+  --database-url "$FINANCIAL_AGENT_DATABASE_URL" \
+  --dataset-version organizer-dart-2026-08-24-v2 \
+  --output-directory /private/tmp/financial-agent-graph
+```
+
+The output contains `data.nq`, `evidence.nq`, `manifest.json`, and
+`report.json`. The report contains aggregate counts and hashes only; it never
+contains entity identifiers, source locators, or raw values. The command
+rejects repository-local, symlinked, and nonempty output directories and
+removes temporary state if projection or validation fails.
+
 ## Run the exact Jena/Fuseki gate
 
 All three variables are mandatory. Selecting the marker without them is an

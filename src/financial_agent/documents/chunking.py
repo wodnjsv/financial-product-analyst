@@ -54,6 +54,8 @@ class ChunkingResult:
     budget_scope_id: str
     dataset_version: str
     document_id: str
+    observed_selected_token_count: int
+    counter_identity: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,9 +108,9 @@ _EXCLUDED_HEADINGS = frozenset(
 
 _SECTION_ALIASES: tuple[tuple[SectionType, frozenset[str]], ...] = (
     (SectionType.REBALANCING, frozenset({"rebalancing", "reconstitution", "리밸런싱", "정기 변경", "정기변경"})),
-    (SectionType.RISK_FACTOR, frozenset({"principal risks", "principal risk", "risk factors", "investment risks", "투자 위험", "투자위험", "위험 요인", "위험요인"})),
-    (SectionType.INVESTMENT_STRATEGY, frozenset({"principal investment strategies", "principal investment strategy", "investment strategy", "investment strategies", "투자 전략", "투자전략", "투자 목적 및 투자 전략", "투자목적 및 투자전략"})),
-    (SectionType.INVESTMENT_OBJECTIVE, frozenset({"investment objective", "investment objectives", "investment goal", "투자 목적", "투자목적"})),
+    (SectionType.RISK_FACTOR, frozenset({"principal risks", "principal risk", "risk factors", "investment risks", "투자 위험", "투자위험", "주요투자위험", "주요투자 위험", "주요 투자위험", "집합투자기구의 투자위험", "위험 요인", "위험요인"})),
+    (SectionType.INVESTMENT_STRATEGY, frozenset({"principal investment strategies", "principal investment strategy", "investment strategy", "investment strategies", "투자 전략", "투자전략", "투자 목적 및 투자 전략", "투자목적 및 투자전략", "집합투자기구의 투자전략"})),
+    (SectionType.INVESTMENT_OBJECTIVE, frozenset({"investment objective", "investment objectives", "investment goal", "투자 목적", "투자목적", "집합투자기구의 투자목적"})),
     (SectionType.INDEX_METHODOLOGY, frozenset({"index methodology", "index methodologies", "지수 방법론", "지수 산출 방법", "지수산출방법"})),
     (SectionType.THEME_DEFINITION, frozenset({"theme definition", "investment theme", "테마 정의"})),
     (SectionType.SELECTION_RULES, frozenset({"selection rules", "selection rule", "eligibility rules", "constituent selection", "편입 기준", "종목 선정", "종목선정"})),
@@ -154,10 +156,17 @@ def chunk_document_sections(
     target_max: int = 800,
     overlap: int = 75,
     soft_limit: int = 20,
+    selected_token_soft_limit: int = 8_000,
 ) -> ChunkingResult:
     """Chunk approved sections without changing their evidence text or locators."""
 
-    _validate_budget(target_min, target_max, overlap, soft_limit)
+    _validate_budget(
+        target_min,
+        target_max,
+        overlap,
+        soft_limit,
+        selected_token_soft_limit,
+    )
     if not context.budget_scope_id.strip():
         raise ValueError("budget_scope_id must not be blank")
     for section in sections:
@@ -187,12 +196,47 @@ def chunk_document_sections(
         chunks.append(_draft(context=context, section=candidate.section, section_type=candidate.section_type, ordinal=len(chunks) + 1, start=candidate.start, end=candidate.end, exact_text=exact_text, content_hash=content_hash))
 
     if not chunks:
-        return _result(context, (), CoverageStatus.SECTION_MISSING, "approved_section_not_found")
+        return _result(
+            context,
+            (),
+            CoverageStatus.SECTION_MISSING,
+            "approved_section_not_found",
+            counter=counter,
+        )
     if oversized_indivisible:
-        return _result(context, tuple(chunks), CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET, "indivisible_unit_over_target_max")
+        return _result(
+            context,
+            tuple(chunks),
+            CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET,
+            "indivisible_unit_over_target_max",
+            counter=counter,
+        )
     if len(chunks) > soft_limit or any(count > soft_limit for count in section_chunk_counts.values()):
-        return _result(context, tuple(chunks), CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET, "soft_chunk_limit_exceeded")
-    return _result(context, tuple(chunks), CoverageStatus.INDEXED, None)
+        return _result(
+            context,
+            tuple(chunks),
+            CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET,
+            "soft_chunk_limit_exceeded",
+            counter=counter,
+        )
+    observed_selected_tokens = sum(
+        counter.count(chunk.exact_text) for chunk in chunks
+    )
+    if observed_selected_tokens > selected_token_soft_limit:
+        return _result(
+            context,
+            tuple(chunks),
+            CoverageStatus.REVIEW_REQUIRED_CHUNK_BUDGET,
+            "soft_selected_token_limit_exceeded",
+            counter=counter,
+        )
+    return _result(
+        context,
+        tuple(chunks),
+        CoverageStatus.INDEXED,
+        None,
+        counter=counter,
+    )
 
 
 def aggregate_chunking_results(
@@ -247,6 +291,8 @@ def _result(
     chunks: tuple[DocumentChunkDraft, ...],
     coverage_status: CoverageStatus,
     reason_code: str | None,
+    *,
+    counter: TokenCounter,
 ) -> ChunkingResult:
     return ChunkingResult(
         chunks,
@@ -256,14 +302,22 @@ def _result(
         context.budget_scope_id,
         context.dataset_version,
         context.document_id,
+        sum(counter.count(chunk.exact_text) for chunk in chunks),
+        type(counter).__name__,
     )
 
 
-def _validate_budget(target_min: int, target_max: int, overlap: int, soft_limit: int) -> None:
+def _validate_budget(
+    target_min: int,
+    target_max: int,
+    overlap: int,
+    soft_limit: int,
+    selected_token_soft_limit: int,
+) -> None:
     if target_min < 0 or target_max <= 0 or target_min > target_max:
         raise ValueError("chunk token targets must satisfy 0 <= target_min <= target_max")
-    if overlap < 0 or soft_limit < 0:
-        raise ValueError("overlap and soft_limit must be non-negative")
+    if overlap < 0 or soft_limit < 0 or selected_token_soft_limit < 0:
+        raise ValueError("overlap and soft limits must be non-negative")
 
 
 def _validate_section(section: ExtractedSection) -> None:
@@ -278,7 +332,20 @@ def _validate_section(section: ExtractedSection) -> None:
 
 
 def _normalized_heading_path(heading_path: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(" ".join(unicodedata.normalize("NFKC", heading).split()).casefold() for heading in heading_path)
+    return tuple(
+        _strip_structural_numbering(
+            " ".join(unicodedata.normalize("NFKC", heading).split()).casefold()
+        )
+        for heading in heading_path
+    )
+
+
+def _strip_structural_numbering(heading: str) -> str:
+    return re.sub(
+        r"^(?:제\s*\d+\s*부[.]?\s*|\(?\d+\)?[.)]\s*|[가-힣][.)]\s*)",
+        "",
+        heading,
+    ).strip()
 
 
 def _is_excluded_heading(headings: tuple[str, ...]) -> bool:

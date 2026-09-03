@@ -10,6 +10,9 @@ dependencies = [
   "pydantic>=2.10,<3",
 ]
 
+[project.scripts]
+financial-agent-graph-build = "financial_agent.graph.cli:main"
+
 [project.optional-dependencies]
 dev = [
   "jsonschema>=4.23,<5",
@@ -25,6 +28,7 @@ storage = [
 ingestion = [
   "openpyxl>=3.1,<4",
   "boto3>=1.35,<2",
+  "pdfplumber>=0.11.9,<0.12",
 ]
 graph = [
   "rdflib>=7.6,<8",

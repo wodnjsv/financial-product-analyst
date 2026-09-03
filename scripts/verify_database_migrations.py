@@ -1013,7 +1013,7 @@ def verify_migration_cycle(source_url: str) -> MigrationVerificationReport:
                 "preflight result changed across the migration cycle",
             )
         return MigrationVerificationReport(
-            alembic_head="0009",
+            alembic_head="0011",
             application_schema_count=len(EXPECTED_APPLICATION_SCHEMAS),
             object_counts=second_inventory,
             ncp_extensions_preserved=ncp_extensions_preserved,

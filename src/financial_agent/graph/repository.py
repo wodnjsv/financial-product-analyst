@@ -34,13 +34,23 @@ from financial_agent.graph.entity_types import (
 )
 
 
+_PRODUCT_TYPE_METRIC_IDS = frozenset(
+    {
+        "organizer.pref01n001.product_type",
+        "organizer.pref02n001.product_type",
+    }
+)
+_OVERSEAS_IS_ETN_METRIC_ID = "organizer.pref02n001.is_etn"
 _RELATION_DOMAIN_RANGE: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     "managedBy": (frozenset({"FinancialProduct"}), frozenset({"AssetManager"})),
     "issuedBy": (
         frozenset({"FinancialProduct", "Security"}),
         frozenset({"Issuer"}),
     ),
-    "tracksIndex": (frozenset({"ETF", "PublicFund"}), frozenset({"Index"})),
+    "tracksIndex": (
+        frozenset({"ExchangeTradedProduct", "PublicFund"}),
+        frozenset({"Index"}),
+    ),
     "holdsSecurity": (frozenset({"ETF", "PublicFund"}), frozenset({"Security"})),
     "containsSecurity": (frozenset({"Index"}), frozenset({"Security"})),
     "securityOfCompany": (frozenset({"EquitySecurity"}), frozenset({"Company"})),
@@ -180,7 +190,37 @@ class GraphProjectionRepository:
                 .where(
                     observation_record.c.dataset_version == dataset_version,
                     observation_record.c.entity_id.is_not(None),
-                    observation_record.c.metric_id == "product_type",
+                    observation_record.c.metric_id.in_(_PRODUCT_TYPE_METRIC_IDS),
+                )
+                .order_by(
+                    observation_record.c.entity_id,
+                    observation_record.c.observation_id,
+                )
+            )
+        ).all()
+        is_etn_rows = (
+            await connection.execute(
+                sa.select(
+                    observation_record.c.entity_id,
+                    observation_record.c.value_status,
+                    observation_record.c.boolean_value,
+                    metric_definition.c.value_kind,
+                )
+                .select_from(
+                    observation_record.join(
+                        metric_definition,
+                        sa.and_(
+                            metric_definition.c.metric_id
+                            == observation_record.c.metric_id,
+                            metric_definition.c.definition_version
+                            == observation_record.c.metric_definition_version,
+                        ),
+                    )
+                )
+                .where(
+                    observation_record.c.dataset_version == dataset_version,
+                    observation_record.c.entity_id.is_not(None),
+                    observation_record.c.metric_id == _OVERSEAS_IS_ETN_METRIC_ID,
                 )
                 .order_by(
                     observation_record.c.entity_id,
@@ -282,6 +322,7 @@ class GraphProjectionRepository:
             entity_rows=entity_rows,
             identifier_rows=identifier_rows,
             product_type_rows=product_type_rows,
+            is_etn_rows=is_etn_rows,
             relation_rows=relation_rows,
             evidence_rows=evidence_rows,
             metric_rows=metric_rows,
@@ -295,6 +336,7 @@ def _build_batch(
     entity_rows: list[Any],
     identifier_rows: list[Any],
     product_type_rows: list[Any],
+    is_etn_rows: list[Any],
     relation_rows: list[Any],
     evidence_rows: list[Any],
     metric_rows: list[Any],
@@ -336,6 +378,29 @@ def _build_batch(
             )
         except EntityTypeProjectionError as error:
             _fail(error.code, error.detail)
+
+    is_etn_by_entity: dict[str, bool] = {}
+    for row in is_etn_rows:
+        if row.entity_id in is_etn_by_entity:
+            _fail("conflicting_product_type_fact", row.entity_id)
+        if row.value_kind != "boolean":
+            _fail("invalid_product_type_fact", str(row.entity_id))
+        if row.value_status == "present" and row.boolean_value is True:
+            is_etn_by_entity[row.entity_id] = True
+        elif row.value_status == "missing" and row.boolean_value is None:
+            is_etn_by_entity[row.entity_id] = False
+        else:
+            _fail("invalid_product_type_fact", str(row.entity_id))
+
+    for row in entity_rows:
+        if row.product_family != "overseas_etf":
+            continue
+        entity_id = row.entity_id
+        rdf_types = types_by_entity[entity_id]
+        if entity_id not in is_etn_by_entity or not ({"ETF", "ETN"} & rdf_types):
+            _fail("conflicting_product_type_fact", entity_id)
+        if is_etn_by_entity[entity_id] is not ("ETN" in rdf_types):
+            _fail("conflicting_product_type_fact", entity_id)
 
     evidence_ids_by_relation: dict[str, list[str]] = defaultdict(list)
     evidence_by_id: dict[str, EvidenceProjection] = {}

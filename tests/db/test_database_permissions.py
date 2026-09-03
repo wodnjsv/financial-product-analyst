@@ -24,6 +24,7 @@ from .test_foundation_migration import (
 
 PROTECTED_FUNCTION_GRANTS = {
     "reject_nonbuilding_dataset_mutation": set(),
+    "lock_building_dataset": {"fa_build"},
     "finish_dataset_validation": {"fa_build"},
     "record_dataset_readiness": {"fa_build"},
     "activate_dataset": {"fa_build"},
@@ -31,6 +32,36 @@ PROTECTED_FUNCTION_GRANTS = {
     "append_request_artifact": {"fa_runtime"},
     "finish_request_run": {"fa_runtime"},
 }
+
+
+@pytest.mark.postgres
+def test_build_locks_building_dataset_only_through_protected_function(
+    connection: psycopg.Connection,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO operations.dataset_version (
+            dataset_version, cutoff_date, manifest_hash, created_at
+        ) VALUES (
+            'document-build-lock', DATE '2026-08-24', %s, %s
+        )
+        """,
+        (VALID_MANIFEST_HASH, datetime(2026, 8, 31, tzinfo=UTC)),
+    )
+    connection.execute("SET LOCAL ROLE fa_build")
+    assert connection.execute(
+        "SELECT operations.lock_building_dataset(%s)",
+        ("document-build-lock",),
+    ).fetchone()[0] is True
+    connection.execute("RESET ROLE")
+    assert_statement_denied(
+        connection,
+        role="fa_runtime",
+        statement=(
+            "SELECT operations.lock_building_dataset("
+            "'document-build-lock')"
+        ),
+    )
 
 
 @pytest.fixture

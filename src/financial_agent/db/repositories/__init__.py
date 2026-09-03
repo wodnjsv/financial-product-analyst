@@ -7,6 +7,7 @@ from .evidence import (
     RequestScopeMismatch,
 )
 from .documents import (
+    CapturedDocumentCorpus,
     DocumentCorpusConflict,
     DocumentCorpusError,
     DocumentCorpusNotFound,
@@ -16,9 +17,12 @@ from .documents import (
     DocumentCorpusValidationError,
     DocumentEntityBindingRecord,
     DocumentProfileRecord,
+    DocumentSourceArtifactRecord,
 )
+from .document_targets import DocumentTargetRepository
 
 __all__ = [
+    "CapturedDocumentCorpus",
     "EvidenceLedgerConflict",
     "EvidenceLedgerNotFound",
     "EvidenceLedgerRepository",
@@ -34,4 +38,6 @@ __all__ = [
     "DocumentCorpusValidationError",
     "DocumentEntityBindingRecord",
     "DocumentProfileRecord",
+    "DocumentSourceArtifactRecord",
+    "DocumentTargetRepository",
 ]

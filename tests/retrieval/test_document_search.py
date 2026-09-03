@@ -230,11 +230,10 @@ def test_metadata_sql_enforces_nonblank_version_and_searchable_sections() -> Non
             {
                 "regulator_disclosure",
                 "asset_manager",
-                "issuer",
                 "policy_authority",
                 "policy_operator",
             },
-            {"subject_index", "index_provider"},
+            {"issuer", "subject_index", "index_provider"},
         ),
         (
             "official_trend_or_update",
@@ -243,12 +242,12 @@ def test_metadata_sql_enforces_nonblank_version_and_searchable_sections() -> Non
             {"subject_product", "subject_policy"},
             {
                 "regulator_disclosure",
-                "asset_manager",
-                "issuer",
+                "exchange",
+                "industry_association",
                 "policy_authority",
                 "policy_operator",
             },
-            {"subject_index", "index_provider"},
+            {"asset_manager", "issuer", "subject_index", "index_provider"},
         ),
         (
             "publisher_provenance",
@@ -258,11 +257,10 @@ def test_metadata_sql_enforces_nonblank_version_and_searchable_sections() -> Non
             {
                 "regulator_disclosure",
                 "asset_manager",
-                "issuer",
                 "policy_authority",
                 "policy_operator",
             },
-            {"subject_index", "index_provider"},
+            {"issuer", "subject_index", "index_provider"},
         ),
     ),
 )
@@ -488,6 +486,74 @@ async def test_vector_search_filters_before_distance_ranking(
     assert all(hit.cutoff_eligible for hit in hits)
     assert all(hit.publisher_approved for hit in hits)
     assert all(hit.vector_rank is not None and hit.keyword_rank is None for hit in hits)
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_product_search_accepts_asset_manager_profile_only_for_official_dart_filing(
+    migrated_database_url: str,
+    corpus_dataset_version: str,
+) -> None:
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        insert_document_search_corpus(
+            connection, dataset_version=corpus_dataset_version
+        )
+        connection.execute(
+            """
+            INSERT INTO evidence.source_record (
+                dataset_version, source_id, publisher, publisher_type,
+                source_title, source_type, authority_tier, source_locator_root,
+                content_checksum, eligible_for_claim, record_hash, created_at
+            )
+            SELECT dataset_version, 'source-official-dart', publisher, 'regulator',
+                   'Official DART filing', 'filing', 'official_primary',
+                   'https://dart.fss.or.kr/dsaf001/main.do?rcpNo=20260801000001',
+                   content_checksum, eligible_for_claim, record_hash, created_at
+            FROM evidence.source_record
+            WHERE dataset_version = %s AND source_id = 'source-approved'
+            """,
+            (corpus_dataset_version,),
+        )
+        connection.execute(
+            """
+            UPDATE document.document_record
+            SET source_id = 'source-official-dart'
+            WHERE dataset_version = %s AND document_id = 'document-risk'
+            """,
+            (corpus_dataset_version,),
+        )
+        connection.execute(
+            """
+            UPDATE document.document_profile
+            SET publisher_role = 'asset_manager'
+            WHERE dataset_version = %s
+              AND document_id IN (
+                  'document-risk', 'document-product-wrong-publisher'
+              )
+            """,
+            (corpus_dataset_version,),
+        )
+
+    request = DocumentSearchRequest(
+        dataset_version=corpus_dataset_version,
+        entity_ids=("selected-etf", "wrong-publisher-etf"),
+        claim_type="product_risk_factor",
+        section_types=(SectionType.RISK_FACTOR,),
+        cutoff_date=CUTOFF_DATE,
+        top_k=5,
+        query_embedding=(1.0, 0.0, 0.0),
+        model_id=MODEL_ID,
+        model_version=MODEL_VERSION,
+    )
+    engine = create_async_engine(migrated_database_url, pool_size=5, max_overflow=0)
+    try:
+        hits = await DocumentCandidateRepository(engine).search_vector(request)
+    finally:
+        await engine.dispose()
+
+    assert hits
+    assert {hit.entity_id for hit in hits} == {"selected-etf"}
+    assert {hit.source_id for hit in hits} == {"source-official-dart"}
 
 
 @pytest.mark.postgres

@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
 from financial_agent.ingestion.identity import (
     build_authoritative_identity_index,
     collect_organizer_identifier_candidates,
@@ -210,6 +212,138 @@ def test_one_row_product_identifiers_aliases_and_relations_are_bounded() -> None
     assert not relations(mapped, "hasShareClass")
 
 
+def test_reviewed_representative_groups_use_one_official_asset_manager() -> None:
+    cases = (
+        (
+            "032280034925",
+            "00040024",
+            "korea_investment_management",
+            "한국투자신탁운용",
+            "00324548",
+        ),
+        (
+            "032280034925",
+            "00040105",
+            "korea_investment_management",
+            "한국투자신탁운용",
+            "00324548",
+        ),
+        (
+            "032530069031",
+            "00080019",
+            "barings_asset_management",
+            "베어링자산운용",
+            "00260480",
+        ),
+        (
+            "032530069031",
+            "00080159",
+            "barings_asset_management",
+            "베어링자산운용",
+            "00260480",
+        ),
+        (
+            "034790011100",
+            "00080151",
+            "the_j_asset_management",
+            "더제이자산운용",
+            "00883078",
+        ),
+        (
+            "034790011100",
+            "00080359",
+            "the_j_asset_management",
+            "더제이자산운용",
+            "00883078",
+        ),
+        (
+            "2000102M9920",
+            "00080134",
+            "samsung_active_asset_management",
+            "삼성액티브자산운용",
+            "01194731",
+        ),
+        (
+            "2000102M9920",
+            "00080135",
+            "samsung_active_asset_management",
+            "삼성액티브자산운용",
+            "01194731",
+        ),
+    )
+
+    for representative, source_code, manager_key, manager_name, dart_code in cases:
+        mapped = _map(
+            synthetic_public_fund_row()
+            | {
+                "or_co_xtn_itt_cd": source_code,
+                "rptt_ksd_itm_no": representative,
+            }
+        )
+        manager_id = stable_id(
+            "institution", "CANONICAL_ASSET_MANAGER", manager_key
+        )
+        manager_relation = relations(mapped, "managedBy")[0]
+
+        assert manager_relation["object_id"] == manager_id
+        assert any(
+            item["entity_id"] == manager_id
+            and item["canonical_name"] == manager_name
+            for item in records(mapped, "catalog.entity")
+        )
+        assert any(
+            item["entity_id"] == manager_id
+            and item["scheme"] == "DART_CORP_CODE"
+            and item["identifier_value"] == dart_code
+            for item in records(mapped, "catalog.identifier")
+        )
+        assert evidence(mapped, "or_co_xtn_itt_cd")["raw_value_repr"] == source_code
+
+
+@pytest.mark.parametrize(
+    "source_code",
+    ("00080159", "00080151", "00080134"),
+)
+def test_reviewed_manager_code_outside_approved_group_stays_source_local(
+    source_code: str,
+) -> None:
+    mapped = _map(
+        synthetic_public_fund_row()
+        | {
+            "or_co_xtn_itt_cd": source_code,
+            "rptt_ksd_itm_no": "UNREVIEWED-REPRESENTATIVE",
+        }
+    )
+
+    manager_relation = relations(mapped, "managedBy")[0]
+    source_local_id = stable_id(
+        "institution", "PRFD01N001", f"asset_manager:{source_code}"
+    )
+    assert manager_relation["object_id"] == source_local_id
+    assert not any(
+        item["scheme"] == "DART_CORP_CODE"
+        for item in records(mapped, "catalog.identifier")
+    )
+
+
+def test_reviewed_public_offering_manager_code_is_not_group_scoped() -> None:
+    mapped = _map(
+        synthetic_public_fund_row()
+        | {
+            "or_co_xtn_itt_cd": "00080359",
+            "rptt_ksd_itm_no": "OTHER-REPRESENTATIVE",
+        }
+    )
+
+    manager_id = stable_id(
+        "institution", "CANONICAL_ASSET_MANAGER", "the_j_asset_management"
+    )
+    manager_relation = relations(mapped, "managedBy")[0]
+
+    assert manager_relation["object_id"] == manager_id
+    assert evidence(mapped, "or_co_xtn_itt_cd")["raw_value_repr"] == "00080359"
+
+
 def test_domestic_etf_overlap_reuses_owner_without_second_product_or_isin() -> None:
     row = synthetic_public_fund_row()
     etf_candidates = (
@@ -330,13 +464,23 @@ def test_representative_fund_relation_uses_canonical_target_and_sentinels_do_not
         "product", "PRFD01N001", "SYN-FUND-001"
     )
 
-    sentinel = _map(
-        synthetic_public_fund_row() | {"rptt_ksd_itm_no": "000000000000"}
-    )
-    assert not relations(sentinel, "hasShareClass")
-    assert observation(sentinel, "representative_fund_id_raw")[
-        "value_status"
-    ] == "placeholder"
+    for sentinel_value in (
+        "000000000000",
+        "0",
+        "00",
+        "00000",
+        "0000000",
+        "WTREWRWE",
+        "wtrewrwe",
+    ):
+        sentinel = _map(
+            synthetic_public_fund_row()
+            | {"rptt_ksd_itm_no": sentinel_value}
+        )
+        assert not relations(sentinel, "hasShareClass")
+        assert observation(sentinel, "representative_fund_id_raw")[
+            "value_status"
+        ] == "placeholder"
 
 
 def test_representative_self_reference_and_cycles_are_suppressed() -> None:
@@ -442,7 +586,7 @@ def test_all_fields_keep_raw_evidence_and_future_date_is_fatal() -> None:
         SPEC.expected_columns
     )
     assert all(item["locator_sheet"] == "data" for item in evidence_rows)
-    assert all(item["mapping_version"] == "2" for item in evidence_rows)
+    assert all(item["mapping_version"] == "4" for item in evidence_rows)
     assert all(item["vintage_date"] == date(2026, 8, 24) for item in evidence_rows)
 
     future = _map(synthetic_public_fund_row() | {"fd_daily_bas_dt": "20260825"})

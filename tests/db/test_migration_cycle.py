@@ -44,10 +44,10 @@ def test_semantic_query_artifact_migration_is_the_single_alembic_head() -> None:
     config = Config(PROJECT_ROOT / "alembic.ini")
     script = ScriptDirectory.from_config(config)
 
-    assert script.get_heads() == ["0009"]
-    revision = script.get_revision("0009")
+    assert script.get_heads() == ["0011"]
+    revision = script.get_revision("0011")
     assert revision is not None
-    assert revision.down_revision == "0008"
+    assert revision.down_revision == "0010"
 
 
 def _object_manifest() -> dict[str, object]:
@@ -180,11 +180,13 @@ def test_database_object_export_covers_non_table_ddl_and_permissions(
         "ck_document_coverage_state",
         "ck_document_profile_effective_dates",
         "ck_document_chunk_character_range",
+        "ck_document_source_artifact_retention_state",
     } <= {check["name"] for check in manifest["checks"]}
     assert {
         "reject_document_profile_nonbuilding_mutation",
         "reject_document_entity_binding_nonbuilding_mutation",
         "reject_document_coverage_nonbuilding_mutation",
+        "reject_document_source_artifact_nonbuilding_mutation",
         "validate_document_coverage_scope_evidence",
     } <= {trigger["name"] for trigger in manifest["triggers"]}
     assert any(
@@ -216,6 +218,7 @@ def test_database_object_export_covers_non_table_ddl_and_permissions(
         "document_profile",
         "document_entity_binding",
         "document_coverage",
+        "document_source_artifact",
     } <= {
         owner["name"]
         for owner in manifest["owners"]
@@ -245,6 +248,7 @@ def test_database_object_export_covers_non_table_ddl_and_permissions(
         "document_profile",
         "document_entity_binding",
         "document_coverage",
+        "document_source_artifact",
     ):
         assert {
             grant["privilege"]
@@ -496,7 +500,7 @@ def test_manifest_and_postflight_reject_redacted_unexpected_principals(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0008",
+                alembic_head="0011",
             )
             with pytest.raises(PreflightFailure) as preflight_error:
                 validate_post_migration_snapshot(snapshot)
@@ -552,7 +556,7 @@ def test_manifest_and_postflight_reject_column_acl_drift(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0008",
+                alembic_head="0011",
             )
             with pytest.raises(PreflightFailure) as preflight_error:
                 validate_post_migration_snapshot(snapshot)
@@ -599,7 +603,7 @@ def test_disposable_database_runs_base_head_base_head_cycle(
 ) -> None:
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0009"
+    assert report.alembic_head == "0011"
     assert report.application_schema_count == 7
     assert report.object_counts["tables"] > 0
     assert report.object_counts["checks"] > 0
@@ -885,6 +889,98 @@ def test_document_corpus_migration_backfills_blank_sections_and_reverses_core_ro
 
 
 @pytest.mark.postgres
+def test_source_artifact_migration_reverses_without_losing_legacy_document(
+    postgres_database_url: str,
+) -> None:
+    with disposable_migration_database(postgres_database_url) as database_url:
+        config = migration_alembic_config(database_url)
+        with configured_alembic_target_only():
+            command.upgrade(config, "0007")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            connection.execute(
+                """
+                INSERT INTO operations.dataset_version
+                    (dataset_version, cutoff_date, status, manifest_hash, created_at)
+                VALUES ('artifact-legacy-v1', DATE '2026-08-24', 'building',
+                        repeat('a', 64), now());
+                INSERT INTO catalog.entity
+                    (dataset_version, entity_id, entity_type, canonical_name,
+                     normalized_name, record_hash, created_at)
+                VALUES ('artifact-legacy-v1', 'publisher-one', 'institution',
+                        'Publisher One', 'publisher one', repeat('b', 64), now());
+                INSERT INTO catalog.institution
+                    (dataset_version, entity_id, institution_kind)
+                VALUES ('artifact-legacy-v1', 'publisher-one', 'asset_manager');
+                INSERT INTO evidence.source_record
+                    (dataset_version, source_id, publisher, publisher_type,
+                     source_title, source_type, authority_tier,
+                     source_locator_root, content_checksum, eligible_for_claim,
+                     record_hash, created_at)
+                VALUES ('artifact-legacy-v1', 'source-one', 'publisher-one',
+                        'regulator', 'DART filing', 'filing', 'official_primary',
+                        'https://dart.fss.or.kr', repeat('c', 64), true,
+                        repeat('d', 64), now());
+                INSERT INTO document.document_record
+                    (dataset_version, document_id, source_id, document_title,
+                     document_type, object_key, content_checksum, record_hash,
+                     created_at)
+                VALUES ('artifact-legacy-v1', 'document-one', 'source-one',
+                        'Legacy DART Document', 'investment_prospectus',
+                        'documents/dart/20260716000161/full-prospectus.pdf',
+                        repeat('c', 64), repeat('e', 64), now())
+                """
+            )
+
+        with configured_alembic_target_only():
+            command.upgrade(config, "0008")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            connection.execute(
+                """
+                INSERT INTO document.document_source_artifact
+                    (dataset_version, source_artifact_id, source_id, document_id,
+                     receipt_id, original_filename, filing_locator,
+                     attachment_locator, media_type, byte_count, source_checksum,
+                     text_checksum, page_count, extraction_version,
+                     retention_disposition, downloaded_at, persisted_at,
+                     verified_at, discarded_at, record_hash, created_at)
+                VALUES ('artifact-legacy-v1', 'artifact-one', 'source-one',
+                        'document-one', '20260716000161', 'prospectus.pdf',
+                        'https://dart.fss.or.kr/main.do?rcpNo=20260716000161',
+                        'https://dart.fss.or.kr/file.do?rcp_no=20260716000161',
+                        'application/pdf', 100, repeat('c', 64), repeat('b', 64),
+                        2, 'pdfplumber-layout-v1', 'pending_delete', now(), now(),
+                        NULL, NULL, repeat('f', 64), now())
+                """
+            )
+            assert connection.execute(
+                "SELECT count(*) FROM document.document_source_artifact"
+            ).fetchone()[0] == 1
+
+        with configured_alembic_target_only():
+            command.downgrade(config, "0007")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                "SELECT pg_catalog.to_regclass("
+                "'document.document_source_artifact')"
+            ).fetchone()[0] is None
+            assert connection.execute(
+                "SELECT count(*) FROM document.document_record "
+                "WHERE dataset_version = 'artifact-legacy-v1'"
+            ).fetchone()[0] == 1
+
+        with configured_alembic_target_only():
+            command.upgrade(config, "0008")
+        with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+            assert connection.execute(
+                "SELECT count(*) FROM document.document_source_artifact"
+            ).fetchone()[0] == 0
+            assert connection.execute(
+                "SELECT count(*) FROM document.document_record "
+                "WHERE dataset_version = 'artifact-legacy-v1'"
+            ).fetchone()[0] == 1
+
+
+@pytest.mark.postgres
 def test_cutoff_rebaseline_preserves_legacy_rows_and_fails_closed_on_downgrade(
     postgres_database_url: str,
 ) -> None:
@@ -937,7 +1033,7 @@ def test_cutoff_rebaseline_preserves_legacy_rows_and_fails_closed_on_downgrade(
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 "SELECT version_num FROM public.alembic_version"
-            ).fetchone()[0] == "0009"
+            ).fetchone()[0] == "0011"
             assert connection.execute(
                 """
                 SELECT count(*) FROM operations.dataset_version
@@ -1039,7 +1135,7 @@ def test_downgrade_restores_the_exact_0006_artifact_trigger_function(
             )
 
         with configured_alembic_target_only():
-            command.upgrade(config, "0008")
+            command.upgrade(config, "0010")
             command.downgrade(config, "0006")
 
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
@@ -1158,7 +1254,7 @@ def test_intent_resolution_audit_migration_fails_closed_on_lossy_downgrade(
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 "SELECT version_num FROM public.alembic_version"
-            ).fetchone()[0] == "0009"
+            ).fetchone()[0] == "0011"
 
 
 @pytest.mark.postgres
@@ -1168,14 +1264,14 @@ def test_semantic_query_artifact_migration_round_trips_without_v2_rows(
     with disposable_migration_database(postgres_database_url) as database_url:
         config = migration_alembic_config(database_url)
         with configured_alembic_target_only():
-            command.upgrade(config, "0008")
-            command.upgrade(config, "0009")
-            command.downgrade(config, "0008")
-            command.upgrade(config, "0009")
+            command.upgrade(config, "0010")
+            command.upgrade(config, "0011")
+            command.downgrade(config, "0010")
+            command.upgrade(config, "0011")
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 "SELECT version_num FROM public.alembic_version"
-            ).fetchone()[0] == "0009"
+            ).fetchone()[0] == "0011"
 
 
 @pytest.mark.postgres
@@ -1218,14 +1314,14 @@ def test_semantic_query_artifacts_derive_ids_and_guard_downgrade(
 
         with configured_alembic_target_only():
             with pytest.raises(DBAPIError) as captured:
-                command.downgrade(config, "0008")
+                command.downgrade(config, "0010")
         assert "SEMANTIC_QUERY_ARTIFACTS_PREVENT_DOWNGRADE" in str(
             captured.value.orig
         )
         with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
             assert connection.execute(
                 "SELECT version_num FROM public.alembic_version"
-            ).fetchone()[0] == "0009"
+            ).fetchone()[0] == "0011"
             assert connection.execute(
                 "SELECT count(*) FROM operations.request_artifact"
             ).fetchone()[0] == 1
@@ -1464,7 +1560,7 @@ def test_migration_cycle_never_uses_an_ambient_database_url(
 
     report = verify_migration_cycle(postgres_database_url)
 
-    assert report.alembic_head == "0009"
+    assert report.alembic_head == "0011"
     assert os.environ["FINANCIAL_AGENT_DATABASE_URL"] == stale_url
 
 

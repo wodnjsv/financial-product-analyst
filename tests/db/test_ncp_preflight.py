@@ -75,7 +75,7 @@ def test_installed_preflight_uses_explicit_project_root(tmp_path: Path) -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout == "0009\n"
+    assert completed.stdout == "0011\n"
 
 
 def _pre_migration_snapshot() -> PreflightSnapshot:
@@ -128,8 +128,8 @@ def _post_migration_snapshot() -> PostMigrationSnapshot:
             "pgcrypto": "public",
         },
         application_schemas=EXPECTED_APPLICATION_SCHEMAS,
-        alembic_revision="0008",
-        alembic_head="0008",
+        alembic_revision="0011",
+        alembic_head="0011",
         cutoff_constraint_matches=True,
         active_dataset_consistent=True,
         parameterized_query_usable=True,
@@ -343,7 +343,7 @@ def test_post_migration_preflight_detects_direct_dml_or_role_membership_drift(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0008",
+                alembic_head="0011",
             )
         finally:
             connection.rollback()
@@ -373,7 +373,7 @@ def test_public_table_inventory_is_independent_of_current_user_visibility(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
-                alembic_head="0008",
+                alembic_head="0011",
             )
         finally:
             connection.rollback()
@@ -422,7 +422,7 @@ def test_permission_layout_rejects_unapproved_external_membership_shape(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
-                alembic_head="0008",
+                alembic_head="0011",
             )
         finally:
             connection.rollback()
@@ -445,7 +445,7 @@ def test_group_roles_allow_external_login_members_only_in_stable_roles(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
-                alembic_head="0008",
+                alembic_head="0011",
             )
         finally:
             connection.rollback()
@@ -483,7 +483,7 @@ def test_direct_users_without_managed_statistics_memberships_remain_approved(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
-                alembic_head="0008",
+                alembic_head="0011",
             )
         finally:
             connection.rollback()
@@ -503,7 +503,7 @@ def test_direct_users_allow_only_the_ncp_managed_statistics_memberships(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
-                alembic_head="0008",
+                alembic_head="0011",
             )
         finally:
             connection.rollback()
@@ -535,7 +535,7 @@ def test_direct_users_reject_statistics_membership_privilege_expansion(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=DEFAULT_DATABASE_OBJECT_MANIFEST,
-                alembic_head="0008",
+                alembic_head="0011",
             )
         finally:
             connection.rollback()
@@ -603,7 +603,7 @@ def test_postflight_rejects_migration_extension_inventory_drift(
             snapshot = collect_post_migration_snapshot(
                 connection,
                 manifest_path=manifest_path,
-                alembic_head="0008",
+                alembic_head="0011",
             )
             with pytest.raises(PreflightFailure) as captured:
                 validate_post_migration_snapshot(snapshot)

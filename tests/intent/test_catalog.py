@@ -99,7 +99,7 @@ EXPECTED_FAMILIES_BY_CONCEPT = {
     "yield_rate": {"domestic_bond"},
 }
 
-V2_CATALOG_HASH = "c1e88ebd353e6306e8f61f4bef31d23fbed802adf4811a8ea287e40dbde73076"
+V2_CATALOG_HASH = "524d96a05dd0ffe45c2ee6e4ba028c69f1341f10a143dad510a5cf7d7ae45142"
 V2_OVERLAY_HASH = "ae2a7216009fe32c7c3393f54e1c5986cde2db750f54b170b1f1f50896ee9441"
 
 
@@ -447,6 +447,17 @@ def test_catalog_preserves_tbox_derived_relation_roles() -> None:
 
     assert holds_security.subject_ontology_types == ("ETF", "PublicFund")
     assert holds_security.object_ontology_types == ("Security",)
+
+
+def test_catalog_tracks_index_for_etf_and_etn_products() -> None:
+    """Catches the semantic catalog drifting behind the approved ETN domain."""
+    tracks_index = load_catalog(PROJECT_ROOT).concepts_by_id["tracksIndex"]
+
+    assert tracks_index.subject_ontology_types == (
+        "ExchangeTradedProduct",
+        "PublicFund",
+    )
+    assert tracks_index.object_ontology_types == ("Index",)
 
 
 def test_catalog_hash_canonicalizes_relation_endpoint_order() -> None:
