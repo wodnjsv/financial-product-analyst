@@ -111,6 +111,7 @@ class QueryResultShape(str, Enum):
 
 class ProvenanceSourceKind(str, Enum):
     EXACT_LOCK = "exact_lock"
+    MODEL_SEMANTIC_LINK = "model_semantic_link"
     AXIS_RESOLUTION = "axis_resolution"
     REGISTRY_DEFAULT = "registry_default"
     PRIOR_RESULT = "prior_result"

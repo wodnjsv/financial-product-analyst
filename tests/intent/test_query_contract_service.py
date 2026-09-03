@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from financial_agent.contracts.canonical import build_request_key
 from financial_agent.contracts.enums import ProductFamily
 from financial_agent.contracts.request import RequestContext, Segment
-from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.catalog import load_catalog, load_hybrid_catalog
 from financial_agent.intent.clova import ModelInvocationResult
 from financial_agent.intent.draft import ProductFamilyChoice
 from financial_agent.intent.evidence import EvidenceCandidate, EvidenceSourceKind
@@ -32,7 +32,9 @@ import financial_agent.intent.service as service_module
 from financial_agent.intent.resolution import ResolutionIssue
 from financial_agent.intent.service import (
     IntentResolverService,
+    PreparedHybridResolutionRequest,
     PreparedResolutionRequest,
+    QueryContractResolutionAttemptV3,
     QueryContractResolutionTelemetry,
     reconcile_exact_axis_locks,
 )
@@ -46,7 +48,10 @@ from financial_agent.intent.view import (
     ActiveDatasetPin,
     ResolverViewReferenceCandidate,
     build_manifest,
+    build_hybrid_manifest,
 )
+from financial_agent.intent.resolution import ValidatedIntentResolutionV3
+from tests.intent.view_fixtures import hybrid_manifest_versions
 from tests.planning.fixtures import resolution
 
 
@@ -195,6 +200,80 @@ def _service(adapter: _Adapter, *, timer=None) -> IntentResolverService:
     )
 
 
+def _hybrid_service(adapter: _Adapter, *, timer=None) -> IntentResolverService:
+    catalog = load_hybrid_catalog(PROJECT_ROOT)
+    return IntentResolverService(
+        adapter=adapter,
+        entity_repository=_EmptyEntities(),
+        catalog=catalog,
+        manifest=build_hybrid_manifest(catalog, hybrid_manifest_versions()),
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version="dataset-v1", manifest_hash="a" * 64
+        ),
+        query_contract_registry=load_query_contract_registry(PROJECT_ROOT),
+        utcnow=lambda: NOW,
+        timer=timer,
+    )
+
+
+def _hybrid_proposal(
+    prepared: PreparedHybridResolutionRequest,
+    *,
+    semantic_ids: tuple[str, ...] = ("fee_rate",),
+    state: str = "selected",
+) -> str:
+    mention_id = next(
+        item.mention_id
+        for item in prepared.view.mention_spans.items
+        if item.text == "비용 부담"
+    )
+    return json.dumps(
+        {
+            "proposal_schema_version": "3.0",
+            "frames": [
+                {
+                    "segment_ids": ["s1"],
+                    "action_choice": {
+                        "state": "selected",
+                        "selected_ids": ["rank"],
+                        "evidence_ids": [],
+                        "reason_code": "explicit",
+                    },
+                    "product_family_choice": {
+                        "state": "selected",
+                        "selected_ids": ["domestic_etf"],
+                        "evidence_ids": [],
+                        "reason_code": "explicit",
+                    },
+                    "entity_type_ids": ["FinancialProduct"],
+                    "semantic_links": [
+                        {
+                            "mention_id": mention_id,
+                            "state": state,
+                            "semantic_ids": list(semantic_ids),
+                            "reason_code": (
+                                "ambiguous" if state == "ambiguous" else "implicit"
+                            ),
+                        }
+                    ],
+                    "unmapped_mention_ids": [],
+                    "semantic_coverage": {"state": "covered", "reason": "none"},
+                    "entity_hints": [],
+                    "produced_result_hints": ["candidates"],
+                }
+            ],
+            "references": [],
+            "context_links": [],
+            "slot_mutations": [],
+            "semantic_flag_hints": [],
+            "frame_limit_exceeded": False,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
 @pytest.mark.asyncio
 async def test_prepare_computes_exact_locks_once_without_exposing_lock_metadata() -> None:
     service = _service(_Adapter([_proposal()]))
@@ -233,6 +312,103 @@ async def test_unique_complete_contract_uses_one_axis_call_and_no_v1_slot_binder
     assert adapter.calls and len(adapter.calls) == 1
     with pytest.raises(FrozenInstanceError):
         attempt.resolution = attempt.resolution  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_query_contract_path_uses_v3_end_to_end_with_one_call() -> None:
+    context = _context("비용 부담이 작은 ETF 다섯 개")
+    adapter = _Adapter([])
+    service = _hybrid_service(adapter)
+    prepared = await service.prepare_hybrid(context)
+    adapter.responses.append(_hybrid_proposal(prepared))
+
+    attempt = await service.resolve_hybrid_query_contract_candidates(context)
+
+    assert isinstance(attempt, QueryContractResolutionAttemptV3)
+    assert isinstance(attempt.resolution, ValidatedIntentResolutionV3)
+    assert attempt.telemetry.model_call_count == 1
+    assert attempt.telemetry.repair_used is False
+    assert attempt.telemetry.candidate_judge_used is False
+    assert attempt.telemetry.complete_candidate_count == 1
+    assert (
+        attempt.candidates.complete_candidates[0].contract.ordering[0].field_concept_id
+        == "fee_rate"
+    )
+    assert len(adapter.calls) == 1
+    envelope = adapter.calls[0]
+    assert envelope.response_schema["properties"]["proposal_schema_version"]["enum"] == [
+        "3.0"
+    ]
+    assert "compact_semantic_catalog" in json.loads(envelope.user_message)["view"]
+    with pytest.raises(FrozenInstanceError):
+        attempt.resolution = attempt.resolution  # type: ignore[misc]
+
+
+@pytest.mark.asyncio
+async def test_hybrid_ambiguous_semantic_link_never_calls_candidate_judge() -> None:
+    context = _context("비용 부담이 작은 ETF 다섯 개")
+    adapter = _Adapter([])
+    service = _hybrid_service(adapter)
+    prepared = await service.prepare_hybrid(context)
+    adapter.responses.append(
+        _hybrid_proposal(
+            prepared,
+            semantic_ids=("fee_rate", "product_risk_grade"),
+            state="ambiguous",
+        )
+    )
+
+    attempt = await service.resolve_hybrid_query_contract_candidates(context)
+
+    assert attempt.telemetry.model_call_count == 1
+    assert attempt.telemetry.repair_used is False
+    assert attempt.telemetry.candidate_judge_used is False
+    assert attempt.candidates.complete_candidates == ()
+    assert (
+        attempt.candidates.frames[0].contract_readiness.readiness
+        is ContractReadiness.AMBIGUOUS
+    )
+    assert len(adapter.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_hybrid_schema_repair_is_separate_and_precludes_judge() -> None:
+    context = _context("비용 부담이 작은 ETF 다섯 개")
+    clock = _Clock()
+    adapter = _TimedAdapter([], clock)
+    service = _hybrid_service(adapter, timer=clock)
+    prepared = await service.prepare_hybrid(context)
+    adapter.responses.extend(["{}", _hybrid_proposal(prepared)])
+
+    attempt = await service.resolve_hybrid_query_contract_candidates(context)
+
+    assert attempt.telemetry.model_call_count == 2
+    assert attempt.telemetry.repair_used is True
+    assert attempt.telemetry.candidate_judge_used is False
+    assert attempt.telemetry.axis_model_ms == 25
+    assert attempt.telemetry.repair_ms == 25
+    assert len(adapter.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_hybrid_unknown_semantic_id_uses_the_shared_repair_allowance() -> None:
+    context = _context("비용 부담이 작은 ETF 다섯 개")
+    adapter = _Adapter([])
+    service = _hybrid_service(adapter)
+    prepared = await service.prepare_hybrid(context)
+    adapter.responses.extend(
+        [
+            _hybrid_proposal(prepared, semantic_ids=("unknown_semantic",)),
+            _hybrid_proposal(prepared),
+        ]
+    )
+
+    attempt = await service.resolve_hybrid_query_contract_candidates(context)
+
+    assert attempt.telemetry.model_call_count == 2
+    assert attempt.telemetry.repair_used is True
+    assert attempt.telemetry.candidate_judge_used is False
+    assert len(adapter.calls) == 2
 
 
 @pytest.mark.asyncio

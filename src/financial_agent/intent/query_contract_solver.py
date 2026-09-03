@@ -14,6 +14,7 @@ from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.enums import Cardinality, IntentType, ProductFamily
 
 from .axis_locks import ExactSemanticLock, validate_exact_semantic_locks
+from .catalog import SemanticCatalogSnapshot
 from .query_contract_registry import (
     EXPECTED_POLICY_KINDS,
     OperatorArity,
@@ -53,7 +54,12 @@ from .query_contracts import (
     _ScreenQueryContractCandidateV2,
     _SimilarQueryContractCandidateV2,
 )
-from .resolution import ValidatedIntentFrameV2, ValidatedIntentResolutionV2
+from .resolution import (
+    ValidatedIntentFrameV2,
+    ValidatedIntentResolutionV2,
+    ValidatedIntentResolutionV3,
+    ValidatedSemanticLinkV3,
+)
 from .types import (
     ChoiceState,
     ContextLinkType,
@@ -66,6 +72,7 @@ from .types import (
 from .view import (
     ResolverView,
     ResolverViewConcept,
+    ResolverViewV3,
     ResolverViewLiteralCandidate,
     ResolverViewSemanticCandidateGroup,
 )
@@ -140,6 +147,7 @@ class _CandidateAccumulator:
     view: ResolverView
     registry: QueryContractRegistry
     frame: ValidatedIntentFrameV2
+    resolution: ValidatedIntentResolutionV2
     field_roles: tuple[tuple[str, tuple[str, ...]], ...]
     rejections: list[CandidateRejection]
     candidates: dict[str, QueryContractCandidate]
@@ -166,7 +174,11 @@ class _CandidateAccumulator:
         enriched = contract.model_copy(
             update={
                 "provenance": _resolved_input_provenance(
-                    contract, self.exact_locks, self.view, self.frame
+                    contract,
+                    self.exact_locks,
+                    self.view,
+                    self.frame,
+                    self.resolution,
                 )
             }
         )
@@ -191,12 +203,29 @@ class _CandidateAccumulator:
 
 def solve_query_contracts(
     *,
-    resolution: ValidatedIntentResolutionV2,
-    view: ResolverView,
+    resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
+    view: ResolverView | ResolverViewV3,
     exact_locks: tuple[ExactSemanticLock, ...],
     registry: QueryContractRegistry,
+    semantic_catalog: SemanticCatalogSnapshot | None = None,
 ) -> QueryContractCandidateSet:
     """Enumerate only complete registered semantic contracts in frame order."""
+
+    if isinstance(resolution, ValidatedIntentResolutionV3) != isinstance(
+        view, ResolverViewV3
+    ):
+        raise ValueError("QUERY_CONTRACT_RESOLVER_VERSION_MISMATCH")
+    if isinstance(view, ResolverViewV3) and (
+        semantic_catalog is None
+        or semantic_catalog.catalog_hash
+        != view.compact_semantic_catalog.source_catalog_hash
+        or set(semantic_catalog.concepts_by_id)
+        != {
+            card.semantic_id
+            for card in view.compact_semantic_catalog.concepts
+        }
+    ):
+        raise ValueError("QUERY_CONTRACT_SEMANTIC_CATALOG_MISMATCH")
 
     locks = validate_exact_semantic_locks(exact_locks)
     frames = tuple(
@@ -206,6 +235,7 @@ def solve_query_contracts(
             view=view,
             exact_locks=_locks_for_frame(frame, resolution, locks, view),
             registry=registry,
+            semantic_catalog=semantic_catalog,
         )
         for frame in resolution.canonical_frames
     )
@@ -214,13 +244,34 @@ def solve_query_contracts(
 
 def _solve_frame(
     *,
-    resolution: ValidatedIntentResolutionV2,
+    resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
     frame: ValidatedIntentFrameV2,
-    view: ResolverView,
+    view: ResolverView | ResolverViewV3,
     exact_locks: tuple[ExactSemanticLock, ...],
     registry: QueryContractRegistry,
+    semantic_catalog: SemanticCatalogSnapshot | None,
 ) -> QueryContractFrameCandidateSet:
     rejections: list[CandidateRejection] = []
+    if isinstance(resolution, ValidatedIntentResolutionV3):
+        ambiguous_links = _unresolved_ambiguous_links(
+            resolution, frame, view, exact_locks
+        )
+        if ambiguous_links:
+            return _frame_result(
+                frame.frame_id,
+                (),
+                tuple(
+                    _rejection(
+                        frame,
+                        "unresolved.v3",
+                        f"field.{link.mention_id}",
+                        link.semantic_ids,
+                        "MODEL_SEMANTIC_LINK_AMBIGUOUS",
+                    )
+                    for link in ambiguous_links
+                ),
+                ambiguous=True,
+            )
     if frame.frame_status is not ResolutionStatus.RESOLVED:
         return _frame_result(
             frame.frame_id,
@@ -266,7 +317,9 @@ def _solve_frame(
             _rejection(frame, "unresolved.v2", "variant", (), "CONTRACT_VARIANT_NOT_REGISTERED"),
         ))
 
-    unknown_locks = _unknown_exact_locks(view, exact_locks, registry)
+    unknown_locks = _unknown_exact_locks(
+        view, exact_locks, registry, semantic_catalog
+    )
     if unknown_locks:
         return _frame_result(
             frame.frame_id,
@@ -342,7 +395,14 @@ def _solve_frame(
     if not qualifier_options:
         return _frame_result(frame.frame_id, (), tuple(rejections))
     fields, field_bound, field_evidence_present, requested_field_roles = _field_offers(
-        frame, view, exact_locks, scopes[0], rejections, variants[0].id
+        resolution,
+        frame,
+        view,
+        exact_locks,
+        scopes[0],
+        rejections,
+        variants[0].id,
+        semantic_catalog,
     )
     if field_bound:
         return _frame_result(
@@ -382,6 +442,7 @@ def _solve_frame(
         view=view,
         registry=registry,
         frame=frame,
+        resolution=resolution,
         field_roles=requested_field_roles,
         rejections=rejections,
         candidates={},
@@ -554,24 +615,87 @@ def _scopes(
 
 
 def _field_offers(
+    resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
     frame: ValidatedIntentFrameV2,
-    view: ResolverView,
+    view: ResolverView | ResolverViewV3,
     locks: tuple[ExactSemanticLock, ...],
     scope: QueryScopeV2,
     rejections: list[CandidateRejection],
     variant_id: str,
+    semantic_catalog: SemanticCatalogSnapshot | None,
 ) -> tuple[
     tuple[_FieldOffer, ...],
     bool,
     bool,
     tuple[tuple[str, tuple[str, ...]], ...],
 ]:
-    concepts = _offered_concepts(view)
+    concepts = _offered_concepts(view, semantic_catalog)
     relations = {item.relation_id: item for item in view.relation_definitions}
     locked = tuple(lock for lock in locks if lock.role == "field")
     offers: dict[tuple[str, str], _FieldOffer] = {}
     mentioned_locks: set[str] = set()
+    selected_links = (
+        tuple(
+            link
+            for link in resolution.semantic_links
+            if link.frame_id == frame.frame_id and link.state == "selected"
+        )
+        if isinstance(resolution, ValidatedIntentResolutionV3)
+        else ()
+    )
+    link_mentions = tuple(link.mention_id for link in selected_links)
+
+    for link in selected_links:
+        owned_locks = tuple(
+            lock
+            for lock in locked
+            if any(
+                _source_ranges_overlap(link.mention_id, source_ref, view)
+                for source_ref in lock.evidence_span_ids
+            )
+        )
+        mentioned_locks.update(lock.lock_id for lock in owned_locks)
+        candidate_ids = (
+            tuple(dict.fromkeys(lock.canonical_id for lock in owned_locks))
+            if owned_locks
+            else link.semantic_ids
+        )
+        for concept_id in candidate_ids:
+            concept = concepts.get(concept_id)
+            if concept is None:
+                rejections.append(
+                    _rejection(
+                        frame,
+                        variant_id,
+                        f"field.{link.mention_id}",
+                        (concept_id,),
+                        "MODEL_SEMANTIC_LINK_NOT_OFFERED",
+                    )
+                )
+                continue
+            if concept.kind not in {
+                "metric",
+                "attribute",
+                "document_topic",
+                "relation",
+            }:
+                continue
+            offers.setdefault(
+                (link.mention_id, concept.concept_id),
+                _FieldOffer(
+                    concept=concept,
+                    mention_id=link.mention_id,
+                    segment_id=_source_segment(link.mention_id, view),
+                    start_char=_source_start(link.mention_id, view),
+                    end_char=_source_end(link.mention_id, view),
+                ),
+            )
     for role_id, groups in _coalesced_field_groups(frame, view, concepts):
+        if isinstance(view, ResolverViewV3) and any(
+            _source_ranges_overlap(role_id, mention_id, view)
+            for mention_id in link_mentions
+        ):
+            continue
         mention_ids = {group.mention_id for group in groups}
         segment_id = _source_segment(role_id, view)
         owned_locks = tuple(
@@ -1753,6 +1877,7 @@ def _resolved_input_provenance(
     exact_locks: tuple[ExactSemanticLock, ...],
     view: ResolverView,
     frame: ValidatedIntentFrameV2,
+    resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
 ) -> tuple[ResolvedInputProvenanceV2, ...]:
     literals_by_id = {item.literal_id: item for item in view.literal_candidates}
     payload = contract.model_dump(
@@ -1782,6 +1907,15 @@ def _resolved_input_provenance(
             (ProvenanceSourceKind.EXACT_LOCK, lock.lock_id)
             for lock in matching_locks
         ]
+        if isinstance(resolution, ValidatedIntentResolutionV3):
+            for link in resolution.semantic_links:
+                if link.frame_id == frame.frame_id and rendered in link.semantic_ids:
+                    sources.extend(
+                        (
+                            (ProvenanceSourceKind.MODEL_SEMANTIC_LINK, link.semantic_link_id),
+                            (ProvenanceSourceKind.MODEL_SEMANTIC_LINK, link.mention_id),
+                        )
+                    )
         sources.extend(
             (ProvenanceSourceKind.AXIS_RESOLUTION, group.mention_id)
             for group in view.semantic_candidates
@@ -1853,9 +1987,10 @@ def _merge_provenance(
 def _provenance_priority(source_kind: ProvenanceSourceKind) -> int:
     return {
         ProvenanceSourceKind.EXACT_LOCK: 0,
-        ProvenanceSourceKind.PRIOR_RESULT: 1,
-        ProvenanceSourceKind.AXIS_RESOLUTION: 2,
-        ProvenanceSourceKind.REGISTRY_DEFAULT: 3,
+        ProvenanceSourceKind.MODEL_SEMANTIC_LINK: 1,
+        ProvenanceSourceKind.PRIOR_RESULT: 2,
+        ProvenanceSourceKind.AXIS_RESOLUTION: 3,
+        ProvenanceSourceKind.REGISTRY_DEFAULT: 4,
     }[source_kind]
 
 
@@ -1871,7 +2006,9 @@ def _semantic_leaves(value: object, path: str = ""):
         yield path, value
 
 
-def _frame_result(frame_id, candidates, rejections, *, bound=False):
+def _frame_result(
+    frame_id, candidates, rejections, *, bound=False, ambiguous=False
+):
     ordered_rejections = tuple(
         sorted(
             {canonical_sha256(item): item for item in rejections}.values(),
@@ -1889,7 +2026,7 @@ def _frame_result(frame_id, candidates, rejections, *, bound=False):
     )
     readiness = (
         ContractReadiness.AMBIGUOUS
-        if bound or len(candidates) > 1
+        if bound or ambiguous or len(candidates) > 1
         else ContractReadiness.COMPLETE
         if len(candidates) == 1
         else ContractReadiness.BLOCKED
@@ -1927,6 +2064,33 @@ def _locks_for_frame(frame, resolution, locks, view):
         if not segments or segments & set(frame.segment_ids):
             selected.append(lock)
     return tuple(selected)
+
+
+def _unresolved_ambiguous_links(
+    resolution: ValidatedIntentResolutionV3,
+    frame: ValidatedIntentFrameV2,
+    view: ResolverViewV3,
+    locks: tuple[ExactSemanticLock, ...],
+) -> tuple[ValidatedSemanticLinkV3, ...]:
+    """Keep model ambiguity diagnostic-only unless an exact source lock resolves it."""
+
+    unresolved: list[ValidatedSemanticLinkV3] = []
+    for link in resolution.semantic_links:
+        if link.frame_id != frame.frame_id or link.state != "ambiguous":
+            continue
+        resolving = tuple(
+            lock
+            for lock in locks
+            if lock.role == "field"
+            and lock.canonical_id in link.semantic_ids
+            and any(
+                _source_ranges_overlap(link.mention_id, source_ref, view)
+                for source_ref in lock.evidence_span_ids
+            )
+        )
+        if len({lock.canonical_id for lock in resolving}) != 1:
+            unresolved.append(link)
+    return tuple(unresolved)
 
 
 def _overflow_role(
@@ -2009,10 +2173,11 @@ def _unknown_exact_locks(
     view: ResolverView,
     locks: tuple[ExactSemanticLock, ...],
     registry: QueryContractRegistry,
+    semantic_catalog: SemanticCatalogSnapshot | None,
 ) -> tuple[ExactSemanticLock, ...]:
     offered = {
         "product_family": set(view.product_family_ids),
-        "field": set(_offered_concepts(view)),
+        "field": set(_offered_concepts(view, semantic_catalog)),
         "operator": set(registry.operators_by_id),
         "literal": {item.literal_id for item in view.literal_candidates},
     }
@@ -2021,7 +2186,32 @@ def _unknown_exact_locks(
     )
 
 
-def _offered_concepts(view: ResolverView) -> dict[str, ResolverViewConcept]:
+def _offered_concepts(
+    view: ResolverView,
+    semantic_catalog: SemanticCatalogSnapshot | None = None,
+) -> dict[str, ResolverViewConcept]:
+    if isinstance(view, ResolverViewV3):
+        if semantic_catalog is None:
+            return {}
+        return {
+            concept.id: ResolverViewConcept(
+                concept_id=concept.id,
+                kind=concept.kind,
+                definition_ko=concept.definition_ko,
+                value_kind=concept.value_kind,
+                allowed_product_families=concept.allowed_product_families,
+                allowed_ontology_types=(
+                    concept.subject_ontology_types
+                    if concept.kind == "relation"
+                    else concept.allowed_ontology_types
+                ),
+                required_qualifiers=concept.required_qualifiers,
+                allowed_operators=concept.allowed_operators,
+                missingness_sensitive=concept.missingness_sensitive,
+                normalization_rule=concept.normalization_rule,
+            )
+            for concept in semantic_catalog.concepts_by_id.values()
+        }
     concepts = {item.concept_id: item for item in view.concept_definitions}
     for relation in view.relation_definitions:
         concepts[relation.relation_id] = ResolverViewConcept(
@@ -2040,6 +2230,17 @@ def _offered_concepts(view: ResolverView) -> dict[str, ResolverViewConcept]:
 
 
 def _source_segment(source_ref: str, view: ResolverView) -> str | None:
+    if isinstance(view, ResolverViewV3):
+        mention = next(
+            (
+                item
+                for item in view.mention_spans.items
+                if item.mention_id == source_ref
+            ),
+            None,
+        )
+        if mention is not None:
+            return mention.segment_id
     literal = next((item for item in view.literal_candidates if item.literal_id == source_ref), None)
     if literal is not None:
         return literal.segment_id
@@ -2059,6 +2260,17 @@ def _source_segment(source_ref: str, view: ResolverView) -> str | None:
 
 
 def _source_start(source_ref: str, view: ResolverView) -> int | None:
+    if isinstance(view, ResolverViewV3):
+        mention = next(
+            (
+                item
+                for item in view.mention_spans.items
+                if item.mention_id == source_ref
+            ),
+            None,
+        )
+        if mention is not None:
+            return mention.start_char
     literal = next((item for item in view.literal_candidates if item.literal_id == source_ref), None)
     if literal is not None:
         return literal.start_char
@@ -2070,6 +2282,17 @@ def _source_start(source_ref: str, view: ResolverView) -> int | None:
 
 
 def _source_end(source_ref: str, view: ResolverView) -> int | None:
+    if isinstance(view, ResolverViewV3):
+        mention = next(
+            (
+                item
+                for item in view.mention_spans.items
+                if item.mention_id == source_ref
+            ),
+            None,
+        )
+        if mention is not None:
+            return mention.end_char
     literal = next((item for item in view.literal_candidates if item.literal_id == source_ref), None)
     if literal is not None:
         return literal.end_char
@@ -2078,3 +2301,22 @@ def _source_end(source_ref: str, view: ResolverView) -> int | None:
         return evidence.end_char
     numbers = re.findall(r"-(\d+)(?=-|$)", source_ref)
     return int(numbers[-1]) if numbers else None
+
+
+def _source_ranges_overlap(left: str, right: str, view: ResolverView) -> bool:
+    left_segment = _source_segment(left, view)
+    right_segment = _source_segment(right, view)
+    left_start = _source_start(left, view)
+    right_start = _source_start(right, view)
+    left_end = _source_end(left, view)
+    right_end = _source_end(right, view)
+    return (
+        left_segment is not None
+        and left_segment == right_segment
+        and left_start is not None
+        and right_start is not None
+        and left_end is not None
+        and right_end is not None
+        and left_start < right_end
+        and right_start < left_end
+    )

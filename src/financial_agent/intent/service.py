@@ -24,6 +24,9 @@ from .candidates import (
     generate_semantic_candidates,
 )
 from .assembler import assemble_proposal
+from .hybrid_assembler import assemble_hybrid_proposal
+from .hybrid_prompt import build_hybrid_prompt
+from .hybrid_proposal import IntentResolutionProposalV3
 from .axis_locks import ExactSemanticLock, build_exact_semantic_locks
 from .catalog import SemanticCatalogSnapshot
 from .clova import ModelInvocationResult
@@ -71,6 +74,7 @@ from .resolution import (
     ResolverBuildManifest,
     ValidatedIntentFrameV2,
     ValidatedIntentResolutionV2,
+    ValidatedIntentResolutionV3,
     ValidationEvent,
 )
 from .slot_resolution import resolve_ambiguous_slots
@@ -91,6 +95,7 @@ from .view import (
     build_resolver_view_v3,
     validate_hybrid_resolver_pins,
     validate_resolver_pins,
+    model_safe_resolver_view_v3_payload,
 )
 
 
@@ -110,6 +115,24 @@ _REPAIR_INSTRUCTIONS = {
     ),
     MODEL_INVALID_SEMANTIC_COVERAGE: (
         "Select only offered identifiers and valid frame ordinals for semantic coverage."
+    ),
+}
+_HYBRID_REPAIR_INSTRUCTIONS = {
+    **_REPAIR_INSTRUCTIONS,
+    "MODEL_UNKNOWN_ID": (
+        "Select only offered mention, semantic, entity, reference, and evidence IDs."
+    ),
+    "MODEL_EXACT_LOCK_CONFLICT": (
+        "Preserve every exact-lock projection exactly as offered."
+    ),
+    "MODEL_OUTPUT_DISABLED": (
+        "Leave every request-disabled entity or reference branch empty."
+    ),
+    "MODEL_INAPPLICABLE_CONCEPT": (
+        "Select only concepts applicable to the selected product families and types."
+    ),
+    "MODEL_INVALID_RELATION": (
+        "Use only relation endpoints compatible with the registered relation."
     ),
 }
 
@@ -154,6 +177,7 @@ class QueryContractResolutionTelemetry(ContractModel):
     normalization_ms: int = Field(ge=0)
     candidate_ms: int = Field(ge=0)
     axis_model_ms: int = Field(ge=0)
+    repair_ms: int = Field(default=0, ge=0)
     validation_ms: int = Field(ge=0)
     exact_lock_reconciliation_ms: int = Field(ge=0)
     candidate_solve_ms: int = Field(ge=0)
@@ -210,6 +234,7 @@ class PreparedHybridResolutionRequest:
     entity_candidates: Mapping[str, tuple[EntityCandidate, ...]]
     mention_spans: MentionSpanSetV1
     view: ResolverViewV3
+    prompt: ResolverPromptEnvelope
     telemetry: _PreparationTelemetry
 
 
@@ -228,6 +253,13 @@ class TaskBoundResolutionAttempt:
 @dataclass(frozen=True, slots=True)
 class QueryContractResolutionAttempt:
     resolution: ValidatedIntentResolutionV2
+    candidates: QueryContractCandidateSet
+    telemetry: QueryContractResolutionTelemetry
+
+
+@dataclass(frozen=True, slots=True)
+class QueryContractResolutionAttemptV3:
+    resolution: ValidatedIntentResolutionV3
     candidates: QueryContractCandidateSet
     telemetry: QueryContractResolutionTelemetry
 
@@ -376,6 +408,7 @@ class IntentResolverService:
             mention_spans=mention_spans,
             exact_semantic_locks=exact_semantic_locks,
         )
+        prompt = build_hybrid_prompt(context, view, self._catalog)
         candidate_ms = _duration_ms(candidates_started, self._timer())
         return PreparedHybridResolutionRequest(
             context=context,
@@ -385,6 +418,7 @@ class IntentResolverService:
             entity_candidates=entity_candidates,
             mention_spans=mention_spans,
             view=view,
+            prompt=prompt,
             telemetry=_PreparationTelemetry(
                 normalization_ms=normalization_ms,
                 candidate_ms=candidate_ms,
@@ -618,6 +652,140 @@ class IntentResolverService:
             telemetry=telemetry,
         )
 
+    async def resolve_hybrid_query_contract_candidates(
+        self, context: RequestContext
+    ) -> QueryContractResolutionAttemptV3:
+        """Resolve the complete V3 shadow path under one shared extra-call allowance."""
+
+        if self._query_contract_registry is None:
+            raise ResolverContractError("QUERY_CONTRACT_REGISTRY_MISSING")
+        prepared = await self.prepare_hybrid(context)
+
+        model_started = self._timer()
+        first_result = await self._adapter.invoke(
+            prepared.prompt,
+            timeout_seconds=self._remaining_model_seconds(context),
+        )
+        model_ms = _duration_ms(model_started, self._timer())
+        repair_ms = 0
+        usage = dict(first_result.usage)
+        repair_used = False
+
+        validation_started = self._timer()
+        validation_ms = 0
+        try:
+            resolution = self.validate_hybrid_response(prepared, first_result.content)
+        except ResolverContractError as failure:
+            validation_ms += _duration_ms(validation_started, self._timer())
+            if failure.code not in _HYBRID_REPAIR_INSTRUCTIONS:
+                raise
+            repair_envelope = build_hybrid_repair_envelope(prepared, failure)
+            repair_started = self._timer()
+            repaired_result = await self._adapter.invoke(
+                repair_envelope,
+                timeout_seconds=self._remaining_model_seconds(context),
+            )
+            repair_ms = _duration_ms(repair_started, self._timer())
+            validation_started = self._timer()
+            resolution = self.validate_hybrid_response(
+                prepared, repaired_result.content
+            )
+            validation_ms += _duration_ms(validation_started, self._timer())
+            resolution = resolution.model_copy(
+                update={
+                    "repair_used": True,
+                    "invalid_attempt_hashes": tuple(
+                        sorted(
+                            {
+                                *resolution.invalid_attempt_hashes,
+                                canonical_sha256(
+                                    {"invalid_model_content": first_result.content}
+                                ),
+                            }
+                        )
+                    ),
+                }
+            )
+            usage = _merge_usage(usage, repaired_result.usage)
+            repair_used = True
+        else:
+            validation_ms += _duration_ms(validation_started, self._timer())
+
+        solve_started = self._timer()
+        candidates = solve_query_contracts(
+            resolution=resolution,
+            view=prepared.view,
+            exact_locks=prepared.view.exact_semantic_locks,
+            registry=self._query_contract_registry,
+            semantic_catalog=self._catalog,
+        )
+        candidate_solve_ms = _duration_ms(solve_started, self._timer())
+        offered_candidate_count = len(candidates.complete_candidates)
+
+        tie_break_started = self._timer()
+        candidates = _apply_deterministic_tie_break(candidates)
+        tie_break_ms = _duration_ms(tie_break_started, self._timer())
+
+        judge_ms = 0
+        judge_used = False
+        ambiguous_frames = tuple(
+            frame
+            for frame in candidates.frames
+            if len(frame.complete_candidates) > 1
+            and "CANDIDATE_BOUND_REACHED"
+            not in frame.contract_readiness.reason_codes
+        )
+        if not repair_used and len(ambiguous_frames) == 1:
+            ambiguous = ambiguous_frames[0]
+            frame = next(
+                item
+                for item in resolution.canonical_frames
+                if item.frame_id == ambiguous.frame_id
+            )
+            judge_started = self._timer()
+            judged = await QueryContractJudge(self._adapter).select_offered_id(
+                question=context.question,
+                frame=frame,
+                view=prepared.view,
+                candidates=ambiguous.complete_candidates,
+                timeout_seconds=max(
+                    0.0, (context.deadline_at - self._utcnow()).total_seconds()
+                ),
+            )
+            judge_ms = _duration_ms(judge_started, self._timer())
+            judge_used = judged.model_call_used
+            if judged.usage:
+                usage = _merge_usage(usage, judged.usage)
+            candidates = _apply_judge_result(
+                candidates, ambiguous.frame_id, judged
+            )
+
+        telemetry = QueryContractResolutionTelemetry(
+            normalization_ms=prepared.telemetry.normalization_ms,
+            candidate_ms=prepared.telemetry.candidate_ms,
+            axis_model_ms=model_ms,
+            repair_ms=repair_ms,
+            validation_ms=validation_ms,
+            exact_lock_reconciliation_ms=0,
+            candidate_solve_ms=candidate_solve_ms,
+            tie_break_ms=tie_break_ms,
+            candidate_judge_ms=judge_ms,
+            model_call_count=1 + int(repair_used or judge_used),
+            repair_used=repair_used,
+            candidate_judge_used=judge_used,
+            offered_candidate_count=offered_candidate_count,
+            complete_candidate_count=len(candidates.complete_candidates),
+            rejection_count=len(candidates.rejections),
+            frame_count=len(resolution.canonical_frames),
+            usage=_usage_telemetry(usage),
+            stable_code=_QUERY_CONTRACT_SUCCESS_CODE,
+        )
+        return QueryContractResolutionAttemptV3(
+            resolution=resolution,
+            candidates=candidates,
+            telemetry=telemetry,
+        )
+
     def validate_axis_response(
         self,
         prepared: PreparedResolutionRequest,
@@ -631,6 +799,59 @@ class IntentResolverService:
         if any(frame.slot_assignments for frame in proposal.frames):
             raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID)
         return self.validate_response(prepared, content)
+
+    def validate_hybrid_response(
+        self,
+        prepared: PreparedHybridResolutionRequest,
+        content: str,
+    ) -> ValidatedIntentResolutionV3:
+        _reject_non_strict_json(content)
+        try:
+            proposal = IntentResolutionProposalV3.model_validate_json(content)
+        except ValidationError:
+            raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID) from None
+        draft = assemble_hybrid_proposal(
+            proposal, prepared.normalized, prepared.view, self._catalog
+        )
+        semantic_state = validate_semantics(
+            draft,
+            prepared.context,
+            prepared.normalized,
+            prepared.view,
+            self._catalog,
+        )
+        context_state = validate_context_graph(semantic_state)
+        draft_hash = canonical_sha256(draft)
+        resolution_seed = canonical_sha256(
+            {
+                "active_dataset_manifest_hash": (
+                    prepared.view.active_dataset_pin.manifest_hash
+                ),
+                "build_manifest": prepared.view.build_manifest.model_dump(mode="json"),
+                "draft_hash": draft_hash,
+                "request_key": prepared.context.request_key,
+                "run_id": prepared.context.run_id,
+            }
+        )
+        resolution = finalize_resolution(
+            context_state,
+            ResolutionFinalizationMetadata(
+                request_key=prepared.context.request_key,
+                run_id=prepared.context.run_id,
+                dataset_version=prepared.context.dataset_version,
+                producer="intent-resolver",
+                created_at=prepared.context.created_at,
+                resolution_id=f"resolution-{resolution_seed}",
+                draft_hash=draft_hash,
+                build_manifest=prepared.view.build_manifest,
+                active_dataset_manifest_hash=(
+                    prepared.view.active_dataset_pin.manifest_hash
+                ),
+            ),
+        )
+        if not isinstance(resolution, ValidatedIntentResolutionV3):
+            raise RuntimeError("assembled hybrid proposal did not finalize as v3")
+        return resolution
 
     def validate_response(
         self,
@@ -715,6 +936,45 @@ def build_repair_envelope(
             {
                 "context": prepared.context.model_dump(mode="json"),
                 "view": model_safe_view_payload(prepared.view),
+                "original_prompt_hash": original_prompt_hash,
+                "failure_code": failure.code,
+                "correction_instruction": instruction,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        response_schema=prepared.prompt.response_schema,
+    )
+
+
+def build_hybrid_repair_envelope(
+    prepared: PreparedHybridResolutionRequest,
+    failure: ResolverContractError,
+) -> ResolverPromptEnvelope:
+    instruction = _HYBRID_REPAIR_INSTRUCTIONS.get(failure.code)
+    if instruction is None:
+        raise ValueError("REPAIR_CODE_NOT_ALLOWED")
+    if failure.code == MODEL_PROPOSAL_SCHEMA_INVALID:
+        instruction = (
+            "Return a ProposalV3 with the exact schema shape. Link only offered "
+            "mention IDs to registered compact-catalog semantic IDs."
+        )
+    original_prompt_hash = canonical_sha256(
+        {
+            "response_schema": prepared.prompt.response_schema,
+            "system_message": prepared.prompt.system_message,
+            "user_message": prepared.prompt.user_message,
+        }
+    )
+    return ResolverPromptEnvelope(
+        system_message=(
+            f"{prepared.prompt.system_message} Apply this correction only: {instruction}"
+        ),
+        user_message=json.dumps(
+            {
+                "context": prepared.context.model_dump(mode="json"),
+                "view": model_safe_resolver_view_v3_payload(prepared.view),
                 "original_prompt_hash": original_prompt_hash,
                 "failure_code": failure.code,
                 "correction_instruction": instruction,

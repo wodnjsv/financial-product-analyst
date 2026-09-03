@@ -7,7 +7,7 @@ from types import MappingProxyType
 
 import pytest
 
-from financial_agent.contracts.canonical import build_request_key
+from financial_agent.contracts.canonical import build_request_key, canonical_sha256
 from financial_agent.contracts.enums import IntentType, ProductFamily
 from financial_agent.contracts.request import RequestContext, Segment
 from financial_agent.intent.axis_locks import (
@@ -18,11 +18,23 @@ from financial_agent.intent.candidates import (
     MAX_CANDIDATES_PER_MENTION,
     generate_semantic_candidates,
 )
-from financial_agent.intent.catalog import load_catalog
+from financial_agent.intent.catalog import load_catalog, load_hybrid_catalog
+from financial_agent.intent.context import (
+    ResolutionFinalizationMetadata,
+    finalize_resolution,
+    validate_context_graph,
+)
 from financial_agent.intent.draft import EntityHintV2
+from financial_agent.intent.hybrid_assembler import assemble_hybrid_proposal
+from financial_agent.intent.hybrid_proposal import (
+    FrameSemanticCoverageV3,
+    IntentResolutionProposalV3,
+    ProposedIntentFrameV3,
+    ProposedSemanticLinkV3,
+)
 from financial_agent.intent.literals import extract_literals
 from financial_agent.intent.normalization import normalize_request
-from financial_agent.intent.proposal import FrameSemanticCoverage
+from financial_agent.intent.proposal import FrameSemanticCoverage, ProposedAxisChoice
 from financial_agent.intent.query_contract_registry import (
     PolicyKind,
     load_query_contract_registry,
@@ -41,11 +53,14 @@ from financial_agent.intent.query_contracts import (
     query_contract_candidate_id,
 )
 from financial_agent.intent.types import (
+    ChoiceState,
     EntitySemanticRole,
     ResolutionStatus,
     SemanticCoverageReason,
     SemanticCoverageState,
+    SourceRole,
 )
+from financial_agent.intent.validation import validate_semantics
 from financial_agent.intent.view import (
     ADAPTER_VERSION,
     CANDIDATE_POLICY_VERSION,
@@ -58,15 +73,20 @@ from financial_agent.intent.view import (
     ResolverViewRelationDefinition,
     ResolverViewSemanticCandidate,
     ResolverViewSemanticCandidateGroup,
+    build_hybrid_manifest,
     build_manifest,
     build_resolver_view,
+    build_resolver_view_v3,
 )
+from financial_agent.intent.mention_spans import generate_mention_spans
+from tests.intent.view_fixtures import hybrid_manifest_versions
 from tests.planning.fixtures import frame, resolution, view
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 REGISTRY = load_query_contract_registry(PROJECT_ROOT)
 CATALOG = load_catalog(PROJECT_ROOT)
+HYBRID_CATALOG = load_hybrid_catalog(PROJECT_ROOT)
 
 
 def _axis(action: IntentType = IntentType.RANK, *, family: ProductFamily = ProductFamily.DOMESTIC_ETF):
@@ -185,6 +205,134 @@ def _candidate_pipeline(question: str):
     return resolver_view, locks
 
 
+def _v3_solver_inputs(
+    *,
+    semantic_ids: tuple[str, ...] = ("fee_rate",),
+    state: str = "selected",
+    family: ProductFamily = ProductFamily.DOMESTIC_ETF,
+    exact_semantic_id: str | None = None,
+):
+    question = "비용 부담이 작은 ETF 다섯 개"
+    created_at = datetime(2026, 9, 3, tzinfo=UTC)
+    context = RequestContext(
+        request_key=build_request_key("solver-v3", question, "dataset-v1", "1.0"),
+        run_id="run-solver-v3",
+        dataset_version="dataset-v1",
+        producer="test",
+        created_at=created_at,
+        question_id="solver-v3",
+        question=question,
+        segments=(Segment(segment_id="s1", ordinal=0, text=question),),
+        deadline_at=created_at + timedelta(seconds=55),
+    )
+    normalized = normalize_request(context)
+    literals = extract_literals(normalized)
+    candidates = generate_semantic_candidates(normalized, HYBRID_CATALOG)
+    mention_spans = generate_mention_spans(
+        normalized,
+        tuple(group.mention for group in candidates.by_mention),
+        literals,
+        (),
+        normalized.reference_candidates,
+    )
+    mention = next(item for item in mention_spans.items if item.text == "비용 부담")
+    locks = (
+        (
+            ExactSemanticLock(
+                lock_id="lock-v3-field",
+                role="field",
+                canonical_id=exact_semantic_id,
+                evidence_span_ids=(mention.mention_id,),
+                source="direct_alias",
+            ),
+        )
+        if exact_semantic_id is not None
+        else ()
+    )
+    resolver_view = build_resolver_view_v3(
+        context=context,
+        normalized=normalized,
+        literals=literals,
+        semantic_candidates=candidates,
+        entity_candidates={},
+        manifest=build_hybrid_manifest(HYBRID_CATALOG, hybrid_manifest_versions()),
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version="dataset-v1", manifest_hash="d" * 64
+        ),
+        catalog=HYBRID_CATALOG,
+        mention_spans=mention_spans,
+        exact_semantic_locks=locks,
+    )
+    proposal = IntentResolutionProposalV3(
+        frames=(
+            ProposedIntentFrameV3(
+                segment_ids=("s1",),
+                action_choice=ProposedAxisChoice(
+                    state=ChoiceState.SELECTED,
+                    selected_ids=(IntentType.RANK.value,),
+                    evidence_ids=(),
+                    reason_code="explicit",
+                ),
+                product_family_choice=ProposedAxisChoice(
+                    state=ChoiceState.SELECTED,
+                    selected_ids=(family.value,),
+                    evidence_ids=(),
+                    reason_code="explicit",
+                ),
+                entity_type_ids=("FinancialProduct",),
+                semantic_links=(
+                    ProposedSemanticLinkV3(
+                        mention_id=mention.mention_id,
+                        state=state,
+                        semantic_ids=semantic_ids,
+                        reason_code="ambiguous" if state == "ambiguous" else "implicit",
+                    ),
+                ),
+                unmapped_mention_ids=(),
+                semantic_coverage=FrameSemanticCoverageV3(
+                    state=SemanticCoverageState.COVERED,
+                    reason=SemanticCoverageReason.NONE,
+                ),
+                entity_hints=(),
+                produced_result_hints=(SourceRole.CANDIDATES,),
+            ),
+        ),
+        references=(),
+        context_links=(),
+        slot_mutations=(),
+        semantic_flag_hints=(),
+        frame_limit_exceeded=False,
+    )
+    draft = assemble_hybrid_proposal(
+        proposal, normalized, resolver_view, HYBRID_CATALOG
+    )
+    state_result = validate_semantics(
+        draft, context, normalized, resolver_view, HYBRID_CATALOG
+    )
+    draft_hash = canonical_sha256(draft)
+    validated = finalize_resolution(
+        validate_context_graph(state_result),
+        ResolutionFinalizationMetadata(
+            request_key=context.request_key,
+            run_id=context.run_id,
+            dataset_version=context.dataset_version,
+            producer="intent-resolver",
+            created_at=context.created_at,
+            resolution_id=f"resolution-{draft_hash}",
+            draft_hash=draft_hash,
+            build_manifest=resolver_view.build_manifest,
+            active_dataset_manifest_hash=resolver_view.active_dataset_pin.manifest_hash,
+        ),
+    )
+    return {
+        "resolution": validated,
+        "view": resolver_view,
+        "exact_locks": locks,
+        "registry": REGISTRY,
+        "semantic_catalog": HYBRID_CATALOG,
+    }
+
+
 def _literal(
     literal_id: str,
     *,
@@ -204,6 +352,105 @@ def _literal(
         canonical_value=value,
         currency=currency,
     )
+
+
+def test_model_semantic_link_can_complete_fee_rank() -> None:
+    inputs = _v3_solver_inputs()
+
+    result = solve_query_contracts(**inputs)
+
+    assert result.frames[0].complete_candidates
+    contract = result.frames[0].complete_candidates[0].contract
+    assert contract.ordering[0].field_concept_id == "fee_rate"
+    model_sources = {
+        item.source_ref
+        for item in contract.provenance
+        if item.source_kind is ProvenanceSourceKind.MODEL_SEMANTIC_LINK
+    }
+    link = inputs["resolution"].semantic_links[0]
+    assert model_sources == {link.semantic_link_id, link.mention_id}
+
+
+def test_ambiguous_model_semantic_link_is_diagnostic_only() -> None:
+    result = solve_query_contracts(
+        **_v3_solver_inputs(
+            semantic_ids=("fee_rate", "product_risk_grade"),
+            state="ambiguous",
+        )
+    )
+
+    solved = result.frames[0]
+    assert solved.complete_candidates == ()
+    assert solved.contract_readiness.readiness is ContractReadiness.AMBIGUOUS
+    assert solved.contract_readiness.reason_codes == (
+        "MODEL_SEMANTIC_LINK_AMBIGUOUS",
+    )
+    assert solved.rejections[0].candidate_ids == (
+        "fee_rate",
+        "product_risk_grade",
+    )
+
+
+def test_unknown_model_semantic_link_makes_no_offer() -> None:
+    inputs = _v3_solver_inputs()
+    resolution_v3 = inputs["resolution"]
+    corrupted_link = resolution_v3.semantic_links[0].model_copy(
+        update={"semantic_ids": ("unknown_semantic",)}
+    )
+    inputs["resolution"] = resolution_v3.model_copy(
+        update={"semantic_links": (corrupted_link,)}
+    )
+
+    result = solve_query_contracts(**inputs)
+
+    assert result.frames[0].complete_candidates == ()
+    assert any(
+        item.reason_code == "MODEL_SEMANTIC_LINK_NOT_OFFERED"
+        for item in result.frames[0].rejections
+    )
+
+
+def test_family_incompatible_model_semantic_link_has_stable_rejection() -> None:
+    inputs = _v3_solver_inputs()
+    resolution_v3 = inputs["resolution"]
+    corrupted_link = resolution_v3.semantic_links[0].model_copy(
+        update={"semantic_ids": ("credit_grade",)}
+    )
+    inputs["resolution"] = resolution_v3.model_copy(
+        update={"semantic_links": (corrupted_link,)}
+    )
+
+    result = solve_query_contracts(**inputs)
+
+    assert result.frames[0].complete_candidates == ()
+    assert any(
+        item.reason_code == "FIELD_NOT_APPLICABLE_TO_FAMILY"
+        and item.candidate_ids == ("credit_grade",)
+        for item in result.frames[0].rejections
+    )
+
+
+def test_exact_field_lock_outranks_conflicting_model_semantic_link() -> None:
+    inputs = _v3_solver_inputs(exact_semantic_id="fee_rate")
+    resolution_v3 = inputs["resolution"]
+    corrupted_link = resolution_v3.semantic_links[0].model_copy(
+        update={"semantic_ids": ("product_risk_grade",)}
+    )
+    inputs["resolution"] = resolution_v3.model_copy(
+        update={"semantic_links": (corrupted_link,)}
+    )
+
+    result = solve_query_contracts(**inputs)
+
+    contract = result.frames[0].complete_candidates[0].contract
+    assert contract.ordering[0].field_concept_id == "fee_rate"
+    ordering_sources = tuple(
+        item
+        for item in contract.provenance
+        if item.semantic_input_id.startswith("ordering.0.field_concept_id")
+    )
+    assert ordering_sources[0].source_kind is ProvenanceSourceKind.EXACT_LOCK
+    assert all(item.source_ref != "product_risk_grade" for item in ordering_sources)
 
 
 def _entity_axis(
