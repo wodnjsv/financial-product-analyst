@@ -13,6 +13,7 @@ from financial_agent.ingestion.cli import (
     _DartCorpusRunReport,
     _discard_failed_dart_pdf,
     _load_dart_corpus_configuration,
+    _load_dart_corpus_inventory,
     _limited_dart_inventory,
     _partition_dart_inventory,
     _parser,
@@ -315,9 +316,15 @@ async def test_blocked_only_run_makes_no_dart_request(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("limit", "target_key"),
+    ((1, None), (None, "public_fund:missing-public")),
+)
 async def test_missing_only_run_discovers_only_actionable_recovery_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    limit: int | None,
+    target_key: str | None,
 ) -> None:
     def target(
         key: str,
@@ -415,8 +422,8 @@ async def test_missing_only_run_discovers_only_actionable_recovery_targets(
         temp_root=tmp_path / "run",
         publisher_aliases={},
         report_path=tmp_path / "report.json",
-        limit=1,
-        target_key=None,
+        limit=limit,
+        target_key=target_key,
         missing_only=True,
     )
 
@@ -431,6 +438,233 @@ async def test_missing_only_run_discovers_only_actionable_recovery_targets(
     )
     assert report.failed_targets == (
         ("public_fund:missing-public", "document_not_found"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_default_inventory_load_skips_recovery_state_query(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Result:
+        def mappings(self) -> Result:
+            return self
+
+        def one_or_none(self) -> dict[str, object]:
+            return {
+                "cutoff_date": date(2026, 8, 24),
+                "status": "building",
+            }
+
+    class Connection:
+        async def scalar(self, _statement: object) -> str:
+            return "150000"
+
+        async def execute(self, _statement: object) -> Result:
+            return Result()
+
+    class ConnectionContext:
+        async def __aenter__(self) -> Connection:
+            return Connection()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class Engine:
+        def connect(self) -> ConnectionContext:
+            return ConnectionContext()
+
+        async def dispose(self) -> None:
+            return None
+
+    async def list_rows(*_args: object) -> tuple[object, ...]:
+        return ()
+
+    async def list_identifiers(*_args: object) -> dict[str, object]:
+        return {}
+
+    async def unexpected_recovery_states(*_args: object) -> tuple[object, ...]:
+        raise AssertionError("default run must not load recovery state")
+
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli.create_database_engine",
+        lambda _config: Engine(),
+    )
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli.DocumentTargetRepository.list_organizer_dart_rows",
+        list_rows,
+    )
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli.DocumentTargetRepository.list_identifiers",
+        list_identifiers,
+    )
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli.DocumentTargetRepository.list_dart_recovery_states",
+        unexpected_recovery_states,
+    )
+
+    engine, inventory, identifiers, recovery_states = (
+        await _load_dart_corpus_inventory(
+            _DartCorpusConfiguration(
+                database_url="postgresql+psycopg://unused",
+                dataset_version="documents-building-v1",
+                dart_api_key="secret",
+                temp_root=tmp_path / "run",
+                publisher_aliases={},
+                report_path=tmp_path / "report.json",
+                limit=None,
+                target_key=None,
+            )
+        )
+    )
+
+    assert inventory.targets == ()
+    assert identifiers == {}
+    assert recovery_states == ()
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "target_key",
+    ("public_fund:complete", "domestic_etf:etn"),
+)
+async def test_missing_only_target_key_fails_closed_after_recovery_filtering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target_key: str,
+) -> None:
+    completed = OrganizerDartTarget(
+        target_key="public_fund:complete",
+        product_family="public_fund",
+        representative_entity_id="complete",
+        canonical_name="Complete",
+        member_entity_ids=("complete",),
+        identifiers=(("complete", "ISIN", "complete"),),
+        manager_bindings=(),
+    )
+    etn = OrganizerDartTarget(
+        target_key="domestic_etf:etn",
+        product_family="domestic_etf",
+        representative_entity_id="etn",
+        canonical_name="ETN",
+        member_entity_ids=("etn",),
+        identifiers=(("etn", "ISIN", "etn"),),
+        manager_bindings=(),
+    )
+    inventory = OrganizerDartInventory(
+        dataset_version="documents-building-v1",
+        cutoff_date=date(2026, 8, 24),
+        product_count=2,
+        targets=(completed, etn),
+        inventory_hash="a" * 64,
+    )
+    states = (
+        DartRecoveryProductState("complete", "fund_prospectus", True),
+        DartRecoveryProductState("etn", "etn_not_applicable", False),
+    )
+
+    class Engine:
+        async def dispose(self) -> None:
+            return None
+
+    async def load(_configuration: object):
+        return Engine(), inventory, {}, states
+
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli._load_dart_corpus_inventory", load
+    )
+    configuration = _DartCorpusConfiguration(
+        database_url="postgresql+psycopg://unused",
+        dataset_version="documents-building-v1",
+        dart_api_key="secret",
+        temp_root=tmp_path / "run",
+        publisher_aliases={},
+        report_path=tmp_path / "report.json",
+        limit=None,
+        target_key=target_key,
+        missing_only=True,
+    )
+
+    with pytest.raises(IngestionArgumentError):
+        await _run_dart_corpus(configuration)
+
+
+@pytest.mark.asyncio
+async def test_missing_only_empty_selection_reports_counts_without_requests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed = OrganizerDartTarget(
+        target_key="public_fund:complete",
+        product_family="public_fund",
+        representative_entity_id="complete",
+        canonical_name="Complete",
+        member_entity_ids=("complete",),
+        identifiers=(("complete", "ISIN", "complete"),),
+        manager_bindings=(),
+    )
+    private_fund = OrganizerDartTarget(
+        target_key="public_fund:private",
+        product_family="public_fund",
+        representative_entity_id="private",
+        canonical_name="Private",
+        member_entity_ids=("private",),
+        identifiers=(("private", "ISIN", "private"),),
+        manager_bindings=(),
+    )
+    inventory = OrganizerDartInventory(
+        dataset_version="documents-building-v1",
+        cutoff_date=date(2026, 8, 24),
+        product_count=2,
+        targets=(completed, private_fund),
+        inventory_hash="a" * 64,
+    )
+    states = (
+        DartRecoveryProductState("complete", "fund_prospectus", True),
+        DartRecoveryProductState(
+            "private", "private_fund_not_applicable", False
+        ),
+    )
+
+    class Engine:
+        async def dispose(self) -> None:
+            return None
+
+    async def load(_configuration: object):
+        return Engine(), inventory, {}, states
+
+    def unexpected_request(*_args: object, **_kwargs: object) -> bytes:
+        raise AssertionError("empty recovery selection must make no request")
+
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli._load_dart_corpus_inventory", load
+    )
+    monkeypatch.setattr(
+        "financial_agent.ingestion.cli.fetch_dart_corporation_codes",
+        unexpected_request,
+    )
+    report = await _run_dart_corpus(
+        _DartCorpusConfiguration(
+            database_url="postgresql+psycopg://unused",
+            dataset_version="documents-building-v1",
+            dart_api_key="secret",
+            temp_root=tmp_path / "run",
+            publisher_aliases={},
+            report_path=tmp_path / "report.json",
+            limit=None,
+            target_key=None,
+            missing_only=True,
+        )
+    )
+
+    assert report.selected_target_count == 0
+    assert report.requested_publisher_count == 0
+    assert report.failed_targets == ()
+    assert report.already_embedded_target_count == 1
+    assert report.not_applicable_target_count == 1
+    assert report.not_applicable_reason_counts == (
+        ("private_fund_not_applicable", 1),
     )
 
 

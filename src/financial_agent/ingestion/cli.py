@@ -1256,9 +1256,13 @@ async def _load_dart_corpus_inventory(
                 configuration.dataset_version,
                 _DOCUMENT_SOURCE_CUTOFF,
             )
-            recovery_states = await repository.list_dart_recovery_states(
-                configuration.dataset_version,
-                APPROVED_MODEL,
+            recovery_states = (
+                await repository.list_dart_recovery_states(
+                    configuration.dataset_version,
+                    APPROVED_MODEL,
+                )
+                if configuration.missing_only
+                else ()
             )
     except Exception:
         await engine.dispose()
