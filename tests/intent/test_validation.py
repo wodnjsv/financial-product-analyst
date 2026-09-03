@@ -17,6 +17,7 @@ from financial_agent.intent.draft import (
     AxisChoice,
     ContextLinkHint,
     EntityHint,
+    EntityHintV2,
     EvidenceSpan,
     IntentFrameDraft,
     IntentFrameDraftV2,
@@ -530,6 +531,184 @@ def test_v3_validation_rejects_unknown_semantic_id_after_assembly() -> None:
 
     with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_ID"):
         validate_semantics(draft, context, normalized, view, catalog)
+
+
+def test_v3_validation_rejects_unknown_mention_after_assembly() -> None:
+    """Catches a corrupted canonical link claiming a mention absent from the view."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    link = draft.semantic_links[0].model_copy(
+        update={"mention_id": "unknown-mention"}
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_ID"):
+        validate_semantics(
+            draft.model_copy(update={"semantic_links": (link,)}),
+            context,
+            normalized,
+            view,
+            catalog,
+        )
+
+
+def test_v3_validation_rejects_exact_lock_conflict_after_assembly() -> None:
+    """Catches a corrupted canonical link replacing an exact server lock."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs(
+        exact_semantic_id="fee_rate"
+    )
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    link = draft.semantic_links[0].model_copy(update={"semantic_ids": ("aum",)})
+
+    with pytest.raises(ResolverContractError, match="MODEL_EXACT_LOCK_CONFLICT"):
+        validate_semantics(
+            draft.model_copy(update={"semantic_links": (link,)}),
+            context,
+            normalized,
+            view,
+            catalog,
+        )
+
+
+def test_v3_validation_rejects_linked_and_unmapped_overlap() -> None:
+    """Catches one canonical evidence span being both linked and declared unmapped."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    frame = draft.intent_frames[0]
+    coverage = FrameSemanticCoverage(
+        state=SemanticCoverageState.PARTIAL,
+        reason=SemanticCoverageReason.LEXICAL_OOD,
+        evidence_ids=draft.semantic_links[0].evidence_span_ids,
+    )
+    frame = frame.model_copy(update={"semantic_coverage": (coverage,)})
+
+    with pytest.raises(
+        ResolverContractError, match="MODEL_INVALID_SEMANTIC_COVERAGE"
+    ):
+        validate_semantics(
+            draft.model_copy(update={"intent_frames": (frame,)}),
+            context,
+            normalized,
+            view,
+            catalog,
+        )
+
+
+def test_v3_validation_rejects_covered_frame_with_unmapped_evidence() -> None:
+    """Catches covered canonical status hiding an unmapped source mention."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    frame = draft.intent_frames[0]
+    coverage = frame.semantic_coverage[0].model_copy(
+        update={"evidence_ids": draft.semantic_links[0].evidence_span_ids}
+    )
+    frame = frame.model_copy(update={"semantic_coverage": (coverage,)})
+
+    with pytest.raises(
+        ResolverContractError, match="MODEL_INVALID_SEMANTIC_COVERAGE"
+    ):
+        validate_semantics(
+            draft.model_copy(
+                update={"intent_frames": (frame,), "semantic_links": ()}
+            ),
+            context,
+            normalized,
+            view,
+            catalog,
+        )
+
+
+def test_v3_validation_rejects_family_incompatible_concept() -> None:
+    """Catches a registered bond-only concept attached to an ETF frame."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    link = draft.semantic_links[0].model_copy(
+        update={"semantic_ids": ("credit_grade",)}
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_INAPPLICABLE_CONCEPT"):
+        validate_semantics(
+            draft.model_copy(update={"semantic_links": (link,)}),
+            context,
+            normalized,
+            view,
+            catalog,
+        )
+
+
+def test_v3_validation_rejects_relation_endpoint_reversal() -> None:
+    """Catches a relation object typed as the relation's subject endpoint."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id, "managedBy"), normalized, view, catalog
+    )
+    hint = EntityHintV2(
+        entity_hint_id="hint-reversed-relation",
+        semantic_role=EntitySemanticRole.RELATION_OBJECT,
+        relation_id=("managedBy",),
+        mention_id=(),
+        evidence_span_ids=(),
+        expected_entity_type_ids=("ETF",),
+        candidate_entity_ids=(),
+        selected_candidate_ids=(),
+        reason_code="explicit",
+    )
+    frame = draft.intent_frames[0].model_copy(
+        update={"entity_hint_ids": (hint.entity_hint_id,)}
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_INVALID_RELATION"):
+        validate_semantics(
+            draft.model_copy(
+                update={"intent_frames": (frame,), "entity_hints": (hint,)}
+            ),
+            context,
+            normalized,
+            view.model_copy(update={"entity_output_enabled": True}),
+            catalog,
+        )
+
+
+def test_v3_validation_rejects_entity_output_when_disabled() -> None:
+    """Catches canonical entity output appearing when the server disabled it."""
+    context, normalized, view, catalog, mention_id = _hybrid_inputs()
+    draft = assemble_hybrid_proposal(
+        _hybrid_proposal(mention_id), normalized, view, catalog
+    )
+    hint = EntityHintV2(
+        entity_hint_id="hint-disabled-entity",
+        semantic_role=EntitySemanticRole.FRAME_SUBJECT,
+        relation_id=(),
+        mention_id=(),
+        evidence_span_ids=(),
+        expected_entity_type_ids=("FinancialProduct",),
+        candidate_entity_ids=(),
+        selected_candidate_ids=(),
+        reason_code="explicit",
+    )
+    frame = draft.intent_frames[0].model_copy(
+        update={"entity_hint_ids": (hint.entity_hint_id,)}
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_OUTPUT_DISABLED"):
+        validate_semantics(
+            draft.model_copy(
+                update={"intent_frames": (frame,), "entity_hints": (hint,)}
+            ),
+            context,
+            normalized,
+            view,
+            catalog,
+        )
 
 
 @pytest.mark.parametrize(

@@ -6,9 +6,17 @@ from pathlib import Path
 import pytest
 
 from financial_agent.contracts.canonical import build_request_key
-from financial_agent.contracts.request import RequestContext, Segment
+from financial_agent.contracts.request import (
+    NamedEntityMention,
+    RequestContext,
+    Segment,
+)
 from financial_agent.intent.axis_locks import ExactSemanticLock
-from financial_agent.intent.candidates import generate_semantic_candidates
+from financial_agent.intent.candidates import (
+    EntityCandidate,
+    Mention,
+    generate_semantic_candidates,
+)
 from financial_agent.intent.catalog import load_hybrid_catalog
 from financial_agent.intent.errors import ResolverContractError
 from financial_agent.intent.hybrid_assembler import assemble_hybrid_proposal
@@ -294,3 +302,127 @@ def test_assembler_rejects_entity_output_when_disabled() -> None:
             view,
             catalog,
         )
+
+
+def test_assembler_rejects_entity_mention_owned_by_another_frame_segment() -> None:
+    """Catches a valid entity mention crossing from its source clause into another frame."""
+    question = "ETF를 찾아줘 KODEX 200을 비교해줘"
+    created_at = datetime(2026, 9, 3, tzinfo=timezone.utc)
+    entity_mention_id = "mention-s2-0-9"
+    context = RequestContext(
+        request_key=build_request_key(
+            "q-hybrid-entity-ownership", question, "dataset-v1", "1.0"
+        ),
+        run_id="run-hybrid-entity-ownership",
+        dataset_version="dataset-v1",
+        producer="test",
+        created_at=created_at,
+        question_id="q-hybrid-entity-ownership",
+        question=question,
+        segments=(
+            Segment(segment_id="s1", ordinal=0, text="ETF를 찾아줘"),
+            Segment(segment_id="s2", ordinal=1, text="KODEX 200을 비교해줘"),
+        ),
+        named_entities=(
+            NamedEntityMention(
+                mention_id=entity_mention_id,
+                segment_id="s2",
+                text="KODEX 200",
+                expected_entity_types=("ETF",),
+            ),
+        ),
+        deadline_at=created_at + timedelta(seconds=10),
+    )
+    catalog = load_hybrid_catalog(PROJECT_ROOT)
+    normalized = normalize_request(context)
+    literals = extract_literals(normalized)
+    semantic_candidates = generate_semantic_candidates(normalized, catalog)
+    entity_mention = Mention(
+        mention_id=entity_mention_id,
+        segment_id="s2",
+        text="KODEX 200",
+        normalized_text="KODEX 200",
+        start_char=0,
+        end_char=9,
+    )
+    mention_spans = generate_mention_spans(
+        normalized,
+        tuple(group.mention for group in semantic_candidates.by_mention),
+        literals,
+        (entity_mention,),
+        normalized.reference_candidates,
+    )
+    view = build_resolver_view_v3(
+        context=context,
+        normalized=normalized,
+        literals=literals,
+        semantic_candidates=semantic_candidates,
+        entity_candidates={
+            entity_mention_id: (
+                EntityCandidate(
+                    entity_id="entity-kodex-200",
+                    canonical_name="KODEX 200",
+                    ontology_type_ids=("DomesticETF", "ETF", "FinancialProduct"),
+                    product_family="domestic_etf",
+                    match_kind="exact_name",
+                    score=1_000_000,
+                    source_id="entity-kodex-200",
+                ),
+            )
+        },
+        manifest=build_hybrid_manifest(catalog, hybrid_manifest_versions()),
+        active_dataset_pin=ActiveDatasetPin(
+            dataset_version="dataset-v1", manifest_hash="d" * 64
+        ),
+        catalog=catalog,
+        mention_spans=mention_spans,
+    )
+    foreign_hint = ProposedEntityHint(
+        semantic_role=EntitySemanticRole.FRAME_SUBJECT,
+        relation_id=(),
+        expected_entity_type_ids=("FinancialProduct",),
+        mention_id=(entity_mention_id,),
+        candidate_entity_ids=("entity-kodex-200",),
+        selected_candidate_ids=("entity-kodex-200",),
+    )
+    frames = (
+        ProposedIntentFrameV3(
+            segment_ids=("s1",),
+            action_choice=_choice("lookup"),
+            product_family_choice=_choice("domestic_etf"),
+            entity_type_ids=("FinancialProduct",),
+            semantic_links=(),
+            unmapped_mention_ids=(),
+            semantic_coverage=FrameSemanticCoverageV3(
+                state=SemanticCoverageState.COVERED,
+                reason=SemanticCoverageReason.NONE,
+            ),
+            entity_hints=(foreign_hint,),
+            produced_result_hints=(SourceRole.CANDIDATES,),
+        ),
+        ProposedIntentFrameV3(
+            segment_ids=("s2",),
+            action_choice=_choice("compare"),
+            product_family_choice=_choice("domestic_etf"),
+            entity_type_ids=("FinancialProduct",),
+            semantic_links=(),
+            unmapped_mention_ids=(),
+            semantic_coverage=FrameSemanticCoverageV3(
+                state=SemanticCoverageState.COVERED,
+                reason=SemanticCoverageReason.NONE,
+            ),
+            entity_hints=(),
+            produced_result_hints=(SourceRole.CANDIDATES,),
+        ),
+    )
+    proposal = IntentResolutionProposalV3(
+        frames=frames,
+        references=(),
+        context_links=(),
+        slot_mutations=(),
+        semantic_flag_hints=(),
+        frame_limit_exceeded=False,
+    )
+
+    with pytest.raises(ResolverContractError, match="MODEL_UNKNOWN_ID"):
+        assemble_hybrid_proposal(proposal, normalized, view, catalog)

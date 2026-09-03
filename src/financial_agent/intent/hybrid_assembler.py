@@ -220,6 +220,9 @@ def _validate_offered_ids(
             _require_subset(hint.expected_entity_type_ids, entity_types)
             if hint.mention_id:
                 mention_id = hint.mention_id[0]
+                mention = mentions.get(mention_id)
+                if mention is None or mention.segment_id not in frame_segments:
+                    raise ResolverContractError("MODEL_UNKNOWN_ID")
                 candidates = entity_by_mention.get(mention_id)
                 if candidates is None:
                     raise ResolverContractError("MODEL_UNKNOWN_ID")
