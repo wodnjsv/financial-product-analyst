@@ -189,7 +189,14 @@ class PhysicalSqlRenderManifest(_StrictModel):
             raise ValueError("SQL_MANIFEST_TEMPLATE_MISMATCH")
         binding_ids = tuple(item.id for item in self.binding_definitions)
         require_unique_ids(binding_ids, label="manifest physical bindings")
-        if binding_ids != self.logical_task.binding_ids:
+        prior_only_scope = (
+            self.logical_task.scope.prior_result_binding is not None
+            and not self.logical_task.scope.product_family_ids
+            and not self.logical_task.binding_ids
+        )
+        if not prior_only_scope and binding_ids != self.logical_task.binding_ids:
+            raise ValueError("SQL_MANIFEST_BINDING_OWNERSHIP_MISMATCH")
+        if prior_only_scope and not binding_ids:
             raise ValueError("SQL_MANIFEST_BINDING_OWNERSHIP_MISMATCH")
         if any(
             EXPECTED_BINDING_DEFINITION_HASHES.get(item.id)
@@ -285,7 +292,23 @@ class CompiledSqlRequest(_StrictModel):
             raise ValueError("SQL_MANIFEST_LOWERING_MISMATCH")
         if self.evidence_projection_ids != rendered.evidence_projection_ids:
             raise ValueError("SQL_MANIFEST_EVIDENCE_MISMATCH")
-        if self.applied_policy_ids != manifest.logical_task.policy_ids:
+        effective_policy_ids = tuple(
+            dict.fromkeys(
+                (
+                    *manifest.logical_task.policy_ids,
+                    *(
+                        item
+                        for binding in manifest.binding_definitions
+                        for item in (
+                            binding.unit_conversion_policy_id,
+                            binding.missingness_policy_id,
+                        )
+                        if item is not None
+                    ),
+                )
+            )
+        )
+        if self.applied_policy_ids != effective_policy_ids:
             raise ValueError("SQL_MANIFEST_POLICY_OWNERSHIP_MISMATCH")
         if self.population_manifest_id != rendered.population_manifest_id or (
             self.population_manifest_hash != rendered.population_manifest_hash

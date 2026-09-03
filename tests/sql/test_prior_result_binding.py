@@ -50,9 +50,15 @@ def test_prior_result_compiles_deferred_then_binds_canonical_entity_ids() -> Non
     plan = compilation.logical_query_plan
     assert plan is not None
     consumer = plan.tasks[1]
+    assert consumer.scope.product_family_ids == ()
     outcome = SQL_COMPILER.compile_task(plan, consumer.task_id)
 
     assert outcome.request is not None
+    assert tuple(
+        item.id for item in outcome.request.render_manifest.binding_definitions
+    ) == ("domestic-etf-aum.v1",)
+    assert "product_family =" not in outcome.request.statement
+    assert "identity-unit.v1" in outcome.request.applied_policy_ids
     deferred = tuple(
         item
         for item in outcome.request.parameters

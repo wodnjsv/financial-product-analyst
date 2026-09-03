@@ -213,7 +213,9 @@ class Orchestrator:
                 *(
                     self._run_task(
                         task,
-                        request_factory(task, final_results, binding_types),
+                        request_factory,
+                        final_results,
+                        binding_types,
                         deadline,
                         retry_budget,
                     )
@@ -272,11 +274,34 @@ class Orchestrator:
     async def _run_task(
         self,
         task,
-        request,
+        request_factory,
+        final_results,
+        binding_types,
         deadline,
         retry_budget,
     ) -> _TaskOutcome:
         attempt_records: list[ExecutionAttempt] = []
+        try:
+            request = request_factory(task, final_results, binding_types)
+        except Exception:
+            attempt_records.append(
+                ExecutionAttempt(
+                    task_id=task.task_id,
+                    attempt_number=1,
+                    status=ToolStatus.PERMANENT_ERROR,
+                    latency_ms=0,
+                )
+            )
+            return _TaskOutcome(
+                task=task,
+                result=None,
+                attempts=tuple(attempt_records),
+                failure=ExecutionFailure(
+                    task_id=task.task_id,
+                    code="EXECUTION_REQUEST_INVALID",
+                    transient=False,
+                ),
+            )
         for attempt_number in (1, 2):
             attempt_started = self._clock()
             remaining = deadline - self._clock()

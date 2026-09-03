@@ -109,6 +109,38 @@ class _Context:
 
 
 @dataclass(frozen=True, slots=True)
+class _BoundMetricSet:
+    definitions: tuple[PhysicalBindingDefinition, ...]
+
+    @property
+    def id(self) -> str:
+        return self.definitions[0].id
+
+    @property
+    def approved_metric_ids(self) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                metric
+                for definition in self.definitions
+                for metric in definition.approved_metric_ids
+            )
+        )
+
+    @property
+    def approved_metric_definition_refs(self) -> tuple[str, ...]:
+        return tuple(
+            dict.fromkeys(
+                reference
+                for definition in self.definitions
+                for reference in definition.approved_metric_definition_refs
+            )
+        )
+
+    def __getattr__(self, name: str):
+        return getattr(self.definitions[0], name)
+
+
+@dataclass(frozen=True, slots=True)
 class RenderedPhysicalSql:
     statement: str
     parameters: tuple[SqlParameter | DeferredSqlParameter, ...]
@@ -129,12 +161,17 @@ class _RenderPlan:
 class _ManifestBindings:
     bindings_by_id: MappingProxyType
     bindings_by_family_concept: MappingProxyType
+    binding_sets_by_concept: MappingProxyType
+    binding_sets_by_key: MappingProxyType
 
     def binding_for(
-        self, family_id: str | ProductFamily, concept_id: str
-    ) -> PhysicalBindingDefinition | None:
+        self, family_id: str | ProductFamily | None, concept_id: str
+    ) -> _BoundMetricSet | None:
+        if family_id is None:
+            return self.binding_sets_by_concept.get(concept_id)
         family = family_id.value if isinstance(family_id, ProductFamily) else family_id
-        return self.bindings_by_family_concept.get((family, concept_id))
+        definition = self.bindings_by_family_concept.get((family, concept_id))
+        return _BoundMetricSet((definition,)) if definition is not None else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,11 +209,21 @@ class SemanticSqlCompiler:
             task = next((item for item in plan.tasks if item.task_id == task_id), None)
             if task is None:
                 raise SqlCompileRejection("SQL_TASK_NOT_FOUND")
-            self._validate_ownership(plan, task)
+            binding_definitions = _effective_binding_definitions(
+                plan, task, self._bindings
+            )
+            applied_policy_ids = _effective_policy_ids(task, binding_definitions)
+            self._validate_ownership(
+                plan,
+                task,
+                binding_definitions=binding_definitions,
+                applied_policy_ids=applied_policy_ids,
+            )
+            manifest_bindings = _manifest_bindings(binding_definitions)
             context = _Context(
                 plan=plan,
                 task=task,
-                bindings=self._bindings,
+                bindings=manifest_bindings,
                 policies=self._policies,
                 facts=readiness_facts,
                 params=ParameterBuilder(),
@@ -199,9 +246,7 @@ class SemanticSqlCompiler:
                 logical_task_semantic_hash=logical_task_semantic_hash(task),
                 dataset_version=plan.dataset_version,
                 dataset_pin=plan.dataset_pin,
-                binding_definitions=tuple(
-                    self._bindings.bindings_by_id[item] for item in task.binding_ids
-                ),
+                binding_definitions=binding_definitions,
                 readiness_facts=manifest_facts,
                 binding_registry_version=plan.binding_registry_version,
                 binding_registry_hash=plan.binding_registry_hash,
@@ -243,7 +288,7 @@ class SemanticSqlCompiler:
                 statement=rendered.statement,
                 parameters=rendered.parameters,
                 lowering_records=rendered.lowering_records,
-                applied_policy_ids=task.policy_ids,
+                applied_policy_ids=applied_policy_ids,
                 evidence_projection_ids=rendered.evidence_projection_ids,
                 compiler_version=COMPILER_VERSION,
                 binding_registry_version=plan.binding_registry_version,
@@ -311,15 +356,19 @@ class SemanticSqlCompiler:
             raise ValueError("COMPILED_SQL_ACTIVE_RECOMPILATION_MISMATCH")
 
     def _validate_ownership(
-        self, plan: LogicalQueryPlanV2, task: LogicalQueryTaskV2
+        self,
+        plan: LogicalQueryPlanV2,
+        task: LogicalQueryTaskV2,
+        *,
+        binding_definitions: tuple[PhysicalBindingDefinition, ...],
+        applied_policy_ids: tuple[str, ...],
     ) -> None:
         self._validate_registry_pins(plan)
         if any(item.execution_route.value != "semantic_sql" for item in task.execution_steps):
             raise SqlCompileRejection("SQL_EXECUTION_ROUTE_REQUIRED")
         if any(item not in self._bindings.bindings_by_id for item in task.binding_ids):
             raise SqlCompileRejection("PHYSICAL_BINDING_NOT_REGISTERED")
-        for binding_id in task.binding_ids:
-            binding = self._bindings.bindings_by_id[binding_id]
+        for binding in binding_definitions:
             if binding.availability is not PhysicalBindingAvailability.VERIFIED:
                 raise SqlCompileRejection("PHYSICAL_BINDING_UNAVAILABLE")
             required = {
@@ -330,11 +379,11 @@ class SemanticSqlCompiler:
                 )
                 if item is not None
             }
-            if not required <= set(task.policy_ids):
+            if not required <= set(applied_policy_ids):
                 raise SqlCompileRejection("PHYSICAL_POLICY_OWNERSHIP_MISMATCH")
-        if any(item not in self._policies.policies_by_id for item in task.policy_ids):
+        if any(item not in self._policies.policies_by_id for item in applied_policy_ids):
             raise SqlCompileRejection("SQL_POLICY_NOT_REGISTERED")
-        if any(not self._policies.policies_by_id[item].verified for item in task.policy_ids):
+        if any(not self._policies.policies_by_id[item].verified for item in applied_policy_ids):
             raise SqlCompileRejection("SQL_POLICY_UNVERIFIED")
 
     def _validate_registry_pins(self, plan: LogicalQueryPlanV2) -> None:
@@ -523,26 +572,172 @@ def _bind_compiled_request(
     )
 
 
+def _manifest_bindings(
+    definitions: tuple[PhysicalBindingDefinition, ...],
+) -> _ManifestBindings:
+    by_id = MappingProxyType({item.id: item for item in definitions})
+    by_pair = MappingProxyType(
+        {
+            (item.product_family_id.value, item.semantic_concept_id): item
+            for item in definitions
+        }
+    )
+    grouped: dict[str, list[PhysicalBindingDefinition]] = {}
+    for definition in definitions:
+        grouped.setdefault(definition.semantic_concept_id, []).append(definition)
+    by_concept = MappingProxyType(
+        {
+            concept: _compatible_metric_set(tuple(items))
+            for concept, items in grouped.items()
+        }
+    )
+    by_key = MappingProxyType({item.id: item for item in by_concept.values()})
+    return _ManifestBindings(by_id, by_pair, by_concept, by_key)
+
+
+def _compatible_metric_set(
+    definitions: tuple[PhysicalBindingDefinition, ...],
+) -> _BoundMetricSet:
+    ordered = tuple(sorted(definitions, key=lambda item: item.id))
+    if not ordered:
+        raise SqlCompileRejection("PHYSICAL_BINDING_NOT_REGISTERED")
+    comparable_fields = (
+        "semantic_concept_id",
+        "source_kind",
+        "availability",
+        "value_column",
+        "semantic_value_kind",
+        "storage_unit_id",
+        "unit_conversion_policy_id",
+        "period_behavior",
+        "date_behavior",
+        "missingness_policy_id",
+        "supported_operator_ids",
+        "supported_aggregate_ids",
+        "supported_qualifier_ids",
+        "required_qualifier_ids",
+        "accepted_semantic_unit_ids",
+        "currency_normalization_required",
+        "verified_population_grain_ids",
+        "required_evidence_locators",
+    )
+    baseline = ordered[0]
+    if any(
+        getattr(candidate, field) != getattr(baseline, field)
+        for candidate in ordered[1:]
+        for field in comparable_fields
+    ):
+        raise SqlCompileRejection("PRIOR_RESULT_BINDINGS_INCOMPATIBLE")
+    return _BoundMetricSet(ordered)
+
+
+def _prior_scope_families(
+    plan: LogicalQueryPlanV2,
+    task: LogicalQueryTaskV2,
+    *,
+    seen: frozenset[str] = frozenset(),
+) -> tuple[ProductFamily, ...]:
+    if task.task_id in seen:
+        raise SqlCompileRejection("PRIOR_RESULT_DEPENDENCY_INVALID")
+    if task.scope.product_family_ids:
+        return task.scope.product_family_ids
+    if len(task.prior_result_inputs) != 1:
+        raise SqlCompileRejection("SQL_SINGLE_FAMILY_SCOPE_REQUIRED")
+    producer_id = task.prior_result_inputs[0].producer_task_id
+    producer = next((item for item in plan.tasks if item.task_id == producer_id), None)
+    if producer is None:
+        raise SqlCompileRejection("PRIOR_RESULT_DEPENDENCY_INVALID")
+    return _prior_scope_families(
+        plan, producer, seen=seen | frozenset((task.task_id,))
+    )
+
+
+def _task_concepts(task: LogicalQueryTaskV2) -> tuple[str, ...]:
+    operation = task.operation
+    if isinstance(operation, LogicalLookupOperationV2):
+        return operation.projections.field_concept_ids
+    if isinstance(operation, LogicalScreenOperationV2):
+        return _predicate_concepts(operation.predicate)
+    if isinstance(operation, LogicalRankOperationV2):
+        concepts = tuple(item.field_concept_id for item in operation.ordering)
+        if operation.predicate is not None:
+            concepts += _predicate_concepts(operation.predicate)
+        return tuple(dict.fromkeys(concepts))
+    if isinstance(operation, LogicalCompareOperationV2):
+        return operation.comparison.metric_concept_ids
+    if isinstance(operation, LogicalAggregateOperationV2):
+        concepts = tuple(
+            item
+            for item in (operation.aggregation.target_field_concept_id,)
+            if item is not None
+        ) + operation.aggregation.group_by_field_concept_ids
+        if operation.predicate is not None:
+            concepts += _predicate_concepts(operation.predicate)
+        return tuple(dict.fromkeys(concepts))
+    raise SqlCompileRejection("SQL_ACTION_NOT_SUPPORTED")
+
+
+def _effective_binding_definitions(
+    plan: LogicalQueryPlanV2,
+    task: LogicalQueryTaskV2,
+    registry: PhysicalBindingRegistry,
+) -> tuple[PhysicalBindingDefinition, ...]:
+    if task.scope.product_family_ids:
+        if any(item not in registry.bindings_by_id for item in task.binding_ids):
+            raise SqlCompileRejection("PHYSICAL_BINDING_NOT_REGISTERED")
+        return tuple(registry.bindings_by_id[item] for item in task.binding_ids)
+    if task.scope.prior_result_binding is None:
+        raise SqlCompileRejection("SQL_SINGLE_FAMILY_SCOPE_REQUIRED")
+    if task.binding_ids:
+        raise SqlCompileRejection("LOGICAL_BINDING_OWNERSHIP_MISMATCH")
+    families = _prior_scope_families(plan, task)
+    definitions = []
+    for concept in _task_concepts(task):
+        concept_definitions = tuple(
+            registry.binding_for(family, concept) for family in families
+        )
+        if any(item is None for item in concept_definitions):
+            raise SqlCompileRejection("PHYSICAL_BINDING_NOT_REGISTERED")
+        verified = tuple(item for item in concept_definitions if item is not None)
+        _compatible_metric_set(verified)
+        definitions.extend(verified)
+    return tuple(
+        sorted(
+            {item.id: item for item in definitions}.values(),
+            key=lambda item: item.id,
+        )
+    )
+
+
+def _effective_policy_ids(
+    task: LogicalQueryTaskV2,
+    definitions: tuple[PhysicalBindingDefinition, ...],
+) -> tuple[str, ...]:
+    required = tuple(
+        item
+        for definition in definitions
+        for item in (
+            definition.unit_conversion_policy_id,
+            definition.missingness_policy_id,
+        )
+        if item is not None
+    )
+    return tuple(dict.fromkeys((*task.policy_ids, *required)))
+
+
 def render_physical_sql_manifest(
     manifest: PhysicalSqlRenderManifest,
 ) -> RenderedPhysicalSql:
     """Rebuild exact SQL from closed task/binding IR, never from stored SQL text."""
 
     definitions = tuple(manifest.binding_definitions)
-    bindings_by_id = MappingProxyType({item.id: item for item in definitions})
-    bindings_by_pair = MappingProxyType(
-        {
-            (item.product_family_id.value, item.semantic_concept_id): item
-            for item in definitions
-        }
-    )
     context = _Context(
         plan=_RenderPlan(
             dataset_version=manifest.dataset_version,
             dataset_pin=manifest.dataset_pin,
         ),
         task=manifest.logical_task,
-        bindings=_ManifestBindings(bindings_by_id, bindings_by_pair),
+        bindings=_manifest_bindings(definitions),
         policies=_ManifestPolicies(
             registry_version=manifest.policy_registry_version,
             registry_hash=manifest.policy_registry_hash,
@@ -565,7 +760,12 @@ def render_physical_sql_manifest(
 
 def _render_context(context: _Context) -> RenderedPhysicalSql:
     statement, evidence_ids = _compile_statement(context)
-    if set(context.observation_aliases) != set(context.task.binding_ids):
+    consumed_binding_ids = {
+        definition.id
+        for key in context.observation_aliases
+        for definition in context.bindings.binding_sets_by_key[key].definitions
+    }
+    if consumed_binding_ids != set(context.bindings.bindings_by_id):
         if (
             isinstance(context.task.operation, LogicalAggregateOperationV2)
             and context.task.operation.aggregation.function_id
@@ -615,9 +815,15 @@ def _render_context(context: _Context) -> RenderedPhysicalSql:
 
 def _compile_statement(context: _Context):
     task = context.task
-    if len(task.scope.product_family_ids) != 1:
+    if len(task.scope.product_family_ids) > 1:
         raise SqlCompileRejection("SQL_SINGLE_FAMILY_SCOPE_REQUIRED")
-    family = task.scope.product_family_ids[0]
+    family = (
+        task.scope.product_family_ids[0]
+        if task.scope.product_family_ids
+        else None
+    )
+    if family is None and task.scope.prior_result_binding is None:
+        raise SqlCompileRejection("SQL_SINGLE_FAMILY_SCOPE_REQUIRED")
     base = product.join(
         entity,
         sa.and_(
@@ -626,18 +832,22 @@ def _compile_statement(context: _Context):
         ),
     )
     dataset = context.params.bind(context.plan.dataset_version, prefix="dataset")
-    family_param = context.params.bind(family.value, prefix="family")
-    where = [
-        product.c.dataset_version == dataset,
-        product.c.product_family == family_param,
-    ]
+    where = [product.c.dataset_version == dataset]
+    if family is not None:
+        family_param = context.params.bind(family.value, prefix="family")
+        where.append(product.c.product_family == family_param)
+        _record(
+            context,
+            "scope.product_family_ids",
+            "catalog-product-family.v1",
+            PhysicalLoweringKind.SCOPE,
+        )
     if task.scope.prior_result_binding is not None:
         prior_result = context.params.bind_prior_result(
             task.scope.prior_result_binding,
             context.prior_result_entity_ids,
         )
         where.append(product.c.entity_id == sa.any_(prior_result))
-    _record(context, "scope.product_family_ids", "catalog-product-family.v1", PhysicalLoweringKind.SCOPE)
     if task.scope.entity_refs:
         where.append(
             product.c.entity_id.in_(
@@ -800,9 +1010,9 @@ def _compile_statement(context: _Context):
     return statement, evidence
 
 
-def _field(context: _Context, family: ProductFamily, concept_id: str):
+def _field(context: _Context, family: ProductFamily | None, concept_id: str):
     binding = context.bindings.binding_for(family, concept_id)
-    if binding is None or binding.id not in context.task.binding_ids:
+    if binding is None:
         raise SqlCompileRejection("LOGICAL_BINDING_OWNERSHIP_MISMATCH")
     if binding.availability is not PhysicalBindingAvailability.VERIFIED:
         raise SqlCompileRejection("PHYSICAL_BINDING_UNAVAILABLE")
@@ -1682,7 +1892,8 @@ def _qualifier_filters(context: _Context):
     }
     consumed_binding_ids = tuple(context.observation_aliases)
     bindings = [
-        context.bindings.bindings_by_id[item] for item in consumed_binding_ids
+        context.bindings.binding_sets_by_key[item]
+        for item in consumed_binding_ids
     ]
     if any(value is not None for value in requested.values()) and not bindings:
         if (
@@ -1716,7 +1927,7 @@ def _qualifier_filters(context: _Context):
             )
     filters = []
     for binding_id, alias in context.observation_aliases.items():
-        binding = context.bindings.bindings_by_id[binding_id]
+        binding = context.bindings.binding_sets_by_key[binding_id]
         if qualifiers.period_id is not None:
             raise SqlCompileRejection("PERIOD_LOWERING_NOT_REGISTERED")
         if qualifiers.currency_id is not None:
@@ -1738,7 +1949,7 @@ def _evidence_ids(context):
 def _requested_evidence_ids(context):
     allowed = {item.value: item for item in EvidenceLocator}
     requested = set(context.task.evidence_requirements)
-    for binding_id in context.task.binding_ids:
+    for binding_id in context.bindings.bindings_by_id:
         requested.update(item.value for item in context.bindings.bindings_by_id[binding_id].required_evidence_locators)
     if not requested <= set(allowed):
         raise SqlCompileRejection("EVIDENCE_PROJECTION_NOT_REGISTERED")
@@ -1746,6 +1957,17 @@ def _requested_evidence_ids(context):
 
 
 def _record(context, path, binding_id, kind, binding=None, policy_ids=()):
+    if isinstance(binding, _BoundMetricSet) and len(binding.definitions) > 1:
+        for definition in binding.definitions:
+            _record(
+                context,
+                path,
+                definition.id,
+                kind,
+                definition,
+                policy_ids,
+            )
+        return
     policies = tuple(
         dict.fromkeys(
             item

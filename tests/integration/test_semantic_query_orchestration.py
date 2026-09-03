@@ -6,9 +6,10 @@ from pathlib import Path
 
 import pytest
 
+from financial_agent.contracts.canonical import canonical_sha256
 from financial_agent.contracts.enums import Capability, ExecutionOutcome, ToolStatus
-from financial_agent.contracts.execution import ToolResult
-from financial_agent.contracts.values import decode_contract_value
+from financial_agent.contracts.execution import BindingValue, ResultRow, ToolResult
+from financial_agent.contracts.values import decode_contract_value, encode_contract_value
 from financial_agent.orchestration.executors import (
     CapabilityExecutor,
     ExecutorRegistry,
@@ -77,6 +78,50 @@ class SemanticRecordingExecutor(CapabilityExecutor):
             binding_values=binding_values,
             latency_ms=1,
         )
+
+
+@dataclass
+class InvalidSemanticProducer(CapabilityExecutor):
+    mode: str
+    calls: list[SemanticExecutorRequest] = field(default_factory=list)
+
+    async def execute(self, request: SemanticExecutorRequest) -> ToolResult:
+        self.calls.append(request)
+        binding_name = request.task.produces_bindings[0]
+        values = {
+            "scalar-for-many": "product-1",
+            "list-for-one": ("product-1",),
+            "invalid-id": ("not an identifier",),
+            "empty-many-with-rows": (),
+        }
+        binding = BindingValue(
+            binding_name=binding_name,
+            value_type=request.binding_type(binding_name),
+            value=encode_contract_value(values.get(self.mode, ("product-1",))),
+        )
+        result = build_tool_result(
+            request,
+            status=ToolStatus.SUCCESS,
+            result_rows=(
+                (ResultRow(row_id="row-1", entity_ids=("product-1",), fields=()),)
+                if self.mode == "empty-many-with-rows"
+                else ()
+            ),
+            binding_values=(binding,),
+            latency_ms=1,
+        )
+        if self.mode == "foreign-producer":
+            draft = result.model_copy(
+                update={"producer": "executor:foreign", "result_hash": "0" * 64}
+            )
+            return draft.model_copy(
+                update={
+                    "result_hash": canonical_sha256(
+                        draft, exclude_fields=("result_hash",)
+                    )
+                }
+            )
+        return result
 
 
 def orchestrator(executors, provider, *, deadline_ms=5_000):
@@ -240,6 +285,37 @@ async def test_semantic_dependency_publishes_typed_binding_before_consumer() -> 
     assert executor.calls[1].dependency_results[0].task_id == executor.calls[0].task.task_id
     assert executor.calls[1].binding_values[0].binding_name == "result-set-1"
     assert executor.calls[1].binding_values[0].value_type == "semantic-result:many"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "cardinality", "failure_code"),
+    (
+        ("foreign-producer", "many", "TOOL_RESULT_PRODUCER_MISMATCH"),
+        ("scalar-for-many", "many", "TOOL_RESULT_BINDING_VALUE_INVALID"),
+        ("list-for-one", "one", "TOOL_RESULT_BINDING_VALUE_INVALID"),
+        ("invalid-id", "many", "TOOL_RESULT_BINDING_VALUE_INVALID"),
+        ("empty-many-with-rows", "many", "TOOL_RESULT_BINDING_VALUE_INVALID"),
+    ),
+)
+async def test_invalid_semantic_result_is_failed_before_publication_and_skips_consumer(
+    mode: str,
+    cardinality: str,
+    failure_code: str,
+) -> None:
+    compilation = tool_dependency_compilation(cardinality)
+    executor = InvalidSemanticProducer(mode)
+
+    result = await orchestrator(
+        ExecutorRegistry(((Capability.KEYWORD_SEARCH, executor),)),
+        lambda *_: None,
+    ).execute_semantic(compilation)
+
+    assert result.execution_outcome is ExecutionOutcome.FAILED
+    assert result.failures[0].code == failure_code
+    assert result.skipped_task_ids == (result.graph.tasks[1].task_id,)
+    assert result.tool_results == ()
+    assert len(executor.calls) == 1
 
 
 @pytest.mark.asyncio

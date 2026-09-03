@@ -1,5 +1,9 @@
+from pydantic import TypeAdapter
+
+from financial_agent.contracts.base import Identifier
 from financial_agent.contracts.enums import ToolStatus
 from financial_agent.contracts.execution import ToolResult
+from financial_agent.contracts.values import decode_contract_value
 
 from .executors import ExecutorRequest, expected_result_hash
 
@@ -8,12 +12,17 @@ class ToolResultContractError(ValueError):
     pass
 
 
+_IDENTIFIER_ADAPTER = TypeAdapter(Identifier)
+
+
 def validate_tool_result(
     request: ExecutorRequest,
     result: ToolResult,
 ) -> ToolResult:
     if result.task_id != request.task.task_id:
         raise ToolResultContractError("TOOL_RESULT_TASK_MISMATCH")
+    if result.producer != f"executor:{request.task.capability.value}":
+        raise ToolResultContractError("TOOL_RESULT_PRODUCER_MISMATCH")
     if (
         result.request_key != request.request_key
         or result.run_id != request.run_id
@@ -36,4 +45,38 @@ def validate_tool_result(
         for binding in result.binding_values:
             if binding.value_type != request.binding_type(binding.binding_name):
                 raise ToolResultContractError("TOOL_RESULT_BINDING_TYPE_MISMATCH")
+            if binding.value_type.startswith("semantic-result:"):
+                _validate_semantic_binding_value(binding.value_type, binding.value)
+        if result.result_rows:
+            for binding in result.binding_values:
+                if (
+                    binding.value_type == "semantic-result:many"
+                    and not decode_contract_value(binding.value)
+                ):
+                    raise ToolResultContractError(
+                        "TOOL_RESULT_BINDING_VALUE_INVALID"
+                    )
     return result
+
+
+def _validate_semantic_binding_value(value_type, value) -> None:
+    try:
+        decoded = decode_contract_value(value)
+        if value_type == "semantic-result:many":
+            if not isinstance(decoded, tuple):
+                raise ValueError
+            candidates = decoded
+        elif value_type == "semantic-result:one":
+            if not isinstance(decoded, str):
+                raise ValueError
+            candidates = (decoded,)
+        else:
+            raise ValueError
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                raise ValueError
+            _IDENTIFIER_ADAPTER.validate_python(candidate)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ToolResultContractError(
+            "TOOL_RESULT_BINDING_VALUE_INVALID"
+        ) from error

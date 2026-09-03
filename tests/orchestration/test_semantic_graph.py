@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from financial_agent.contracts.enums import Capability, ProductFamily, ResultType
+from financial_agent.contracts.enums import Capability, ResultType
 from financial_agent.contracts.execution import NamedValue
 from financial_agent.contracts.values import encode_contract_value
 from financial_agent.intent.query_contract_solver import QueryContractCandidate
@@ -136,16 +136,6 @@ def sql_dependency_compilation():
 
     first = qualified(_rank("frame-1"))
     second = _rank("frame-2", "result-set-1")
-    second = QueryContractCandidate(
-        candidate_id=second.candidate_id,
-        contract=second.contract.model_copy(
-            update={
-                "scope": second.contract.scope.model_copy(
-                    update={"product_family_ids": (ProductFamily.DOMESTIC_ETF,)}
-                )
-            }
-        ),
-    )
     second = qualified(second)
     return _compile(
         (first, second),
