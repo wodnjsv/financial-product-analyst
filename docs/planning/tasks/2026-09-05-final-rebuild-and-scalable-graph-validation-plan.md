@@ -132,7 +132,7 @@ class GraphPreflightResult:
 def validate_projection_batch(batch: GraphProjectionBatch) -> GraphPreflightResult: ...
 ```
 
-- [ ] **Step 1: Write literal-fixture tests for every failure family**
+- [x] **Step 1: Write literal-fixture tests for every failure family**
 
 Starting from the existing small valid batch, mutate one fact at a time to
 prove detection of duplicate IDs, missing relation endpoints, invalid domain
@@ -140,7 +140,7 @@ or range, missing Evidence/source, reversed or post-cutoff dates, missing or
 out-of-range holding weights, duplicate holding observation IDs, and relation/
 observation mismatch. Assert stable sorted violation codes and canonical JSON.
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 ```bash
 .venv/bin/python -m pytest tests/graph/test_graph_preflight.py -q
@@ -148,18 +148,18 @@ observation mismatch. Assert stable sorted violation codes and canonical JSON.
 
 Expected: collection/import failure because `graph.preflight` does not exist.
 
-- [ ] **Step 3: Implement one-pass indexed checks**
+- [x] **Step 3: Implement one-pass indexed checks**
 
 Use dictionaries and sets keyed by IDs and relation/date tuples. Do not parse
 RDF, execute SPARQL, or make database queries. Return all detected stable codes
 in sorted order and hash only canonical deterministic report bytes.
 
-- [ ] **Step 4: Invoke preflight before RDF export**
+- [x] **Step 4: Invoke preflight before RDF export**
 
 Make `build_graph_snapshot` stop with `GraphBuildError` before writing N-Quads
 when preflight does not conform. Persist `preflight.json` for passing builds.
 
-- [ ] **Step 5: Run focused Graph tests and verify GREEN**
+- [x] **Step 5: Run focused Graph tests and verify GREEN**
 
 ```bash
 .venv/bin/python -m pytest tests/graph/test_graph_preflight.py tests/graph/test_graph_cli.py tests/graph/test_graph_exporter.py -q

@@ -19,6 +19,7 @@ from financial_agent.graph.contract import (
 )
 from financial_agent.graph.exporter import build_graph_artifacts
 from financial_agent.graph.manifest import build_graph_manifest
+from financial_agent.graph.preflight import validate_projection_batch
 from financial_agent.graph.repository import GraphProjectionRepository
 from financial_agent.graph.validator import validate_graph
 
@@ -49,6 +50,11 @@ async def build_graph_snapshot(
     engine = create_async_engine(database_url)
     try:
         batch = await GraphProjectionRepository(engine).load(dataset_version)
+        preflight = validate_projection_batch(batch)
+        if not preflight.conforms:
+            codes = ",".join(preflight.violation_codes)
+            raise GraphBuildError(f"graph preflight failed: {codes}")
+        (temporary / "preflight.json").write_bytes(preflight.report_bytes)
         artifacts = build_graph_artifacts(batch)
         data_path = temporary / "data.nq"
         evidence_path = temporary / "evidence.nq"

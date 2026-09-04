@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from financial_agent.graph import cli
 from financial_agent.graph.cli import GraphBuildError, build_graph_snapshot
 from financial_agent.graph.repository import GraphProjectionRepository
 from tests.graph.test_graph_exporter import valid_batch
@@ -91,7 +92,13 @@ async def test_build_is_deterministic_and_report_contains_only_aggregates(
     )
 
     assert first == second
-    expected_names = {"data.nq", "evidence.nq", "manifest.json", "report.json"}
+    expected_names = {
+        "data.nq",
+        "evidence.nq",
+        "manifest.json",
+        "preflight.json",
+        "report.json",
+    }
     assert {path.name for path in first_output.iterdir()} == expected_names
     for name in expected_names:
         assert (first_output / name).read_bytes() == (second_output / name).read_bytes()
@@ -127,3 +134,44 @@ async def test_build_leaves_no_partial_output_when_projection_fails(
 
     assert not output.exists()
     assert not tuple(tmp_path.glob(".graph-build-*"))
+
+
+@pytest.mark.asyncio
+async def test_build_stops_before_export_when_preflight_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Catches malformed projection data reaching RDF export or SHACL."""
+    batch = valid_batch()
+
+    async def load(_repository, _dataset_version: str):
+        return batch
+
+    def reject(_batch):
+        return type(
+            "FailedPreflight",
+            (),
+            {
+                "conforms": False,
+                "report_bytes": b'{"conforms":false}',
+                "report_hash": "a" * 64,
+                "violation_codes": ("MISSING_EVIDENCE",),
+            },
+        )()
+
+    def unexpected_export(_batch):
+        pytest.fail("RDF export must not run after preflight failure")
+
+    monkeypatch.setattr(GraphProjectionRepository, "load", load)
+    monkeypatch.setattr(cli, "validate_projection_batch", reject)
+    monkeypatch.setattr(cli, "build_graph_artifacts", unexpected_export)
+    output = tmp_path / "failed-preflight"
+
+    with pytest.raises(GraphBuildError, match="MISSING_EVIDENCE"):
+        await build_graph_snapshot(
+            database_url=DATABASE_URL,
+            dataset_version=batch.dataset_version,
+            output_directory=output,
+        )
+
+    assert not output.exists()
