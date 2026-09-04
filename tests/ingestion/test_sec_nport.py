@@ -205,6 +205,34 @@ def test_capacity_probe_selects_a_stable_sample_of_matched_products(
     }
 
 
+def test_nport_ids_are_unique_when_one_filing_maps_to_two_products(
+    tmp_path: Path,
+) -> None:
+    mapped = _map_files(
+        tmp_path,
+        bindings=(
+            _binding(product_id="product-a"),
+            _binding(product_id="product-b"),
+        ),
+    )
+
+    observations = _records(mapped, "observation.observation_record")
+    observation_ids = [str(row["observation_id"]) for row in observations]
+    evidence = tuple(
+        row
+        for row in _records(mapped, "evidence.evidence_record")
+        if row["evidence_kind"] in {"observation", "relation"}
+    )
+    evidence_ids = [str(row["evidence_id"]) for row in evidence]
+
+    assert {str(row["subject_id"]) for row in evidence} == {
+        "product-a",
+        "product-b",
+    }
+    assert len(observation_ids) == len(set(observation_ids)) == 12
+    assert len(evidence_ids) == len(set(evidence_ids)) == 16
+
+
 def test_capacity_probe_rejects_a_sample_larger_than_the_matched_population(
     tmp_path: Path,
 ) -> None:

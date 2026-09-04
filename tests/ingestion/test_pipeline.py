@@ -858,6 +858,32 @@ def test_cli_exposes_bounded_stage03b_capacity_probe_arguments() -> None:
     assert arguments.current_storage_gib == 20
 
 
+def test_official_inputs_load_each_capture_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from financial_agent.ingestion import cli
+
+    roots = (tmp_path / "first", tmp_path / "second")
+    for root in roots:
+        (root / "manifests").mkdir(parents=True)
+        (root / "objects").mkdir()
+    monkeypatch.setenv(
+        "FINANCIAL_AGENT_OFFICIAL_CAPTURE_ROOTS",
+        os.pathsep.join(str(root) for root in roots),
+    )
+    monkeypatch.setattr(
+        cli,
+        "load_official_manifests",
+        lambda root: (root.parent.name,),
+    )
+
+    manifests, object_roots = cli._official_inputs()
+
+    assert manifests == ("first", "second")
+    assert object_roots == tuple(root / "objects" for root in roots)
+
+
 @pytest.mark.asyncio
 async def test_capacity_probe_command_prints_only_aggregate_measurements(
     monkeypatch: pytest.MonkeyPatch,

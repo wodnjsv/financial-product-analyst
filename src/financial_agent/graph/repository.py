@@ -341,6 +341,42 @@ def _build_batch(
     evidence_rows: list[Any],
     metric_rows: list[Any],
 ) -> GraphProjectionBatch:
+    relation_predicates = {
+        row.relation_id: row.predicate_id for row in relation_rows
+    }
+    relations_with_known_weights = {
+        row.relation_id
+        for row in metric_rows
+        if row.value_status in {"present", "zero"}
+    }
+    relations_with_reported_weights = {
+        row.relation_id for row in metric_rows
+    }
+    unprojectable_holding_ids = {
+        relation_id
+        for relation_id, predicate_id in relation_predicates.items()
+        if predicate_id == "holdsSecurity"
+        and relation_id in relations_with_reported_weights
+        and relation_id not in relations_with_known_weights
+    }
+    relation_rows = [
+        row
+        for row in relation_rows
+        if row.relation_id not in unprojectable_holding_ids
+    ]
+    relation_predicates = {
+        row.relation_id: row.predicate_id for row in relation_rows
+    }
+    evidence_rows = [
+        row for row in evidence_rows if row.relation_id in relation_predicates
+    ]
+    metric_rows = [
+        row
+        for row in metric_rows
+        if row.relation_id in relation_predicates
+        and row.value_status in {"present", "zero"}
+    ]
+
     identifier_schemes_by_entity: dict[str, list[str]] = defaultdict(list)
     for row in identifier_rows:
         identifier_schemes_by_entity[row.entity_id].append(row.scheme)
@@ -424,9 +460,6 @@ def _build_batch(
             publisher_id=row.publisher,
         )
 
-    relation_predicates = {
-        row.relation_id: row.predicate_id for row in relation_rows
-    }
     observation_ids: set[str] = set()
     metric_dates_by_relation: dict[str, set[date]] = defaultdict(set)
     metrics_by_relation: dict[str, list[RelationMetricProjection]] = defaultdict(list)

@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal
 
 import pytest
@@ -90,6 +91,51 @@ def _environment(
     )
     monkeypatch.setenv("FINANCIAL_AGENT_DART_REPORT", str(output))
     return key_file, mapping, output
+
+
+@pytest.mark.asyncio
+async def test_carry_forward_command_requires_explicit_versions_and_reports_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from financial_agent.ingestion import cli
+
+    class FakeEngine:
+        async def dispose(self) -> None:
+            return None
+
+    observed: dict[str, object] = {}
+    monkeypatch.setenv(
+        "FINANCIAL_AGENT_BUILD_DATABASE_URL",
+        "postgresql://owner:private@example.invalid/database",
+    )
+    monkeypatch.setenv(
+        "FINANCIAL_AGENT_SOURCE_DATASET_VERSION", "source-v1"
+    )
+    monkeypatch.setenv("FINANCIAL_AGENT_DATASET_VERSION", "target-v1")
+    monkeypatch.setattr(
+        cli, "create_async_engine", lambda *args, **kwargs: FakeEngine()
+    )
+
+    async def carry_forward(engine: object, **kwargs: object) -> object:
+        observed["engine"] = engine
+        observed.update(kwargs)
+        return SimpleNamespace(
+            document_count=2,
+            coverage_count=3,
+            chunk_count=4,
+            embedding_count=4,
+        )
+
+    monkeypatch.setattr(cli, "carry_forward_dart_corpus", carry_forward)
+
+    assert await cli._carry_forward_dart_corpus_command() == 0
+    assert observed["source_dataset"] == "source-v1"
+    assert observed["target_dataset"] == "target-v1"
+    assert capsys.readouterr().out == (
+        "DART_CARRY_FORWARD_OK documents=2 coverages=3 "
+        "chunks=4 embeddings=4\n"
+    )
 
 
 def test_repository_ignores_the_user_api_file() -> None:

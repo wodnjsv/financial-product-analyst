@@ -1103,7 +1103,9 @@ def _add_holding_relation(
             }
         )
     )
-    evidence_id = stable_id("evidence", _SOURCE_CODE, f"{key}:holdsSecurity")
+    evidence_id = stable_id(
+        "evidence", _SOURCE_CODE, f"{product_id}:{key}:holdsSecurity"
+    )
     series_id = normalize_name(filing.fund.values["SERIES_ID"]).upper()
     records["evidence.evidence_record"].append(
         _with_hash(
@@ -1178,7 +1180,9 @@ def _add_holding_relation(
             "IDENTIFIER_ISIN" if matching is not None else "ISSUER_CUSIP"
         )
         identifier_evidence_id = stable_id(
-            "evidence", _SOURCE_CODE, f"{key}:{identifier_scheme}"
+            "evidence",
+            _SOURCE_CODE,
+            f"{product_id}:{key}:{identifier_scheme}",
         )
         records["evidence.evidence_record"].append(
             _with_hash(
@@ -1306,7 +1310,7 @@ def _add_holding_observations(
         if column == "BALANCE":
             unit = normalize_name(holding.values["UNIT"]) or None
         observation_id = stable_id(
-            "observation", _SOURCE_CODE, f"{key}:{column}"
+            "observation", _SOURCE_CODE, f"{product_id}:{key}:{column}"
         )
         observation = _with_hash(
             {
@@ -1337,7 +1341,9 @@ def _add_holding_observations(
             }
         )
         records["observation.observation_record"].append(observation)
-        evidence_id = stable_id("evidence", _SOURCE_CODE, f"{key}:{column}")
+        evidence_id = stable_id(
+            "evidence", _SOURCE_CODE, f"{product_id}:{key}:{column}"
+        )
         normalized = numeric_value if numeric_value is not None else text_value
         records["evidence.evidence_record"].append(
             _with_hash(

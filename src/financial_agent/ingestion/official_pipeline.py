@@ -295,18 +295,34 @@ def compose_stage03b_capacity_probe_manifest(
 
 def verify_official_snapshot_objects(
     official_manifests: Sequence[OfficialSnapshotManifest],
-    object_root: Path,
+    object_root: Path | Sequence[Path],
 ) -> Mapping[tuple[str, str], Path]:
     ordered = _ordered_manifests(official_manifests)
+    roots = (object_root,) if isinstance(object_root, Path) else tuple(object_root)
     try:
-        resolved_root = object_root.resolve(strict=True)
+        resolved_roots = tuple(root.resolve(strict=True) for root in roots)
     except OSError:
+        raise OfficialPipelineError("OFFICIAL_OBJECT_ROOT_MISSING") from None
+    if not resolved_roots:
         raise OfficialPipelineError("OFFICIAL_OBJECT_ROOT_MISSING") from None
 
     verified: dict[tuple[str, str], Path] = {}
     for manifest in ordered:
         for item in manifest.objects:
-            candidate = object_root / item.object_key
+            candidates = [
+                (root / item.object_key, resolved_root)
+                for root, resolved_root in zip(
+                    roots, resolved_roots, strict=True
+                )
+                if (root / item.object_key).exists()
+            ]
+            if not candidates:
+                raise OfficialPipelineError("OFFICIAL_OBJECT_MISSING") from None
+            if len(candidates) != 1:
+                raise OfficialPipelineError(
+                    "OFFICIAL_OBJECT_AMBIGUOUS"
+                ) from None
+            candidate, resolved_root = candidates[0]
             try:
                 resolved = candidate.resolve(strict=True)
             except OSError:
@@ -333,7 +349,7 @@ def verify_official_snapshot_objects(
 @contextmanager
 def _snapshot_official_inputs(
     official_manifests: Sequence[OfficialSnapshotManifest],
-    object_root: Path,
+    object_root: Path | Sequence[Path],
 ) -> Iterator[Mapping[tuple[str, str], Path]]:
     if not official_manifests:
         yield {}
@@ -715,7 +731,7 @@ def validate_stage03b_inputs(
     *,
     organizer_inputs: OrganizerInputs,
     official_manifests: Sequence[OfficialSnapshotManifest],
-    official_object_root: Path,
+    official_object_root: Path | Sequence[Path],
 ) -> str:
     with _snapshot_source_inputs(
         organizer_inputs.data_paths,
@@ -845,7 +861,7 @@ async def build_stage03b_dataset(
     dataset_version: str,
     organizer_inputs: OrganizerInputs,
     official_manifests: Sequence[OfficialSnapshotManifest],
-    official_object_root: Path,
+    official_object_root: Path | Sequence[Path],
     batch_size: int = 1000,
 ) -> BuildReport:
     if batch_size < 1:
@@ -934,7 +950,7 @@ async def build_stage03b_capacity_probe(
     dataset_version: str,
     organizer_inputs: OrganizerInputs,
     official_manifests: Sequence[OfficialSnapshotManifest],
-    official_object_root: Path,
+    official_object_root: Path | Sequence[Path],
     sample_product_count: int,
     full_holding_count: int,
     current_storage_gib: int,

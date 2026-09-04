@@ -652,6 +652,33 @@ async def test_load_rejects_a_non_finite_approved_relation_metric(
     assert repository_engine.sync_engine.pool.checkedout() == 0
 
 
+async def test_load_omits_a_holding_relation_when_weight_is_officially_unknown(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+) -> None:
+    dataset_version = _seed_projection(migrated_database_url)
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        connection.execute(
+            """
+            UPDATE observation.observation_record
+            SET value_status = 'unknown', numeric_value = NULL,
+                reason_code = 'source_blank'
+            WHERE dataset_version = %s
+              AND observation_id IN ('weight-approved', 'weight-approved-later')
+            """,
+            (dataset_version,),
+        )
+
+    batch = await GraphProjectionRepository(repository_engine).load(dataset_version)
+
+    assert "rel-a-holding" not in {
+        relation.relation_id for relation in batch.relations
+    }
+    assert "evidence-a" not in {
+        evidence.evidence_id for evidence in batch.evidences
+    }
+
+
 async def test_load_rejects_an_approved_holding_weight_without_applicable_date(
     migrated_database_url: str,
     repository_engine: AsyncEngine,

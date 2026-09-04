@@ -46,6 +46,10 @@ from financial_agent.documents import (
     SectionType,
     SourceAuditStatus,
 )
+from financial_agent.documents.carry_forward import (
+    CorpusCarryForwardError,
+    carry_forward_dart_corpus,
+)
 from financial_agent.documents.chunking import WhitespaceTokenCounter
 from financial_agent.documents.source_manifest import (
     validate_document_source_report,
@@ -76,6 +80,7 @@ from financial_agent.ingestion.official.capture import (
     capture_approved_official_sources,
     load_capture_configuration,
 )
+from financial_agent.ingestion.official.models import OfficialSnapshotManifest
 from financial_agent.ingestion.document_sources.audit import (
     audit_document_sources,
     document_source_audit_passed,
@@ -297,6 +302,7 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("capture-official")
     commands.add_parser("validate-official")
     commands.add_parser("load-stage03b")
+    commands.add_parser("carry-forward-dart-corpus")
     commands.add_parser("verify-official-object-storage")
     commands.add_parser("audit-document-sources")
     dart_corpus = commands.add_parser("ingest-dart-corpus")
@@ -604,7 +610,26 @@ def _source_inputs() -> tuple[
     return data_paths, schema_paths, data_hashes, schema_hashes
 
 
-def _official_inputs():
+def _official_inputs() -> tuple[
+    tuple[OfficialSnapshotManifest, ...], Path | tuple[Path, ...]
+]:
+    capture_roots = tuple(
+        Path(value)
+        for value in os.getenv(
+            "FINANCIAL_AGENT_OFFICIAL_CAPTURE_ROOTS", ""
+        ).split(os.pathsep)
+        if value.strip()
+    )
+    if capture_roots:
+        manifests = tuple(
+            manifest
+            for root in capture_roots
+            for manifest in load_official_manifests(root / "manifests")
+        )
+        if not manifests:
+            raise OfficialSourceConfigurationError() from None
+        return manifests, tuple(root / "objects" for root in capture_roots)
+
     manifest_root = Path(
         _required_env("FINANCIAL_AGENT_OFFICIAL_MANIFEST_ROOT")
     )
@@ -826,6 +851,34 @@ async def _load_stage03b_command() -> int:
         f"products={acceptance.canonical_product_count} "
         f"exact_reused={acceptance.exact_reused_identity_count} "
         f"ambiguous_pairs={acceptance.aligned_ambiguous_pair_count}"
+    )
+    return 0
+
+
+async def _carry_forward_dart_corpus_command() -> int:
+    database_url = _required_env("FINANCIAL_AGENT_BUILD_DATABASE_URL")
+    source_dataset = _required_env(
+        "FINANCIAL_AGENT_SOURCE_DATASET_VERSION"
+    ).strip()
+    target_dataset = _required_env("FINANCIAL_AGENT_DATASET_VERSION").strip()
+    engine = create_async_engine(
+        _async_database_url(database_url),
+        pool_size=5,
+        max_overflow=0,
+        connect_args={"options": "-c timezone=UTC"},
+    )
+    try:
+        report = await carry_forward_dart_corpus(
+            engine,
+            source_dataset=source_dataset,
+            target_dataset=target_dataset,
+        )
+    finally:
+        await engine.dispose()
+    print(
+        f"DART_CARRY_FORWARD_OK documents={report.document_count} "
+        f"coverages={report.coverage_count} chunks={report.chunk_count} "
+        f"embeddings={report.embedding_count}"
     )
     return 0
 
@@ -1842,6 +1895,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = asyncio.run(_validate_official_command())
         elif arguments.command == "load-stage03b":
             result = asyncio.run(_load_stage03b_command())
+        elif arguments.command == "carry-forward-dart-corpus":
+            result = asyncio.run(_carry_forward_dart_corpus_command())
         elif arguments.command == "measure-stage03b-capacity":
             result = asyncio.run(_capacity_probe_command(arguments))
         elif arguments.command == "audit-document-sources":
@@ -1863,6 +1918,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         OrganizerSourceValidationError,
         SourceVerificationError,
         DartCorpusIngestionError,
+        CorpusCarryForwardError,
         DartPublisherDataError,
         DatasetBuildConflict,
         DatasetBuildPayloadError,

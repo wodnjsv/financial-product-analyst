@@ -244,6 +244,76 @@ def test_missing_official_object_is_rejected(tmp_path: Path) -> None:
     assert captured.value.__cause__ is None
 
 
+def test_official_object_can_be_resolved_from_exactly_one_capture_root(
+    tmp_path: Path,
+) -> None:
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    manifest = _manifest(
+        second_root,
+        source_code="KRX_KOSPI_BASIC",
+        snapshot_id="krx-kospi-20260710",
+        payload=b"payload",
+    )
+
+    verified = verify_official_snapshot_objects(
+        (manifest,), (first_root, second_root)
+    )
+
+    key = (manifest.snapshot_id, manifest.objects[0].object_key)
+    assert verified[key] == (second_root / manifest.objects[0].object_key).resolve()
+
+
+def test_official_object_in_multiple_capture_roots_is_rejected(
+    tmp_path: Path,
+) -> None:
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    manifest = _manifest(
+        first_root,
+        source_code="KRX_KOSPI_BASIC",
+        snapshot_id="krx-kospi-20260710",
+        payload=b"payload",
+    )
+    duplicate = second_root / manifest.objects[0].object_key
+    duplicate.parent.mkdir(parents=True)
+    duplicate.write_bytes(b"payload")
+
+    with pytest.raises(OfficialPipelineError) as captured:
+        verify_official_snapshot_objects((manifest,), (first_root, second_root))
+
+    assert captured.value.code == "OFFICIAL_OBJECT_AMBIGUOUS"
+    assert captured.value.__cause__ is None
+
+
+def test_missing_official_object_across_capture_roots_is_rejected(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    empty_root = tmp_path / "empty"
+    source_root.mkdir()
+    empty_root.mkdir()
+    manifest = _manifest(
+        source_root,
+        source_code="KRX_KOSPI_BASIC",
+        snapshot_id="krx-kospi-20260710",
+        payload=b"payload",
+    )
+    (source_root / manifest.objects[0].object_key).unlink()
+
+    with pytest.raises(OfficialPipelineError) as captured:
+        verify_official_snapshot_objects(
+            (manifest,), (source_root, empty_root)
+        )
+
+    assert captured.value.code == "OFFICIAL_OBJECT_MISSING"
+    assert captured.value.__cause__ is None
+
+
 def test_official_build_reads_a_verified_immutable_object_snapshot(
     tmp_path: Path,
 ) -> None:
