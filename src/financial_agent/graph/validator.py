@@ -48,6 +48,10 @@ class GraphValidationResult:
             MappingProxyType(dict(sorted(self.contract_hashes.items()))),
         )
 
+    @property
+    def report_bytes(self) -> bytes:
+        return self.report_ntriples
+
 
 InputBytes = tuple[Path, bytes]
 

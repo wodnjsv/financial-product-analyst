@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping, Sequence
+from typing import Mapping, Protocol, Sequence
 
 from financial_agent.graph.contract import (
     GRAPH_CONTRACT_RELATIVE_PATHS,
@@ -13,11 +13,24 @@ from financial_agent.graph.contract import (
     GraphProjectionBatch,
 )
 from financial_agent.graph.exporter import build_graph_artifacts
-from financial_agent.graph.validator import GraphValidationResult
+from financial_agent.graph.preflight import (
+    GraphPreflightResult,
+    validate_projection_batch,
+)
 
 
 EXPORTER_VERSION = "1"
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+class GraphValidationEvidence(Protocol):
+    conforms: bool
+    report_bytes: bytes
+    report_hash: str
+    validated_data_hash: str
+    validated_evidence_hash: str | None
+    validated_cutoff_date: str
+    contract_hashes: Mapping[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +43,7 @@ class GraphComponentManifest:
     data_nquads_hash: str
     evidence_nquads_hash: str
     validation_report_hash: str
+    preflight_report_hash: str
     entity_type_counts: Mapping[str, int]
     predicate_counts: Mapping[str, int]
 
@@ -56,6 +70,7 @@ class GraphComponentManifest:
             "data_nquads_hash": self.data_nquads_hash,
             "evidence_nquads_hash": self.evidence_nquads_hash,
             "validation_report_hash": self.validation_report_hash,
+            "preflight_report_hash": self.preflight_report_hash,
             "entity_type_counts": dict(self.entity_type_counts),
             "predicate_counts": dict(self.predicate_counts),
         }
@@ -100,7 +115,8 @@ def build_graph_manifest(
     batch: GraphProjectionBatch,
     artifacts: GraphArtifacts,
     ontology_paths: Sequence[Path],
-    validation: GraphValidationResult,
+    validation: GraphValidationEvidence,
+    preflight: GraphPreflightResult | None = None,
 ) -> GraphComponentManifest:
     if not validation.conforms:
         raise ValueError("graph validation must conform before manifest generation")
@@ -115,7 +131,7 @@ def build_graph_manifest(
         raise ValueError("validated contract does not match manifest input")
     if validation.validated_cutoff_date != batch.cutoff_date.isoformat():
         raise ValueError("validated cutoff does not match manifest input")
-    validation_report_hash = sha256(validation.report_ntriples).hexdigest()
+    validation_report_hash = sha256(validation.report_bytes).hexdigest()
     if validation.report_hash != validation_report_hash:
         raise ValueError("validation report hash does not match report bytes")
     try:
@@ -124,8 +140,18 @@ def build_graph_manifest(
         raise ValueError("graph artifacts do not match the projection batch") from error
     if expected_artifacts != artifacts:
         raise ValueError("graph artifacts do not match the projection batch")
+    expected_preflight = validate_projection_batch(batch)
+    selected_preflight = preflight or expected_preflight
+    if not selected_preflight.conforms:
+        raise ValueError("graph preflight must conform before manifest generation")
+    if selected_preflight.report_hash != sha256(
+        selected_preflight.report_bytes
+    ).hexdigest():
+        raise ValueError("preflight report hash does not match report bytes")
+    if selected_preflight.report_bytes != expected_preflight.report_bytes:
+        raise ValueError("preflight report does not match the projection batch")
     return GraphComponentManifest(
-        schema_version="1",
+        schema_version="2",
         dataset_version=batch.dataset_version,
         cutoff_date=batch.cutoff_date.isoformat(),
         exporter_version=EXPORTER_VERSION,
@@ -133,6 +159,7 @@ def build_graph_manifest(
         data_nquads_hash=data_nquads_hash,
         evidence_nquads_hash=evidence_nquads_hash,
         validation_report_hash=validation_report_hash,
+        preflight_report_hash=selected_preflight.report_hash,
         entity_type_counts=MappingProxyType(
             dict(sorted(artifacts.entity_type_counts.items()))
         ),

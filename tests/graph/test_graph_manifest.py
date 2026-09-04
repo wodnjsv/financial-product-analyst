@@ -24,6 +24,7 @@ from financial_agent.graph.manifest import (
     GraphComponentManifest,
     build_graph_manifest,
 )
+from financial_agent.graph.preflight import validate_projection_batch
 from financial_agent.graph.validator import GraphValidationResult
 
 
@@ -141,7 +142,8 @@ def test_manifest_uses_sorted_canonical_json_and_exact_contract_keys(
         "exporter_version": EXPORTER_VERSION,
         "ontology_hashes": dict(sorted(validation.contract_hashes.items())),
         "predicate_counts": {"managedBy": 1},
-        "schema_version": "1",
+        "preflight_report_hash": validate_projection_batch(batch).report_hash,
+        "schema_version": "2",
         "validation_report_hash": validation.report_hash,
     }
     expected_bytes = json.dumps(
@@ -249,6 +251,34 @@ def test_manifest_rejects_failed_validation(tmp_path: Path, monkeypatch) -> None
             artifacts=artifacts,
             ontology_paths=contract_paths,
             validation=validation,
+        )
+
+
+def test_manifest_rejects_fabricated_preflight_hash(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Catches a preflight report being substituted after batch validation."""
+    contract_paths = _contract_paths(tmp_path)
+    monkeypatch.setattr("financial_agent.graph.manifest._PROJECT_ROOT", tmp_path)
+    batch, artifacts = _inputs()
+    validation = _validation(
+        project_root=tmp_path,
+        contract_paths=contract_paths,
+        artifacts=artifacts,
+    )
+    preflight = replace(
+        validate_projection_batch(batch),
+        report_hash="0" * 64,
+    )
+
+    with pytest.raises(ValueError, match="preflight"):
+        build_graph_manifest(
+            batch=batch,
+            artifacts=artifacts,
+            ontology_paths=contract_paths,
+            validation=validation,
+            preflight=preflight,
         )
 
 
@@ -454,7 +484,7 @@ def test_manifest_defensively_freezes_caller_owned_mappings() -> None:
     entity_type_counts = {"ETF": 1}
     predicate_counts = {"holdsSecurity": 1}
     manifest = GraphComponentManifest(
-        schema_version="1",
+        schema_version="2",
         dataset_version="dataset-2026-08-24",
         cutoff_date="2026-08-24",
         exporter_version=EXPORTER_VERSION,
@@ -462,6 +492,7 @@ def test_manifest_defensively_freezes_caller_owned_mappings() -> None:
         data_nquads_hash="b" * 64,
         evidence_nquads_hash="c" * 64,
         validation_report_hash="d" * 64,
+        preflight_report_hash="e" * 64,
         entity_type_counts=entity_type_counts,
         predicate_counts=predicate_counts,
     )

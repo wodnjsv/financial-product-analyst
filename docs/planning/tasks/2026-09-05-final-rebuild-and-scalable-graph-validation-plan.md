@@ -100,7 +100,7 @@ row payloads or credentials.
 .venv/bin/python -m pytest tests/ingestion/test_final_rebuild.py tests/ingestion/test_dart_corpus_cli.py -q
 ```
 
-- [ ] **Step 6: Commit the independently useful safety boundary**
+- [x] **Step 6: Commit the independently useful safety boundary**
 
 ```bash
 git add src/financial_agent/ingestion/final_rebuild.py src/financial_agent/ingestion/cli.py tests/ingestion/test_final_rebuild.py tests/ingestion/test_dart_corpus_cli.py
@@ -165,7 +165,7 @@ when preflight does not conform. Persist `preflight.json` for passing builds.
 .venv/bin/python -m pytest tests/graph/test_graph_preflight.py tests/graph/test_graph_cli.py tests/graph/test_graph_exporter.py -q
 ```
 
-- [ ] **Step 6: Commit the preflight**
+- [x] **Step 6: Commit the preflight**
 
 ```bash
 git add src/financial_agent/graph/preflight.py src/financial_agent/graph/cli.py tests/graph/test_graph_preflight.py tests/graph/test_graph_cli.py
@@ -251,7 +251,7 @@ The second command runs only when Jena/Fuseki 6.0.0 paths are configured; an
 unavailable exact runtime is reported as a blocked runtime prerequisite, not a
 passing test.
 
-- [ ] **Step 6: Commit the Jena release boundary**
+- [x] **Step 6: Commit the Jena release boundary**
 
 ```bash
 git add src/financial_agent/graph/queries.py src/financial_agent/graph/jena.py scripts/graph/verify_jena.py tests/graph/test_jena_release.py tests/graph/test_jena_integration.py
@@ -275,32 +275,32 @@ git commit -m "feat: add bounded Jena release validation"
   `preflight.json`, `validation.json`, `telemetry.json`, `manifest.json`, and
   `report.json` only after all gates pass.
 
-- [ ] **Step 1: Write failing manifest and CLI tests**
+- [x] **Step 1: Write failing manifest and CLI tests**
 
 Prove that mismatched data, Evidence, cutoff, preflight, Jena report, or
 contract hashes prevents manifest creation; prove telemetry changes do not
 change the component-manifest hash; prove failed validation leaves no partial
 output.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```bash
 .venv/bin/python -m pytest tests/graph/test_graph_manifest.py tests/graph/test_graph_cli.py -q
 ```
 
-- [ ] **Step 3: Implement protocol and atomic release build**
+- [x] **Step 3: Implement protocol and atomic release build**
 
 Hash deterministic preflight and Jena report bytes into schema version 2 of
 the Graph component manifest. Keep telemetry outside the hash. Preserve the
 existing pySHACL interface for bounded tests.
 
-- [ ] **Step 4: Run all non-Jena Graph tests and verify GREEN**
+- [x] **Step 4: Run all non-Jena Graph tests and verify GREEN**
 
 ```bash
 .venv/bin/python -m pytest tests/graph -q -m 'not jena_integration'
 ```
 
-- [ ] **Step 5: Commit the Graph release integration**
+- [x] **Step 5: Commit the Graph release integration**
 
 ```bash
 git add src/financial_agent/graph/validator.py src/financial_agent/graph/manifest.py src/financial_agent/graph/cli.py tests/graph/test_graph_manifest.py tests/graph/test_graph_cli.py
