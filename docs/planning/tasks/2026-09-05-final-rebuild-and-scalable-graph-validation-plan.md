@@ -334,7 +334,7 @@ async def validate_and_activate_final_dataset(
 ) -> FinalReleaseReport: ...
 ```
 
-- [ ] **Step 1: Write PostgreSQL release-gate tests**
+- [x] **Step 1: Write PostgreSQL release-gate tests**
 
 Prove that count drift, DART count drift, vector anomaly, missing source,
 manifest mismatch, failed Graph report, or fewer than four readiness components
@@ -342,32 +342,32 @@ prevents activation. Prove the passing path records one successful validation
 run, four readiness rows, finishes validation, and activates atomically only
 when `activate=True`.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```bash
 .venv/bin/python -m pytest tests/ingestion/test_final_release.py -q
 ```
 
-- [ ] **Step 3: Implement deterministic checks and stored-function calls**
+- [x] **Step 3: Implement deterministic checks and stored-function calls**
 
 Use the existing `operations.record_dataset_readiness`,
 `operations.finish_dataset_validation`, and `operations.activate_dataset`
 functions. Generate validation IDs and report hashes from canonical inputs,
 not wall-clock values. Keep activation a final explicit option.
 
-- [ ] **Step 4: Add `finalize-stage03-stage04` CLI command**
+- [x] **Step 4: Add `finalize-stage03-stage04` CLI command**
 
 Require explicit paths/hashes through validated environment inputs, default to
 validation-only, and require `--activate` for the final atomic call. Print only
 aggregate status and hashes.
 
-- [ ] **Step 5: Run focused and broader tests and verify GREEN**
+- [x] **Step 5: Run focused and broader tests and verify GREEN**
 
 ```bash
 .venv/bin/python -m pytest tests/ingestion/test_final_release.py tests/ingestion/test_final_rebuild.py tests/graph -q -m 'not jena_integration'
 ```
 
-- [ ] **Step 6: Commit release activation**
+- [x] **Step 6: Commit release activation**
 
 ```bash
 git add src/financial_agent/ingestion/final_release.py src/financial_agent/ingestion/cli.py tests/ingestion/test_final_release.py

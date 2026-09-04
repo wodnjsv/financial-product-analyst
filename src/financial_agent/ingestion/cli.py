@@ -64,6 +64,12 @@ from financial_agent.ingestion.final_rebuild import (
     FinalRebuildError,
     remove_incomplete_final_dataset,
 )
+from financial_agent.ingestion.final_release import (
+    FinalReleaseError,
+    FinalReleaseInputs,
+    load_graph_release_manifest_hash,
+    validate_and_activate_final_dataset,
+)
 from financial_agent.ingestion.pipeline import (
     SOURCE_SPECS,
     OrganizerBuildError,
@@ -308,6 +314,8 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("load-stage03b")
     commands.add_parser("carry-forward-dart-corpus")
     commands.add_parser("reset-incomplete-final")
+    final_release = commands.add_parser("finalize-stage03-stage04")
+    final_release.add_argument("--activate", action="store_true")
     commands.add_parser("verify-official-object-storage")
     commands.add_parser("audit-document-sources")
     dart_corpus = commands.add_parser("ingest-dart-corpus")
@@ -908,6 +916,54 @@ async def _reset_incomplete_final_command() -> int:
         f"FINAL_DATASET_RESET_OK dataset={report.dataset_version} "
         f"deleted={sum(report.deleted_counts.values())} "
         f"tables={len(report.deleted_counts)}"
+    )
+    return 0
+
+
+async def _finalize_stage03_stage04_command(
+    arguments: argparse.Namespace,
+) -> int:
+    database_url = _required_env("FINANCIAL_AGENT_BUILD_DATABASE_URL")
+    dataset_version = _required_env("FINANCIAL_AGENT_DATASET_VERSION").strip()
+    graph_directory = _untracked_absolute_path(
+        _required_env("FINANCIAL_AGENT_GRAPH_RELEASE_DIRECTORY"),
+        require_parent=False,
+    )
+    graph_hash = load_graph_release_manifest_hash(
+        graph_directory,
+        dataset_version=dataset_version,
+    )
+    inputs = FinalReleaseInputs(
+        dataset_version=dataset_version,
+        postgres_manifest_hash=_required_env(
+            "FINANCIAL_AGENT_POSTGRES_COMPONENT_HASH"
+        ).strip(),
+        graph_manifest_hash=graph_hash,
+        vector_manifest_hash=_required_env(
+            "FINANCIAL_AGENT_VECTOR_COMPONENT_HASH"
+        ).strip(),
+        evidence_manifest_hash=_required_env(
+            "FINANCIAL_AGENT_EVIDENCE_COMPONENT_HASH"
+        ).strip(),
+    )
+    engine = create_async_engine(
+        _async_database_url(database_url),
+        pool_size=1,
+        max_overflow=0,
+        connect_args={"options": "-c timezone=UTC"},
+    )
+    try:
+        report = await validate_and_activate_final_dataset(
+            engine,
+            inputs=inputs,
+            activate=bool(arguments.activate),
+        )
+    finally:
+        await engine.dispose()
+    print(
+        f"FINAL_RELEASE_OK dataset={report.dataset_version} "
+        f"status={report.dataset_status} activated={int(report.activated)} "
+        f"validation={report.validation_run_id} report={report.report_hash}"
     )
     return 0
 
@@ -1928,6 +1984,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = asyncio.run(_carry_forward_dart_corpus_command())
         elif arguments.command == "reset-incomplete-final":
             result = asyncio.run(_reset_incomplete_final_command())
+        elif arguments.command == "finalize-stage03-stage04":
+            result = asyncio.run(_finalize_stage03_stage04_command(arguments))
         elif arguments.command == "measure-stage03b-capacity":
             result = asyncio.run(_capacity_probe_command(arguments))
         elif arguments.command == "audit-document-sources":
@@ -1951,6 +2009,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         DartCorpusIngestionError,
         CorpusCarryForwardError,
         FinalRebuildError,
+        FinalReleaseError,
         DartPublisherDataError,
         DatasetBuildConflict,
         DatasetBuildPayloadError,
