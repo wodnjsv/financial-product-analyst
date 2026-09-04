@@ -60,6 +60,10 @@ from financial_agent.ingestion.capacity_probe import (
     measure_database_acceptance,
     require_current_rebaseline_acceptance,
 )
+from financial_agent.ingestion.final_rebuild import (
+    FinalRebuildError,
+    remove_incomplete_final_dataset,
+)
 from financial_agent.ingestion.pipeline import (
     SOURCE_SPECS,
     OrganizerBuildError,
@@ -303,6 +307,7 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("validate-official")
     commands.add_parser("load-stage03b")
     commands.add_parser("carry-forward-dart-corpus")
+    commands.add_parser("reset-incomplete-final")
     commands.add_parser("verify-official-object-storage")
     commands.add_parser("audit-document-sources")
     dart_corpus = commands.add_parser("ingest-dart-corpus")
@@ -879,6 +884,30 @@ async def _carry_forward_dart_corpus_command() -> int:
         f"DART_CARRY_FORWARD_OK documents={report.document_count} "
         f"coverages={report.coverage_count} chunks={report.chunk_count} "
         f"embeddings={report.embedding_count}"
+    )
+    return 0
+
+
+async def _reset_incomplete_final_command() -> int:
+    database_url = _required_env("FINANCIAL_AGENT_BUILD_DATABASE_URL")
+    dataset_version = _required_env("FINANCIAL_AGENT_DATASET_VERSION").strip()
+    engine = create_async_engine(
+        _async_database_url(database_url),
+        pool_size=1,
+        max_overflow=0,
+        connect_args={"options": "-c timezone=UTC"},
+    )
+    try:
+        report = await remove_incomplete_final_dataset(
+            engine,
+            dataset_version=dataset_version,
+        )
+    finally:
+        await engine.dispose()
+    print(
+        f"FINAL_DATASET_RESET_OK dataset={report.dataset_version} "
+        f"deleted={sum(report.deleted_counts.values())} "
+        f"tables={len(report.deleted_counts)}"
     )
     return 0
 
@@ -1897,6 +1926,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = asyncio.run(_load_stage03b_command())
         elif arguments.command == "carry-forward-dart-corpus":
             result = asyncio.run(_carry_forward_dart_corpus_command())
+        elif arguments.command == "reset-incomplete-final":
+            result = asyncio.run(_reset_incomplete_final_command())
         elif arguments.command == "measure-stage03b-capacity":
             result = asyncio.run(_capacity_probe_command(arguments))
         elif arguments.command == "audit-document-sources":
@@ -1919,6 +1950,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         SourceVerificationError,
         DartCorpusIngestionError,
         CorpusCarryForwardError,
+        FinalRebuildError,
         DartPublisherDataError,
         DatasetBuildConflict,
         DatasetBuildPayloadError,

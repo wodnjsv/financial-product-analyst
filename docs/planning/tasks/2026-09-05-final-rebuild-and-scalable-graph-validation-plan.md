@@ -61,7 +61,7 @@ async def remove_incomplete_final_dataset(
 ) -> IncompleteDatasetCleanupReport: ...
 ```
 
-- [ ] **Step 1: Write PostgreSQL tests for the safety boundary**
+- [x] **Step 1: Write PostgreSQL tests for the safety boundary**
 
 Create fixtures proving that the function refuses a blank or different target,
 an absent target, a non-`building` target, the active target, and a target with
@@ -70,7 +70,7 @@ catalog, relation, observation, Evidence, document, chunk, and embedding rows;
 assert that only those target rows are removed and a second dataset is byte-for-
 byte/count-for-count unchanged.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 Run:
 
@@ -80,21 +80,21 @@ Run:
 
 Expected: collection/import failure because `final_rebuild` does not exist.
 
-- [ ] **Step 3: Implement the guarded transaction**
+- [x] **Step 3: Implement the guarded transaction**
 
 Use one transaction, lock the exact dataset row, verify all guards, collect
 counts, delete reverse dependency order using the registered SQLAlchemy
 metadata for tables carrying `dataset_version`, and delete the dataset row
 last. Convert all guard failures to stable `FinalRebuildError.code` values.
 
-- [ ] **Step 4: Add the explicit CLI command**
+- [x] **Step 4: Add the explicit CLI command**
 
 Add `reset-incomplete-final` using only
 `FINANCIAL_AGENT_BUILD_DATABASE_URL` and
 `FINANCIAL_AGENT_DATASET_VERSION`. Print canonical aggregate counts without
 row payloads or credentials.
 
-- [ ] **Step 5: Run focused and adjacent tests and verify GREEN**
+- [x] **Step 5: Run focused and adjacent tests and verify GREEN**
 
 ```bash
 .venv/bin/python -m pytest tests/ingestion/test_final_rebuild.py tests/ingestion/test_dart_corpus_cli.py -q
