@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import resource
 import shutil
 import socket
 import subprocess
@@ -653,6 +654,39 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
     }
 
 
+def _sha256_path(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _contract_hashes() -> dict[str, str]:
+    return {
+        path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix(): _sha256_path(path)
+        for path in (*TBOX_PATHS, *SHAPE_PATHS)
+    }
+
+
+def _canonical_json(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _write_json(path: Path | None, value: object) -> None:
+    if path is None:
+        return
+    path.write_bytes(_canonical_json(value))
+
+
+def _peak_rss_bytes() -> int:
+    peak = int(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)
+    return peak if sys.platform == "darwin" else peak * 1024
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Verify Graph Phase 1 with Apache Jena 6.0.0")
     parser.add_argument("--jena-home", required=True)
@@ -660,18 +694,55 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--data", required=True)
     parser.add_argument("--evidence", required=True)
     parser.add_argument("--expected", required=True)
+    parser.add_argument("--report", type=Path)
+    parser.add_argument("--telemetry", type=Path)
+    parser.add_argument("--timeout-seconds", type=int, default=1200)
     return parser
 
 
 def main() -> int:
+    started = monotonic_time.monotonic()
+    arguments = _parser().parse_args()
+    if arguments.timeout_seconds <= 0:
+        print("stage=arguments error=timeout must be positive", file=sys.stderr)
+        return 1
     try:
-        summary = verify(_parser().parse_args())
+        summary = verify(arguments)
     except VerificationFailure as error:
         print(f"stage={error.stage} error={error.detail}", file=sys.stderr)
         return 1
     except Exception as error:
         print(f"stage=unexpected error={type(error).__name__}: {error}", file=sys.stderr)
         return 1
+    _, cutoff, _ = _load_expected(Path(arguments.expected))
+    report = {
+        "conforms": True,
+        "contract_hashes": _contract_hashes(),
+        "cutoff_date": cutoff.isoformat(),
+        "data_hash": _sha256_path(Path(arguments.data)),
+        "evidence_hash": _sha256_path(Path(arguments.evidence)),
+        "fuseki_version": summary["fuseki_version"],
+        "java_version": summary["java_version"],
+        "jena_version": summary["jena_version"],
+        "schema_version": "1",
+        "stages": {
+            key: value
+            for key, value in summary.items()
+            if key
+            not in {
+                "java_version",
+                "jena_version",
+                "fuseki_version",
+            }
+        },
+    }
+    telemetry = {
+        "elapsed_seconds": round(monotonic_time.monotonic() - started, 6),
+        "peak_rss_bytes": _peak_rss_bytes(),
+        "schema_version": "1",
+    }
+    _write_json(arguments.report, report)
+    _write_json(arguments.telemetry, telemetry)
     for key, value in summary.items():
         print(f"{key}={value}")
     return 0

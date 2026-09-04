@@ -210,14 +210,14 @@ def run_jena_release_validation(
 ) -> JenaReleaseResult: ...
 ```
 
-- [ ] **Step 1: Write expected-binding and subprocess-boundary tests**
+- [x] **Step 1: Write expected-binding and subprocess-boundary tests**
 
 Use literal expected JSON for all five predicates. Use a temporary executable
 fixture for the wrapper boundary to prove success parsing, timeout failure,
 non-zero exit failure, malformed JSON failure, input-hash mismatch failure,
 and separation of deterministic report from non-deterministic telemetry.
 
-- [ ] **Step 2: Run the focused tests and verify RED**
+- [x] **Step 2: Run the focused tests and verify RED**
 
 ```bash
 .venv/bin/python -m pytest tests/graph/test_jena_release.py -q
@@ -225,14 +225,14 @@ and separation of deterministic report from non-deterministic telemetry.
 
 Expected: import failure for the new interfaces.
 
-- [ ] **Step 3: Implement canonical expected bindings and the bounded wrapper**
+- [x] **Step 3: Implement canonical expected bindings and the bounded wrapper**
 
 Generate bindings from the projection batch without RDF queries. Launch the
 tracked verifier with `shell=False`, a fixed timeout, sanitized environment,
 and explicit absolute paths. Verify returned hashes against the exact input
 files and tracked contract files.
 
-- [ ] **Step 4: Make the verifier emit two JSON files**
+- [x] **Step 4: Make the verifier emit two JSON files**
 
 Keep all current Jena checks. Add `--report`, `--telemetry`, and
 `--timeout-seconds`; route each external command through the remaining
@@ -240,7 +240,7 @@ deadline. The report contains only deterministic outcomes, versions, and
 hashes. Telemetry contains elapsed seconds and platform-normalized peak RSS.
 Terminate Fuseki in every exit path.
 
-- [ ] **Step 5: Run unit tests and the installed Jena fixture gate**
+- [x] **Step 5: Run unit tests and the installed Jena fixture gate**
 
 ```bash
 .venv/bin/python -m pytest tests/graph/test_jena_release.py -q

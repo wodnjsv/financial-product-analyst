@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+import json
 from rdflib import Literal, URIRef
 
-from financial_agent.graph.contract import APPROVED_PREDICATES, FP
+from financial_agent.graph.contract import (
+    APPROVED_PREDICATES,
+    FP,
+    GraphProjectionBatch,
+)
 from financial_agent.graph.exporter import _encoded_segment
+
+
+COMPETENCY_QUERY_IDS = (
+    "managedBy",
+    "issuedBy",
+    "tracksIndex",
+    "holdsSecurity",
+    "hasShareClass",
+)
 
 
 def _versioned_graph_iris(dataset_version: str) -> tuple[URIRef, URIRef]:
@@ -69,3 +83,38 @@ WHERE {{
   BIND ({Literal(predicate_id).n3()} AS ?predicate_id)
 }}
 """
+
+
+def build_expected_bindings(batch: GraphProjectionBatch) -> bytes:
+    queries: dict[str, list[dict[str, str]]] = {
+        predicate_id: [] for predicate_id in COMPETENCY_QUERY_IDS
+    }
+    for relation in batch.relations:
+        if relation.predicate_id not in queries:
+            continue
+        for evidence_id in relation.evidence_ids:
+            row = {
+                "dataset_version": batch.dataset_version,
+                "evidence_id": evidence_id,
+                "object_id": relation.object_id,
+                "predicate_id": relation.predicate_id,
+                "relation_assertion_id": relation.relation_id,
+                "subject_id": relation.subject_id,
+            }
+            if relation.valid_from is not None:
+                row["valid_from"] = relation.valid_from.isoformat()
+            if relation.valid_to is not None:
+                row["valid_to"] = relation.valid_to.isoformat()
+            queries[relation.predicate_id].append(row)
+    for rows in queries.values():
+        rows.sort(key=lambda row: tuple(sorted(row.items())))
+    return json.dumps(
+        {
+            "cutoff_date": batch.cutoff_date.isoformat(),
+            "dataset_version": batch.dataset_version,
+            "queries": queries,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")

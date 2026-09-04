@@ -22,6 +22,8 @@ from financial_agent.graph.contract import (
     SourceProjection,
 )
 from financial_agent.graph.exporter import build_graph_artifacts
+from financial_agent.graph.jena import run_jena_release_validation
+from financial_agent.graph.queries import build_expected_bindings
 from scripts.graph import verify_jena
 
 
@@ -228,6 +230,34 @@ def test_verified_jena_tdb2_and_read_only_fuseki(tmp_path: Path) -> None:
     assert summary["fuseki_query"] == "pass"
     assert summary["update_surface"] == "blocked"
     assert summary["admin_surface"] == "blocked"
+
+
+@pytest.mark.jena_integration
+def test_bounded_release_wrapper_accepts_actual_jena_report(tmp_path: Path) -> None:
+    """Catches drift between the subprocess wrapper and the tracked verifier."""
+    jena_home, fuseki_home = _require_exact_runtime()
+    batch = _synthetic_batch()
+    artifacts = build_graph_artifacts(batch)
+    data_path = tmp_path / "release-data.nq"
+    evidence_path = tmp_path / "release-evidence.nq"
+    expected_path = tmp_path / "release-expected.json"
+    data_path.write_bytes(artifacts.data_nquads)
+    evidence_path.write_bytes(artifacts.evidence_nquads)
+    expected_path.write_bytes(build_expected_bindings(batch))
+
+    result = run_jena_release_validation(
+        data_path=data_path,
+        evidence_path=evidence_path,
+        expected_path=expected_path,
+        jena_home=jena_home,
+        fuseki_home=fuseki_home,
+        cutoff_date=CUTOFF,
+        timeout_seconds=120,
+    )
+
+    assert result.conforms is True
+    assert json.loads(result.report_bytes)["stages"]["shacl"] == "pass"
+    assert json.loads(result.telemetry_bytes)["peak_rss_bytes"] > 0
 
 
 @pytest.mark.jena_integration
