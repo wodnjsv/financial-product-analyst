@@ -1,7 +1,7 @@
 # Final Dataset Rebuild and Scalable Graph Validation Design
 
 - Date: 2026-09-04
-- Status: Proposed for review
+- Status: Accepted
 - Decision: [ADR-0048](../decisions/ADR-0048-rebuild-final-dataset-with-tiered-graph-validation.md)
 
 ## 1. Outcome
@@ -145,11 +145,13 @@ Apache Jena 6.0.0 is the only full-data SHACL release engine. It must:
 5. prove update, Graph Store, and admin surfaces are unavailable; and
 6. remove the temporary Jena state and terminate Fuseki.
 
-The verifier emits machine-readable canonical JSON with stage outcomes,
-elapsed seconds, peak resident memory, tool versions, and hashes of its inputs
-and tracked contracts. A configurable watchdog defaults to 20 minutes for the
-full local release run. Timeout and resource-limit exits are failures, never
-warnings.
+The verifier emits two machine-readable JSON documents. The deterministic
+validation report contains stage outcomes, tool versions, and hashes of its
+inputs and tracked contracts and is bound into the component manifest. The
+operational telemetry contains elapsed seconds and peak resident memory and is
+not manifest-bound because those values vary between otherwise identical
+builds. A configurable watchdog defaults to 20 minutes for the full local
+release run. Timeout and resource-limit exits are failures, never warnings.
 
 ### 7.4 pySHACL boundary
 

@@ -1,7 +1,7 @@
 # ADR-0048: Rebuild the Incomplete Final Dataset with Tiered Graph Validation
 
 - Date: 2026-09-04
-- Status: Proposed
+- Status: Accepted
 - Amends: ADR-0047
 
 ## Context
@@ -47,9 +47,10 @@ Rebuild the exact incomplete target version rather than mutating it in place.
      read-only Fuseki validation;
    - pySHACL remains the development validator for bounded fixtures and
      contract tests, not the full production-sized release artifact.
-6. Record stage duration and peak memory for the full Graph gate. A timeout,
-   non-zero exit, malformed report, or missing expected binding fails closed
-   and prevents activation.
+6. Record stage duration and peak memory as non-deterministic operational
+   telemetry outside the component-manifest hash. A timeout, non-zero exit,
+   malformed report, or missing expected binding fails closed and prevents
+   activation.
 7. Create the four component-readiness records and activate only after the
    complete release gate passes.
 
