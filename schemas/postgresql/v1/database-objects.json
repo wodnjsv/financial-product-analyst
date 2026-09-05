@@ -1710,7 +1710,7 @@
       "object_type": "function",
       "schema": "operations",
       "name": "cache_verified_release(p_run_id text, p_verification_artifact_id uuid, p_answer_plan_artifact_id uuid, p_released_answer_artifact_id uuid)",
-      "owner": "__unexpected_principal__"
+      "owner": "fa_migration"
     },
     {
       "object_type": "function",
@@ -1734,7 +1734,7 @@
       "object_type": "function",
       "schema": "operations",
       "name": "get_cached_release(p_request_key text, p_dataset_version text, p_schema_version text)",
-      "owner": "__unexpected_principal__"
+      "owner": "fa_migration"
     },
     {
       "object_type": "function",
@@ -2064,7 +2064,7 @@
       "object_type": "table",
       "schema": "operations",
       "name": "verified_release_cache",
-      "owner": "__unexpected_principal__"
+      "owner": "fa_migration"
     },
     {
       "object_type": "table",
@@ -5118,49 +5118,49 @@
     {
       "schema": "operations",
       "name": "verified_release_cache",
-      "grantee": "__unexpected_principal__",
+      "grantee": "fa_migration",
       "privilege": "DELETE",
       "grantable": false
     },
     {
       "schema": "operations",
       "name": "verified_release_cache",
-      "grantee": "__unexpected_principal__",
+      "grantee": "fa_migration",
       "privilege": "INSERT",
       "grantable": false
     },
     {
       "schema": "operations",
       "name": "verified_release_cache",
-      "grantee": "__unexpected_principal__",
+      "grantee": "fa_migration",
       "privilege": "REFERENCES",
       "grantable": false
     },
     {
       "schema": "operations",
       "name": "verified_release_cache",
-      "grantee": "__unexpected_principal__",
+      "grantee": "fa_migration",
       "privilege": "SELECT",
       "grantable": false
     },
     {
       "schema": "operations",
       "name": "verified_release_cache",
-      "grantee": "__unexpected_principal__",
+      "grantee": "fa_migration",
       "privilege": "TRIGGER",
       "grantable": false
     },
     {
       "schema": "operations",
       "name": "verified_release_cache",
-      "grantee": "__unexpected_principal__",
+      "grantee": "fa_migration",
       "privilege": "TRUNCATE",
       "grantable": false
     },
     {
       "schema": "operations",
       "name": "verified_release_cache",
-      "grantee": "__unexpected_principal__",
+      "grantee": "fa_migration",
       "privilege": "UPDATE",
       "grantable": false
     },
@@ -5650,7 +5650,7 @@
       "schema": "operations",
       "name": "cache_verified_release",
       "identity_arguments": "p_run_id text, p_verification_artifact_id uuid, p_answer_plan_artifact_id uuid, p_released_answer_artifact_id uuid",
-      "grantee": "__unexpected_principal__",
+      "grantee": "fa_migration",
       "privilege": "EXECUTE",
       "grantable": false
     },
@@ -5706,7 +5706,7 @@
       "schema": "operations",
       "name": "get_cached_release",
       "identity_arguments": "p_request_key text, p_dataset_version text, p_schema_version text",
-      "grantee": "__unexpected_principal__",
+      "grantee": "fa_migration",
       "privilege": "EXECUTE",
       "grantable": false
     },

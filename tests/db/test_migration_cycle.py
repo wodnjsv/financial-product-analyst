@@ -82,6 +82,20 @@ def _object_manifest() -> dict[str, object]:
     }
 
 
+def test_reviewed_database_object_manifest_has_no_unexpected_principal() -> None:
+    manifest = json.loads(
+        (
+            PROJECT_ROOT
+            / "schemas"
+            / "postgresql"
+            / "v1"
+            / "database-objects.json"
+        ).read_text("utf-8")
+    )
+
+    assert "__unexpected_principal__" not in json.dumps(manifest)
+
+
 def test_manifest_comparison_classifies_executable_definition_drift() -> None:
     expected = _object_manifest()
     actual = deepcopy(expected)

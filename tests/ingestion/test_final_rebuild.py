@@ -143,12 +143,28 @@ async def test_cleanup_refuses_active_or_successfully_validated_target(
     ingestion_migrated_database_url: str,
     blocked_state: str,
 ) -> None:
+    prior_active: str | None = None
     with psycopg.connect(
         normalize_psycopg_url(ingestion_migrated_database_url)
     ) as connection:
         insert_building_dataset(connection, FINAL_DATASET_VERSION)
         if blocked_state == "active":
             connection.execute("SET LOCAL session_replication_role = replica")
+            prior_active = connection.execute(
+                """
+                SELECT dataset_version FROM operations.active_dataset
+                 WHERE singleton
+                """
+            ).fetchone()[0]
+            if prior_active is not None:
+                connection.execute(
+                    """
+                    UPDATE operations.dataset_version
+                       SET status = 'retired'
+                     WHERE dataset_version = %s
+                    """,
+                    (prior_active,),
+                )
             connection.execute(
                 """
                 UPDATE operations.dataset_version
@@ -225,6 +241,21 @@ async def test_cleanup_refuses_active_or_successfully_validated_target(
         ingestion_admin_engine,
         dataset_version=FINAL_DATASET_VERSION,
     )
+    if prior_active is not None:
+        async with ingestion_admin_engine.begin() as connection:
+            await connection.execute(
+                sa.text("SET LOCAL session_replication_role = replica")
+            )
+            await connection.execute(
+                sa.update(dataset_version_table)
+                .where(dataset_version_table.c.dataset_version == prior_active)
+                .values(status="active")
+            )
+            await connection.execute(
+                sa.update(operations.active_dataset)
+                .where(operations.active_dataset.c.singleton.is_(True))
+                .values(dataset_version=prior_active)
+            )
 
 
 @pytest.mark.asyncio

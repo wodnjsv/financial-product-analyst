@@ -90,6 +90,35 @@ def _purge_final_dataset(database_url: str) -> None:
         )
 
 
+def _active_dataset(database_url: str) -> str | None:
+    with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+        return connection.execute(
+            "SELECT dataset_version FROM operations.active_dataset WHERE singleton"
+        ).fetchone()[0]
+
+
+def _restore_active_dataset(database_url: str, dataset_version: str | None) -> None:
+    if dataset_version is None:
+        return
+    with psycopg.connect(normalize_psycopg_url(database_url)) as connection:
+        connection.execute("SET LOCAL session_replication_role = replica")
+        connection.execute(
+            """
+            UPDATE operations.dataset_version SET status = 'active'
+             WHERE dataset_version = %s
+            """,
+            (dataset_version,),
+        )
+        connection.execute(
+            """
+            UPDATE operations.active_dataset
+               SET dataset_version = %s, activated_at = clock_timestamp()
+             WHERE singleton
+            """,
+            (dataset_version,),
+        )
+
+
 @pytest.mark.postgres
 @pytest.mark.asyncio
 async def test_release_audit_executes_against_postgresql_schema(
@@ -124,6 +153,7 @@ async def test_release_records_four_components_then_activates_explicitly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _purge_final_dataset(ingestion_migrated_database_url)
+    prior_active = _active_dataset(ingestion_migrated_database_url)
     with psycopg.connect(
         normalize_psycopg_url(ingestion_migrated_database_url)
     ) as connection:
@@ -177,7 +207,7 @@ async def test_release_records_four_components_then_activates_explicitly(
                 sa.select(operations.active_dataset.c.dataset_version).where(
                     operations.active_dataset.c.singleton.is_(True)
                 )
-            ) is None
+            ) == prior_active
 
         activated = await validate_and_activate_final_dataset(
             ingestion_admin_engine,
@@ -202,6 +232,7 @@ async def test_release_records_four_components_then_activates_explicitly(
             ) == 1
     finally:
         _purge_final_dataset(ingestion_migrated_database_url)
+        _restore_active_dataset(ingestion_migrated_database_url, prior_active)
 
 
 @pytest.mark.postgres
