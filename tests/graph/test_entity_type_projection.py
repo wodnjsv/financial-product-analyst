@@ -38,6 +38,22 @@ def test_projection_preserves_storage_subtype_and_relation_roles() -> None:
     ) == ("FinancialProduct", "PublicFund", "RepresentativeFund")
 
 
+def test_projection_adds_security_role_to_a_product_held_by_another_product() -> None:
+    assert project_entity_ontology_type_ids(
+        entity_id="held-etf",
+        storage_entity_type="product",
+        product_family="overseas_etf",
+        product_type_facts=(ProductTypeFact("present", "ETF", "text"),),
+        is_holding_object=True,
+    ) == (
+        "ETF",
+        "ExchangeTradedProduct",
+        "FinancialProduct",
+        "OverseasETF",
+        "Security",
+    )
+
+
 @pytest.mark.parametrize("institution_kind", ["organizer", "regulator", "central_bank"])
 def test_unmapped_institution_kinds_keep_the_organization_base_type(
     institution_kind: str,

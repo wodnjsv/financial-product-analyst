@@ -679,6 +679,47 @@ async def test_load_omits_a_holding_relation_when_weight_is_officially_unknown(
     }
 
 
+async def test_load_omits_a_holding_relation_with_a_negative_short_weight(
+    migrated_database_url: str,
+    repository_engine: AsyncEngine,
+) -> None:
+    dataset_version = _seed_projection(migrated_database_url)
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        connection.execute(
+            """
+            UPDATE observation.observation_record
+            SET value_status = 'present', numeric_value = -0.4928217334
+            WHERE dataset_version = %s
+              AND observation_id IN ('weight-approved', 'weight-approved-later')
+            """,
+            (dataset_version,),
+        )
+
+    batch = await GraphProjectionRepository(repository_engine).load(dataset_version)
+
+    assert "rel-a-holding" not in {
+        relation.relation_id for relation in batch.relations
+    }
+    assert "evidence-a" not in {
+        evidence.evidence_id for evidence in batch.evidences
+    }
+    with psycopg.connect(normalize_psycopg_url(migrated_database_url)) as connection:
+        stored_values = connection.execute(
+            """
+            SELECT numeric_value
+            FROM observation.observation_record
+            WHERE dataset_version = %s
+              AND observation_id IN ('weight-approved', 'weight-approved-later')
+            ORDER BY observation_id
+            """,
+            (dataset_version,),
+        ).fetchall()
+    assert stored_values == [
+        (Decimal("-0.492821733400"),),
+        (Decimal("-0.492821733400"),),
+    ]
+
+
 async def test_load_rejects_an_approved_holding_weight_without_applicable_date(
     migrated_database_url: str,
     repository_engine: AsyncEngine,

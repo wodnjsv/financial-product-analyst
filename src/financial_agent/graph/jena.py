@@ -18,6 +18,7 @@ from financial_agent.graph.contract import GRAPH_CONTRACT_RELATIVE_PATHS
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_VERIFIER = _PROJECT_ROOT / "scripts" / "graph" / "verify_jena.py"
+_OVERALL_TIMEOUT_MULTIPLIER = 3
 _RUNTIME_VARIABLES = (
     "JENA_HOME",
     "FUSEKI_HOME",
@@ -35,9 +36,22 @@ _RUNTIME_VARIABLES = (
 
 
 class JenaReleaseError(ValueError):
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, detail: str | None = None) -> None:
         self.code = code
+        self.detail = detail
         super().__init__(code)
+
+
+def _overall_timeout_seconds(per_stage_timeout_seconds: int) -> int:
+    return per_stage_timeout_seconds * _OVERALL_TIMEOUT_MULTIPLIER
+
+
+def _sha256_path(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +155,9 @@ def run_jena_release_validation(
             start_new_session=True,
         )
         try:
-            process.communicate(timeout=timeout_seconds)
+            _, stderr = process.communicate(
+                timeout=_overall_timeout_seconds(timeout_seconds)
+            )
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGTERM)
             try:
@@ -151,7 +167,9 @@ def run_jena_release_validation(
                 process.communicate()
             raise JenaReleaseError("JENA_TIMEOUT") from None
         if process.returncode != 0:
-            raise JenaReleaseError("JENA_PROCESS_FAILED")
+            lines = [line.strip() for line in (stderr or "").splitlines() if line.strip()]
+            detail = lines[-1][:1000] if lines else None
+            raise JenaReleaseError("JENA_PROCESS_FAILED", detail=detail)
 
         report, report_bytes = _load_canonical_json(
             report_path, "JENA_REPORT_INVALID"
@@ -160,8 +178,8 @@ def run_jena_release_validation(
             telemetry_path, "JENA_TELEMETRY_INVALID"
         )
 
-    data_hash = sha256(data_path.read_bytes()).hexdigest()
-    evidence_hash = sha256(evidence_path.read_bytes()).hexdigest()
+    data_hash = _sha256_path(data_path)
+    evidence_hash = _sha256_path(evidence_path)
     contract_hashes = _contract_hashes()
     if (
         report.get("schema_version") != "1"

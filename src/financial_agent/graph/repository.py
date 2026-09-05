@@ -352,12 +352,26 @@ def _build_batch(
     relations_with_reported_weights = {
         row.relation_id for row in metric_rows
     }
+    relations_with_out_of_bounds_weights = {
+        row.relation_id
+        for row in metric_rows
+        if row.value_status in {"present", "zero"}
+        and isinstance(row.numeric_value, Decimal)
+        and row.numeric_value.is_finite()
+        and (
+            row.numeric_value < Decimal("0")
+            or row.numeric_value > Decimal("100")
+        )
+    }
     unprojectable_holding_ids = {
         relation_id
         for relation_id, predicate_id in relation_predicates.items()
         if predicate_id == "holdsSecurity"
         and relation_id in relations_with_reported_weights
-        and relation_id not in relations_with_known_weights
+        and (
+            relation_id not in relations_with_known_weights
+            or relation_id in relations_with_out_of_bounds_weights
+        )
     }
     relation_rows = [
         row
@@ -391,6 +405,9 @@ def _build_batch(
     share_class_object_ids = {
         row.object_id for row in relation_rows if row.predicate_id == "hasShareClass"
     }
+    holding_object_ids = {
+        row.object_id for row in relation_rows if row.predicate_id == "holdsSecurity"
+    }
 
     types_by_entity: dict[str, set[str]] = {}
     for row in entity_rows:
@@ -410,6 +427,7 @@ def _build_batch(
                     ),
                     is_share_class_subject=row.entity_id in share_class_subject_ids,
                     is_share_class_object=row.entity_id in share_class_object_ids,
+                    is_holding_object=row.entity_id in holding_object_ids,
                 )
             )
         except EntityTypeProjectionError as error:

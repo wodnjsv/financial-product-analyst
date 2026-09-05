@@ -138,6 +138,13 @@ def _expected_bindings(
     relations: tuple[tuple[str, str, str, str], ...] = RELATIONS,
 ) -> dict[str, object]:
     return {
+        "binding_counts": {
+            predicate_id: sum(
+                row_predicate == predicate_id
+                for row_predicate, _, _, _ in relations
+            )
+            for predicate_id in verify_jena.QUERY_IDS
+        },
         "cutoff_date": CUTOFF.isoformat(),
         "dataset_version": VERSION,
         "queries": {
@@ -162,6 +169,7 @@ def _expected_bindings(
             ]
             for predicate_id in verify_jena.QUERY_IDS
         },
+        "schema_version": "2",
     }
 
 

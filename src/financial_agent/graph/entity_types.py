@@ -45,6 +45,7 @@ def project_entity_ontology_type_ids(
     product_type_facts: tuple[ProductTypeFact, ...] = (),
     is_share_class_subject: bool = False,
     is_share_class_object: bool = False,
+    is_holding_object: bool = False,
 ) -> tuple[str, ...]:
     """Project one catalog entity using the same source facts as the ABox."""
 
@@ -117,6 +118,8 @@ def project_entity_ontology_type_ids(
         if "FinancialProduct" not in ontology_types:
             _fail("missing_relation_type", f"{entity_id}:object")
         ontology_types.add("FundShareClass")
+    if is_holding_object and storage_entity_type == "product":
+        ontology_types.add("Security")
     if {"ETF", "ETN"} <= ontology_types:
         _fail("conflicting_entity_types", f"{entity_id}:ETF and ETN")
     if not ontology_types <= APPROVED_RDF_TYPES:

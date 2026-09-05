@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+import json
 from warnings import catch_warnings, filterwarnings
 
 import pytest
@@ -23,7 +24,11 @@ from financial_agent.graph.exporter import (
     evidence_iri,
     source_iri,
 )
-from financial_agent.graph.queries import build_relation_query
+from financial_agent.graph.queries import (
+    build_expected_bindings,
+    build_relation_count_query,
+    build_relation_query,
+)
 
 
 pytestmark = pytest.mark.filterwarnings(
@@ -168,6 +173,77 @@ def test_relation_query_leaves_missing_validity_bounds_unbound() -> None:
         "evidence_id",
         "dataset_version",
     }
+
+
+def test_release_queries_support_bounded_exact_rows_and_full_counts() -> None:
+    dataset = _exported_dataset()
+    exact_query = build_relation_query(
+        "holdsSecurity",
+        VERSION,
+        relation_ids=("relation/holds",),
+    )
+    exact = dataset.query(exact_query)
+    count_query = build_relation_count_query("holdsSecurity", VERSION)
+    count = dataset.query(count_query)
+
+    assert [str(row["relation_assertion_id"]) for row in exact] == ["relation/holds"]
+    assert int(count.bindings[0]["binding_count"]) == 1
+    assert "fp:entityId" not in count_query
+    assert "fp:supportedBy" in count_query
+    assert "fp:sourceRecord" in count_query
+    assert exact_query.index("VALUES ?assertion") < exact_query.index("GRAPH <")
+    assert exact_query.index("?assertion a fp:RelationAssertion") < exact_query.index(
+        "?subject <urn:ontology:financial-product:v1#holdsSecurity> ?object"
+    )
+    assert "urn:financial-agent:relation:2026-08-24%2Fv1:relation%2Fholds" in exact_query
+
+
+def test_expected_binding_sample_never_splits_one_relations_evidence_group() -> None:
+    batch = GraphProjectionBatch(
+        dataset_version=VERSION,
+        cutoff_date=CUTOFF,
+        entities=(),
+        sources=(),
+        evidences=(),
+        relations=(
+            RelationProjection(
+                VERSION,
+                "relation/multiple",
+                "product/one",
+                "holdsSecurity",
+                "security/one",
+                None,
+                None,
+                ("evidence/one", "evidence/two"),
+                (),
+            ),
+            RelationProjection(
+                VERSION,
+                "relation/single",
+                "product/two",
+                "holdsSecurity",
+                "security/two",
+                None,
+                None,
+                ("evidence/three",),
+                (),
+            ),
+        ),
+    )
+
+    payload = json.loads(build_expected_bindings(batch, sample_limit_per_predicate=1))
+
+    assert payload["binding_counts"]["holdsSecurity"] == 3
+    assert payload["queries"]["holdsSecurity"] == [
+        {
+            "dataset_version": VERSION,
+            "evidence_id": "evidence/three",
+            "object_id": "security/two",
+            "predicate_id": "holdsSecurity",
+            "relation_assertion_id": "relation/single",
+            "subject_id": "product/two",
+        }
+    ]
 
 
 def test_relation_query_requires_the_requested_assertion_dataset_version() -> None:

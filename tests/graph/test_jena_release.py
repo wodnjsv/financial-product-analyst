@@ -3,17 +3,105 @@ from __future__ import annotations
 from hashlib import sha256
 import json
 from pathlib import Path
+import sys
 import textwrap
 
 import pytest
 
 from financial_agent.graph.contract import GRAPH_CONTRACT_RELATIVE_PATHS
+from financial_agent.graph import jena
 from financial_agent.graph.jena import JenaReleaseError, run_jena_release_validation
 from financial_agent.graph.queries import build_expected_bindings
+from scripts.graph import verify_jena
+from scripts.graph.verify_jena import (
+    _render_fuseki_config,
+    _run as run_verifier_command,
+)
 from tests.graph.test_graph_exporter import valid_batch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_outer_watchdog_allows_multiple_bounded_verifier_stages() -> None:
+    assert jena._overall_timeout_seconds(1200) == 3600
+
+
+def test_large_artifact_hashing_does_not_use_path_read_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact = tmp_path / "artifact.nq"
+    artifact.write_bytes(b"stream this payload")
+    expected = sha256(b"stream this payload").hexdigest()
+
+    def reject_full_read(path: Path) -> bytes:
+        raise AssertionError(f"full read attempted for {path}")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_full_read)
+
+    assert jena._sha256_path(artifact) == expected
+    assert verify_jena._sha256_path(artifact) == expected
+
+
+def test_fuseki_readiness_probe_does_not_run_a_competency_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str] = []
+
+    class RunningProcess:
+        @staticmethod
+        def poll() -> None:
+            return None
+
+    def query(endpoint: str, sparql: str, *, timeout: float, stage: str) -> str:
+        del endpoint, timeout, stage
+        observed.append(sparql)
+        return "{}"
+
+    monkeypatch.setattr(verify_jena, "_http_query", query)
+
+    verify_jena._wait_for_fuseki(RunningProcess(), "http://127.0.0.1/query")
+
+    assert len(observed) == 1
+    assert "LIMIT 1" in observed[0]
+    assert "RelationAssertion" not in observed[0]
+
+
+def test_verifier_command_can_stream_stdout_directly_to_a_file(tmp_path: Path) -> None:
+    output_path = tmp_path / "large-output.ttl"
+
+    result = run_verifier_command(
+        "stream",
+        [sys.executable, "-c", "print('streamed graph')"],
+        environment={},
+        stdout_path=output_path,
+    )
+
+    assert result.stdout is None
+    assert output_path.read_text(encoding="utf-8") == "streamed graph\n"
+
+
+def test_validation_fuseki_config_adds_only_the_internal_shacl_endpoint() -> None:
+    template = (PROJECT_ROOT / "config/fuseki/financial-product.ttl").read_text(
+        encoding="utf-8"
+    )
+
+    validation_config = _render_fuseki_config(
+        template,
+        tdb2_location=Path("/tmp/graph-tdb2"),
+        include_shacl=True,
+    )
+    runtime_config = _render_fuseki_config(
+        template,
+        tdb2_location=Path("/tmp/graph-tdb2"),
+        include_shacl=False,
+    )
+
+    assert "fuseki:operation fuseki:shacl" in validation_config
+    assert "fuseki:name \"shacl\"" in validation_config
+    assert "fuseki:operation fuseki:shacl" not in runtime_config
+    assert "__TDB2_LOCATION__" not in validation_config
 
 
 def test_expected_bindings_are_canonical_and_evidence_expanded() -> None:
@@ -25,6 +113,14 @@ def test_expected_bindings_are_canonical_and_evidence_expanded() -> None:
     assert payload == {
         "cutoff_date": "2026-08-24",
         "dataset_version": "2026-08-24/v1",
+        "schema_version": "2",
+        "binding_counts": {
+            "hasShareClass": 0,
+            "holdsSecurity": 2,
+            "issuedBy": 0,
+            "managedBy": 0,
+            "tracksIndex": 0,
+        },
         "queries": {
             "hasShareClass": [],
             "holdsSecurity": [
@@ -95,9 +191,12 @@ for name in ('jena-home', 'fuseki-home', 'data', 'evidence', 'expected', 'report
 args = parser.parse_args()
 mode = {mode!r}
 if mode == 'timeout':
-    time.sleep(2)
+    time.sleep(4)
 if mode == 'nonzero':
     raise SystemExit(3)
+if mode == 'reported_failure':
+    print('stage=shacl error=validation endpoint rejected the graph', file=sys.stderr)
+    raise SystemExit(4)
 if mode == 'malformed':
     open(args.report, 'w', encoding='utf-8').write('{{')
 else:
@@ -171,3 +270,17 @@ def test_release_wrapper_fails_closed(
 
     with pytest.raises(JenaReleaseError, match=expected_code):
         _run(tmp_path, script, timeout_seconds=timeout_seconds)
+
+
+def test_release_wrapper_preserves_only_the_verifier_failure_summary(
+    tmp_path: Path,
+) -> None:
+    script = _verifier_script(tmp_path / "reported.py", mode="reported_failure")
+
+    with pytest.raises(JenaReleaseError, match="JENA_PROCESS_FAILED") as captured:
+        _run(tmp_path, script)
+
+    assert captured.value.code == "JENA_PROCESS_FAILED"
+    assert captured.value.detail == (
+        "stage=shacl error=validation endpoint rejected the graph"
+    )

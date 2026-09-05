@@ -18,7 +18,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from financial_agent.graph.queries import build_relation_query
+from rdflib import Graph, URIRef
+
+from financial_agent.graph.queries import build_relation_count_query, build_relation_query
 
 
 REQUIRED_VERSION = "6.0.0"
@@ -63,6 +65,7 @@ RUNTIME_CUSTOMIZATION_VARIABLES = (
 )
 TEMP_ENVIRONMENT_VARIABLES = ("TMPDIR", "TEMP", "TMP")
 STANDARD_TEMP_PARENTS = (Path("/tmp"), Path("/var/tmp"), Path("/usr/tmp"))
+FUSEKI_READINESS_QUERY = "SELECT ?g WHERE { GRAPH ?g { ?s ?p ?o } } LIMIT 1"
 
 
 class VerificationFailure(RuntimeError):
@@ -78,17 +81,30 @@ def _run(
     *,
     cwd: Path | None = None,
     environment: Mapping[str, str],
+    stdout_path: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(
-            list(command),
-            cwd=cwd,
-            env=dict(environment),
-            capture_output=True,
-            text=True,
-            shell=False,
-            check=True,
-        )
+        if stdout_path is None:
+            return subprocess.run(
+                list(command),
+                cwd=cwd,
+                env=dict(environment),
+                capture_output=True,
+                text=True,
+                shell=False,
+                check=True,
+            )
+        with stdout_path.open("w", encoding="utf-8") as output:
+            return subprocess.run(
+                list(command),
+                cwd=cwd,
+                env=dict(environment),
+                stdout=output,
+                stderr=subprocess.PIPE,
+                text=True,
+                shell=False,
+                check=True,
+            )
     except subprocess.CalledProcessError as error:
         detail = (error.stderr or error.stdout or "command failed").strip().splitlines()
         raise VerificationFailure(stage, detail[-1] if detail else "command failed") from error
@@ -272,12 +288,29 @@ def _normalize_sparql_json(payload: str, stage: str) -> list[dict[str, str]]:
     return sorted(normalized, key=lambda row: tuple(row.items()))
 
 
-def _load_expected(path: Path) -> tuple[str, date, dict[str, list[dict[str, str]]]]:
+def _normalize_count_json(payload: str, stage: str) -> int:
+    try:
+        document = json.loads(payload)
+        variables = document["head"]["vars"]
+        bindings = document["results"]["bindings"]
+        value = bindings[0]["binding_count"]["value"]
+        count = int(value)
+    except (json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as error:
+        raise VerificationFailure(stage, "malformed SPARQL count result") from error
+    if variables != ["binding_count"] or len(bindings) != 1 or count < 0:
+        raise VerificationFailure(stage, "SPARQL count result is invalid")
+    return count
+
+
+def _load_expected(
+    path: Path,
+) -> tuple[str, date, dict[str, list[dict[str, str]]], dict[str, int]]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
         version = document["dataset_version"]
         cutoff = date.fromisoformat(document["cutoff_date"])
         queries = document["queries"]
+        counts = document["binding_counts"]
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
         raise VerificationFailure(
             "expected_bindings", "invalid expected-bindings document"
@@ -285,8 +318,12 @@ def _load_expected(path: Path) -> tuple[str, date, dict[str, list[dict[str, str]
     if (
         not isinstance(version, str)
         or not version
+        or document.get("schema_version") != "2"
         or not isinstance(queries, dict)
         or set(queries) != set(QUERY_IDS)
+        or not isinstance(counts, dict)
+        or set(counts) != set(QUERY_IDS)
+        or any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in counts.values())
     ):
         raise VerificationFailure(
             "expected_bindings", "expected queries or dataset version are invalid"
@@ -307,15 +344,17 @@ def _load_expected(path: Path) -> tuple[str, date, dict[str, list[dict[str, str]
                 raise VerificationFailure("expected_bindings", f"{query_id} binding is invalid")
             normalized_rows.append(dict(sorted(row.items())))
         normalized[query_id] = sorted(normalized_rows, key=lambda row: tuple(row.items()))
-    return version, cutoff, normalized
+        if len(normalized[query_id]) > counts[query_id]:
+            raise VerificationFailure(
+                "expected_bindings", f"{query_id} sample exceeds its binding count"
+            )
+    return version, cutoff, normalized, counts
 
 
 def _write_validation_inputs(
     *,
     riot: Path,
     temporary_root: Path,
-    data: Path,
-    evidence: Path,
     cutoff: date,
     environment: Mapping[str, str],
 ) -> tuple[Path, Path]:
@@ -333,53 +372,131 @@ def _write_validation_inputs(
         f'  v:cutoffEndExclusive "{cutoff_end.isoformat()}"^^xsd:dateTime .\n',
         encoding="utf-8",
     )
-    data_union = temporary_root / "validation-data.ttl"
     shapes_union = temporary_root / "validation-shapes.ttl"
-    data_result = _run(
-        "shacl_prepare",
-        [
-            str(riot),
-            "--merge",
-            "--output=TTL",
-            *(str(path) for path in TBOX_PATHS),
-            str(data),
-            str(evidence),
-            str(context),
-        ],
-        environment=environment,
-    )
-    data_union.write_text(data_result.stdout, encoding="utf-8")
-    shapes_result = _run(
+    _run(
         "shacl_prepare",
         [str(riot), "--merge", "--output=TTL", *(str(path) for path in SHAPE_PATHS)],
         environment=environment,
+        stdout_path=shapes_union,
     )
-    shapes_union.write_text(shapes_result.stdout, encoding="utf-8")
-    return data_union, shapes_union
+    return context, shapes_union
 
 
-def _check_shacl(
-    shacl: Path,
-    data_union: Path,
-    shapes_union: Path,
-    environment: Mapping[str, str],
+def _check_shacl_endpoint(
+    endpoint: str,
+    shapes_path: Path,
+    *,
+    timeout: float,
 ) -> None:
-    result = _run(
-        "shacl",
-        [str(shacl), "validate", "--shapes", str(shapes_union), "--data", str(data_union)],
-        environment=environment,
+    request = Request(
+        endpoint,
+        data=shapes_path.read_bytes(),
+        headers={
+            "Accept": "text/turtle",
+            "Content-Type": "text/turtle",
+        },
+        method="POST",
     )
-    if re.search(r"(?:sh:conforms|/ns/shacl#conforms>)\s+true\b", result.stdout) is None:
-        raise VerificationFailure("shacl", "validation did not report sh:conforms true")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            payload = response.read().decode("utf-8")
+    except (HTTPError, URLError, TimeoutError) as error:
+        raise VerificationFailure("shacl", f"loopback validation failed: {error}") from error
+    try:
+        report = Graph().parse(data=payload, format="turtle")
+    except Exception as error:
+        raise VerificationFailure("shacl", "validation report is not Turtle") from error
+    conforms = tuple(
+        report.objects(
+            None,
+            URIRef("http://www.w3.org/ns/shacl#conforms"),
+        )
+    )
+    if not conforms or not all(value.toPython() is True for value in conforms):
+        component = next(
+            report.objects(
+                None,
+                URIRef("http://www.w3.org/ns/shacl#sourceConstraintComponent"),
+            ),
+            None,
+        )
+        detail = "validation did not report sh:conforms true"
+        if component is not None:
+            detail = f"validation failed constraint={component}"
+        source_shape = next(
+            report.objects(
+                None,
+                URIRef("http://www.w3.org/ns/shacl#sourceShape"),
+            ),
+            None,
+        )
+        if source_shape is not None:
+            detail = f"{detail} shape={source_shape}"
+        result_path = next(
+            report.objects(
+                None,
+                URIRef("http://www.w3.org/ns/shacl#resultPath"),
+            ),
+            None,
+        )
+        if result_path is not None:
+            detail = f"{detail} path={result_path}"
+        raise VerificationFailure("shacl", detail)
 
 
-def _query_files(root: Path, dataset_version: str) -> dict[str, Path]:
+def _render_fuseki_config(
+    template: str,
+    *,
+    tdb2_location: Path,
+    include_shacl: bool,
+) -> str:
+    if template.count("__TDB2_LOCATION__") != 1:
+        raise VerificationFailure(
+            "fuseki_config", "assembler placeholder must occur exactly once"
+        )
+    rendered = template.replace("__TDB2_LOCATION__", str(tdb2_location))
+    if not include_shacl:
+        return rendered
+    marker = "  fuseki:dataset <#dataset> ."
+    if rendered.count(marker) != 1:
+        raise VerificationFailure("fuseki_config", "dataset marker must occur exactly once")
+    shacl_endpoint = (
+        "  fuseki:endpoint [\n"
+        "    fuseki:operation fuseki:shacl ;\n"
+        '    fuseki:name "shacl"\n'
+        "  ] ;\n"
+    )
+    return rendered.replace(marker, shacl_endpoint + marker)
+
+
+def _query_files(
+    root: Path,
+    dataset_version: str,
+    expected: Mapping[str, list[dict[str, str]]],
+) -> tuple[dict[str, Path], dict[str, Path]]:
     paths: dict[str, Path] = {}
+    count_paths: dict[str, Path] = {}
     for query_id in QUERY_IDS:
         path = root / f"{query_id}.rq"
-        path.write_text(build_relation_query(query_id, dataset_version), encoding="utf-8")
+        relation_ids = tuple(
+            sorted({row["relation_assertion_id"] for row in expected[query_id]})
+        )
+        path.write_text(
+            build_relation_query(
+                query_id,
+                dataset_version,
+                relation_ids=relation_ids or None,
+            ),
+            encoding="utf-8",
+        )
         paths[query_id] = path
-    return paths
+        count_path = root / f"{query_id}-count.rq"
+        count_path.write_text(
+            build_relation_count_query(query_id, dataset_version),
+            encoding="utf-8",
+        )
+        count_paths[query_id] = count_path
+    return paths, count_paths
 
 
 def _run_cli_queries(
@@ -387,10 +504,27 @@ def _run_cli_queries(
     tdbquery: Path,
     tdb2_location: Path,
     query_paths: Mapping[str, Path],
+    count_query_paths: Mapping[str, Path],
     expected: Mapping[str, list[dict[str, str]]],
+    expected_counts: Mapping[str, int],
     environment: Mapping[str, str],
 ) -> None:
     for query_id in QUERY_IDS:
+        count_result = _run(
+            "tdb2_query",
+            [
+                str(tdbquery),
+                "--optimize=false",
+                "--loc",
+                str(tdb2_location),
+                "--query",
+                str(count_query_paths[query_id]),
+                "--results=JSON",
+            ],
+            environment=environment,
+        )
+        if _normalize_count_json(count_result.stdout, "tdb2_query") != expected_counts[query_id]:
+            raise VerificationFailure("tdb2_query", f"binding count differs for {query_id}")
         result = _run(
             "tdb2_query",
             [
@@ -432,13 +566,18 @@ def _http_query(endpoint: str, sparql: str, *, timeout: float, stage: str) -> st
         raise VerificationFailure(stage, f"loopback query failed: {error}") from error
 
 
-def _wait_for_fuseki(process: subprocess.Popen[str], endpoint: str, sparql: str) -> None:
+def _wait_for_fuseki(process: subprocess.Popen[str], endpoint: str) -> None:
     deadline = monotonic_time.monotonic() + 20.0
     while monotonic_time.monotonic() < deadline:
         if process.poll() is not None:
             raise VerificationFailure("fuseki_start", f"Fuseki exited with {process.returncode}")
         try:
-            _http_query(endpoint, sparql, timeout=1.0, stage="fuseki_start")
+            _http_query(
+                endpoint,
+                FUSEKI_READINESS_QUERY,
+                timeout=1.0,
+                stage="fuseki_start",
+            )
             return
         except VerificationFailure:
             monotonic_time.sleep(0.1)
@@ -448,9 +587,19 @@ def _wait_for_fuseki(process: subprocess.Popen[str], endpoint: str, sparql: str)
 def _run_http_queries(
     endpoint: str,
     query_paths: Mapping[str, Path],
+    count_query_paths: Mapping[str, Path],
     expected: Mapping[str, list[dict[str, str]]],
+    expected_counts: Mapping[str, int],
 ) -> None:
     for query_id in QUERY_IDS:
+        count_payload = _http_query(
+            endpoint,
+            count_query_paths[query_id].read_text(encoding="utf-8"),
+            timeout=60.0,
+            stage="fuseki_query",
+        )
+        if _normalize_count_json(count_payload, "fuseki_query") != expected_counts[query_id]:
+            raise VerificationFailure("fuseki_query", f"binding count differs for {query_id}")
         payload = _http_query(
             endpoint,
             query_paths[query_id].read_text(encoding="utf-8"),
@@ -529,7 +678,6 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
             raise VerificationFailure("arguments", f"required tracked file is missing: {path}")
 
     riot = _resolve_executable(jena_home, "bin/riot")
-    shacl = _resolve_executable(jena_home, "bin/shacl")
     tdbloader = _resolve_executable(jena_home, "bin/tdb2.tdbloader")
     tdbquery = _resolve_executable(jena_home, "bin/tdb2.tdbquery")
     fuseki_server = _resolve_executable(fuseki_home, "fuseki-server")
@@ -539,7 +687,7 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
         jena_home=jena_home,
         fuseki_home=fuseki_home,
     )
-    dataset_version, cutoff, expected = _load_expected(expected_path)
+    dataset_version, cutoff, expected, expected_counts = _load_expected(expected_path)
 
     fuseki_process: subprocess.Popen[str] | None = None
     with tempfile.TemporaryDirectory(
@@ -571,37 +719,52 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
                 environment=environment,
             )
         tdb2_location = temporary_root / "tdb2"
-        data_union, shapes_union = _write_validation_inputs(
+        context, shapes_union = _write_validation_inputs(
             riot=riot,
             temporary_root=temporary_root,
-            data=data,
-            evidence=evidence,
             cutoff=cutoff,
             environment=environment,
         )
-        _check_shacl(shacl, data_union, shapes_union, environment)
+        _run(
+            "tdb2_load_contract",
+            [
+                str(tdbloader),
+                "--loc",
+                str(tdb2_location),
+                "--graph=urn:validation:financial-product:contract",
+                *(str(path) for path in TBOX_PATHS),
+                str(context),
+            ],
+            environment=environment,
+        )
         _run(
             "tdb2_load",
             [str(tdbloader), "--loc", str(tdb2_location), str(data), str(evidence)],
             environment=environment,
         )
-        query_paths = _query_files(temporary_root, dataset_version)
+        query_paths, count_query_paths = _query_files(
+            temporary_root,
+            dataset_version,
+            expected,
+        )
         _run_cli_queries(
             tdbquery=tdbquery,
             tdb2_location=tdb2_location,
             query_paths=query_paths,
+            count_query_paths=count_query_paths,
             expected=expected,
+            expected_counts=expected_counts,
             environment=environment,
         )
 
         template = ASSEMBLER_TEMPLATE.read_text(encoding="utf-8")
-        if template.count("__TDB2_LOCATION__") != 1:
-            raise VerificationFailure(
-                "fuseki_config", "assembler placeholder must occur exactly once"
-            )
         rendered = temporary_root / "financial-product.ttl"
         rendered.write_text(
-            template.replace("__TDB2_LOCATION__", str(tdb2_location)),
+            _render_fuseki_config(
+                template,
+                tdb2_location=tdb2_location,
+                include_shacl=True,
+            ),
             encoding="utf-8",
         )
         port = _loopback_port()
@@ -630,9 +793,53 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
                 _wait_for_fuseki(
                     fuseki_process,
                     endpoint,
-                    query_paths[QUERY_IDS[0]].read_text(encoding="utf-8"),
                 )
-                _run_http_queries(endpoint, query_paths, expected)
+                _check_shacl_endpoint(
+                    f"{base_url}/shacl?graph=union",
+                    shapes_union,
+                    timeout=float(arguments.timeout_seconds),
+                )
+        finally:
+            _stop_process(fuseki_process)
+
+        rendered.write_text(
+            _render_fuseki_config(
+                template,
+                tdb2_location=tdb2_location,
+                include_shacl=False,
+            ),
+            encoding="utf-8",
+        )
+        fuseki_process = None
+        try:
+            with log_path.open("w", encoding="utf-8") as log_file:
+                fuseki_process = subprocess.Popen(
+                    [
+                        str(fuseki_server),
+                        "--conf",
+                        str(rendered),
+                        "--port",
+                        str(port),
+                        "--localhost",
+                    ],
+                    cwd=temporary_root,
+                    env=environment,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    shell=False,
+                )
+                _wait_for_fuseki(
+                    fuseki_process,
+                    endpoint,
+                )
+                _run_http_queries(
+                    endpoint,
+                    query_paths,
+                    count_query_paths,
+                    expected,
+                    expected_counts,
+                )
                 _verify_read_only(server_url, base_url)
         finally:
             _stop_process(fuseki_process)
@@ -657,7 +864,11 @@ def verify(arguments: argparse.Namespace) -> dict[str, str]:
 def _sha256_path(path: Path) -> str:
     import hashlib
 
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def _contract_hashes() -> dict[str, str]:
@@ -714,7 +925,7 @@ def main() -> int:
     except Exception as error:
         print(f"stage=unexpected error={type(error).__name__}: {error}", file=sys.stderr)
         return 1
-    _, cutoff, _ = _load_expected(Path(arguments.expected))
+    _, cutoff, _, _ = _load_expected(Path(arguments.expected))
     report = {
         "conforms": True,
         "contract_hashes": _contract_hashes(),

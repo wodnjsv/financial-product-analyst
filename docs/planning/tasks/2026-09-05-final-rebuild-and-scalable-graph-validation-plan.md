@@ -453,3 +453,36 @@ git commit -m "docs: record final stage03 stage04 activation"
   TDB2 workspace is estimated at another 7–8 GiB. Preserve fail-closed state
   until at least 15–20 GiB of safe working space or an inactive NCP validation
   environment is available.
+
+## Runtime amendment — 2026-09-05
+
+- Approved local cleanup raised free space from 9.6 GiB to approximately
+  26 GiB without deleting the final PostgreSQL database, organizer inputs,
+  official captures, or the compact DART export.
+- Full projection found 13,124 negative and 175 above-100 official holding
+  weights. They remain losslessly stored in PostgreSQL but are not projected
+  into the `[0, 100]` Graph property.
+- The projection found 615 fund-of-fund objects stored canonically as products
+  (613 overseas ETFs and two public funds). A projected holding object now
+  receives the compatible relation-derived `Security` role.
+- The original Jena verifier buffered a multi-gigabyte RIOT merge and complete
+  competency-query results. The release verifier now performs full SHACL over
+  the disk-backed TDB2 union, checks full Evidence-expanded counts in both
+  TDB2 and Fuseki, and compares at most 25 deterministic exact bindings per
+  predicate. See ADR-0049.
+- Production-scale retries also exposed three orchestration defects rather
+  than data defects: the outer validator used the same 1,200-second limit as
+  each internal command, an exact-binding sample could split one relation's
+  Evidence group, and Fuseki startup polling used a full competency query.
+  The release path now uses a sufficient aggregate watchdog at invocation,
+  samples only complete Evidence groups, and uses a bounded one-row readiness
+  query. Focused tests and the real Jena/Fuseki integration suite cover the
+  latter two regressions.
+- The final local Jena run completed deterministic preflight, the 6.5 GiB RDF
+  export, full TDB2 loading, all Evidence-expanded relation counts, and exact
+  Evidence samples. Full SHACL remained CPU-active through its 3,600-second
+  request limit and therefore failed closed. No data mismatch or SHACL
+  violation report was returned. Do not repeat this full local run; perform
+  the authoritative full Jena SHACL gate in the inactive NCP validation
+  environment with a longer per-stage limit before recording readiness or
+  activating the dataset.
