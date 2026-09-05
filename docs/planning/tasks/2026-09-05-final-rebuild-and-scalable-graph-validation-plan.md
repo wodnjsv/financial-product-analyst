@@ -380,29 +380,29 @@ git commit -m "feat: add final dataset release gate"
 - Modify: `docs/planning/tasks/2026-09-04-stage03-stage04-final-assembly-plan.md`
 - Runtime outputs only under ignored source roots and `/private/tmp`.
 
-- [ ] **Step 1: Run the complete code verification before mutation**
+- [x] **Step 1: Run the complete code verification before mutation**
 
 Run focused tests first, then all non-live tests. Verify migration head `0012`,
 PostgreSQL 15, database URL, target/source state, free disk, and exact Q2 hash.
 
-- [ ] **Step 2: Copy and reverify the Q2 ZIP**
+- [x] **Step 2: Copy and reverify the Q2 ZIP**
 
 Copy the verified download to the exact manifest object key. Re-run size and
 SHA-256 checks against all official manifests before touching PostgreSQL.
 
-- [ ] **Step 3: Remove only the guarded incomplete target**
+- [x] **Step 3: Remove only the guarded incomplete target**
 
 Run `reset-incomplete-final`. Save the aggregate cleanup report outside Git and
 verify the DART source dataset and active pointer are unchanged.
 
-- [ ] **Step 4: Rebuild structured sources and carry forward DART**
+- [x] **Step 4: Rebuild structured sources and carry forward DART**
 
 Run the existing organizer/official build for the exact final version. Require
 SEC N-PORT in the frozen manifest and require the build report to pass. Carry
 forward DART and require exactly 2,214 documents, 7,267 coverages, 40,149
 chunks, and 40,149 dimension-1,024 embeddings.
 
-- [ ] **Step 5: Reconcile PostgreSQL, Evidence, and Vector**
+- [x] **Step 5: Reconcile PostgreSQL, Evidence, and Vector**
 
 Require zero missing, duplicate, stale, orphan, or wrong-dimension vectors and
 no deferred foreign-key failure. Record authoritative table counts and hashes.
@@ -432,3 +432,24 @@ git add docs/planning/decisions/ADR-0048-rebuild-final-dataset-with-tiered-graph
 git diff --cached --check
 git commit -m "docs: record final stage03 stage04 activation"
 ```
+
+## Runtime checkpoint — 2026-09-05
+
+- The verified SEC 2026 Q2 N-PORT ZIP was included; no other quarter was
+  ingested.
+- The structured build passed with 10 sources, 67,377 mapped source rows,
+  58,646 canonical products, and acceptance hash
+  `94148ab084f2aa2015199e89c9a4e03d50ca56763922086a52383583d6b0bfef`.
+- DART carry-forward passed with exactly 2,214 documents, 7,267 coverages,
+  40,149 chunks, and 40,149 embeddings.
+- Vector reconciliation passed with 40,149 eligible and exact rows and zero
+  missing, duplicate, stale, orphan, or wrong-dimension rows. The embedding
+  payload size was 514,285,568 bytes.
+- The target remains `building` and inactive. The active pointer remains
+  empty.
+- Graph A/B and Jena release validation are intentionally not started on the
+  current disk. Only 9.6 GiB remains, while the prior measured Graph output
+  scaled to the final projection requires about 5 GiB and the concurrent Jena
+  TDB2 workspace is estimated at another 7–8 GiB. Preserve fail-closed state
+  until at least 15–20 GiB of safe working space or an inactive NCP validation
+  environment is available.

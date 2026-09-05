@@ -85,9 +85,9 @@ async def carry_forward_dart_corpus(
 ) -> CorpusCarryForwardReport: ...
 ```
 
-- [ ] Write a failing PostgreSQL test with one indexed document, one additional
+- [x] Write a failing PostgreSQL test with one indexed document, one additional
   coverage, one documentless negative coverage, and one embedding.
-- [ ] Require failure because `carry_forward_dart_corpus` does not exist.
+- [x] Require failure because `carry_forward_dart_corpus` does not exist.
 - [x] Rebuild target document records with the target dataset version and
   canonical record hashes; preserve all non-version fields exactly.
 - [x] Recompute target embedding IDs with `embedding_id(APPROVED_MODEL, chunk)`
@@ -109,23 +109,23 @@ async def carry_forward_dart_corpus(
 - Produces one validation run and four readiness records, then optionally calls
   `operations.activate_dataset`.
 
-- [ ] Write failing tests proving missing entities, count drift, vector anomaly,
+- [x] Write failing tests proving missing entities, count drift, vector anomaly,
   graph mismatch, or absent readiness prevents activation.
-- [ ] Implement read-only checks and canonical component-manifest hashes.
-- [ ] Implement validation-run and readiness writes through existing operations
+- [x] Implement read-only checks and canonical component-manifest hashes.
+- [x] Implement validation-run and readiness writes through existing operations
   functions; keep activation a separate final call.
-- [ ] Run the focused validation tests.
+- [x] Run the focused validation tests.
 
 ### Task 4: Verify code before touching the critical database
 
 **Files:**
 - Update: this plan's checkboxes only.
 
-- [ ] Run non-integration ingestion, document, embedding, retrieval, and Graph
+- [x] Run non-integration ingestion, document, embedding, retrieval, and Graph
   tests excluding Jena.
 - [x] Create a disposable PostgreSQL 15 database and run migrations through
   `0012`.
-- [ ] Run the new PostgreSQL carry-forward and release-validation tests.
+- [x] Run the new PostgreSQL carry-forward and release-validation tests.
 - [x] Inspect the diff and confirm no raw data, generated output, or secrets are
   present.
 
@@ -136,10 +136,10 @@ async def carry_forward_dart_corpus(
 
 - [x] Record free space, current DB size, source counts, and active pointer.
 - [x] Migrate the critical local database from `0009` to `0012`.
-- [ ] Verify all official manifests and objects across the four capture roots.
-- [ ] Run the organizer plus official build for
+- [x] Verify all official manifests and objects across the four capture roots.
+- [x] Run the organizer plus official build for
   `competition-2026-08-24-final-v1`.
-- [ ] Require the build report to pass before continuing.
+- [x] Require the build report to pass before continuing.
 - [x] Run DART carry-forward and require the exact approved counts.
 - [x] Run vector reconciliation and require all anomaly counts to be zero.
 
@@ -168,3 +168,17 @@ async def carry_forward_dart_corpus(
 - [ ] Activate `competition-2026-08-24-final-v1` atomically.
 - [ ] Run post-activation SQL, Graph, Vector, and Evidence smoke checks.
 - [ ] Commit only source, tests, ADR, spec, plan, and sanitized status updates.
+
+## Runtime status — 2026-09-05
+
+- The complete structured build including SEC N-PORT 2026 Q2 passed. The
+  target contains 58,646 canonical products and remains `building` and
+  inactive.
+- DART carry-forward again matched the approved counts: 2,214 documents,
+  7,267 coverages, 40,149 chunks, and 40,149 embeddings.
+- Vector reconciliation reported 40,149 eligible and exact rows with zero
+  anomalies across missing, duplicate, stale, orphan, and dimension checks.
+- Full Graph A/B plus Jena is blocked only by local working space. The current
+  9.6 GiB free space is below the estimated 15–20 GiB safe requirement, so no
+  partial Graph output or readiness record was created and activation remains
+  prohibited.
