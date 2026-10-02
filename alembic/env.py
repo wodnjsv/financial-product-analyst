@@ -78,6 +78,9 @@ def run_migrations_online() -> None:
                 "-c timezone=UTC "
                 f"-c statement_timeout={database_config.statement_timeout_ms} "
                 f"-c search_path={compact_search_path}"
+                + (" -c role=fa_migration"
+                   if os.environ.get("FINANCIAL_AGENT_LOCAL_DEVELOPMENT") == "1"
+                   else "")
             ),
         },
     )

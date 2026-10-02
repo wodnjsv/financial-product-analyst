@@ -1,5 +1,23 @@
 # Financial Product Agent 계획·구현 현황
 
+**2026-10-02 개인용 검색 검증:** 등록된 세 조회 계획의 읽기 전용 PostgreSQL
+검색, 건수·누락·출처 표시, 원문 전체 인용과 최종 문서 본문 검증을 구현했다.
+운용사 5곳의 삼성전자 보조 비중 9개는 기존 KRX 값과 별도로 유지한다.
+문서 모델 계약은 조회 ID만 허용하며 자유 요약은 출력하지 않는다.
+오프라인 회귀 3,192개와 실제 DB 세 질문, NVIDIA 임시 연결 호출 4회를
+검증했다. 일반 자연어 서비스 API와 영구 NVIDIA adapter 연결은 남아 있다.
+[README](../../README.md), [검색 실행 방법](../runbooks/personal-local-search.md),
+[ADR-0052](decisions/ADR-0052-source-owned-local-document-answers.md)를 따른다.
+
+**2026-09-18 개인용 전환:** 대회 종료 후 별도 로컬 PostgreSQL 17 DB와
+30 GB 이내 추가 디스크 사용 범위로 전환했다. `financial_agent_local`에
+마스터 원본 53,375행, 국내·해외 ETF 각 50개의 구성종목, DART 문서 100건과
+기존 임베딩 1,552개를 적재했고 최종 검증을 통과했다. DB는 인덱스 포함
+약 6.72 GB이며 SQL·문서·저장 벡터 조회가 가능하다. 사용 범위와 검증 결과는
+[개인용 계획](tasks/2026-09-18-personal-local-dataset.md)과
+[사용 방법](../runbooks/personal-local-postgresql.md)을 따른다.
+아래 대회 Stage 현황은 역사적 기록이며 개인용 완료 조건과 구분한다.
+
 **Updated:** 2026-09-04
 
 이 문서는 어떤 결정과 계획이 Git에 저장되어 있는지, 현재 무엇을 구현 중인지, 다음 단계가 무엇인지를 한 곳에서 추적한다. 설계 권위는 각 연결 문서와 ADR이 가지며, 이 문서는 상태 색인이다.

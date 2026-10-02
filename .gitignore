@@ -32,6 +32,7 @@ vector_store/
 
 # Python
 .venv/
+*.egg-info/
 __pycache__/
 *.py[cod]
 .pytest_cache/

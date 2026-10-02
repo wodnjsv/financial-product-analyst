@@ -70,6 +70,31 @@ def test_preflight_accepts_the_local_group_role_layout(
     assert report.permission_layout == "group_roles"
 
 
+def test_personal_profile_accepts_pg17_without_shared_statistics(valid_snapshot):
+    snapshot = replace(valid_snapshot, postgres_major=17, pg_stat_statements_usable=False)
+    assert validate_pre_migration_snapshot(
+        snapshot, local_development=True
+    ).permission_layout == "group_roles"
+    with pytest.raises(PreflightFailure, match="not supported"):
+        validate_pre_migration_snapshot(snapshot)
+    with pytest.raises(PreflightFailure, match="unusable"):
+        validate_pre_migration_snapshot(
+            replace(snapshot, vector_usable=False), local_development=True
+        )
+
+
+@pytest.mark.parametrize("url", [
+    "postgresql://remote/financial_agent_local",
+    "postgresql://localhost/palantiny_db",
+    "postgresql://localhost/financial_agent_local?host=remote",
+])
+def test_personal_profile_rejects_other_databases_before_connect(monkeypatch, url):
+    monkeypatch.setenv("FINANCIAL_AGENT_LOCAL_DEVELOPMENT", "1")
+    with pytest.raises(PreflightFailure) as error:
+        run_pre_migration_preflight(url)
+    assert error.value.code == "LOCAL_DATABASE_TARGET_REQUIRED"
+
+
 def test_logical_database_role_names_fit_the_ncp_user_id_limit() -> None:
     assert EXPECTED_ROLES == frozenset(
         {"fa_migration", "fa_build", "fa_runtime"}

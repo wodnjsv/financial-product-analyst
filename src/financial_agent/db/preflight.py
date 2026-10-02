@@ -568,8 +568,12 @@ def collect_database_objects(
 
 def validate_post_migration_snapshot(
     snapshot: PostMigrationSnapshot,
+    *,
+    local_development: bool = False,
 ) -> PreflightReport:
-    report = validate_pre_migration_snapshot(snapshot.pre_migration)
+    report = validate_pre_migration_snapshot(
+        snapshot.pre_migration, local_development=local_development
+    )
     if (
         EXPECTED_NCP_MANAGED_EXTENSIONS.keys()
         - snapshot.extension_versions.keys()
@@ -867,6 +871,7 @@ def collect_post_migration_snapshot(
     *,
     manifest_path: Path,
     alembic_head: str,
+    local_development: bool = False,
 ) -> PostMigrationSnapshot:
     pre_migration = collect_preflight_snapshot(connection)
     login_values = {
@@ -1020,6 +1025,14 @@ def collect_post_migration_snapshot(
     except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
         expected_manifest = {}
     actual_manifest = collect_database_objects(connection)
+    if local_development and pre_migration.postgres_major == 17:
+        # PostgreSQL 17 adds MAINTAIN to the owner's implicit table privileges.
+        # Keep every grant to build/runtime/other principals in the comparison.
+        actual_manifest["table_grants"] = [
+            grant for grant in actual_manifest["table_grants"]
+            if not (grant["grantee"] == "fa_migration"
+                    and grant["privilege"] == "MAINTAIN")
+        ]
     comparison = compare_database_object_manifests(
         expected_manifest,
         actual_manifest,
@@ -1054,6 +1067,7 @@ def run_post_migration_preflight(
     manifest_path: Path = DEFAULT_DATABASE_OBJECT_MANIFEST,
     connect_timeout_seconds: int = 5,
 ) -> PreflightReport:
+    local_development = _local_development_profile(url)
     options = '-c timezone=UTC -c search_path="$user",public,cdb_admin'
     try:
         alembic_head = _expected_alembic_head()
@@ -1067,6 +1081,7 @@ def run_post_migration_preflight(
                 connection,
                 manifest_path=manifest_path,
                 alembic_head=alembic_head,
+                local_development=local_development,
             )
     except PreflightFailure:
         raise
@@ -1080,16 +1095,20 @@ def run_post_migration_preflight(
             "DATABASE_QUERY_FAILED",
             "database post-migration preflight query failed",
         ) from None
-    return validate_post_migration_snapshot(snapshot)
+    return validate_post_migration_snapshot(
+        snapshot, local_development=local_development
+    )
 
 
 def validate_pre_migration_snapshot(
     snapshot: PreflightSnapshot,
+    *,
+    local_development: bool = False,
 ) -> PreflightReport:
-    if snapshot.postgres_major != 15:
+    if snapshot.postgres_major not in ((15, 17) if local_development else (15,)):
         raise PreflightFailure(
             "DB_VERSION_MISMATCH",
-            "PostgreSQL major version must be 15",
+            "PostgreSQL major version is not supported by this profile",
         )
     if snapshot.server_encoding != "UTF8":
         raise PreflightFailure(
@@ -1125,7 +1144,9 @@ def validate_pre_migration_snapshot(
             "NCP_EXTENSION_SCHEMA_MISMATCH",
             "NCP-managed extension is installed in an incompatible schema",
         )
-    if not snapshot.vector_usable or not snapshot.pg_stat_statements_usable:
+    if not snapshot.vector_usable or (
+        not local_development and not snapshot.pg_stat_statements_usable
+    ):
         raise PreflightFailure(
             "NCP_EXTENSION_UNUSABLE",
             "NCP-managed extension is installed but unusable",
@@ -1333,6 +1354,7 @@ def run_pre_migration_preflight(
     *,
     connect_timeout_seconds: int = 5,
 ) -> PreflightReport:
+    local_development = _local_development_profile(url)
     options = '-c timezone=UTC -c search_path="$user",public,cdb_admin'
     try:
         with psycopg.connect(
@@ -1352,7 +1374,27 @@ def run_pre_migration_preflight(
             "DATABASE_QUERY_FAILED",
             "database preflight query failed",
         ) from None
-    return validate_pre_migration_snapshot(snapshot)
+    return validate_pre_migration_snapshot(
+        snapshot, local_development=local_development
+    )
+
+
+def _local_development_profile(url: str) -> bool:
+    if os.environ.get("FINANCIAL_AGENT_LOCAL_DEVELOPMENT") != "1":
+        return False
+    from sqlalchemy.engine import make_url
+
+    parsed = make_url(url)
+    if (
+        parsed.host not in {"localhost", "127.0.0.1", "::1"}
+        or parsed.database not in {"financial_agent_local", "financial_agent_local_test"}
+        or parsed.query
+    ):
+        raise PreflightFailure(
+            "LOCAL_DATABASE_TARGET_REQUIRED",
+            "local development requires an explicit isolated loopback database",
+        )
+    return True
 
 
 def main(argv: Sequence[str] | None = None) -> int:

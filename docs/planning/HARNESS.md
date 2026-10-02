@@ -1,5 +1,12 @@
 # Financial Product Analyst Planning Harness
 
+**Personal local profile — approved 2026-09-18:** The competition has ended.
+The active task is a bounded personal PostgreSQL dataset under
+[ADR-0050](decisions/ADR-0050-personal-local-subset.md). For this profile,
+local SQL testing replaces competition submission/NCP/Graph activation gates;
+source integrity, deterministic calculations, and repository data exclusions
+remain in force. The competition baseline below is retained as history.
+
 **Status:** Approved project direction
 
 **Last updated:** 2026-08-31
