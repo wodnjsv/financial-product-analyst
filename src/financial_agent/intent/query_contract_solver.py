@@ -77,7 +77,6 @@ from .types import (
     SlotMutationKind,
 )
 from .view import (
-    HYBRID_ADAPTER_VERSION,
     HYBRID_CANDIDATE_POLICY_VERSION,
     HYBRID_PROMPT_VERSION,
     HYBRID_RESOLVER_SCHEMA_VERSION,
@@ -287,7 +286,7 @@ def _validate_v3_solver_pins(
                 "candidate_policy_version": HYBRID_CANDIDATE_POLICY_VERSION,
                 "resolver_schema_version": HYBRID_RESOLVER_SCHEMA_VERSION,
                 "prompt_version": HYBRID_PROMPT_VERSION,
-                "adapter_version": HYBRID_ADAPTER_VERSION,
+                "adapter_version": view.build_manifest.adapter_version,
             },
         )
     except (ResolverInvariantError, ValueError):

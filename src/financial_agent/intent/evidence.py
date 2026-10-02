@@ -187,16 +187,28 @@ def _add_named_entity_evidence(
         ):
             continue
         segment = segments[mention.segment_id]
-        occurrences = _occurrences(segment.original_text, mention.text)
-        if len(occurrences) == 1:
+        if mention.start_char is not None:
+            start_char = mention.start_char
+            end_char = mention.end_char
+            if (
+                end_char is None
+                or not 0 <= start_char < end_char <= len(segment.original_text)
+                or segment.original_text[start_char:end_char] != mention.text
+            ):
+                raise ValueError("ENTITY_MENTION_RANGE_INVALID")
+        else:
+            occurrences = _occurrences(segment.original_text, mention.text)
+            if len(occurrences) != 1:
+                continue
             start_char = occurrences[0]
-            builder.add(
-                segment_id=mention.segment_id,
-                start_char=start_char,
-                end_char=start_char + len(mention.text),
-                text=mention.text,
-                source_kind=EvidenceSourceKind.ENTITY,
-            )
+            end_char = start_char + len(mention.text)
+        builder.add(
+            segment_id=mention.segment_id,
+            start_char=start_char,
+            end_char=end_char,
+            text=mention.text,
+            source_kind=EvidenceSourceKind.ENTITY,
+        )
 
 
 def _occurrences(text: str, needle: str) -> tuple[int, ...]:

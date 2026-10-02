@@ -6,7 +6,11 @@ from decimal import Decimal
 import re
 from typing import Literal
 
-from .normalization import NormalizedRequest, NormalizedSegment
+from .normalization import (
+    NormalizedRequest,
+    NormalizedSegment,
+    named_entity_source_ranges,
+)
 
 
 _NUMERIC = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
@@ -199,8 +203,15 @@ def extract_literals(request: NormalizedRequest) -> tuple[LiteralCandidate, ...]
 
     candidates: list[LiteralCandidate] = []
     for segment in request.segments:
+        entity_ranges = named_entity_source_ranges(request.context, segment)
         selected: list[_LiteralMatch] = []
         for match in sorted(_matches(segment), key=lambda item: (item.start, -item.end)):
+            original_start, original_end = segment.to_original_span(match.start, match.end)
+            if any(
+                original_start < entity_end and original_end > entity_start
+                for entity_start, entity_end in entity_ranges
+            ):
+                continue
             if any(
                 match.start < selected_match.end and match.end > selected_match.start
                 for selected_match in selected

@@ -508,6 +508,34 @@ async def test_hybrid_missing_request_required_property_uses_one_repair_call() -
 
 
 @pytest.mark.asyncio
+async def test_hybrid_missing_segment_ids_is_not_filled_and_repair_is_bounded() -> None:
+    context = _context("비용 부담이 작은 ETF 다섯 개")
+    adapter = _Adapter([])
+    service = _hybrid_service(adapter)
+    prepared = await service.prepare_hybrid(context)
+    valid = _hybrid_proposal(prepared)
+    missing_segment = json.loads(valid)
+    missing_segment["frames"][0].pop("segment_ids")
+    invalid = json.dumps(missing_segment, ensure_ascii=False)
+    adapter.responses.extend([invalid, invalid, valid])
+
+    with pytest.raises(ResolverContractError) as failure:
+        await service.resolve_hybrid_query_contract_candidates(context)
+
+    assert failure.value.code == MODEL_PROPOSAL_SCHEMA_INVALID
+    assert len(adapter.calls) == 2
+    assert adapter.responses == [valid]
+    repair = adapter.calls[1]
+    correction = json.loads(repair.user_message)["correction_instruction"]
+    assert "non-empty segment_ids" in correction
+    assert "offered context.segments segment_id values" in correction
+    assert correction in repair.system_message
+    frame_schema = repair.response_schema["properties"]["frames"]["items"]
+    assert "segment_ids" in frame_schema["required"]
+    assert frame_schema["properties"]["segment_ids"]["minItems"] == 1
+
+
+@pytest.mark.asyncio
 async def test_hybrid_request_excluded_entity_branch_fails_as_schema_invalid() -> None:
     """Catches a disabled branch reaching broad Pydantic/semantic validation."""
     context = _context("비용 부담이 작은 ETF 다섯 개")
@@ -763,7 +791,7 @@ async def test_same_segment_family_lock_changes_only_its_evidence_owned_frame() 
     etf_evidence = next(
         item.evidence_id
         for item in prepared.view.evidence_candidates
-        if item.text == "ETF"
+        if item.text == "국내 ETF"
     )
     source = resolution()
     first = source.canonical_frames[0].model_copy(

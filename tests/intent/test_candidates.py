@@ -179,7 +179,7 @@ def test_v4_preferred_label_is_a_request_local_v2_candidate(snapshot) -> None:
     result = generate_semantic_candidates(normalize_request(context), snapshot)
 
     assert result.candidate_policy_version == (
-        "semantic-candidates-v2-preferred-label-trigram-0.50"
+        "semantic-candidates-v3-explicit-family-trigram-0.50"
     )
     assert [(item.semantic_id, item.match_kind) for item in _items_for(result, "잔여일수")] == [
         ("remaining_days", "group_alias")

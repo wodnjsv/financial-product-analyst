@@ -33,16 +33,21 @@ from .normalization import NormalizedRequest
 from .resolution import ContractFileHash, ResolverBuildManifest
 
 
-NORMALIZER_VERSION = "intent-normalizer-v1"
+NORMALIZER_VERSION = "intent-normalizer-v2-entity-spans"
 CANDIDATE_POLICY_VERSION = "intent-candidate-v3"
 RESOLVER_SCHEMA_VERSION = "2.0"
 PROMPT_VERSION = "intent-resolver-ko-v5-axis-only"
 ADAPTER_VERSION = "clova-chat-v3-proposal-v2"
 
 HYBRID_RESOLVER_SCHEMA_VERSION = "3.0"
-HYBRID_CANDIDATE_POLICY_VERSION = "intent-hints-v4"
-HYBRID_PROMPT_VERSION = "intent-resolver-ko-v6-full-catalog"
+HYBRID_CANDIDATE_POLICY_VERSION = "intent-hints-v5-explicit-family"
+HYBRID_PROMPT_VERSION = "intent-resolver-ko-v10-grounded-routing"
 HYBRID_ADAPTER_VERSION = "clova-chat-v3-proposal-v3"
+NVIDIA_HYBRID_ADAPTER_VERSION = "nvidia-chat-json-proposal-v4"
+APPROVED_HYBRID_ADAPTER_VERSIONS = (
+    HYBRID_ADAPTER_VERSION,
+    NVIDIA_HYBRID_ADAPTER_VERSION,
+)
 
 MAX_CANDIDATES_PER_MENTION = 5
 MAX_SEMANTIC_CANDIDATES = 80
@@ -317,8 +322,11 @@ def build_hybrid_manifest(
     snapshot: SemanticCatalogSnapshot, versions: Mapping[str, str]
 ) -> ResolverBuildManifest:
     """Build a V3-only manifest from the V4 model-facing overlay."""
+    adapter_version = versions.get("adapter_version", "")
+    expected_versions = _HYBRID_VERSION_FIELDS | {"adapter_version": adapter_version}
     if (
-        dict(versions) != _HYBRID_VERSION_FIELDS
+        adapter_version not in APPROVED_HYBRID_ADAPTER_VERSIONS
+        or dict(versions) != expected_versions
         or snapshot.overlay_version != _HYBRID_OVERLAY_VERSION
         or tuple(sorted(snapshot.ontology_hashes))
         != tuple(sorted(GRAPH_CONTRACT_RELATIVE_PATHS))
@@ -333,7 +341,7 @@ def build_hybrid_manifest(
         ),
         overlay_version=snapshot.overlay_version,
         overlay_hash=snapshot.overlay_hash,
-        **_HYBRID_VERSION_FIELDS,
+        **expected_versions,
     )
 
 
@@ -564,9 +572,11 @@ def validate_hybrid_resolver_pins(
         or manifest.overlay_hash != catalog.overlay_hash
         or manifest.ontology_hashes != catalog_hashes
         or manifest.schema_version != "1.0"
+        or manifest.adapter_version not in APPROVED_HYBRID_ADAPTER_VERSIONS
         or any(
             getattr(manifest, field_name) != expected
             for field_name, expected in _HYBRID_VERSION_FIELDS.items()
+            if field_name != "adapter_version"
         )
     ):
         raise ResolverInvariantError("CATALOG_VERSION_MISMATCH")
@@ -582,23 +592,34 @@ def _validated_hybrid_output_capabilities(
     expected_entity_spans: set[tuple[str, str, int, int, str, str]] = set()
     for entity in context.named_entities:
         segment = segments[entity.segment_id]
-        starts = [
-            start
-            for start in range(len(segment.original_text) - len(entity.text) + 1)
-            if entity.text and segment.original_text.startswith(entity.text, start)
-        ]
-        if len(starts) != 1:
-            raise ResolverInvariantError("ENTITY_MENTION_RANGE_AMBIGUOUS")
-        start = starts[0]
+        if entity.start_char is not None:
+            start = entity.start_char
+            end = entity.end_char
+            if (
+                end is None
+                or not 0 <= start < end <= len(segment.original_text)
+                or segment.original_text[start:end] != entity.text
+            ):
+                raise ResolverInvariantError("ENTITY_MENTION_RANGE_INVALID")
+        else:
+            starts = [
+                start
+                for start in range(len(segment.original_text) - len(entity.text) + 1)
+                if entity.text and segment.original_text.startswith(entity.text, start)
+            ]
+            if len(starts) != 1:
+                raise ResolverInvariantError("ENTITY_MENTION_RANGE_AMBIGUOUS")
+            start = starts[0]
+            end = start + len(entity.text)
         expected_entity_spans.add(
             (
-                f"mention-{entity.segment_id}-{start}-{start + len(entity.text)}",
+                f"mention-{entity.segment_id}-{start}-{end}",
                 entity.segment_id,
                 start,
-                start + len(entity.text),
+                end,
                 entity.text,
                 segment.normalized_text_for_original_span(
-                    start, start + len(entity.text)
+                    start, end
                 ),
             )
         )

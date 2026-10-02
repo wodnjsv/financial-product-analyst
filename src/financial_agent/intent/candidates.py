@@ -24,7 +24,7 @@ MATCH_PRIORITY = {
     "trigram": 4,
 }
 SEMANTIC_CANDIDATE_POLICY_VERSION = (
-    "semantic-candidates-v2-preferred-label-trigram-0.50"
+    "semantic-candidates-v3-explicit-family-trigram-0.50"
 )
 TRIGRAM_THRESHOLD_SCORE = 500_000
 MAX_CANDIDATES_PER_MENTION = 5
@@ -210,6 +210,7 @@ def _exact_mentions(
         set(catalog.alias_candidates)
         | set(catalog.preferred_labels_by_semantic_id.values())
         | _semantic_ids(catalog)
+        | set(_family_axis_aliases(catalog))
     )
     spans: set[tuple[int, int]] = set()
     text = segment.normalized_text
@@ -226,6 +227,9 @@ def _exact_matches(
     mention: Mention, catalog: SemanticCatalogSnapshot
 ) -> Iterable[tuple[str, SemanticMatchKind, str]]:
     normalized_text = "".join(mention.normalized_text.lower().split())
+    for surface, family_id in sorted(_family_axis_aliases(catalog).items()):
+        if normalized_text == "".join(surface.lower().split()):
+            yield family_id, "direct_alias", f"axis:{family_id}:{surface}"
     for semantic_id in sorted(_semantic_ids(catalog)):
         if normalized_text == "".join(semantic_id.lower().split()):
             yield semantic_id, "canonical_id", f"canonical:{semantic_id}"
@@ -252,6 +256,33 @@ def _exact_matches(
                 "group_alias",
                 f"overlay-preferred:{semantic_id}",
             )
+
+
+def _family_axis_aliases(catalog: SemanticCatalogSnapshot) -> dict[str, str]:
+    """Promote explicit registered family surfaces without generic-type defaults."""
+    families_by_surface: dict[str, set[str]] = {}
+    for definition in catalog.axis_definitions.values():
+        if definition.axis_kind != "product_family":
+            continue
+        for surface in definition.surface_forms:
+            normalized = "".join(surface.lower().split())
+            families_by_surface.setdefault(normalized, set()).add(definition.axis_id)
+    aliases: dict[str, str] = {}
+    for surface, families in families_by_surface.items():
+        if len(families) != 1 or surface in {"etf", "etn", "펀드", "채권"}:
+            continue
+        family_id = next(iter(families))
+        conflicting_alias = any(
+            "".join(alias.lower().split()) == surface
+            and (
+                catalog.alias_kinds[alias] != "direct"
+                or set(ids) != {family_id}
+            )
+            for alias, ids in catalog.alias_candidates.items()
+        )
+        if not conflicting_alias:
+            aliases[surface] = family_id
+    return aliases
 
 
 def _fuzzy_mentions(segment: NormalizedSegment) -> tuple[Mention, ...]:

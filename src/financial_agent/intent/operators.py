@@ -24,7 +24,9 @@ _COMPARISON_RE = re.compile(
 )
 _EXCLUSION_RE = re.compile(r"제외")
 _RANGE_RE = re.compile(r"(?P<cue>사이|부터\s*.*?까지)")
-_HARD_CLAUSE_BOUNDARY_RE = re.compile(r"[;.!?]|그리고|및|또는|하지만")
+_HARD_CLAUSE_BOUNDARY_RE = re.compile(
+    r"[;!?]|(?<!\d)\.|\.(?!\d)|그리고|및|또는|하지만"
+)
 _COMMA_RE = re.compile(r",")
 
 

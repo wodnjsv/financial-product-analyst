@@ -51,6 +51,52 @@ def test_comparison_cues_emit_semantic_operator_ids_only(
 
 
 @pytest.mark.parametrize(
+    ("text", "operator_id", "value"),
+    [
+        ("국내 ETF 중 총보수 0.1% 이하인 상품", "lte", "0.1"),
+        ("국내 ETF 중 총보수 0.1% 미만인 상품", "lt", "0.1"),
+        ("총보수 0.25% 이상인 상품", "gte", "0.25"),
+        ("총보수 0.25% 초과인 상품", "gt", "0.25"),
+    ],
+)
+def test_decimal_percentage_is_not_split_at_a_sentence_boundary(
+    text: str, operator_id: str, value: str
+) -> None:
+    request = _normalized_request(text)
+    literals = extract_literals(request)
+    values = {item.literal_id: item.canonical_value for item in literals}
+
+    operators = extract_operator_candidates(request, literals)
+
+    assert [
+        (item.operator_id.value, tuple(values[value_id] for value_id in item.compatible_value_candidate_ids))
+        for item in operators
+    ] == [(operator_id, (value,))]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("총보수 0.1% 이하. 수익률 3% 이상", [("lte", ("0.1",)), ("gte", ("3",))]),
+        ("총보수 0.1% 이하. 수익률 이상", [("lte", ("0.1",))]),
+    ],
+)
+def test_sentence_period_keeps_decimal_literals_in_their_own_clause(
+    text: str, expected: list[tuple[str, tuple[str, ...]]]
+) -> None:
+    request = _normalized_request(text)
+    literals = extract_literals(request)
+    values = {item.literal_id: item.canonical_value for item in literals}
+
+    operators = extract_operator_candidates(request, literals)
+
+    assert [
+        (item.operator_id.value, tuple(values[value_id] for value_id in item.compatible_value_candidate_ids))
+        for item in operators
+    ] == expected
+
+
+@pytest.mark.parametrize(
     ("text", "operator_id", "value_count"),
     [
         ("1% 제외", "neq", 1),

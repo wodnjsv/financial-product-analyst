@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from financial_agent.contracts.canonical import build_request_key
-from financial_agent.contracts.request import RequestContext, Segment
+from financial_agent.contracts.request import NamedEntityMention, RequestContext, Segment
 from financial_agent.intent.normalization import (
     RequestNormalizationError,
     normalize_request,
@@ -127,3 +127,25 @@ def test_request_marks_context_reference_stems_longest_first_without_overlap() -
         "나머지 상품",
         "이거",
     ]
+
+
+def test_company_name_does_not_create_a_context_reference() -> None:
+    text = "삼성전자와 SK하이닉스 중 전자와 후자를 비교해줘"
+    context = context_factory(question=text).model_copy(
+        update={
+            "segments": (Segment(segment_id="s1", ordinal=0, text=text),),
+            "named_entities": (
+                NamedEntityMention(
+                    mention_id="entity-1",
+                    segment_id="s1",
+                    text="삼성전자",
+                    expected_entity_types=("Security",),
+                ),
+            ),
+        }
+    )
+
+    request = normalize_request(context)
+
+    assert [candidate.text for candidate in request.reference_candidates] == ["전자", "후자"]
+    assert all(candidate.start_char > len("삼성전자") for candidate in request.reference_candidates)

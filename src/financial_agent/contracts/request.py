@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from .base import ContractModel, Identifier, RuntimeArtifact, UtcDateTime
 from .canonical import build_request_key
@@ -20,6 +20,16 @@ class NamedEntityMention(ContractModel):
     text: str
     expected_entity_types: tuple[Identifier, ...]
     resolution_status: EntityResolutionStatus = EntityResolutionStatus.UNRESOLVED
+    start_char: int | None = Field(default=None, ge=0)
+    end_char: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_source_range(self) -> "NamedEntityMention":
+        if (self.start_char is None) != (self.end_char is None):
+            raise ValueError("named entity mention range must have both offsets")
+        if self.start_char is not None and self.end_char <= self.start_char:
+            raise ValueError("named entity mention range must not be empty")
+        return self
 
 
 class ReferenceMention(ContractModel):
@@ -63,6 +73,14 @@ class RequestContext(RuntimeArtifact):
             label="mentions",
         )
         segments_by_id = {segment.segment_id: segment for segment in self.segments}
+        for mention in self.named_entities:
+            if mention.start_char is None:
+                continue
+            segment_text = segments_by_id[mention.segment_id].text
+            if not 0 <= mention.start_char < mention.end_char <= len(segment_text):
+                raise ValueError("named entity mention range is outside its segment")
+            if segment_text[mention.start_char : mention.end_char] != mention.text:
+                raise ValueError("named entity mention text does not match its segment")
         for mention in self.reference_mentions:
             segment_text = segments_by_id[mention.segment_id].text
             if not 0 <= mention.start_char <= mention.end_char <= len(segment_text):

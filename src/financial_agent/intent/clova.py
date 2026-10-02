@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass
-from typing import Mapping, Protocol
 from urllib.parse import quote
 
 import httpx
 
 from .config import ClovaResolverConfig
+from .model import ModelInvocationResult, StructuredOutputEnvelope
 from .errors import (
     MODEL_CONFIGURATION_INVALID,
     MODEL_PROVIDER_UNAVAILABLE,
@@ -19,18 +18,6 @@ from .errors import (
     MODEL_TIMEOUT,
     ModelInvocationError,
 )
-
-
-class StructuredOutputEnvelope(Protocol):
-    system_message: str
-    user_message: str
-    response_schema: dict[str, object]
-
-
-@dataclass(frozen=True, slots=True)
-class ModelInvocationResult:
-    content: str
-    usage: Mapping[str, int]
 
 
 class ClovaStructuredOutputAdapter:

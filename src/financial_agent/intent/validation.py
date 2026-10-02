@@ -968,7 +968,10 @@ def derive_semantic_tags(
         if (
             hint.semantic_tag in _POLICY_TAGS
             and hint.evidence_span_ids
-            and hint.reason_code in _POLICY_REASON_CODES
+            and (
+                hint.reason_code in _POLICY_REASON_CODES
+                or isinstance(view, ResolverViewV3) and hint.reason_code == "implicit"
+            )
             and (
                 view is None
                 or _has_policy_evidence(
@@ -990,6 +993,10 @@ def _has_policy_evidence(
     if view is None:
         return False
     evidence_by_id = {item.evidence_id: item for item in view.evidence_candidates}
+    if isinstance(view, ResolverViewV3):
+        # A source-grounded V3 restriction may cover an unseen paraphrase.
+        # It can only block execution; it cannot authorize a fact or a query.
+        return bool(evidence_ids) and all(item in evidence_by_id for item in evidence_ids)
     return any(
         EvidenceSourceKind.POLICY in evidence.source_kinds
         and tag.value in evidence.offered_semantic_ids

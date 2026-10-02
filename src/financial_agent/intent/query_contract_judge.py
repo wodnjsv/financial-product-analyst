@@ -8,7 +8,7 @@ from typing import Iterable
 
 from financial_agent.contracts.base import ContractModel, Identifier
 
-from .clova import ModelInvocationResult
+from .model import ModelInvocationResult
 from .errors import MODEL_SCHEMA_INVALID, MODEL_TIMEOUT, ModelInvocationError
 from .query_contract_solver import QueryContractCandidate
 from .query_contracts import ContractReadiness, ContractReadinessRecordV2

@@ -138,6 +138,11 @@ def _search_statement(
     parameters: dict[str, object] = {
         "dataset_version": dataset_version,
         "trigram_threshold": TRIGRAM_THRESHOLD,
+        "product_type_metric_ids": [
+            "product_type",
+            "organizer.pref01n001.product_type",
+            "organizer.pref02n001.product_type",
+        ],
     }
     for index, mention in enumerate(mentions):
         parameters[f"mention_id_{index}"] = mention.mention_id
@@ -174,7 +179,8 @@ def _search_statement(
             JOIN dataset ON TRUE
             JOIN catalog.entity AS entity
               ON entity.dataset_version = :dataset_version
-             AND entity.normalized_name = m.normalized_text
+             AND upper(regexp_replace(entity.normalized_name, '[[:space:]]', '', 'g'))
+               = upper(regexp_replace(m.normalized_text, '[[:space:]]', '', 'g'))
             UNION ALL
 
             SELECT m.mention_id, alias.entity_id,
@@ -185,7 +191,8 @@ def _search_statement(
             JOIN dataset ON TRUE
             JOIN catalog.alias AS alias
               ON alias.dataset_version = :dataset_version
-             AND alias.normalized_alias_text = m.normalized_text
+             AND upper(regexp_replace(alias.normalized_alias_text, '[[:space:]]', '', 'g'))
+               = upper(regexp_replace(m.normalized_text, '[[:space:]]', '', 'g'))
              AND (alias.valid_from IS NULL OR alias.valid_from <= dataset.cutoff_date)
              AND (alias.valid_to IS NULL OR alias.valid_to >= dataset.cutoff_date)
             UNION ALL
@@ -260,7 +267,7 @@ def _search_statement(
                    FROM observation.observation_record AS product_type
                    WHERE product_type.dataset_version = :dataset_version
                      AND product_type.entity_id = ranked_matches.entity_id
-                     AND product_type.metric_id = 'product_type'
+                     AND product_type.metric_id = ANY(CAST(:product_type_metric_ids AS text[]))
                    ORDER BY product_type.observation_id
                ) AS product_type_statuses,
                ARRAY(
@@ -268,7 +275,7 @@ def _search_statement(
                    FROM observation.observation_record AS product_type
                    WHERE product_type.dataset_version = :dataset_version
                      AND product_type.entity_id = ranked_matches.entity_id
-                     AND product_type.metric_id = 'product_type'
+                     AND product_type.metric_id = ANY(CAST(:product_type_metric_ids AS text[]))
                    ORDER BY product_type.observation_id
                ) AS product_type_text_values,
                ARRAY(
@@ -279,7 +286,7 @@ def _search_statement(
                     AND metric_definition.definition_version = product_type.metric_definition_version
                    WHERE product_type.dataset_version = :dataset_version
                      AND product_type.entity_id = ranked_matches.entity_id
-                     AND product_type.metric_id = 'product_type'
+                     AND product_type.metric_id = ANY(CAST(:product_type_metric_ids AS text[]))
                    ORDER BY product_type.observation_id
                ) AS product_type_value_kinds,
                EXISTS (

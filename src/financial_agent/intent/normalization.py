@@ -133,6 +133,7 @@ def normalize_request(context: RequestContext) -> NormalizedRequest:
     )
     candidates: list[ReferenceCandidate] = []
     for segment in segments:
+        entity_ranges = named_entity_source_ranges(context, segment)
         occupied: list[tuple[int, int]] = []
         for surface in _REFERENCE_SURFACES:
             start = segment.normalized_text.find(surface)
@@ -143,6 +144,12 @@ def normalize_request(context: RequestContext) -> NormalizedRequest:
                     for occupied_start, occupied_end in occupied
                 ):
                     original_start, original_end = segment.to_original_span(start, end)
+                    if any(
+                        original_start < entity_end and original_end > entity_start
+                        for entity_start, entity_end in entity_ranges
+                    ):
+                        start = segment.normalized_text.find(surface, start + 1)
+                        continue
                     candidates.append(
                         ReferenceCandidate(
                             reference_id=(
@@ -170,3 +177,30 @@ def normalize_request(context: RequestContext) -> NormalizedRequest:
         segments=segments,
         reference_candidates=tuple(candidates),
     )
+
+
+def named_entity_source_ranges(
+    context: RequestContext, segment: NormalizedSegment
+) -> tuple[tuple[int, int], ...]:
+    """Use only uniquely source-grounded entity names; never guess an occurrence."""
+    ranges: list[tuple[int, int]] = []
+    for mention in context.named_entities:
+        if mention.segment_id != segment.segment_id:
+            continue
+        if mention.start_char is not None and mention.end_char is not None:
+            if (
+                not 0 <= mention.start_char < mention.end_char <= len(segment.original_text)
+                or segment.original_text[mention.start_char : mention.end_char] != mention.text
+            ):
+                raise RequestNormalizationError("ENTITY_MENTION_RANGE_AMBIGUOUS")
+            ranges.append((mention.start_char, mention.end_char))
+            continue
+        starts = [
+            start
+            for start in range(len(segment.original_text) - len(mention.text) + 1)
+            if mention.text and segment.original_text.startswith(mention.text, start)
+        ]
+        if len(starts) != 1:
+            continue
+        ranges.append((starts[0], starts[0] + len(mention.text)))
+    return tuple(ranges)

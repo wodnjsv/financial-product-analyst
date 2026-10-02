@@ -332,6 +332,23 @@ def test_hybrid_manifest_rejects_legacy_overlay_or_version_pins() -> None:
         build_hybrid_manifest(load_hybrid_catalog(PROJECT_ROOT), versions)
 
 
+@pytest.mark.parametrize(
+    ("field", "previous_version"),
+    [
+        ("normalizer_version", "intent-normalizer-v1"),
+        ("candidate_policy_version", "intent-hints-v4"),
+        ("prompt_version", "intent-resolver-ko-v6-full-catalog"),
+    ],
+)
+def test_current_hybrid_manifest_rejects_pre_migration_behavior_versions(
+    field: str, previous_version: str
+) -> None:
+    versions = hybrid_manifest_versions() | {field: previous_version}
+
+    with pytest.raises(ResolverInvariantError, match="CATALOG_VERSION_MISMATCH"):
+        build_hybrid_manifest(load_hybrid_catalog(PROJECT_ROOT), versions)
+
+
 def test_hybrid_version_constants_match_the_shadow_v3_contract() -> None:
     """Catches a V3 manifest reaching a model with a mismatched proposal contract."""
     assert (
@@ -341,8 +358,8 @@ def test_hybrid_version_constants_match_the_shadow_v3_contract() -> None:
         HYBRID_ADAPTER_VERSION,
     ) == (
         "3.0",
-        "intent-hints-v4",
-        "intent-resolver-ko-v6-full-catalog",
+        "intent-hints-v5-explicit-family",
+        "intent-resolver-ko-v10-grounded-routing",
         "clova-chat-v3-proposal-v3",
     )
 

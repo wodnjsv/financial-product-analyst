@@ -7,6 +7,13 @@ local SQL testing replaces competition submission/NCP/Graph activation gates;
 source integrity, deterministic calculations, and repository data exclusions
 remain in force. The competition baseline below is retained as history.
 
+**Personal intent migration — approved 2026-10-02:** The user requested that
+the existing intent resolver use NVIDIA API instead of HCX and that its
+identified routing gaps be improved. [ADR-0053](decisions/ADR-0053-nvidia-personal-intent-routing.md)
+supersedes HCX-only intent transport and the shadow-only restriction for the
+bounded personal intent entry point. Semantic catalogs, source-owned mentions,
+deterministic validation and execution boundaries remain in force.
+
 **Status:** Approved project direction
 
 **Last updated:** 2026-08-31

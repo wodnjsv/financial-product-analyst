@@ -15,10 +15,10 @@
 | 개인용 검색 | 수익률 순위·정확 종목명 보유 ETF 조회·위험 문서 키워드 조회의 세 계획을 CLI로 실행 |
 | 출력·검증 | 검색 일치/표시 건수, 누락 상태, 출처와 전체 조회 발췌를 서버에서 출력·검증 |
 | 별도 비중 | 다섯 운용사에서 확인한 삼성전자 보통주 비중 9건을 원본 KRX 값과 분리하여 적재 |
-| NVIDIA 실험 | `z-ai/glm-5.3-flash`로 세 질문의 분석과 문서 ID 선택을 임시 테스트 스크립트에서 검증 |
-| 일반 자연어 서비스 | NVIDIA 정식 adapter와 자연어 HTTP API 연결은 아직 구현되지 않음 |
+| NVIDIA 의도 분석 | `z-ai/glm-5.3-flash` adapter와 자연어 CLI 구현. 기존 V3 의미 계약·검증·라우팅 사용 |
+| 자연어 실행 범위 | 상품군·엔터티·조건·기간·계획을 JSON으로 출력. 상품 조회 실행과 HTTP API는 별도 연결 필요 |
 
-**현재 저장소의 검색 CLI는 모델을 호출하지 않습니다.** 사용자가 `plan`, `keyword`, `limit`를 지정합니다. NVIDIA로 질문을 분석한 결과를 같은 조회·검증 경로로 전달하는 실험은 완료했지만, 임시 실험 스크립트가 정식 서비스 진입점인 것은 아닙니다.
+`search_personal_dataset.py`는 사용자가 지정한 `plan`, `keyword`, `limit`로 실제 검색합니다. 새 `resolve_personal_intent.py`는 NVIDIA로 자연어를 분석하고 기존 컴파일러로 라우팅·실행 가능성을 검사합니다. 두 CLI는 아직 자동 연결되지 않았으며, 의도 분석 출력의 `execution_performed`는 항상 `false`입니다.
 
 ## 실행 흐름
 
@@ -34,7 +34,19 @@
   → 출력 계약 및 원문 일치 검증
 ```
 
-실험에서는 이 앞에 `자연어 질문 → NVIDIA 질문 분석 → 등록된 계획 검증`을 붙였습니다. 모델이 SQL을 작성하거나 비중·수익률을 계산하지 않습니다. 문서 모델 계약은 `{"citations": ["D1", "D2", "D3"]}`처럼 조회된 문서 ID만 허용합니다. CLI는 조회 ID를 직접 사용하므로 모델 호출 없이 같은 서버 출력 경로를 실행합니다.
+새 의도 분석 경로는 다음과 같습니다.
+
+```text
+자연어 질문 + 실제 데이터셋 pin
+  → 읽기 전용 DB에서 이름·별칭·식별자와 원문 위치 탐색
+  → 의미 목록·상품 후보·명시적 상품군 잠금 구성
+  → NVIDIA가 등록된 ID로 의미·엔터티 역할 제안
+  → JSON 스키마·근거 ID·상품군 잠금·질의 계약 검증
+  → 결정론적 계획 컴파일 및 fast / compose / explore / abstain 판정
+  → 해석·후보 계약·승인된 계획·제한 사유 JSON 출력
+```
+
+모델이 SQL을 작성하거나 비중·수익률을 계산하지 않습니다. 검색 CLI의 문서 계약은 `{"citations": ["D1", "D2", "D3"]}`처럼 조회된 문서 ID만 허용합니다. CLI는 조회 ID를 직접 사용하므로 모델 호출 없이 서버 출력 경로를 실행합니다.
 
 ## 프로젝트 구조
 
@@ -46,11 +58,11 @@
 | `src/financial_agent/db/`, `alembic/` | PostgreSQL 스키마, 마이그레이션, 최소 권한, 불변 원장·요청 산출물 저장 |
 | `src/financial_agent/ingestion/` | 주최 측 마스터·공식 소스 정규화, 식별자 연결, 누락·출처 보존, 로컬 용량 검사 |
 | `src/financial_agent/documents/`, `embeddings/` | PDF 추출·문서 구역·청크·원문 해시·임베딩 계약 및 저장 |
-| `src/financial_agent/intent/` | 기존 의도 해소·한국어 의미 연결·평가 기반. HCX adapter는 과거 대회 구현으로 보존 |
+| `src/financial_agent/intent/` | NVIDIA adapter·원문 엔터티 탐색·기존 V3 의미 해소·검증·개인용 라우팅. HCX adapter는 과거 검증용으로 보존 |
 | `src/financial_agent/planning/`, `orchestration/` | 타입이 정해진 계획·실행 그래프, 조건부 라우팅, 제한된 동시 실행·재시도 |
 | `src/financial_agent/sql/`, `graph/`, `retrieval/` | 결정론적 SQL 컴파일·조회, RDF/SHACL·Graph 투영, 문서 검색과 근거 연결 |
 | `src/financial_agent/release/` | 근거 검증·Claim Gate·Renderer·검증 응답 캐시와 개인용 출력 계약 |
-| `scripts/` | 개인용 적재·복원·검색·감사·재검증 CLI |
+| `scripts/` | 개인용 적재·복원·검색·자연어 의도 분석·감사·재검증 CLI |
 | `schemas/`, `ontology/`, `tests/` | 계약 산출물, 온톨로지, 합성 데이터 기반 회귀·선택적 통합 검사 |
 | `docs/planning/`, `docs/runbooks/` | 승인된 설계·결정·작업 계획·검증 이력·운영 방법 |
 
@@ -89,7 +101,7 @@ python3.12 -m venv .venv
 .venv/bin/python -m pip install --no-deps -e .
 ```
 
-`requirements/personal-local.lock`은 2026-09-18 개인용 환경에서 검증한 패키지 버전입니다. 현재 검색·문서 복원에는 LLM API 키가 필요하지 않습니다.
+`requirements/personal-local.lock`은 2026-09-18 개인용 환경에서 검증한 패키지 버전입니다. 검색·문서 복원에는 LLM API 키가 필요하지 않습니다. 자연어 의도 분석에는 NVIDIA API 키가 필요합니다.
 
 ## 로컬 DB 재현
 
@@ -145,6 +157,22 @@ manifest·체크섬·표본 목록·용량 기준·검증 결과는 원본 작�
 
 2026-10-02 수정 후 실DB 검증에서는 세 예제의 일치/표시 건수가 각각 **210/5, 9/5, 58/3**이었습니다. 이는 저장된 표본의 검증 이력으로, 새로운 수집이나 다른 데이터셋의 결과를 보장하지 않습니다.
 
+## NVIDIA 자연어 의도 분석
+
+키는 환경의 `NVIDIA_API_KEY` 또는 명시한 로컬 `api.txt`의 `Nvidia API = 값`에서 읽습니다. 파일은 Git에 포함하지 않습니다. 모델은 `FINANCIAL_AGENT_INTENT_MODEL_ID`로 변경할 수 있으며 기본값은 `z-ai/glm-5.3-flash`입니다.
+
+```sh
+.venv/bin/python scripts/resolve_personal_intent.py \
+  --question '국내 ETF 중 총보수가 0.1% 이하인 상품을 보수가 낮은 순으로 5개 보여줘' \
+  --api-key-file /path/to/original-workspace/api.txt
+```
+
+이 호출은 질문, 등록된 의미 목록, DB에서 매칭한 후보의 이름·타입·상품군·내부 ID를 NVIDIA로 전송합니다. 원본 워크북·문서 본문·상품 관측값 전체를 전송하는 경로는 아닙니다. 모델의 숨겨진 추론과 키는 출력하지 않습니다.
+
+`interpreted_product_families`는 검증된 해석, `target_product_families`와 `selected_contract`는 컴파일된 계획의 범위입니다. `discovered_entities`, `frames`, `issue_codes`, `route`, `disposition`, `logical_query_plan`으로 해석과 제한을 확인할 수 있습니다. 상품군 오변경·불완전한 기간·엔터티 미해소는 승인된 조회 계획으로 진행하지 않습니다. 물리 매핑이 없는 지표와 아직 내릴 수 없는 관계 조건은 제한 사유를 출력합니다. `explore` 판정이 추가 탐색 실행을 뜻하지는 않습니다.
+
+개선 사항과 지원 경계는 [NVIDIA 의도 분석 runbook](docs/runbooks/personal-nvidia-intent.md)에 있습니다. 메타데이터 전송 승인 후 정식 V3 경로에서 여섯 질문의 실제 NVIDIA 응답을 검증했습니다. 모델 호출은 각각 1회였고, 조건·상품군·기간·정렬·건수·상품 ID와 제한 판정이 일치했습니다. 이 검증에서 상품 SQL은 실행하지 않았습니다.
+
 ## 답변·누락·출처 정책
 
 - 수치·기준일·원본 파일·시트·행·열과 관계 근거는 조회 결과에서 서버가 출력합니다. 검색 일치 건수와 실제 표시 건수를 구분합니다.
@@ -198,31 +226,38 @@ psql -X -h localhost -d financial_agent_local -f scripts/personal_queries.sql
 
 2026-10-02 수정 검증 이력은 관련 검사 **186 passed**, 전체 offline **3,192 passed, 4 skipped, 516 deselected**입니다. 건너뛰거나 제외한 외부 통합·성능 검사는 통과했다고 취급하지 않습니다. 실DB에서는 세 검색·빈 결과·개수 제한·우선주 조건, 원문 인용 3/3과 운용사 원본/상품 식별 자료 체크섬 18/18을 확인했습니다. 원본 KRX 감사는 불일치 0건이었습니다. NVIDIA 임시 harness의 질문 분석 3회와 문서 ID 선택 1회도 HTTP 200과 출력 계약을 확인했습니다.
 
-검증 이력과 수정 근거는 [2026-10-02 작업 기록](docs/planning/tasks/2026-10-02-local-search-grounding-fixes.md)을 참조합니다. 생성한 실제 데이터 로그는 저장소에서 제외합니다.
+검증 이력과 수정 근거는 [검색 수정 기록](docs/planning/tasks/2026-10-02-local-search-grounding-fixes.md)과 [NVIDIA 의도 분석 작업 기록](docs/planning/tasks/2026-10-02-nvidia-intent-routing.md)을 참조합니다. 생성한 실제 데이터 로그는 저장소에서 제외합니다.
+
+읽기 전용 DB에서 상품·종목·운용사 타입과 반복된 이름 위치를 확인했습니다. 정식 V3 경로의 실제 NVIDIA 검증은 **6/6**이며, 마지막 실행에서 각 질문의 전체 처리 시간은 **22.2~36.7초**였습니다. 초기 스키마 오류와 시간 초과는 작업 기록에 보존하고, 필수 구간 ID·의미 ID 역할 지침과 중복 스키마 안내를 보완한 뒤 재검증했습니다. 제공된 여섯 예제의 성공이 모든 질문이나 이후 API 응답 시간을 보장하지는 않습니다.
+
+이후 수정까지 포함한 최종 offline 결과는 **3,365 passed, 4 skipped, 516 deselected**입니다. 제외한 외부 통합·성능 검사를 통과로 취급하지 않습니다.
 
 ## 남은 작업
 
-- NVIDIA 질문 분석 adapter와 일반 자연어 서비스 진입점을 정식 코드로 연결하고 실패·시간 제한·API 계약까지 통합 검증하기.
+- 지원이 확인된 자연어 계획을 실제 조회·출력 경로와 연결하기.
+- 관계 조건을 타입에 맞게 컴파일하고, 미등록 지표의 물리 매핑을 보완하기. 일반 자연어 HTTP API는 별도 작업입니다.
 - 현재 세 계획 밖의 상품군·조건·비교·금융 계산·유사도 경로를 승인된 정책과 실제 데이터로 연결하기.
 - 표본 밖 coverage와 추가 공식 데이터의 출처·날짜·비교 가능성을 확인하기.
 - 개인용 검색을 전체 Evidence/Claim 출시 경로와 연결하려면 해당 근거 게이트를 별도로 검증하기.
 - 자유로운 문서 요약을 다시 제공하려면 원문 충실성을 넘어 주장 내용의 근거를 검증하는 별도 설계가 필요합니다. 현재는 원문 근거만 출력합니다.
 
-전체 서비스 배포·대회용 공개 API·NCP 운영 acceptance는 완료되지 않았습니다. 현재 완료 범위는 제한된 로컬 DB와 검색·출력·검증 경로입니다.
+전체 서비스 배포·대회용 공개 API·NCP 운영 acceptance는 완료되지 않았습니다. 로컬 DB와 세 검색·출력·검증 경로, 새 자연어 분석·라우팅의 여섯 예제는 검증했습니다. 두 경로를 하나의 자연어 조회·답변 서비스로 연결하는 작업은 남아 있습니다.
 
 ## 데이터와 보안
 
-원본 워크북·대회 PDF·DB·Parquet·벡터·모델 캐시·실행 로그·API 키·`.env`·`api.txt`·계정 식별 설정은 커밋하지 않습니다. `data/`는 전체 제외하며, 저장소에는 재현용 코드·스키마·합성 테스트·승인된 문서만 포함합니다. 향후 모델을 정식 연결할 때도 키와 숨겨진 모델 추론을 실행 로그에 남기지 않아야 합니다.
+원본 워크북·대회 PDF·DB·Parquet·벡터·모델 캐시·실행 로그·API 키·`.env`·`api.txt`·계정 식별 설정은 커밋하지 않습니다. `data/`는 전체 제외하며, 저장소에는 재현용 코드·스키마·합성 테스트·승인된 문서만 포함합니다. NVIDIA adapter는 키와 숨겨진 모델 추론을 실행 로그에 남기지 않습니다.
 
 ## 설계·사용 문서
 
 - [개인용 PostgreSQL 설치·재현](docs/runbooks/personal-local-postgresql.md)
 - [개인용 검색·원문 출력·운용사 비중](docs/runbooks/personal-local-search.md)
+- [NVIDIA 자연어 의도 분석·라우팅](docs/runbooks/personal-nvidia-intent.md)
 - [현재 및 과거 구현 현황](docs/planning/STATUS.md)
 - [계획·구현 기준](docs/planning/HARNESS.md)
 - [개인용 표본·용량 결정: ADR-0050](docs/planning/decisions/ADR-0050-personal-local-subset.md)
 - [원본 기반 문서 답변 결정: ADR-0052](docs/planning/decisions/ADR-0052-source-owned-local-document-answers.md)
+- [NVIDIA 의도 분석 결정: ADR-0053](docs/planning/decisions/ADR-0053-nvidia-personal-intent-routing.md)
 - [전체 근거·검증·응답 구조](docs/planning/architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md)
 - [온톨로지 구조](docs/planning/architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md)
 
-대회 관련 계획은 과거 설계·검증 기록입니다. 현재 개인용 범위는 최신 사용자 승인과 ADR-0050~0052를 따릅니다.
+대회 관련 계획은 과거 설계·검증 기록입니다. 현재 개인용 범위는 최신 사용자 승인과 ADR-0050~0053을 따릅니다.

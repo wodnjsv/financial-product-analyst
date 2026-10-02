@@ -10,7 +10,7 @@ from pydantic import Field, ValidationError
 from financial_agent.contracts.base import ContractModel, Identifier
 from financial_agent.contracts.request import RequestContext
 
-from .clova import ModelInvocationResult
+from .model import ModelInvocationResult
 from .draft import SlotAssignment
 from .prompt import ResolverPromptEnvelope
 from .task_binding import (

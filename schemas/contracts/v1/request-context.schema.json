@@ -21,6 +21,19 @@
     "NamedEntityMention": {
       "additionalProperties": false,
       "properties": {
+        "end_char": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Char"
+        },
         "expected_entity_types": {
           "items": {
             "minLength": 1,
@@ -45,6 +58,19 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
           "title": "Segment Id",
           "type": "string"
+        },
+        "start_char": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start Char"
         },
         "text": {
           "title": "Text",

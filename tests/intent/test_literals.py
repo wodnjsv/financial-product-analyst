@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from financial_agent.contracts.canonical import build_request_key
-from financial_agent.contracts.request import RequestContext, Segment
+from financial_agent.contracts.request import NamedEntityMention, RequestContext, Segment
 from financial_agent.intent.literals import extract_literals
 from financial_agent.intent.normalization import normalize_request
 
@@ -133,4 +133,103 @@ def test_literal_candidates_expose_semantic_value_kinds() -> None:
         ("percentage", "decimal"),
         ("date", "date"),
         ("result_limit", "integer"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "entity_name",
+    ["TIGER 미국S&P500", "국고채24-3", "005930", "국채1년 ETF", "상위5개 ETF"],
+)
+def test_entity_name_literals_do_not_become_query_conditions(entity_name: str) -> None:
+    request = normalized_request(f"{entity_name}의 1년 수익률 높은 5개")
+    context = request.context.model_copy(
+        update={
+            "named_entities": (
+                NamedEntityMention(
+                    mention_id="entity-1",
+                    segment_id="s1",
+                    text=entity_name,
+                    expected_entity_types=("FinancialProduct",),
+                ),
+            )
+        }
+    )
+
+    literals = extract_literals(normalize_request(context))
+
+    assert [(item.kind, item.canonical_value) for item in literals] == [
+        ("period", "P1Y"),
+        ("sort_direction", "desc"),
+        ("result_limit", "5"),
+    ]
+    assert all(item.start_char >= len(entity_name) for item in literals)
+
+
+def test_entity_literal_mask_preserves_original_unicode_ranges() -> None:
+    request = normalized_request("ＴＩＧＥＲ Ｓ＆Ｐ５００의 １년 수익률 상위 ５개")
+    context = request.context.model_copy(
+        update={
+            "named_entities": (
+                NamedEntityMention(
+                    mention_id="entity-1",
+                    segment_id="s1",
+                    text="ＴＩＧＥＲ Ｓ＆Ｐ５００",
+                    expected_entity_types=("FinancialProduct",),
+                ),
+            )
+        }
+    )
+
+    literals = extract_literals(normalize_request(context))
+
+    assert [(item.original_text, item.canonical_value) for item in literals] == [
+        ("１년", "P1Y"),
+        ("５개", "5"),
+    ]
+
+
+def test_repeated_entity_text_without_offsets_does_not_guess_a_mask_range() -> None:
+    request = normalized_request("005930과 005930의 1년 수익률")
+    context = request.context.model_copy(
+        update={
+            "named_entities": (
+                NamedEntityMention(
+                    mention_id="entity-1",
+                    segment_id="s1",
+                    text="005930",
+                    expected_entity_types=("Security",),
+                ),
+            )
+        }
+    )
+
+    literals = extract_literals(normalize_request(context))
+
+    assert [item.start_char for item in literals if item.kind == "number"] == [0, 8]
+
+
+def test_repeated_entity_text_with_source_offsets_preserves_real_conditions() -> None:
+    request = normalized_request("005930과 005930의 1년 수익률 높은 5개")
+    context = request.context.model_copy(
+        update={
+            "named_entities": tuple(
+                NamedEntityMention(
+                    mention_id=f"entity-{index}",
+                    segment_id="s1",
+                    text="005930",
+                    expected_entity_types=("Security",),
+                    start_char=start,
+                    end_char=start + 6,
+                )
+                for index, start in enumerate((0, 8))
+            )
+        }
+    )
+
+    literals = extract_literals(normalize_request(context))
+
+    assert [(item.kind, item.canonical_value) for item in literals] == [
+        ("period", "P1Y"),
+        ("sort_direction", "desc"),
+        ("result_limit", "5"),
     ]

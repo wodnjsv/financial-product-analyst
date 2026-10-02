@@ -31,7 +31,7 @@ from .hybrid_prompt import build_hybrid_prompt
 from .hybrid_proposal import IntentResolutionProposalV3
 from .axis_locks import ExactSemanticLock, build_exact_semantic_locks
 from .catalog import SemanticCatalogSnapshot
-from .clova import ModelInvocationResult
+from .model import ModelInvocationResult
 from .context import (
     ResolutionFinalizationMetadata,
     finalize_resolution,
@@ -268,6 +268,7 @@ class QueryContractResolutionAttemptV3:
     resolution: ValidatedIntentResolutionV3
     candidates: QueryContractCandidateSet
     telemetry: QueryContractResolutionTelemetry
+    view: ResolverViewV3 | None = None
 
 
 class IntentResolverService:
@@ -796,6 +797,7 @@ class IntentResolverService:
             resolution=resolution,
             candidates=candidates,
             telemetry=telemetry,
+            view=prepared.view,
         )
 
     def validate_axis_response(
@@ -976,7 +978,10 @@ def build_hybrid_repair_envelope(
     if failure.code == MODEL_PROPOSAL_SCHEMA_INVALID:
         instruction = (
             "Return a ProposalV3 with the exact schema shape. Link only offered "
-            "mention IDs to registered compact-catalog semantic IDs."
+            "mention IDs to registered compact-catalog semantic IDs. Every frame "
+            "must include all required keys, especially non-empty segment_ids "
+            "selected from offered context.segments segment_id values, even for "
+            "a single segment or unsupported intent."
         )
     original_prompt_hash = canonical_sha256(
         {
@@ -1384,12 +1389,22 @@ def _entity_mentions(
     mentions: list[Mention] = []
     for source in context.named_entities:
         segment = segments[source.segment_id]
-        start = segment.original_text.find(source.text)
+        start = (
+            source.start_char
+            if source.start_char is not None
+            else segment.original_text.find(source.text)
+        )
         if start < 0:
             raise RequestNormalizationError(
                 "REQUEST_CONTRACT_INVALID: named entity text is absent from its segment"
             )
-        end = start + len(source.text)
+        end = (
+            source.end_char
+            if source.end_char is not None
+            else start + len(source.text)
+        )
+        if segment.original_text[start:end] != source.text:
+            raise RequestNormalizationError("ENTITY_MENTION_RANGE_INVALID")
         normalized_text = normalize_segment(
             source.mention_id, source.text
         ).normalized_text
@@ -1417,14 +1432,25 @@ def _hybrid_entity_mentions(
         segment = segments[source.segment_id]
         if not source.text:
             raise RequestNormalizationError("ENTITY_MENTION_RANGE_AMBIGUOUS")
-        starts = [
-            start
-            for start in range(len(segment.original_text) - len(source.text) + 1)
-            if segment.original_text.startswith(source.text, start)
-        ]
-        if len(starts) != 1:
-            raise RequestNormalizationError("ENTITY_MENTION_RANGE_AMBIGUOUS")
-        start = starts[0]
+        if source.start_char is not None:
+            start = source.start_char
+            end = source.end_char
+            if (
+                end is None
+                or not 0 <= start < end <= len(segment.original_text)
+                or segment.original_text[start:end] != source.text
+            ):
+                raise RequestNormalizationError("ENTITY_MENTION_RANGE_INVALID")
+        else:
+            starts = [
+                start
+                for start in range(len(segment.original_text) - len(source.text) + 1)
+                if segment.original_text.startswith(source.text, start)
+            ]
+            if len(starts) != 1:
+                raise RequestNormalizationError("ENTITY_MENTION_RANGE_AMBIGUOUS")
+            start = starts[0]
+            end = start + len(source.text)
         mentions.append(
             Mention(
                 mention_id=source.mention_id,
@@ -1434,7 +1460,7 @@ def _hybrid_entity_mentions(
                     source.mention_id, source.text
                 ).normalized_text,
                 start_char=start,
-                end_char=start + len(source.text),
+                end_char=end,
             )
         )
     return tuple(mentions)
