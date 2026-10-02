@@ -47,10 +47,12 @@ _LOCKING = re.compile(
 _COMMENT = re.compile(r"--|/\*|\*/")
 _SERVER_BINDING_IDS = frozenset(EXPECTED_BINDING_DEFINITION_HASHES) | {
     "catalog-product-family.v1",
+    "managed-by-condition.v1",
+    "holds-security-condition.v1",
     *(f"evidence-{item.value}.v1" for item in EvidenceLocator),
 }
 _SEMANTIC_PATH = re.compile(
-    r"^(?:scope\.product_family_ids|operation\.(?:projections|predicate|ordering|"
+    r"^(?:scope\.(?:product_family_ids|relation_conditions\.[0-9]+)|operation\.(?:projections|predicate|ordering|"
     r"aggregation(?:\.target|\.population|\.group_by)?)(?:\.[0-9]+)?|"
     r"qualifiers\.(?:period|currency|unit|as_of)|evidence\.[0-9]+)$"
 )

@@ -237,7 +237,7 @@ async def test_factory_uses_actual_pin_and_nvidia_provenance(monkeypatch, status
     assert captured['cutoff_date'] == date(2026, 8, 24)
     assert captured['model_id'] == 'z-ai/glm-5.3-flash'
     resolver = captured['resolver']
-    assert resolver._manifest.adapter_version == 'nvidia-chat-json-proposal-v4'
+    assert resolver._manifest.adapter_version == 'nvidia-chat-json-proposal-v5'
     assert resolver._semantic_default_registry is None
     assert resolver._dataset_semantic_defaults is None
     assert type(resolver._adapter).__name__ == 'NvidiaStructuredOutputAdapter'

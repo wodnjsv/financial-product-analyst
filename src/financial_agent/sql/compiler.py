@@ -12,7 +12,7 @@ from financial_agent.contracts.base import ContractModel, Identifier
 from financial_agent.contracts.enums import Capability, Cardinality, ProductFamily, ToolStatus
 from financial_agent.contracts.execution import BindingValue, ToolResult
 from financial_agent.contracts.values import decode_contract_value
-from financial_agent.db.schema.catalog import entity, product
+from financial_agent.db.schema.catalog import entity, institution, product, security
 from financial_agent.contracts.canonical import canonical_json_bytes, canonical_sha256
 from financial_agent.db.schema.evidence import (
     evidence_observation_origin,
@@ -849,6 +849,9 @@ def _compile_statement(context: _Context):
     if family is not None:
         family_param = context.params.bind(family.value, prefix="family")
         where.append(product.c.product_family == family_param)
+        type_scope = _etf_product_scope(context, family)
+        if type_scope is not None:
+            where.append(type_scope)
         _record(
             context,
             "scope.product_family_ids",
@@ -877,6 +880,11 @@ def _compile_statement(context: _Context):
         )
 
     operation = task.operation
+    if task.scope.relation_conditions and not isinstance(operation, (
+        LogicalLookupOperationV2, LogicalScreenOperationV2, LogicalRankOperationV2
+    )):
+        raise SqlCompileRejection("RELATION_ACTION_UNSUPPORTED")
+    base, relation_columns = _join_relation_conditions(context, base)
     if (
         isinstance(operation, LogicalRankOperationV2)
         and ProductFamily.PUBLIC_FUND in context.scope_families
@@ -888,7 +896,10 @@ def _compile_statement(context: _Context):
     ):
         raise SqlCompileRejection("PUBLIC_FUND_GRAIN_UNVERIFIED")
     if isinstance(operation, LogicalLookupOperationV2):
-        if operation.projections.default_profile_id is not None:
+        if operation.projections.default_profile_id is not None and not (
+            task.scope.relation_conditions
+            and operation.projections.default_profile_id == "default-product-projection.v1"
+        ):
             raise SqlCompileRejection("PROJECTION_PROFILE_NOT_EXPANDED")
         fields = operation.projections.field_concept_ids
         selected = [product.c.entity_id.label("product_id"), entity.c.canonical_name.label("product_name")]
@@ -918,13 +929,14 @@ def _compile_statement(context: _Context):
     elif isinstance(operation, LogicalScreenOperationV2):
         concepts = _predicate_concepts(operation.predicate)
         base, expressions = _join_fields(context, base, family, concepts)
-        where.append(
-            lower_predicate(
-                operation.predicate,
-                expression_for=lambda concept: expressions[concept][:3],
-                parameters=context.params,
+        if operation.predicate is not None:
+            where.append(
+                lower_predicate(
+                    operation.predicate,
+                    expression_for=lambda concept: expressions[concept][:3],
+                    parameters=context.params,
+                )
             )
-        )
         for index, concept in enumerate(concepts):
             binding = expressions[concept][1]
             _record(context, f"operation.predicate.{index}", binding.id, PhysicalLoweringKind.PREDICATE, binding, (binding.missingness_policy_id,))
@@ -1033,9 +1045,123 @@ def _compile_statement(context: _Context):
         raise SqlCompileRejection("SQL_ACTION_NOT_SUPPORTED")
 
     if not isinstance(operation, LogicalAggregateOperationV2):
+        if relation_columns:
+            statement = statement.add_columns(*relation_columns)
         statement = _apply_qualifiers(context, statement)
     evidence = _evidence_ids(context)
     return statement, evidence
+
+
+def _join_relation_conditions(context: _Context, base):
+    columns = []
+    for index, condition in enumerate(context.task.scope.relation_conditions):
+        policy_id = ("managed-by-condition.v1" if condition.relation_id == "managedBy"
+                     else "holds-security-condition.v1")
+        if policy_id not in context.task.policy_ids:
+            raise SqlCompileRejection("RELATION_POLICY_OWNERSHIP_MISMATCH")
+        if (condition.relation_id == "holdsSecurity" and any(
+            family is ProductFamily.DOMESTIC_BOND for family in context.scope_families
+        )):
+            raise SqlCompileRejection("RELATION_FAMILY_UNSUPPORTED")
+        as_of = context.task.qualifiers.as_of_date
+        if condition.relation_id == "holdsSecurity" and as_of is None:
+            raise SqlCompileRejection("PHYSICAL_REQUIRED_QUALIFIER_MISSING")
+        relation = relation_record.alias(f"condition_relation_{index}")
+        origin = evidence_relation_origin.alias(f"condition_relation_origin_{index}")
+        evidence = evidence_record.alias(f"condition_relation_evidence_{index}")
+        source = source_record.alias(f"condition_relation_source_{index}")
+        object_catalog = (institution if condition.relation_id == "managedBy" else security).alias(
+            f"condition_relation_object_{index}")
+        predicate = context.params.bind(condition.relation_id, prefix="relation_predicate")
+        filters = [
+            relation.c.predicate_id == predicate,
+            relation.c.object_id == context.params.bind(condition.object_entity_id, prefix="relation_object"),
+            evidence.c.evidence_kind == context.params.bind("relation", prefix="relation_evidence_kind"),
+            evidence.c.predicate_id == predicate,
+            evidence.c.subject_id == relation.c.subject_id,
+            evidence.c.cutoff_status == context.params.bind("eligible", prefix="relation_cutoff"),
+            source.c.eligible_for_claim.is_(True),
+        ]
+        if condition.relation_id == "managedBy":
+            filters.append(object_catalog.c.institution_kind == context.params.bind(
+                "asset_manager", prefix="relation_object_type"))
+        if as_of is not None:
+            reference_date = context.params.bind(as_of, prefix="relation_as_of")
+            filters.extend((
+                sa.or_(relation.c.valid_from.is_(None), relation.c.valid_from <= reference_date),
+                sa.or_(relation.c.valid_to.is_(None), relation.c.valid_to >= reference_date),
+            ))
+        else:
+            filters.append(relation.c.valid_to.is_(None))
+        lineage = (sa.select(
+            relation.c.dataset_version, relation.c.subject_id,
+            sa.func.array_agg(sa.distinct(relation.c.relation_id)).label("relation_ids"),
+            sa.func.array_agg(sa.distinct(evidence.c.evidence_id)).label("evidence_ids"),
+            sa.func.array_agg(sa.distinct(source.c.source_id)).label("source_ids"),
+        ).select_from(relation.join(origin, sa.and_(
+            origin.c.dataset_version == relation.c.dataset_version,
+            origin.c.relation_id == relation.c.relation_id,
+        )).join(evidence, sa.and_(
+            evidence.c.dataset_version == origin.c.dataset_version,
+            evidence.c.evidence_id == origin.c.evidence_id,
+        )).join(source, sa.and_(
+            source.c.dataset_version == evidence.c.dataset_version,
+            source.c.source_id == evidence.c.source_id,
+        )).join(object_catalog, sa.and_(
+            object_catalog.c.dataset_version == relation.c.dataset_version,
+            object_catalog.c.entity_id == relation.c.object_id,
+        ))).where(*filters).group_by(relation.c.dataset_version, relation.c.subject_id)
+            .subquery(f"condition_relation_lineage_{index}"))
+        base = base.join(lineage, sa.and_(
+            lineage.c.dataset_version == product.c.dataset_version,
+            lineage.c.subject_id == product.c.entity_id,
+        ))
+        columns.extend((lineage.c.relation_ids.label(f"relation_ids_{index}"),
+                        lineage.c.evidence_ids.label(f"relation_evidence_ids_{index}"),
+                        lineage.c.source_ids.label(f"relation_source_ids_{index}")))
+        _record(context, f"scope.relation_conditions.{index}", policy_id,
+                PhysicalLoweringKind.SCOPE, policy_ids=(policy_id,))
+    return base, columns
+
+
+def _etf_product_scope(context: _Context, family: ProductFamily):
+    """ETF family semantics exclude ETNs co-located in the source master."""
+    metric = {
+        ProductFamily.DOMESTIC_ETF: "organizer.pref01n001.product_type",
+        ProductFamily.OVERSEAS_ETF: "organizer.pref02n001.product_type",
+    }.get(family)
+    if metric is None:
+        return None
+    kind = observation_record.alias("scope_product_type")
+    origin = evidence_observation_origin.alias("scope_type_origin")
+    evidence = evidence_record.alias("scope_type_evidence")
+    source = source_record.alias("scope_type_source")
+    base = kind.join(origin, sa.and_(
+        origin.c.dataset_version == kind.c.dataset_version,
+        origin.c.observation_id == kind.c.observation_id,
+    )).join(evidence, sa.and_(
+        evidence.c.dataset_version == origin.c.dataset_version,
+        evidence.c.evidence_id == origin.c.evidence_id,
+    )).join(source, sa.and_(
+        source.c.dataset_version == evidence.c.dataset_version,
+        source.c.source_id == evidence.c.source_id,
+    ))
+    return sa.exists(sa.select(kind.c.observation_id).select_from(base).where(
+        kind.c.dataset_version == product.c.dataset_version,
+        kind.c.entity_id == product.c.entity_id,
+        kind.c.metric_id == context.params.bind(metric, prefix="type_metric"),
+        kind.c.metric_definition_version == context.params.bind("2", prefix="type_definition"),
+        kind.c.value_status == context.params.bind("present", prefix="type_status"),
+        kind.c.text_value == context.params.bind("ETF", prefix="product_type"),
+        evidence.c.subject_id == product.c.entity_id,
+        evidence.c.predicate_id == kind.c.metric_id,
+        evidence.c.evidence_kind == context.params.bind("observation", prefix="type_evidence_kind"),
+        evidence.c.cutoff_status == context.params.bind("eligible", prefix="type_cutoff"),
+        evidence.c.normalized_value == sa.cast(context.params.bind(
+            '{"type":"string","value":"ETF"}', prefix="type_evidence_value",
+        ), postgresql.JSONB),
+        source.c.eligible_for_claim.is_(True),
+    ))
 
 
 def _field(context: _Context, family: ProductFamily | None, concept_id: str):
@@ -1065,8 +1191,15 @@ def _join_fields(context, base, family, concepts):
 
 def _observation_join(context, alias, binding):
     metric_conditions = tuple(
-        alias.c.metric_id == context.params.bind(metric, prefix="metric")
-        for metric in binding.approved_metric_ids
+        sa.and_(
+            alias.c.metric_id == context.params.bind(metric, prefix="metric"),
+            alias.c.metric_definition_version
+            == context.params.bind(version, prefix="metric_definition_version"),
+        )
+        for metric, version in (
+            reference.rsplit(":", 1)
+            for reference in binding.approved_metric_definition_refs
+        )
     )
     return sa.and_(
         alias.c.dataset_version == product.c.dataset_version,
@@ -1086,6 +1219,16 @@ def _join_evidence(context, base, alias, binding):
     record_alias = evidence_record.alias(f"evidence_{index}")
     source_alias = source_record.alias(f"evidence_source_{index}")
     lineage_filters = [
+        origin_alias.c.dataset_version
+        == context.params.bind(context.plan.dataset_version, prefix="lineage_dataset"),
+        origin_alias.c.observation_id == alias.c.observation_id,
+        record_alias.c.subject_id == alias.c.entity_id,
+        record_alias.c.predicate_id.in_(
+            tuple(
+                context.params.bind(metric, prefix="lineage_metric")
+                for metric in binding.approved_metric_ids
+            )
+        ),
         record_alias.c.evidence_kind
         == context.params.bind("observation", prefix="evidence_kind")
     ]
@@ -1130,7 +1273,8 @@ def _join_evidence(context, base, alias, binding):
         )
         .where(*lineage_filters)
         .group_by(origin_alias.c.dataset_version, origin_alias.c.observation_id)
-        .subquery(f"evidence_lineage_{index}")
+        .correlate(alias)
+        .lateral(f"evidence_lineage_{index}")
     )
     context.evidence_aliases[binding.id] = evidence_alias
     return base.join(
@@ -1945,6 +2089,15 @@ def _qualifier_filters(context: _Context):
         context.bindings.binding_sets_by_key[item]
         for item in consumed_binding_ids
     ]
+    if (
+        not bindings
+        and context.task.scope.relation_conditions
+        and qualifiers.period_id is None
+        and qualifiers.currency_id is None
+        and qualifiers.unit_id is None
+    ):
+        # The relation join already consumes as_of through its validity dates.
+        return []
     if any(value is not None for value in requested.values()) and not bindings:
         if (
             isinstance(context.task.operation, LogicalAggregateOperationV2)
@@ -1994,7 +2147,12 @@ def _qualifier_filters(context: _Context):
             qualifiers.period_id is not None
             and SemanticQualifierId.PERIOD in supported
         ):
-            raise SqlCompileRejection("PERIOD_LOWERING_NOT_REGISTERED")
+            # This source metric already represents a cumulative P1Y return;
+            # no source period_start exists and none may be synthesized.
+            if binding.semantic_concept_id != "trailing_1y_historical_cumulative_return":
+                raise SqlCompileRejection("PERIOD_LOWERING_NOT_REGISTERED")
+            if qualifiers.period_id != "P1Y":
+                raise SqlCompileRejection("PERIOD_QUALIFIER_NOT_SUPPORTED")
         if (
             qualifiers.currency_id is not None
             and SemanticQualifierId.CURRENCY in supported
@@ -2031,6 +2189,8 @@ def _evidence_ids(context):
 def _requested_evidence_ids(context):
     allowed = {item.value: item for item in EvidenceLocator}
     requested = set(context.task.evidence_requirements)
+    if context.task.scope.relation_conditions:
+        requested.update({"relation_record", "evidence_record", "source_record"})
     for binding_id in context.bindings.bindings_by_id:
         requested.update(item.value for item in context.bindings.bindings_by_id[binding_id].required_evidence_locators)
     if not requested <= set(allowed):
@@ -2085,6 +2245,8 @@ def _record(context, path, binding_id, kind, binding=None, policy_ids=()):
 
 
 def _predicate_concepts(predicate):
+    if predicate is None:
+        return ()
     if predicate.node_type == "atom":
         return (predicate.field_concept_id,)
     if predicate.node_type == "not":

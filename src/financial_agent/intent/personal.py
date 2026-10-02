@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+import re
 import uuid
 
 from financial_agent.contracts.canonical import build_request_key
@@ -21,7 +22,8 @@ from financial_agent.planning.semantic_compiler import (
 
 from .entity_discovery import EntityMentionDiscovery
 from .errors import MODEL_TIMEOUT, ModelInvocationError, ResolverContractError
-from .normalization import MAX_QUESTION_CODE_POINTS
+from .normalization import MAX_QUESTION_CODE_POINTS, named_entity_source_ranges, normalize_request
+from .personal_clarification import ambiguous_product_family_frames, unsupported_boolean_frames
 from .query_contracts import AxisReadiness, AxisReadinessRecordV2, ContractReadiness
 from .service import IntentResolverService, QueryContractResolutionAttemptV3
 from .types import EntitySemanticRole, ResolutionStatus
@@ -32,6 +34,20 @@ class PersonalIntentInputError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def _unsupported_relation_boolean(context: RequestContext, segment_ids: tuple[str, ...]) -> bool:
+    pattern = (r"또는|혹은|\b(?:OR|NOT)\b|(?:보유|운용|포함)(?:하지|되지)?(?:는|도)?\s*(?:않|안)"
+               r"|안\s*(?:보유|운용|포함)|(?:미|비)보유|아닌|제외|없는")
+    for segment in normalize_request(context).segments:
+        if segment.segment_id not in segment_ids:
+            continue
+        source = list(segment.original_text)
+        for start, end in named_entity_source_ranges(context, segment):
+            source[start:end] = " " * (end - start)
+        if re.search(pattern, "".join(source), re.IGNORECASE):
+            return True
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,7 +170,13 @@ class PersonalIntentService:
         entities = {item.entity_id: item for group in view.entity_candidates for item in group.items}
         selected = tuple(group.complete_candidates[0] for group in groups)
         scopes = {item.contract.frame_id: set(item.contract.scope.entity_refs) for item in selected}
+        relation_scopes = {item.contract.frame_id: {
+            (condition.relation_id, condition.object_entity_id)
+            for condition in item.contract.scope.relation_conditions
+        } for item in selected}
         for frame in resolution.canonical_frames:
+            if relation_scopes[frame.frame_id] and _unsupported_relation_boolean(context, frame.segment_ids):
+                return blocked("RELATION_BOOLEAN_SCOPE_UNSUPPORTED", limitation=True)
             families = {item.value for item in frame.product_family_choice.selected_ids}
             for hint_id in frame.entity_hint_ids:
                 hint = hints[hint_id]
@@ -163,12 +185,23 @@ class PersonalIntentService:
                 ):
                     return blocked("ENTITY_RELATION_SCOPE_NOT_LOWERABLE", limitation=True)
                 if hint.semantic_role is not EntitySemanticRole.FRAME_SUBJECT:
+                    if hint.semantic_role is not EntitySemanticRole.RELATION_OBJECT or any(
+                        (relation_id, entity_id) not in relation_scopes[frame.frame_id]
+                        for relation_id in hint.relation_id for entity_id in hint.selected_candidate_ids
+                    ) or not hint.relation_id:
+                        return blocked("ENTITY_RELATION_SCOPE_NOT_LOWERABLE", limitation=True)
                     continue
                 for entity_id in hint.selected_candidate_ids:
                     entity = entities[entity_id]
+                    if "ETN" in entity.ontology_type_ids:
+                        return blocked("PRODUCT_SUBTYPE_NOT_SUPPORTED", limitation=True)
                     if entity.product_family and entity.product_family not in families:
                         return blocked("ENTITY_PRODUCT_FAMILY_MISMATCH")
 
+        if ambiguous_product_family_frames(attempt):
+            return blocked("AMBIGUOUS_PRODUCT_FAMILY")
+        if unsupported_boolean_frames(context, attempt):
+            return blocked("BOOLEAN_PREDICATE_SCOPE_UNSUPPORTED", limitation=True)
         if any(candidate.contract.qualifiers.as_of_date and
                candidate.contract.qualifiers.as_of_date > self._cutoff for candidate in selected):
             return blocked("REQUEST_AFTER_DATASET_CUTOFF", limitation=True)
@@ -190,6 +223,8 @@ class PersonalIntentService:
         for candidate in selected:
             fields = {semantic_id for link in resolution.semantic_links
                       if link.frame_id == candidate.contract.frame_id for semantic_id in link.semantic_ids}
+            fields.difference_update(condition.relation_id
+                                     for condition in candidate.contract.scope.relation_conditions)
             primitives.update(role.primitive_id for role in required_primitive_roles(
                 candidate.contract.action_id,
                 family_count=len(candidate.contract.scope.product_family_ids),

@@ -69,7 +69,7 @@ class LogicalLookupOperationV2(_StrictModel):
 
 class LogicalScreenOperationV2(_StrictModel):
     operation_type: Literal["screen"] = "screen"
-    predicate: PredicateNodeV2
+    predicate: PredicateNodeV2 | None = None
 
 
 class LogicalRankOperationV2(_StrictModel):
@@ -168,6 +168,9 @@ class LogicalQueryTaskV2(_StrictModel):
     def validate_task(self):
         if self.operation.operation_type != self.action_id.value:
             raise ValueError("LOGICAL_OPERATION_ACTION_MISMATCH")
+        if (isinstance(self.operation, LogicalScreenOperationV2)
+                and self.operation.predicate is None and not self.scope.relation_conditions):
+            raise ValueError("SCREEN_CONDITION_REQUIRED")
         if any(item.action_id is not self.action_id for item in self.execution_steps):
             raise ValueError("LOGICAL_PRIMITIVE_ACTION_MISMATCH")
         validate_primitive_roles(
@@ -406,6 +409,8 @@ def _logical_relation_required(task: LogicalQueryTaskV2) -> bool:
 
 
 def _predicate_field_ids(predicate: PredicateNodeV2) -> set[str]:
+    if predicate is None:
+        return set()
     if predicate.node_type == "atom":
         return {predicate.field_concept_id}
     if predicate.node_type == "not":

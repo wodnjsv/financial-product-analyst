@@ -7,7 +7,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Literal, Self, TypeAlias
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, model_serializer, model_validator
 
 from financial_agent.contracts.base import (
     ContractModel,
@@ -121,10 +121,32 @@ class _StrictContractModel(ContractModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
+class RelationConditionV2(_StrictContractModel):
+    relation_id: Literal["managedBy", "holdsSecurity"]
+    object_entity_id: Identifier
+    object_ontology_type_id: Literal["AssetManager", "Security"]
+    direction: Literal["subject_to_object"] = "subject_to_object"
+
+    @model_validator(mode="after")
+    def require_registered_endpoint(self) -> Self:
+        expected = "AssetManager" if self.relation_id == "managedBy" else "Security"
+        if self.object_ontology_type_id != expected:
+            raise ValueError("RELATION_OBJECT_TYPE_MISMATCH")
+        return self
+
+
 class QueryScopeV2(_StrictContractModel):
     product_family_ids: tuple[ProductFamily, ...] = Field(default=(), max_length=4)
     entity_refs: tuple[Identifier, ...] = Field(default=(), max_length=16)
     prior_result_binding: Identifier | None = None
+    relation_conditions: tuple[RelationConditionV2, ...] = Field(default=(), max_length=8)
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_empty_scope(self, handler):
+        payload = handler(self)
+        if not self.relation_conditions:
+            payload.pop("relation_conditions", None)
+        return payload
 
     @model_validator(mode="after")
     def require_one_unique_scope(self) -> Self:
@@ -132,6 +154,12 @@ class QueryScopeV2(_StrictContractModel):
             raise ValueError("QUERY_SCOPE_REQUIRED")
         _require_unique(self.product_family_ids, "DUPLICATE_PRODUCT_FAMILY_ID")
         _require_unique(self.entity_refs, "DUPLICATE_ENTITY_REF")
+        _require_unique(
+            tuple((item.relation_id, item.object_entity_id) for item in self.relation_conditions),
+            "DUPLICATE_RELATION_CONDITION",
+        )
+        if set(self.entity_refs) & {item.object_entity_id for item in self.relation_conditions}:
+            raise ValueError("RELATION_OBJECT_IN_PRODUCT_SCOPE")
         return self
 
 
@@ -419,12 +447,16 @@ class _LookupQueryContractCandidateV2(QueryContractSemanticBaseV2):
 
 class _ScreenQueryContractCandidateV2(QueryContractSemanticBaseV2):
     action_id: Literal[IntentType.SCREEN]
-    predicate: PredicateNodeV2
+    predicate: PredicateNodeV2 | None = None
 
     @model_validator(mode="after")
     def require_complete_predicate(self) -> Self:
         _require_variant(self, {"screen.predicate.v2"}, {QueryResultShape.PRODUCT_LIST})
-        _validate_predicate_bounds(self.predicate)
+        if self.predicate is None:
+            if not self.scope.relation_conditions:
+                raise ValueError("SCREEN_CONDITION_REQUIRED")
+        else:
+            _validate_predicate_bounds(self.predicate)
         return self
 
 

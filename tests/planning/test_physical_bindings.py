@@ -103,7 +103,7 @@ def test_loader_returns_closed_immutable_verified_repository_bindings() -> None:
     assert overseas_fee.approved_metric_ids == ("organizer.pref02n001.total_fee_rate",)
     assert public_fee is not None
     assert public_fee.availability is PhysicalBindingAvailability.UNAVAILABLE
-    assert public_fee.unavailable_reason_code == "PHYSICAL_DEFINITION_UNVERIFIED"
+    assert public_fee.unavailable_reason_code == "PUBLIC_FUND_TOTAL_FEE_DEFINITION_UNVERIFIED"
     assert public_fee.approved_metric_ids == ()
     assert public_fee.value_column is None
     with pytest.raises(TypeError):
@@ -168,7 +168,8 @@ def test_loader_rejects_binding_definition_not_in_code_allowlist(
     payload = json.loads(
         (PROJECT_ROOT / "config/planning/semantic-sql-bindings.v1.json").read_text()
     )
-    payload["bindings"][0].update(update)
+    target = next(binding for binding in payload["bindings"] if binding["id"] == "domestic-etf-aum.v1")
+    target.update(update)
     path = _write_registry(tmp_path, payload)
 
     with pytest.raises(ValueError, match="physical binding definition mismatch"):
@@ -356,3 +357,16 @@ def test_policy_loader_rejects_invented_verified_policy(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="semantic SQL policy definition mismatch"):
         load_semantic_sql_policy_registry(PROJECT_ROOT, registry_path=path)
+
+
+def test_verified_date_binding_preserves_mapper_unit_none_and_decimal_still_requires_unit() -> None:
+    registry = load_physical_binding_registry(PROJECT_ROOT)
+    maturity = registry.binding_for('domestic_bond', 'maturity_date')
+    assert maturity is not None
+    assert maturity.value_column is ObservationValueColumn.DATE
+    assert maturity.storage_unit_id is None
+    assert maturity.approved_metric_definition_refs == ('organizer.prbd01n001.maturity_date:2',)
+    aum = registry.binding_for('domestic_etf', 'aum')
+    assert aum is not None
+    with pytest.raises(ValidationError, match='verified binding requires unit policy'):
+        type(aum).model_validate_json(aum.model_copy(update={'storage_unit_id': None}).model_dump_json())

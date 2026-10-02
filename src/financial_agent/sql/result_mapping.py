@@ -82,6 +82,7 @@ def map_sql_rows(
         if set(row) != expected_columns:
             raise SqlResultMappingError("RETURNED_COLUMN_SET_MISMATCH")
         _validate_physical_metadata(request, row, descriptors)
+        _collect_relation_condition_lineage(request, row, lineage)
         row_key = _row_key(operation, row, descriptors)
         if row_key in seen_rows:
             raise SqlResultMappingError("RETURNED_DUPLICATE_ROW")
@@ -249,6 +250,9 @@ def _expected_columns(
     operation = request.render_manifest.logical_task.operation
     if not isinstance(operation, LogicalAggregateOperationV2):
         columns = {"product_id", "product_name"}
+        for index, _ in enumerate(request.render_manifest.logical_task.scope.relation_conditions):
+            columns.update({f"relation_ids_{index}", f"relation_evidence_ids_{index}",
+                            f"relation_source_ids_{index}"})
         for index in range(len(descriptors)):
             columns.update(
                 {
@@ -354,7 +358,12 @@ def _validate_physical_metadata(request, row, descriptors) -> None:
             binding = bindings[concept_id]
             if row[f"metric_id_{index}"] not in binding.approved_metric_ids:
                 raise SqlResultMappingError("RETURNED_METRIC_OWNERSHIP_MISMATCH")
-            _identifier(row[f"metric_definition_version_{index}"])
+            version = _identifier(row[f"metric_definition_version_{index}"])
+            if (
+                f"{row[f'metric_id_{index}']}:{version}"
+                not in binding.approved_metric_definition_refs
+            ):
+                raise SqlResultMappingError("RETURNED_METRIC_DEFINITION_OWNERSHIP_MISMATCH")
             value = row[f"field_{index}"]
             if value is not None and row[f"unit_{index}"] != binding.storage_unit_id:
                 raise SqlResultMappingError("RETURNED_UNIT_OWNERSHIP_MISMATCH")
@@ -398,6 +407,11 @@ def _validate_physical_metadata(request, row, descriptors) -> None:
     )
     if len(definitions) != 1:
         raise SqlResultMappingError("RETURNED_METRIC_DEFINITION_VERSIONS_MALFORMED")
+    if any(
+        f"{metric}:{definitions[0]}" not in binding.approved_metric_definition_refs
+        for metric in metrics
+    ):
+        raise SqlResultMappingError("RETURNED_METRIC_DEFINITION_OWNERSHIP_MISMATCH")
     units = _optional_scalar_array(
         row["units"], "RETURNED_AGGREGATE_UNIT_MISMATCH"
     )
@@ -514,6 +528,19 @@ def _collect_aggregate_lineage(
                 )
             for metric in metrics:
                 target.add(f"metric-definition:{metric}:{versions[0]}")
+
+
+def _collect_relation_condition_lineage(request, row, target: set[str]) -> None:
+    for index, _ in enumerate(request.render_manifest.logical_task.scope.relation_conditions):
+        for column, prefix, reason in (
+            (f"relation_ids_{index}", "relation:", "RETURNED_RELATION_IDS_MALFORMED"),
+            (f"relation_evidence_ids_{index}", "evidence:", "RETURNED_RELATION_EVIDENCE_IDS_MALFORMED"),
+            (f"relation_source_ids_{index}", "source:", "RETURNED_RELATION_SOURCE_IDS_MALFORMED"),
+        ):
+            values = _identifier_array(row[column], reason)
+            if not values:
+                raise SqlResultMappingError(reason)
+            target.update(prefix + value for value in values)
 
 
 def _collect_manifest_relation_lineage(request, target: set[str]) -> None:

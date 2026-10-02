@@ -507,8 +507,9 @@ def test_evidence_uses_exact_observation_origin_bridge_and_source_owner() -> Non
     assert outcome.request is not None
     assert "evidence.evidence_observation_origin" in outcome.request.statement
     assert "evidence.source_record" in outcome.request.statement
-    assert "observation_id" in outcome.request.statement
-    assert "evidence_0.subject_id" not in outcome.request.statement
+    assert "evidence_origin_0.observation_id = observation_0.observation_id" in outcome.request.statement
+    assert "evidence_0.evidence_id = evidence_origin_0.evidence_id" in outcome.request.statement
+    assert "evidence_0.subject_id = observation_0.entity_id" in outcome.request.statement
 
 
 def test_public_fund_proof_restricts_relation_observation_evidence_and_source_rows() -> None:
@@ -649,11 +650,21 @@ def test_restore_rerenders_the_closed_manifest_and_rejects_semantically_unowned_
     assert restored.render_manifest.ordered_placeholder_names == tuple(
         name
         for name in (
-            "metric_2",
-            "evidence_kind_3",
+            "metric_9",
+            "metric_definition_version_10",
+            "lineage_dataset_11",
+            "lineage_metric_12",
+            "evidence_kind_13",
             "dataset_0",
             "family_1",
-            "as_of_4",
+            "type_metric_2",
+            "type_definition_3",
+            "type_status_4",
+            "product_type_5",
+            "type_evidence_kind_6",
+            "type_cutoff_7",
+            "type_evidence_value_8",
+            "as_of_14",
         )
     )
     assert restored.render_manifest.logical_task == plan.tasks[0]

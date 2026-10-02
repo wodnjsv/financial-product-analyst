@@ -157,7 +157,7 @@ def _verified_population_manifest() -> PublicFundDatasetManifest:
         manifest_id="synthetic-public-fund-complete.v1",
         dataset_pin=_DATASET_PIN,
         physical_policy_registry_version="semantic-sql-policies.v1",
-        physical_policy_registry_hash="cf4f5065eb4fdae76902a1c0bd817700129ad077fe56795c05ab95d76937abf4",
+        physical_policy_registry_hash="5255ba918c730afe6153c9f42e1dd86fbb0ac2580b504470974f878e1fd8c826",
         population_grain_policy_id="representative-product.v1",
         dedup_policy_id="public-fund-representative-share.v1",
         authoritative_share_class_ids=("share-a", "share-b"),
@@ -566,7 +566,7 @@ def test_public_fund_total_fee_is_semantically_complete_but_physically_limited()
     )
 
     assert result.readiness is PlanReadiness.LIMITED
-    assert result.reason_codes == ("PHYSICAL_DEFINITION_UNVERIFIED",)
+    assert result.reason_codes == ("PUBLIC_FUND_TOTAL_FEE_DEFINITION_UNVERIFIED",)
     assert "public-fund-fee-rate.v1" in result.binding_ids
 
 
@@ -606,9 +606,10 @@ def test_percent_conversion_comes_from_physical_binding() -> None:
     )
 
 
-def test_fee_rate_requires_explicit_percentage_qualifier() -> None:
+def test_fee_numeric_threshold_requires_explicit_percentage_unit() -> None:
     payload = json.loads(_screen("fee_rate", "domestic_etf").model_dump_json())
     payload["qualifiers"]["unit_id"] = None
+    payload["predicate"]["value"]["unit_id"] = None
 
     result = _assess_plan_readiness(
         _validate(payload),
@@ -617,7 +618,7 @@ def test_fee_rate_requires_explicit_percentage_qualifier() -> None:
     )
 
     assert result.readiness is PlanReadiness.LIMITED
-    assert "PHYSICAL_REQUIRED_QUALIFIER_MISSING" in result.reason_codes
+    assert "SEMANTIC_VALUE_UNIT_REQUIRED" in result.reason_codes
 
 
 def test_invented_aum_currency_and_unit_qualifiers_fail_closed() -> None:
@@ -1565,7 +1566,60 @@ def test_readiness_returns_all_stable_reasons_across_roles() -> None:
 
     assert result.readiness is PlanReadiness.BLOCKED
     assert result.reason_codes == tuple(sorted({
-        "PHYSICAL_DEFINITION_UNVERIFIED",
+        "PUBLIC_FUND_TOTAL_FEE_DEFINITION_UNVERIFIED",
         "SEMANTIC_CONCEPT_NOT_REGISTERED",
         "SQL_POLICY_NOT_REGISTERED",
     }))
+
+
+def test_fee_lookup_and_rank_need_no_global_unit_qualifier() -> None:
+    for action in ('lookup', 'rank'):
+        payload = _common(action, 'domestic_etf')
+        if action == 'lookup':
+            payload['projections'] = {'field_concept_ids': ['fee_rate'], 'default_profile_id': None}
+        else:
+            payload['ordering'] = [{
+                'field_concept_id': 'fee_rate', 'direction': 'asc',
+                'nulls_policy_id': 'exclude_missing.v1', 'tie_break_policy_id': 'stable-product-id.v1',
+            }]
+            payload['limit'] = 5
+        result = _assess_plan_readiness(
+            _validate(payload), load_physical_binding_registry(PROJECT_ROOT),
+            load_semantic_sql_policy_registry(PROJECT_ROOT),
+        )
+        assert result.readiness is PlanReadiness.EXECUTABLE
+
+
+def test_domestic_one_year_return_requires_exact_registered_period() -> None:
+    for period, expected in (
+        ('P1Y', None), (None, 'PHYSICAL_REQUIRED_QUALIFIER_MISSING'),
+        ('P6M', 'PERIOD_QUALIFIER_NOT_SUPPORTED'),
+    ):
+        payload = _common('lookup', 'domestic_etf')
+        payload['qualifiers']['period_id'] = period
+        payload['projections'] = {
+            'field_concept_ids': ['trailing_1y_historical_cumulative_return'], 'default_profile_id': None,
+        }
+        result = _assess_plan_readiness(
+            _validate(payload), load_physical_binding_registry(PROJECT_ROOT),
+            load_semantic_sql_policy_registry(PROJECT_ROOT),
+        )
+        if expected is None:
+            assert result.readiness is PlanReadiness.EXECUTABLE
+        else:
+            assert result.readiness is PlanReadiness.LIMITED
+            assert expected in result.reason_codes
+
+
+def test_overseas_one_year_return_reports_missing_source_metric() -> None:
+    payload = _common('lookup', 'overseas_etf')
+    payload['qualifiers']['period_id'] = 'P1Y'
+    payload['projections'] = {
+        'field_concept_ids': ['trailing_1y_historical_cumulative_return'], 'default_profile_id': None,
+    }
+    result = _assess_plan_readiness(
+        _validate(payload), load_physical_binding_registry(PROJECT_ROOT),
+        load_semantic_sql_policy_registry(PROJECT_ROOT),
+    )
+    assert result.readiness is PlanReadiness.LIMITED
+    assert result.reason_codes == ('SOURCE_ONE_YEAR_RETURN_NOT_PROVIDED',)

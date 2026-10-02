@@ -16,6 +16,14 @@ deterministic validation and execution boundaries remain in force.
 
 **Status:** Approved project direction
 
+**Personal semantic execution — approved 2026-10-02:** The user authorized
+continuing the remaining local priorities after the NVIDIA migration push.
+[ADR-0054](decisions/ADR-0054-personal-semantic-search-execution.md) permits the
+explicit personal entry point to execute approved semantic plans through the
+existing read-only SQL boundary and render verified text results. Historical
+competition promotion gates do not activate this path; source, evidence,
+calculation and repository safeguards remain unchanged.
+
 **Last updated:** 2026-08-31
 
 **Purpose:** Keep the project's `what` and `why` stable while allowing capable agents freedom over `how` within approved constraints.

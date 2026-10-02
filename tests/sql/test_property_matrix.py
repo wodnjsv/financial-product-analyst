@@ -36,6 +36,11 @@ COMPILER = SemanticSqlCompiler(BINDINGS, POLICIES, PLANNING, ACTIVE_DATASET)
 def _qualifiers(binding):
     return QueryQualifiersV2(
         unit_id="percent" if binding.semantic_concept_id == "fee_rate" else None,
+        period_id=(
+            "P1Y"
+            if binding.semantic_concept_id == "trailing_1y_historical_cumulative_return"
+            else None
+        ),
         as_of_date=(
             date(2026, 8, 24)
             if binding.semantic_concept_id == "aum"
@@ -44,11 +49,13 @@ def _qualifiers(binding):
     )
 
 
-def _value(operator: QueryOperatorId, *, wrong_kind: bool = False):
+def _value(operator: QueryOperatorId, *, wrong_kind: bool = False, value_kind="decimal"):
     if operator in {QueryOperatorId.IS_MISSING, QueryOperatorId.IS_PRESENT}:
         return {"value": None, "values": ()}
     if wrong_kind:
         item = TypedSemanticValue(kind="string", string="not-a-decimal")
+    elif value_kind == "date":
+        item = TypedSemanticValue(kind="date", date=date(2030, 1, 15))
     else:
         item = TypedSemanticValue(kind="decimal", decimal="1", unit_id="percent")
     if operator is QueryOperatorId.BETWEEN:
@@ -63,7 +70,7 @@ def _value(operator: QueryOperatorId, *, wrong_kind: bool = False):
 def test_family_field_operator_value_matrix_never_raises(binding_id, operator) -> None:
     binding = BINDINGS.bindings_by_id[binding_id]
     wrong_kind = operator is QueryOperatorId.CONTAINS
-    values = _value(operator, wrong_kind=wrong_kind)
+    values = _value(operator, wrong_kind=wrong_kind, value_kind=binding.semantic_value_kind.value)
     predicate = PredicateAtomV2(
         field_concept_id=binding.semantic_concept_id,
         operator_id=operator,
@@ -185,6 +192,8 @@ def test_family_aggregate_predicate_matrix_is_lossless_or_one_rejection(binding_
         **(
             {"decimal": "1", "unit_id": "percent"}
             if binding.semantic_value_kind.value == "decimal"
+            else {"date": date(2030, 1, 15)}
+            if binding.semantic_value_kind.value == "date"
             else {"string": "x"}
         ),
     )

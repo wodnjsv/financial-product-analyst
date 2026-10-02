@@ -43,7 +43,7 @@ HYBRID_RESOLVER_SCHEMA_VERSION = "3.0"
 HYBRID_CANDIDATE_POLICY_VERSION = "intent-hints-v5-explicit-family"
 HYBRID_PROMPT_VERSION = "intent-resolver-ko-v10-grounded-routing"
 HYBRID_ADAPTER_VERSION = "clova-chat-v3-proposal-v3"
-NVIDIA_HYBRID_ADAPTER_VERSION = "nvidia-chat-json-proposal-v4"
+NVIDIA_HYBRID_ADAPTER_VERSION = "nvidia-chat-json-proposal-v5"
 APPROVED_HYBRID_ADAPTER_VERSIONS = (
     HYBRID_ADAPTER_VERSION,
     NVIDIA_HYBRID_ADAPTER_VERSION,

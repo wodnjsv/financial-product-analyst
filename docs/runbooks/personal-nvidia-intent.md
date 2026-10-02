@@ -94,14 +94,14 @@ with one candidate contract is not sufficient to approve a plan.
   Missing keys remain errors; the service does not inject them into responses.
 
 Exact catalog discovery does not recognize every typo or unnamed description.
-Relation operands currently cannot be safely lowered by every existing planning
-path; this entry point reports `ENTITY_RELATION_SCOPE_NOT_LOWERABLE` instead of
-using a security/manager ID as a product ID. Many metrics still lack physical
-SQL bindings, including the general one-year-return semantic path. These limits
-are separate from intent interpretation and from the existing fixed search CLI.
-Even registered fee bindings can require a unit qualifier absent from a question;
-the public-fund fee definition remains physically unverified. Such questions may
-have a complete semantic candidate while still lacking an executable plan.
+The follow-up ADR-0054 connects verified ETF fee lookup/ranking, domestic P1Y
+return, bond maturity and directed manager/holding conditions to the separate
+`search_personal_question.py` entry point. The resolver-only CLI still performs
+no product execution. Unsupported relation operands, overseas one-year return,
+public-fund total-fee definition and other unregistered metrics remain explicit
+limitations. See [personal semantic search](personal-semantic-search.md) for the
+current execution boundary. The six-case table below records the migration's
+original verification before those follow-up bindings were added.
 
 ## Verification
 

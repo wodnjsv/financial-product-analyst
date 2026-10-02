@@ -16,9 +16,9 @@
 | 출력·검증 | 검색 일치/표시 건수, 누락 상태, 출처와 전체 조회 발췌를 서버에서 출력·검증 |
 | 별도 비중 | 다섯 운용사에서 확인한 삼성전자 보통주 비중 9건을 원본 KRX 값과 분리하여 적재 |
 | NVIDIA 의도 분석 | `z-ai/glm-5.3-flash` adapter와 자연어 CLI 구현. 기존 V3 의미 계약·검증·라우팅 사용 |
-| 자연어 실행 범위 | 상품군·엔터티·조건·기간·계획을 JSON으로 출력. 상품 조회 실행과 HTTP API는 별도 연결 필요 |
+| 자연어 실행 범위 | 승인된 lookup/screen/rank/compare 계획을 읽기 전용 SQL로 실행하고 값·출처·건수를 검증하여 텍스트 출력. HTTP API는 미연결 |
 
-`search_personal_dataset.py`는 사용자가 지정한 `plan`, `keyword`, `limit`로 실제 검색합니다. 새 `resolve_personal_intent.py`는 NVIDIA로 자연어를 분석하고 기존 컴파일러로 라우팅·실행 가능성을 검사합니다. 두 CLI는 아직 자동 연결되지 않았으며, 의도 분석 출력의 `execution_performed`는 항상 `false`입니다.
+`search_personal_dataset.py`는 사용자가 지정한 세 가지 고정 계획으로 검색합니다. `resolve_personal_intent.py`는 자연어 의미와 실행 가능성을 JSON으로 출력하며, 이 의도 분석 출력의 `execution_performed`는 항상 `false`입니다. `search_personal_question.py`는 승인된 의미 계획을 실제 SQL 실행과 근거 검증까지 연결합니다. 등록된 지표·관계와 지원하는 출력 형태를 만족하는 질문만 실행합니다.
 
 ## 실행 흐름
 
@@ -34,7 +34,7 @@
   → 출력 계약 및 원문 일치 검증
 ```
 
-새 의도 분석 경로는 다음과 같습니다.
+자연어 검색 경로는 다음과 같습니다.
 
 ```text
 자연어 질문 + 실제 데이터셋 pin
@@ -43,7 +43,10 @@
   → NVIDIA가 등록된 ID로 의미·엔터티 역할 제안
   → JSON 스키마·근거 ID·상품군 잠금·질의 계약 검증
   → 결정론적 계획 컴파일 및 fast / compose / explore / abstain 판정
-  → 해석·후보 계약·승인된 계획·제한 사유 JSON 출력
+  → 승인된 계획을 읽기 전용 SQL로 실행
+  → 관측·관계·근거·출처를 같은 데이터셋에서 조회하여 독립 검증
+  → 해석·값·출처·전체 일치/표시 건수 텍스트 출력
+     (실행 불가 질문은 구체적인 제한·확인 필요 사유 출력)
 ```
 
 모델이 SQL을 작성하거나 비중·수익률을 계산하지 않습니다. 검색 CLI의 문서 계약은 `{"citations": ["D1", "D2", "D3"]}`처럼 조회된 문서 ID만 허용합니다. CLI는 조회 ID를 직접 사용하므로 모델 호출 없이 서버 출력 경로를 실행합니다.
@@ -173,6 +176,21 @@ manifest·체크섬·표본 목록·용량 기준·검증 결과는 원본 작�
 
 개선 사항과 지원 경계는 [NVIDIA 의도 분석 runbook](docs/runbooks/personal-nvidia-intent.md)에 있습니다. 메타데이터 전송 승인 후 정식 V3 경로에서 여섯 질문의 실제 NVIDIA 응답을 검증했습니다. 모델 호출은 각각 1회였고, 조건·상품군·기간·정렬·건수·상품 ID와 제한 판정이 일치했습니다. 이 검증에서 상품 SQL은 실행하지 않았습니다.
 
+## 자연어 질문으로 실제 로컬 검색
+
+```sh
+.venv/bin/python scripts/search_personal_question.py \
+  --question '국내 ETF 중 총보수가 0.1% 이하인 상품을 찾아줘' \
+  --api-key-file /path/to/original-workspace/api.txt \
+  --display-limit 5
+```
+
+이 경로는 NVIDIA 의도 분석 → 검증된 의미 계약 → 결정론적 SQL 컴파일 → 기존 Orchestrator의 읽기 전용 실행 → 원천 근거 대조 → 텍스트 출력을 연결합니다. 상품 관측값과 문서를 NVIDIA에 다시 보내지 않습니다. 출력에는 조건·상품군·전체 일치/표시 건수 또는 상위 결과 건수, 값·단위·실제 날짜, 파일·시트·행·열·지표 정의 버전이 포함됩니다. `--display-limit`은 표시만 제한하며 검색 조건을 바꾸지 않습니다.
+
+현재 연결된 항목은 ETF 총보수 조회·조건·순위, 국내 ETF 과거 1년 누적수익률, 국내채권 만기 날짜, 운용사·보유 종목의 양의 관계 조건입니다. ETF 원천의 ETN은 상품유형 근거로 제외합니다. 보유 종목은 기준일을 명시해야 합니다. 해외 ETF 1년 수익률 원천과 공모펀드 총보수 정의·단위는 없거나 미검증이므로 구체적인 제한 사유를 출력합니다. 모호한 상품군·기간·후속 범위와 아직 표현하지 못하는 OR·관계 부정은 실행하지 않습니다. 임의 오타 교정이나 모든 자연어 질문의 성공을 보장하지 않습니다.
+
+실행 예제, 지원 경계와 검증 방법은 [개인용 의미 검색 runbook](docs/runbooks/personal-semantic-search.md)에 있습니다. 이 로컬 경로는 HTTP 서버나 운영 출시 원장을 활성화하지 않습니다.
+
 ## 답변·누락·출처 정책
 
 - 수치·기준일·원본 파일·시트·행·열과 관계 근거는 조회 결과에서 서버가 출력합니다. 검색 일치 건수와 실제 표시 건수를 구분합니다.
@@ -228,20 +246,25 @@ psql -X -h localhost -d financial_agent_local -f scripts/personal_queries.sql
 
 검증 이력과 수정 근거는 [검색 수정 기록](docs/planning/tasks/2026-10-02-local-search-grounding-fixes.md)과 [NVIDIA 의도 분석 작업 기록](docs/planning/tasks/2026-10-02-nvidia-intent-routing.md)을 참조합니다. 생성한 실제 데이터 로그는 저장소에서 제외합니다.
 
-읽기 전용 DB에서 상품·종목·운용사 타입과 반복된 이름 위치를 확인했습니다. 정식 V3 경로의 실제 NVIDIA 검증은 **6/6**이며, 마지막 실행에서 각 질문의 전체 처리 시간은 **22.2~36.7초**였습니다. 초기 스키마 오류와 시간 초과는 작업 기록에 보존하고, 필수 구간 ID·의미 ID 역할 지침과 중복 스키마 안내를 보완한 뒤 재검증했습니다. 제공된 여섯 예제의 성공이 모든 질문이나 이후 API 응답 시간을 보장하지는 않습니다.
+NVIDIA 전환 커밋 `b5a3e18`에서 읽기 전용 DB의 상품·종목·운용사 타입과 반복된 이름 위치를 확인했습니다. 당시 정식 V3 의도 분석의 실제 NVIDIA 검증은 **6/6**이며, 마지막 실행에서 각 질문의 전체 처리 시간은 **22.2~36.7초**였습니다. 초기 스키마 오류와 시간 초과는 작업 기록에 보존하고, 필수 구간 ID·의미 ID 역할 지침과 중복 스키마 안내를 보완한 뒤 재검증했습니다. 제공된 여섯 예제의 성공이 모든 질문이나 이후 API 응답 시간을 보장하지는 않습니다.
 
-이후 수정까지 포함한 최종 offline 결과는 **3,365 passed, 4 skipped, 516 deselected**입니다. 제외한 외부 통합·성능 검사를 통과로 취급하지 않습니다.
+NVIDIA 전환 단계의 offline 결과는 **3,365 passed, 4 skipped, 516 deselected**입니다. 제외한 외부 통합·성능 검사를 통과로 취급하지 않습니다.
+
+후속 의미 검색 구현의 최종 offline 결과는 **3,577 passed, 4 skipped, 516 deselected**입니다. 실제 NVIDIA와 로컬 DB를 연결한 중간 재시험에서는 보수 조건 154건, 이름 조회 1건(보수 누락), 국내 1년 수익률 상위 5건, 만기 조건 929건이 성공했고 독립 SQL과 일치했습니다. 그러나 최종 지침을 적용한 이름·운용사·보유 종목 순차 재시험은 모두 약 55초에서 `MODEL_TIMEOUT`이 발생했습니다. 실제 NVIDIA 통합의 안정성 검증은 미완료이며, 이전 성공을 최종 재시험의 성공으로 취급하지 않습니다.
+
+관계 실행 경로는 외부 API 없이 정상 합성 V3 제안을 실제 DB에 연결해 별도로 검증했습니다. 삼성자산운용 조건 243건과 2026-08-22 삼성전자 보유 조건 9건의 전체 ID·건수·표시 ID·출처가 독립 SQL과 일치했습니다. 보유 9건은 적재된 표본에서의 결과입니다. 이는 SQL·근거·출력 검증이며 NVIDIA의 관계 의도 생성 성공을 뜻하지 않습니다. 상세 시도와 미해결 사항은 [의미 검색 작업 기록](docs/planning/tasks/2026-10-02-personal-semantic-search.md)에 남깁니다.
 
 ## 남은 작업
 
-- 지원이 확인된 자연어 계획을 실제 조회·출력 경로와 연결하기.
-- 관계 조건을 타입에 맞게 컴파일하고, 미등록 지표의 물리 매핑을 보완하기. 일반 자연어 HTTP API는 별도 작업입니다.
-- 현재 세 계획 밖의 상품군·조건·비교·금융 계산·유사도 경로를 승인된 정책과 실제 데이터로 연결하기.
+- NVIDIA의 타입·관계 제안 오류와 55초 시간 초과를 우선 해결하고, 반복 실제 질문으로 안정성을 검증하기.
+- 해외 ETF 1년 수익률 원천과 공모펀드 총보수 정의·단위를 확인해 물리 매핑을 보완하기.
+- 복잡한 OR·관계 부정, 오타 해소, 대화 후속 범위를 명시적으로 설계·검증하기.
+- 집계·금융 계산·유사도·문서 경로의 자연어 실행과 출력, 일반 HTTP API를 별도 연결하기.
 - 표본 밖 coverage와 추가 공식 데이터의 출처·날짜·비교 가능성을 확인하기.
 - 개인용 검색을 전체 Evidence/Claim 출시 경로와 연결하려면 해당 근거 게이트를 별도로 검증하기.
 - 자유로운 문서 요약을 다시 제공하려면 원문 충실성을 넘어 주장 내용의 근거를 검증하는 별도 설계가 필요합니다. 현재는 원문 근거만 출력합니다.
 
-전체 서비스 배포·대회용 공개 API·NCP 운영 acceptance는 완료되지 않았습니다. 로컬 DB와 세 검색·출력·검증 경로, 새 자연어 분석·라우팅의 여섯 예제는 검증했습니다. 두 경로를 하나의 자연어 조회·답변 서비스로 연결하는 작업은 남아 있습니다.
+전체 서비스 배포·공개 API·NCP 운영 acceptance는 완료되지 않았습니다. 세 고정 검색 경로와 별도로, 자연어 질문의 승인된 의미 계획을 로컬 SQL·근거 검증·텍스트 출력에 연결했습니다. 지원하는 지표·관계·출력 형태와 표본 데이터 범위에서만 사용할 수 있습니다.
 
 ## 데이터와 보안
 
@@ -252,12 +275,14 @@ psql -X -h localhost -d financial_agent_local -f scripts/personal_queries.sql
 - [개인용 PostgreSQL 설치·재현](docs/runbooks/personal-local-postgresql.md)
 - [개인용 검색·원문 출력·운용사 비중](docs/runbooks/personal-local-search.md)
 - [NVIDIA 자연어 의도 분석·라우팅](docs/runbooks/personal-nvidia-intent.md)
+- [자연어 의미 계획의 실제 로컬 SQL 검색](docs/runbooks/personal-semantic-search.md)
 - [현재 및 과거 구현 현황](docs/planning/STATUS.md)
 - [계획·구현 기준](docs/planning/HARNESS.md)
 - [개인용 표본·용량 결정: ADR-0050](docs/planning/decisions/ADR-0050-personal-local-subset.md)
 - [원본 기반 문서 답변 결정: ADR-0052](docs/planning/decisions/ADR-0052-source-owned-local-document-answers.md)
 - [NVIDIA 의도 분석 결정: ADR-0053](docs/planning/decisions/ADR-0053-nvidia-personal-intent-routing.md)
+- [개인용 의미 검색 실행 결정: ADR-0054](docs/planning/decisions/ADR-0054-personal-semantic-search-execution.md)
 - [전체 근거·검증·응답 구조](docs/planning/architecture/EVIDENCE_VERIFICATION_AND_RENDERING.md)
 - [온톨로지 구조](docs/planning/architecture/FINANCIAL_ONTOLOGY_ARCHITECTURE.md)
 
-대회 관련 계획은 과거 설계·검증 기록입니다. 현재 개인용 범위는 최신 사용자 승인과 ADR-0050~0053을 따릅니다.
+대회 관련 계획은 과거 설계·검증 기록입니다. 현재 개인용 범위는 최신 사용자 승인과 ADR-0050~0054를 따릅니다.

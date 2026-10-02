@@ -142,11 +142,15 @@ async def test_raw_question_preserves_product_family_and_ordering(family, label)
     assert output['interpreted_product_families'] == [family]
     assert output['frames'][0]['candidate_contract']['ordering'][0]['direction'] == 'asc'
     assert output['frames'][0]['candidate_contract']['limit'] == 5
-    assert output['target_product_families'] == []
-    assert output['frames'][0]['selected_contract'] is None
-    expected_issue = ('PHYSICAL_DEFINITION_UNVERIFIED' if family == 'public_fund'
-                      else 'PHYSICAL_REQUIRED_QUALIFIER_MISSING')
-    assert expected_issue in output['issue_codes']
+    if family == 'public_fund':
+        assert output['target_product_families'] == []
+        assert output['frames'][0]['selected_contract'] is None
+        assert 'PUBLIC_FUND_TOTAL_FEE_DEFINITION_UNVERIFIED' in output['issue_codes']
+    else:
+        assert output['target_product_families'] == [family]
+        assert output['frames'][0]['selected_contract'] is not None
+        assert output['issue_codes'] == []
+        assert output['route'] == 'compose'
     assert output['execution_performed'] is False
     assert adapter.calls == 1
 
@@ -174,7 +178,7 @@ async def test_decimal_fee_screen_preserves_family_predicate_and_planning_bounda
     assert contract['predicate']['value']['unit_id'] == 'percent'
     if family == 'public_fund':
         assert output['route'] == 'explore'
-        assert 'PHYSICAL_DEFINITION_UNVERIFIED' in output['issue_codes']
+        assert 'PUBLIC_FUND_TOTAL_FEE_DEFINITION_UNVERIFIED' in output['issue_codes']
         assert output['target_product_families'] == []
         assert frame['selected_contract'] is None
         assert output['logical_query_plan'] is None
@@ -189,16 +193,16 @@ async def test_decimal_fee_screen_preserves_family_predicate_and_planning_bounda
 
 
 @pytest.mark.asyncio
-async def test_bond_scope_is_preserved_even_without_a_physical_binding():
+async def test_bond_maturity_uses_registered_date_binding():
     result = await service(Adapter('domestic_bond', 'maturity_date', action='lookup')).resolve(
         '국내채권 만기일 알려줘')
     output = result.to_dict()
     assert output['interpreted_product_families'] == ['domestic_bond']
-    assert output['target_product_families'] == []
-    assert output['frames'][0]['selected_contract'] is None
+    assert output['target_product_families'] == ['domestic_bond']
+    assert output['frames'][0]['selected_contract'] is not None
     assert output['frames'][0]['candidate_contract'] is not None
-    assert output['route'] == 'explore'
-    assert 'PHYSICAL_BINDING_NOT_REGISTERED' in output['issue_codes']
+    assert output['route'] == 'compose'
+    assert output['issue_codes'] == []
 
 
 @pytest.mark.asyncio
@@ -207,7 +211,7 @@ async def test_discovered_product_is_bound_to_scope_and_provenance():
                            name='TIGER 미국S&P500').resolve('TIGER 미국S&P500의 총보수 알려줘')
     output = result.to_dict()
     assert output['frames'][0]['candidate_contract']['scope']['entity_refs'] == ['product-1']
-    assert output['frames'][0]['selected_contract'] is None
+    assert output['frames'][0]['selected_contract'] is not None
     assert output['discovered_entities'][0]['text'] == 'TIGER 미국S&P500'
     assert output['adapter_version'] == NVIDIA_HYBRID_ADAPTER_VERSION
 
@@ -229,6 +233,33 @@ async def test_product_family_conflict_cannot_become_executable():
     output = result.to_dict()
     assert output['route'] == 'abstain'
     assert 'ENTITY_PRODUCT_FAMILY_MISMATCH' in output['issue_codes']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('family', ['domestic_etf', 'overseas_etf'])
+async def test_named_etn_cannot_execute_in_an_etf_product_family(family):
+    class EtnEntities(Entities):
+        async def search_batch(self, dataset_version, mentions):
+            candidates = await super().search_batch(dataset_version, mentions)
+            return {mention_id: tuple(candidate.model_copy(update={
+                'ontology_type_ids': ('ETN', 'FinancialProduct'),
+            }) for candidate in items) for mention_id, items in candidates.items()}
+
+    adapter = Adapter(family, 'fee_rate', action='lookup')
+    resolver = service(adapter, name='합성 ETN', actual_family=family)
+    resolver._resolver._entity_repository = EtnEntities(family)
+    result = await resolver.resolve('합성 ETN의 총보수 알려줘')
+    output = result.to_dict()
+
+    assert output['route'] == 'explore'
+    assert output['disposition'] == 'limitation'
+    assert output['issue_codes'] == ['PRODUCT_SUBTYPE_NOT_SUPPORTED']
+    assert output['frames'][0]['candidate_contract']['scope']['entity_refs'] == ['product-1']
+    assert output['frames'][0]['selected_contract'] is None
+    assert output['target_product_families'] == []
+    assert output['logical_query_plan'] is None
+    assert output['execution_performed'] is False
+    assert adapter.calls == 1
 
 
 @pytest.mark.asyncio
@@ -262,7 +293,7 @@ async def test_explicit_past_return_period_survives_without_execution_fallback()
     assert output['frames'][0]['selected_contract'] is None
     assert output['target_product_families'] == []
     assert output['route'] == 'explore'
-    assert 'PHYSICAL_BINDING_NOT_REGISTERED' in output['issue_codes']
+    assert 'SOURCE_ONE_YEAR_RETURN_NOT_PROVIDED' in output['issue_codes']
 
 
 @pytest.mark.asyncio
@@ -284,3 +315,29 @@ async def test_bad_question_is_rejected_before_model_call(question):
     with pytest.raises(ValueError, match='QUESTION_INVALID'):
         await service(adapter).resolve(question)
     assert adapter.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_explicit_domestic_one_year_rank_produces_registered_logical_plan():
+    result = await service(Adapter('domestic_etf', 'trailing_1y_historical_cumulative_return')).resolve(
+        '국내 ETF 최근 1년 수익률 높은 5개')
+    output = result.to_dict()
+    assert output['route'] == 'compose'
+    assert output['issue_codes'] == []
+    assert output['target_product_families'] == ['domestic_etf']
+    assert output['frames'][0]['selected_contract']['qualifiers']['period_id'] == 'P1Y'
+    assert output['logical_query_plan']['tasks'][0]['binding_ids'] == ['domestic-etf-return-1y.v1']
+
+
+@pytest.mark.asyncio
+async def test_bond_maturity_threshold_is_date_predicate_and_not_as_of_date():
+    result = await service(Adapter('domestic_bond', 'maturity_date', action='screen')).resolve(
+        '국내채권 만기일 2030-01-15 이하인 상품 찾아줘')
+    output = result.to_dict()
+    assert output['route'] == 'compose'
+    assert output['issue_codes'] == []
+    contract = output['frames'][0]['selected_contract']
+    assert contract['predicate']['value']['kind'] == 'date'
+    assert contract['predicate']['value']['date'] == '2030-01-15'
+    assert contract['predicate']['value']['unit_id'] is None
+    assert contract['qualifiers']['as_of_date'] is None

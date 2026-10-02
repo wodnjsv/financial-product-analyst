@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from financial_agent.intent.prompt import model_safe_view_payload
-from financial_agent.ingestion.mapping import domestic_etp, overseas_etp, public_fund
+from financial_agent.ingestion.mapping import domestic_bond, domestic_etp, overseas_etp, public_fund
 from financial_agent.planning.physical_bindings import load_physical_binding_registry
 from tests.planning.fixtures import view
 
@@ -18,6 +18,7 @@ def test_registered_metric_ids_are_present_in_tracked_ingestion_definitions() ->
         *(f"organizer.pref01n001.{spec[0]}" for spec in domestic_etp._METRIC_SPECS.values()),
         *(f"organizer.pref02n001.{spec[0]}" for spec in overseas_etp._METRIC_SPECS.values()),
         *(f"organizer.prfd01n001.{spec[0]}" for spec in public_fund._METRIC_SPECS.values()),
+        *(f"organizer.prbd01n001.{spec[0]}" for spec in domestic_bond._METRIC_SPECS.values()),
     }
 
     assert {

@@ -1029,6 +1029,8 @@ def _execution_steps(
 
 
 def _predicate_field_ids(predicate: Any) -> set[str]:
+    if predicate is None:
+        return set()
     if predicate.node_type == "atom":
         return {predicate.field_concept_id}
     if predicate.node_type == "not":
@@ -1086,6 +1088,8 @@ def semantic_compilation_id(compilation: SemanticQueryPlanCompilation) -> str:
 
 
 def _predicate_policy_ids(predicate: Any) -> set[str]:
+    if predicate is None:
+        return set()
     if predicate.node_type == "atom":
         return {predicate.null_policy_id}
     if predicate.node_type == "not":

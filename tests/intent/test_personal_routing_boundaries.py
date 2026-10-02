@@ -73,7 +73,15 @@ async def test_relation_object_cannot_be_approved_as_a_product_scope():
     )
     resolver._resolver._entity_repository = _ManagerEntities()
 
-    result = await resolver.resolve("삼성자산운용의 국내 ETF 총보수 조회")
+    valid = await resolver.resolve("삼성자산운용의 국내 ETF 총보수 조회")
+    group = valid.attempt.candidates.frames[0]
+    candidate = group.complete_candidates[0]
+    contaminated = candidate.contract.model_copy(update={"scope":
+        candidate.contract.scope.model_copy(update={"entity_refs": ("manager-1",)})})
+    attempt = replace(valid.attempt, candidates=valid.attempt.candidates.model_copy(update={
+        "frames": (group.model_copy(update={"complete_candidates": (
+            candidate.model_copy(update={"contract": contaminated}),)}),)}))
+    result = resolver._route(valid.context, attempt)
 
     assert result.route is CompilationRoute.EXPLORE
     assert result.disposition is AnswerDisposition.LIMITATION

@@ -41,6 +41,7 @@ from .query_contracts import (
     QueryRegistryPinsV2,
     QueryResultShape,
     QueryScopeV2,
+    RelationConditionV2,
     ResolvedInputProvenanceV2,
     SemanticValueKind,
     SimilaritySpecV2,
@@ -437,28 +438,6 @@ def _solve_frame(
         )
     if not scopes:
         return _frame_result(frame.frame_id, (), tuple(rejections))
-    try:
-        qualifier_options, qualifier_states = _qualifier_options(
-            resolution, frame, view, exact_locks, rejections, variants[0].id
-        )
-    except _CandidateBoundReached as error:
-        return _frame_result(
-            frame.frame_id,
-            (),
-            (
-                *rejections,
-                _rejection(
-                    frame,
-                    variants[0].id,
-                    error.role_id,
-                    (),
-                    "CANDIDATE_BOUND_REACHED",
-                ),
-            ),
-            bound=True,
-        )
-    if not qualifier_options:
-        return _frame_result(frame.frame_id, (), tuple(rejections))
     fields, field_bound, field_evidence_present, requested_field_roles = _field_offers(
         resolution,
         frame,
@@ -477,6 +456,29 @@ def _solve_frame(
             bound=True,
         )
     if any(lock.role == "field" for lock in exact_locks) and not fields:
+        return _frame_result(frame.frame_id, (), tuple(rejections))
+    try:
+        qualifier_options, qualifier_states = _qualifier_options(
+            resolution, frame, view, exact_locks, rejections, variants[0].id,
+            predicate_date_ids=_predicate_date_literal_ids(fields, view, exact_locks, registry),
+        )
+    except _CandidateBoundReached as error:
+        return _frame_result(
+            frame.frame_id,
+            (),
+            (
+                *rejections,
+                _rejection(
+                    frame,
+                    variants[0].id,
+                    error.role_id,
+                    (),
+                    "CANDIDATE_BOUND_REACHED",
+                ),
+            ),
+            bound=True,
+        )
+    if not qualifier_options:
         return _frame_result(frame.frame_id, (), tuple(rejections))
     as_of_default = _apply_as_of_semantic_default(
         resolution=resolution,
@@ -502,9 +504,14 @@ def _solve_frame(
     qualifier_options = as_of_default.qualifier_options
     qualifier_states = as_of_default.qualifier_states
     fields = _fields_with_complete_qualifiers(
-        frame, variants[0].id, fields, qualifier_states, rejections
+        frame, variants[0].id,
+        tuple(field for field in fields if field.concept.concept_id not in {
+            condition.relation_id for scope in scopes for condition in scope.relation_conditions
+        }),
+        qualifier_states, rejections
     )
-    if action is IntentType.LOOKUP and field_evidence_present and not fields:
+    if (action is IntentType.LOOKUP and field_evidence_present and not fields
+            and not scopes[0].relation_conditions):
         return _frame_result(frame.frame_id, (), tuple(rejections))
     overflow_role = _overflow_role(action, frame, resolution, view, exact_locks)
     if overflow_role is not None:
@@ -640,12 +647,37 @@ def _scopes(
     )
 
     hints = {item.entity_hint_id: item for item in resolution.entity_hints}
+    relation_conditions = []
+    offered_entities = {item.entity_id: item for group in view.entity_candidates for item in group.items}
+    for hint_id in frame.entity_hint_ids:
+        hint = hints.get(hint_id)
+        if hint is None or hint.semantic_role is not EntitySemanticRole.RELATION_OBJECT:
+            continue
+        if len(hint.relation_id) != 1 or hint.relation_id[0] not in {"managedBy", "holdsSecurity"}:
+            rejections.append(_rejection(frame, variant_id, "scope.relation", hint.relation_id,
+                                         "RELATION_CONDITION_NOT_REGISTERED"))
+            return ()
+        if len(hint.selected_candidate_ids) != 1:
+            rejections.append(_rejection(frame, variant_id, "scope.relation.object", (),
+                                         "ENTITY_SCOPE_UNRESOLVED"))
+            return ()
+        relation_id = hint.relation_id[0]
+        object_id = hint.selected_candidate_ids[0]
+        expected_type = "AssetManager" if relation_id == "managedBy" else "Security"
+        candidate = offered_entities.get(object_id)
+        if candidate is None or expected_type not in candidate.ontology_type_ids:
+            rejections.append(_rejection(frame, variant_id, "scope.relation.object", (object_id,),
+                                         "RELATION_OBJECT_TYPE_MISMATCH"))
+            return ()
+        relation_conditions.append(RelationConditionV2(relation_id=relation_id,
+            object_entity_id=object_id, object_ontology_type_id=expected_type))
     fixed_entity_refs = {
         value_id
         for assignment in frame.slot_assignments
         if assignment.slot_kind is SlotKind.ENTITY
         for value_id in assignment.value_ids
     }
+    fixed_entity_refs.difference_update(item.object_entity_id for item in relation_conditions)
     entity_choice_groups: list[tuple[str, ...]] = []
     for hint_id in frame.entity_hint_ids:
         hint = hints.get(hint_id)
@@ -698,6 +730,8 @@ def _scopes(
             product_family_ids=families,
             entity_refs=entity_refs,
             prior_result_binding=prior_ids[0] if prior_ids else None,
+            relation_conditions=tuple(sorted(set(relation_conditions),
+                key=lambda item: (item.relation_id, item.object_entity_id))),
         )
         for entity_refs in entity_ref_options
     )
@@ -1088,7 +1122,8 @@ def _screen(
     frame, variant_id, scope, qualifiers, fields, view, locks, registry, pins, rejections
 ):
     predicates = _predicate_candidates(
-        frame, variant_id, fields, view, locks, registry, rejections, required=True
+        frame, variant_id, fields, view, locks, registry, rejections,
+        required=not bool(scope.relation_conditions)
     )
     return (
         _ScreenQueryContractCandidateV2(
@@ -1528,6 +1563,27 @@ def _pins(registry: QueryContractRegistry) -> QueryRegistryPinsV2:
     )
 
 
+def _predicate_date_literal_ids(fields, view, locks, registry) -> frozenset[str]:
+    """A date compared to a date field is a predicate value, not an as-of date."""
+    consumed = set()
+    dates = tuple(_LiteralOffer(item) for item in view.literal_candidates if item.kind == "date")
+    for lock in locks:
+        if lock.role != "operator" or lock.canonical_id not in registry.operators_by_id:
+            continue
+        nearest_fields = _nearest_fields(fields, lock, view)
+        date_fields = tuple(item for item in nearest_fields
+                            if _field_value_kind(item.concept) is SemanticValueKind.DATE)
+        if not date_fields:
+            continue
+        definition = registry.operators_by_id[lock.canonical_id]
+        nearest_dates = _nearest_literals(dates, lock, view, definition.arity)
+        consumed.update(item.literal.literal_id for item in nearest_dates
+                        if any(field.segment_id == item.literal.segment_id
+                               and field.start_char is not None
+                               and item.literal.start_char >= field.start_char for field in date_fields))
+    return frozenset(consumed)
+
+
 def _qualifier_options(
     resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
     frame: ValidatedIntentFrameV2,
@@ -1535,6 +1591,7 @@ def _qualifier_options(
     locks: tuple[ExactSemanticLock, ...],
     rejections: list[CandidateRejection],
     variant_id: str,
+    *, predicate_date_ids: frozenset[str] = frozenset(),
 ) -> tuple[tuple[QueryQualifiersV2, ...], dict[str, str]]:
     role_specs = (
         ("qualifier.period", {"period"}, lambda item: item.canonical_value),
@@ -1557,6 +1614,7 @@ def _qualifier_options(
             item
             for item in view.literal_candidates
             if item.segment_id in frame.segment_ids and item.kind in kinds
+            and not (role_id == "qualifier.as_of" and item.literal_id in predicate_date_ids)
         )
         offered_by_id = {item.literal_id: item for item in offered}
         exact = tuple(
@@ -2008,6 +2066,11 @@ def _field_operator_compatible(concept: ResolverViewConcept, operator: QueryOper
         QueryOperatorId.NOT_IN: "equals",
         QueryOperatorId.CONTAINS: "contains",
     }.get(operator)
+    if value_kind in {SemanticValueKind.DATE, SemanticValueKind.DATETIME}:
+        if operator in {QueryOperatorId.LT, QueryOperatorId.LTE}:
+            language_operator = "before"
+        elif operator in {QueryOperatorId.GT, QueryOperatorId.GTE, QueryOperatorId.BETWEEN}:
+            language_operator = "after"
     if language_operator is not None and language_operator not in concept.allowed_operators:
         return False
     if operator in {QueryOperatorId.LT, QueryOperatorId.LTE, QueryOperatorId.GT, QueryOperatorId.GTE, QueryOperatorId.BETWEEN}:

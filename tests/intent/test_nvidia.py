@@ -367,7 +367,9 @@ def hybrid_inputs():
     from financial_agent.contracts.canonical import build_request_key
     from financial_agent.contracts.request import RequestContext, Segment
     from financial_agent.intent.catalog import load_hybrid_catalog
-    from financial_agent.intent.view import ActiveDatasetPin, build_hybrid_manifest
+    from financial_agent.intent.view import (
+        ActiveDatasetPin, NVIDIA_HYBRID_ADAPTER_VERSION, build_hybrid_manifest,
+    )
     from .view_fixtures import hybrid_manifest_versions
 
     root = Path(__file__).resolve().parents[2]
@@ -381,7 +383,7 @@ def hybrid_inputs():
         segments=(Segment(segment_id='s1', ordinal=0, text=question),),
         deadline_at=now + timedelta(seconds=55),
     )
-    versions = hybrid_manifest_versions() | {'adapter_version': 'nvidia-chat-json-proposal-v4'}
+    versions = hybrid_manifest_versions() | {'adapter_version': NVIDIA_HYBRID_ADAPTER_VERSION}
     return {
         'catalog': catalog, 'context': context,
         'manifest': build_hybrid_manifest(catalog, versions),
@@ -488,3 +490,185 @@ async def test_hybrid_preparation_rejects_forged_adapter_pin() -> None:
     )
     with pytest.raises(ResolverInvariantError, match='CATALOG_VERSION_MISMATCH'):
         await service.prepare_hybrid(inputs['context'])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('invalid_relation', [None, 'managedBy', 'wrong-axis'])
+async def test_v3_generation_guidance_does_not_relax_invalid_proposals_after_repair(invalid_relation) -> None:
+    from jsonschema import Draft202012Validator
+    from financial_agent.contracts.request import NamedEntityMention
+    from financial_agent.intent.candidates import EntityCandidate
+    from financial_agent.intent.errors import ResolverContractError
+    from financial_agent.intent.query_contract_registry import load_query_contract_registry
+    from financial_agent.intent.service import IntentResolverService
+    from .test_hybrid_assembler import _proposal
+
+    inputs = hybrid_inputs()
+    question = inputs['context'].question
+    start = question.index('ETF')
+    context = inputs['context'].model_copy(update={'named_entities': (NamedEntityMention(
+        mention_id='mention-v3-fixture', segment_id='s1', text='ETF',
+        expected_entity_types=(), start_char=start, end_char=start + 3,
+    ),)})
+
+    class Repository:
+        async def search_batch(self, dataset_version, mentions):
+            return {mention.mention_id: (EntityCandidate(
+                entity_id='entity-v3-fixture', canonical_name='ETF',
+                ontology_type_ids=('ETF', 'FinancialProduct'), product_family='domestic_etf',
+                match_kind='exact_name', score=1_000_000, source_id='source-v3-fixture',
+            ),) for mention in mentions}
+
+    transport, calls = transport_for(httpx.Response(200, json=payload()))
+    service = IntentResolverService(
+        adapter=NvidiaStructuredOutputAdapter(config(), transport=transport),
+        entity_repository=Repository(), catalog=inputs['catalog'], manifest=inputs['manifest'],
+        active_dataset_pin=inputs['active_dataset_pin'],
+        query_contract_registry=load_query_contract_registry(Path(__file__).resolve().parents[2]),
+        utcnow=lambda: context.created_at,
+    )
+    prepared = await service.prepare_hybrid(context)
+    mention = next(item for item in prepared.view.mention_spans.items if item.text == '비용 부담')
+    valid = _proposal(mention.mention_id).model_dump(mode='json')
+    valid['frames'][0]['entity_hints'] = [{
+        'semantic_role': 'frame_subject', 'relation_id': [],
+        'expected_entity_type_ids': ['FinancialProduct'], 'mention_id': ['mention-v3-fixture'],
+        'candidate_entity_ids': ['entity-v3-fixture'], 'selected_candidate_ids': ['entity-v3-fixture'],
+    }]
+    Draft202012Validator(prepared.prompt.response_schema).validate(valid)
+    invalid = deepcopy(valid)
+    if invalid_relation == 'wrong-axis':
+        invalid['frames'][0]['semantic_links'][0]['semantic_ids'] = ['domestic_etf']
+    else:
+        invalid['frames'][0]['entity_hints'][0]['relation_id'] = invalid_relation
+    response = httpx.Response(200, json=payload(json.dumps(invalid)))
+    transport, calls = transport_for(response)
+    service._adapter = NvidiaStructuredOutputAdapter(config(), transport=transport)
+    original_schema = deepcopy(prepared.prompt.response_schema)
+    with pytest.raises(ResolverContractError, match='MODEL_PROPOSAL_SCHEMA_INVALID'):
+        await service.resolve_hybrid_query_contract_candidates(context)
+    assert len(calls) == 2
+    for call in calls:
+        system = json.loads(call.content)['messages'][0]['content']
+        assert 'V3 field-shape checks' in system
+        assert 'never null or a scalar' in system
+        assert 'semantic_links[].mention_id is one string' in system
+        assert 'entity_hints[].mention_id is an array' in system
+        assert 'frame_subject relation_id=[]' in system
+        assert 'relation_object relation_id=["managedBy"]' in system
+        assert 'product_family_choice.selected_ids=["domestic_etf"]' in system
+        assert 'semantic_links[].semantic_ids=["trailing_1y_historical_cumulative_return"]' in system
+        model_schema = json.loads(system.split('JSON Schema:\n', 1)[1])
+        relation_schema = model_schema['properties']['frames']['items']['properties']['entity_hints']['items']['properties']['relation_id']
+        assert relation_schema['type'] == 'array'
+        assert 'managedBy' in relation_schema['items']['enum']
+    assert prepared.prompt.response_schema == original_schema
+
+
+@pytest.mark.asyncio
+async def test_non_v3_envelope_does_not_receive_v3_generation_examples() -> None:
+    transport, calls = transport_for(httpx.Response(200, json=payload()))
+    await NvidiaStructuredOutputAdapter(config(), transport=transport).invoke(envelope(), 1)
+    assert 'V3 field-shape checks' not in json.loads(calls[0].content)['messages'][0]['content']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('relation_id,question,name,wrong_subject_types', [
+    ('managedBy', '삼성자산운용의 국내 ETF 찾아줘', '삼성자산운용', ['AssetManager', 'ETF']),
+    ('holdsSecurity', '2026-08-21 삼성전자를 보유한 국내 ETF 찾아줘', '삼성전자',
+     ['ETF', 'EquitySecurity', 'Security']),
+])
+async def test_relation_object_type_in_frame_subject_is_still_rejected_after_repair(
+    relation_id, question, name, wrong_subject_types,
+) -> None:
+    from financial_agent.intent.errors import ResolverContractError
+    from financial_agent.intent.view import NVIDIA_HYBRID_ADAPTER_VERSION
+    from .test_personal_intent import service
+    from .test_personal_relations import _RelationAdapter, _RelationEntities
+
+    proposal_adapter = _RelationAdapter(relation_id)
+    valid_service = service(proposal_adapter, name=name)
+    valid_service._resolver._entity_repository = _RelationEntities(proposal_adapter.object_type)
+    valid = await valid_service.resolve(question)
+    assert valid.route.value == 'compose'
+
+    calls = []
+
+    async def handler(request):
+        calls.append(request)
+        body = json.loads(request.content)
+        model_response = await proposal_adapter.invoke(
+            Envelope(user_message=body['messages'][1]['content']), 1,
+        )
+        proposal = json.loads(model_response.content)
+        proposal['frames'][0]['entity_type_ids'] = wrong_subject_types
+        return httpx.Response(200, json=payload(json.dumps(proposal)))
+
+    invalid_service = service(
+        NvidiaStructuredOutputAdapter(config(), transport=httpx.MockTransport(handler)),
+        name=name,
+    )
+    invalid_service._resolver._entity_repository = _RelationEntities(proposal_adapter.object_type)
+    with pytest.raises(ResolverContractError, match='MODEL_INAPPLICABLE_CONCEPT'):
+        await invalid_service.resolve(question)
+    assert len(calls) == 2
+    for call in calls:
+        system = json.loads(call.content)['messages'][0]['content']
+        assert 'frame.entity_type_ids contains only queried product subject types' in system
+        assert 'Security and AssetManager object types only in relation_object hints' in system
+        assert 'frame.entity_type_ids=["ETF"]' in system
+        assert 'expected_entity_type_ids=["AssetManager"]' in system
+        assert 'holdsSecurity uses ["Security"]' in system
+    assert NVIDIA_HYBRID_ADAPTER_VERSION == 'nvidia-chat-json-proposal-v5'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('after_repair', [False, True])
+async def test_frame_subject_hint_with_extra_ancestor_types_is_rejected(after_repair) -> None:
+    from financial_agent.intent.errors import ResolverContractError
+    from financial_agent.intent.view import NVIDIA_HYBRID_ADAPTER_VERSION
+    from .test_personal_intent import Adapter, service
+
+    class EtfAdapter(Adapter):
+        async def invoke(self, envelope, timeout_seconds):
+            result = await super().invoke(envelope, timeout_seconds)
+            proposal = json.loads(result.content)
+            frame = proposal['frames'][0]
+            frame['entity_type_ids'] = ['ETF']
+            for hint in frame['entity_hints']:
+                hint['expected_entity_type_ids'] = ['ETF']
+            return ModelInvocationResult(content=json.dumps(proposal), usage=result.usage)
+
+    name = 'TIGER 미국S&P500'
+    question = f'{name}의 총보수 알려줘'
+    proposal_adapter = EtfAdapter('domestic_etf', 'fee_rate', action='lookup')
+    valid = await service(proposal_adapter, name=name).resolve(question)
+    assert valid.route.value == 'compose'
+
+    calls = []
+
+    async def handler(request):
+        calls.append(request)
+        body = json.loads(request.content)
+        result = await proposal_adapter.invoke(Envelope(user_message=body['messages'][1]['content']), 1)
+        proposal = json.loads(result.content)
+        if after_repair and len(calls) == 1:
+            proposal['frames'][0]['semantic_links'][0]['semantic_ids'] = ['domestic_etf']
+        else:
+            proposal['frames'][0]['entity_hints'][0]['expected_entity_type_ids'] = [
+                'ETF', 'ExchangeTradedProduct', 'FinancialProduct',
+            ]
+        return httpx.Response(200, json=payload(json.dumps(proposal)))
+
+    invalid_service = service(
+        NvidiaStructuredOutputAdapter(config(), transport=httpx.MockTransport(handler)), name=name,
+    )
+    with pytest.raises(ResolverContractError, match='MODEL_INVALID_ENTITY_TYPE'):
+        await invalid_service.resolve(question)
+    assert len(calls) == (2 if after_repair else 1)
+    for call in calls:
+        system = json.loads(call.content)['messages'][0]['content']
+        assert 'For frame_subject, expected_entity_type_ids must match frame.entity_type_ids' in system
+        assert 'without extra broad ancestor types' in system
+        assert 'frame.entity_type_ids=["ETF"] and expected_entity_type_ids=["ETF"]' in system
+    assert NVIDIA_HYBRID_ADAPTER_VERSION == 'nvidia-chat-json-proposal-v5'

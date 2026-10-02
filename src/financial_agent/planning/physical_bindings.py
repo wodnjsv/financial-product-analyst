@@ -37,6 +37,9 @@ from financial_agent.ingestion.mapping.overseas_etp import (
 from financial_agent.ingestion.mapping.public_fund import (
     _METRIC_SPECS as PUBLIC_FUND_METRIC_SPECS,
 )
+from financial_agent.ingestion.mapping.domestic_bond import (
+    _METRIC_SPECS as DOMESTIC_BOND_METRIC_SPECS,
+)
 
 
 BINDING_REGISTRY_PATH = Path("config/planning/semantic-sql-bindings.v1.json")
@@ -44,7 +47,7 @@ POLICY_REGISTRY_PATH = Path("config/planning/semantic-sql-policies.v1.json")
 BINDING_REGISTRY_VERSION = "semantic-sql-bindings.v1"
 POLICY_REGISTRY_VERSION = "semantic-sql-policies.v1"
 EXPECTED_POLICY_REGISTRY_HASH = (
-    "cf4f5065eb4fdae76902a1c0bd817700129ad077fe56795c05ab95d76937abf4"
+    "5255ba918c730afe6153c9f42e1dd86fbb0ac2580b504470974f878e1fd8c826"
 )
 EXPECTED_POLICY_IDS = frozenset(
     {
@@ -58,6 +61,8 @@ EXPECTED_POLICY_IDS = frozenset(
         "equal-width-10.v1",
         "exclude_missing.v1",
         "identity-unit.v1",
+        "holds-security-condition.v1",
+        "managed-by-condition.v1",
         "minimum-dimension-coverage.v1",
         "no-dedup.v1",
         "public-fund-representative-share.v1",
@@ -84,11 +89,14 @@ EXPECTED_CATALOG_PROJECTION_HASH = (
 EXPECTED_BINDING_DEFINITION_HASHES = MappingProxyType(
     {
         "domestic-etf-aum.v1": "5ca7edfbf435b6aa493b046511dbf30f1156ac281278e82dba435daa0cf5a99a",
-        "domestic-etf-fee-rate.v1": "5e30bdd1542023891255028254929dd8f13ede4fd922d2b2d73feaa752070a7c",
+        "domestic-etf-fee-rate.v1": "e4c378fbe5494569b0bb18956c261570f12afc55d306a389d0add180e6c2add2",
         "overseas-etf-aum.v1": "eab62e8bc8c99f757adb18d193b4710c382c03f75ae49ab1298ffbec91854adb",
-        "overseas-etf-fee-rate.v1": "fd723bf049d800c724eca7c91ab182f685c415aa94698bbf0b9442d56513b90c",
+        "overseas-etf-fee-rate.v1": "557f5a4eb1b797ededb9a1f3b6a91c7923978f9414e14ebc28bf1d463bfcaa7d",
         "public-fund-aum.v1": "0e0c593d46c74819efb7684ec64fe48774ec6632ec5214420a869d46e5678511",
-        "public-fund-fee-rate.v1": "fbb846956c6a4b37c50c9842905bce28c229b75ca037a5fef7756e92986d34b0",
+        "public-fund-fee-rate.v1": "05416066fa3a20611fc73ae67ce483759910b80dd3c80c23a16e2f2230c396fe",
+        "domestic-etf-return-1y.v1": "3f8895c26c5b33c85cbce2a8ba67eb8297cdd2ae82fc60b7134bd26dce40e4a4",
+        "domestic-bond-maturity-date.v1": "a3ce112ae4a9bdd541c4cc5a1cd8c7eabd5ffb516ed6f7cfe832882a0ed04627",
+        "overseas-etf-return-1y.v1": "7b0c66d94af587a8e05d64691eefadea79df4824efc8238d9fb7baa89588e304",
     }
 )
 EXPECTED_MAPPER_BINDINGS = MappingProxyType(
@@ -118,13 +126,23 @@ EXPECTED_MAPPER_BINDINGS = MappingProxyType(
             "fd_nast_suma",
             "organizer.prfd01n001.net_assets",
         ),
+        "domestic-etf-return-1y.v1": (
+            DOMESTIC_ETP_METRIC_SPECS,
+            "du_er_1y",
+            "organizer.pref01n001.cumulative_return_1y",
+        ),
+        "domestic-bond-maturity-date.v1": (
+            DOMESTIC_BOND_METRIC_SPECS,
+            "mat_dt",
+            "organizer.prbd01n001.maturity_date",
+        ),
     }
 )
 TRUSTED_PUBLIC_FUND_MANIFEST_PINS = MappingProxyType(
     {
         "synthetic-public-fund-complete.v1": (
             "43138033043db74566a74023c18b83e01b9637c1041ae737758aef55aaa9b36f",
-            "859d22464fe035c1cf0be0dd7fa048146b06167994c4133e2edf649c8963a001",
+            "11f88c9998a0b7e383fba251c8b9b9cf2ffa24b80d44522d81769107b824b6a8",
         )
     }
 )
@@ -189,6 +207,7 @@ class SemanticSqlPolicyKind(str, Enum):
     NORMALIZATION = "normalization"
     POPULATION_GRAIN = "population_grain"
     RECIPE = "recipe"
+    RELATION_CONDITION = "relation_condition"
     SIMILARITY = "similarity"
     STABLE_TIE = "stable_tie"
     UNIT_CONVERSION = "unit_conversion"
@@ -232,7 +251,13 @@ class PhysicalBindingDefinition(_StrictModel):
                 or self.value_column is None
             ):
                 raise ValueError("verified binding requires physical fields")
-            if not self.storage_unit_id or not self.unit_conversion_policy_id:
+            if (
+                not self.unit_conversion_policy_id
+                or (
+                    not self.storage_unit_id
+                    and self.semantic_value_kind is not SemanticValueKind.DATE
+                )
+            ):
                 raise ValueError("verified binding requires unit policy")
             if not self.missingness_policy_id:
                 raise ValueError("verified binding requires missingness policy")
@@ -729,8 +754,11 @@ def _validate_mapper_binding(binding: PhysicalBindingDefinition) -> None:
         binding.approved_metric_ids != (expected_metric_id,)
         or binding.approved_metric_definition_refs != (f"{expected_metric_id}:2",)
         or expected_metric_id.rsplit(".", 1)[-1] != metric_suffix
-        or mapper_value_kind != "numeric"
-        or binding.semantic_value_kind is not SemanticValueKind.DECIMAL
+        or binding.semantic_value_kind
+        is not {
+            "numeric": SemanticValueKind.DECIMAL,
+            "date": SemanticValueKind.DATE,
+        }.get(mapper_value_kind)
         or binding.storage_unit_id != mapper_unit_id
     ):
         raise ValueError("physical binding definition mismatch")

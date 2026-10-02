@@ -20,6 +20,34 @@ from .model import ModelInvocationResult, StructuredOutputEnvelope
 from .nvidia_config import NvidiaResolverConfig
 
 
+_V3_OUTPUT_GUIDANCE = (
+    "V3 field-shape checks, including repair: keep the full root object and all "
+    "required frame keys. Array fields must be JSON arrays, never null or a scalar; "
+    "use [] when there is no item. semantic_links[].mention_id is one string; "
+    "entity_hints[].mention_id is an array. Each entity hint's relation_id, "
+    "expected_entity_type_ids, candidate_entity_ids and selected_candidate_ids "
+    "are arrays. Field-value examples inside a frame: frame_subject relation_id=[]; "
+    'relation_object relation_id=["managedBy"] (or another offered relation). '
+    "frame.entity_type_ids contains only queried product subject types; put "
+    "Security and AssetManager object types only in relation_object hints' expected_entity_type_ids, "
+    "never in frame.entity_type_ids. Example: frame.entity_type_ids=[\"ETF\"]; "
+    "the managedBy relation_object expected_entity_type_ids=[\"AssetManager\"] "
+    "(holdsSecurity uses [\"Security\"]). "
+    "For frame_subject, expected_entity_type_ids must match frame.entity_type_ids "
+    "without extra broad ancestor types, e.g. frame.entity_type_ids=[\"ETF\"] "
+    "and expected_entity_type_ids=[\"ETF\"]. "
+    "Keep action IDs only in action_choice.selected_ids and product-family IDs "
+    "only in product_family_choice.selected_ids. semantic_links[].semantic_ids "
+    "contains only compact_semantic_catalog.concepts[].semantic_id values; "
+    "never action, family, entity-type, literal or operator IDs. Example for a "
+    'domestic annual-return question: action_choice.selected_ids=["rank"]; '
+    'product_family_choice.selected_ids=["domestic_etf"]; '
+    'semantic_links[].semantic_ids=["trailing_1y_historical_cumulative_return"]. '
+    "The domestic_etf family mention needs no semantic link. These examples are "
+    "field values, not complete outputs; use only IDs offered in the current view.\n"
+)
+
+
 class NvidiaStructuredOutputAdapter:
     def __init__(
         self,
@@ -97,6 +125,7 @@ class NvidiaStructuredOutputAdapter:
                         f"{envelope.system_message}\n\n"
                         "Return exactly one JSON object matching this JSON Schema. "
                         "Do not return Markdown, explanations, or additional fields.\n"
+                        f"{_V3_OUTPUT_GUIDANCE if _is_v3_response_schema(envelope.response_schema) else ''}"
                         f"JSON Schema:\n{schema}"
                     ),
                 },
@@ -115,11 +144,7 @@ class NvidiaStructuredOutputAdapter:
 
 def _model_response_schema(schema: dict[str, object]) -> object:
     """Omit repeated V3 ID lists only in the model's schema presentation."""
-    properties = schema.get("properties", {})
-    version = properties.get("proposal_schema_version", {}) if isinstance(properties, dict) else {}
-    if not isinstance(version, dict) or not (
-        version.get("enum") == ["3.0"] or version.get("const") == "3.0"
-    ):
+    if not _is_v3_response_schema(schema):
         return schema
     identifier_fields = {
         "mention_id", "unmapped_mention_ids", "evidence_ids", "semantic_ids",
@@ -139,6 +164,14 @@ def _model_response_schema(schema: dict[str, object]) -> object:
         return value
 
     return copy(schema)
+
+
+def _is_v3_response_schema(schema: dict[str, object]) -> bool:
+    properties = schema.get("properties", {})
+    version = properties.get("proposal_schema_version", {}) if isinstance(properties, dict) else {}
+    return isinstance(version, dict) and (
+        version.get("enum") == ["3.0"] or version.get("const") == "3.0"
+    )
 
 
 def _parse_success(response: httpx.Response) -> ModelInvocationResult:

@@ -146,7 +146,7 @@ def _lookup_row(
         "reason_code_0": None if value is not None else "synthetic_missing",
         "observation_id_0": "observation-a",
         "metric_id_0": "organizer.pref01n001.aum",
-        "metric_definition_version_0": "metric.v1",
+        "metric_definition_version_0": "2",
         "unit_0": "source_defined_amount",
         "currency_0": "KRW",
         "applicable_date_0": date(2026, 8, 24),
@@ -172,7 +172,7 @@ def test_maps_business_value_and_flat_lineage_without_losing_zero() -> None:
     assert aum.applicable_date == date(2026, 8, 24)
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
-        "metric-definition:organizer.pref01n001.aum:metric.v1",
+        "metric-definition:organizer.pref01n001.aum:2",
         "observation:observation-a",
         "source:source-a",
     )
@@ -280,7 +280,7 @@ def test_scalar_aggregate_preserves_flat_arrays_and_rejects_mixed_units() -> Non
         "aggregate_value": Decimal("300"),
         "observation_ids": ["observation-a", "observation-b"],
         "metric_ids": ["organizer.pref01n001.aum"],
-        "metric_definition_versions": ["metric.v1"],
+        "metric_definition_versions": ["2"],
         "units": ["source_defined_amount"],
         "currencies": ["KRW"],
         "applicable_dates": [date(2026, 8, 24)],
@@ -292,7 +292,7 @@ def test_scalar_aggregate_preserves_flat_arrays_and_rejects_mixed_units() -> Non
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
         "evidence:evidence-b",
-        "metric-definition:organizer.pref01n001.aum:metric.v1",
+        "metric-definition:organizer.pref01n001.aum:2",
         "observation:observation-a",
         "observation:observation-b",
         "source:source-a",
@@ -311,6 +311,8 @@ def test_scalar_aggregate_preserves_flat_arrays_and_rejects_mixed_units() -> Non
         )
     with pytest.raises(SqlResultMappingError, match="RETURNED_METRIC_OWNERSHIP_MISMATCH"):
         map_sql_rows(outcome.request, [{**row, "metric_ids": ["invented.metric"]}])
+    with pytest.raises(SqlResultMappingError, match="RETURNED_METRIC_DEFINITION_OWNERSHIP_MISMATCH"):
+        map_sql_rows(outcome.request, [{**row, "metric_definition_versions": ["invented-version"]}])
 
 
 def test_count_cardinality_and_injection_shaped_names_remain_data() -> None:
@@ -782,7 +784,7 @@ def test_grouped_aggregate_maps_group_and_target_without_nested_evidence() -> No
                 "aggregate_value": Decimal("100"),
                 "observation_ids": ["observation-a"],
                 "metric_ids": ["organizer.pref01n001.aum"],
-                "metric_definition_versions": ["metric.v1"],
+                "metric_definition_versions": ["2"],
                 "units": ["source_defined_amount"],
                 "currencies": ["KRW"],
                 "applicable_dates": [date(2026, 8, 24)],
@@ -799,7 +801,7 @@ def test_grouped_aggregate_maps_group_and_target_without_nested_evidence() -> No
     assert mapped.result_rows[0].fields[0].applicable_date == date(2026, 8, 24)
     assert mapped.evidence_refs == (
         "evidence:evidence-a",
-        "metric-definition:organizer.pref01n001.aum:metric.v1",
+        "metric-definition:organizer.pref01n001.aum:2",
         "observation:observation-a",
         "source:source-a",
     )

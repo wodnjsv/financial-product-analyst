@@ -179,12 +179,29 @@ def assess_plan_readiness(
     known_entity_ids = facts.known_entity_ids if facts is not None else frozenset()
     if set(contract.scope.entity_refs) - known_entity_ids:
         state.add("ENTITY_IDENTITY_UNVERIFIED", PlanReadiness.LIMITED)
+    for condition in contract.scope.relation_conditions:
+        if condition.object_entity_id not in known_entity_ids:
+            state.add("ENTITY_IDENTITY_UNVERIFIED", PlanReadiness.LIMITED)
+        policy_id = ("managed-by-condition.v1" if condition.relation_id == "managedBy"
+                     else "holds-security-condition.v1")
+        _assess_policy(policy_id, SemanticSqlPolicyKind.RELATION_CONDITION,
+                       "SQL_POLICY_NOT_REGISTERED", families, policies, state)
+        policy = policies.policies_by_id.get(policy_id)
+        if policy is not None and (policy.relation_predicate_id != condition.relation_id
+                                  or policy.relation_direction != condition.direction):
+            state.add("RELATION_DIRECTION_UNVERIFIED", PlanReadiness.BLOCKED)
+        if condition.relation_id == "holdsSecurity" and contract.qualifiers.as_of_date is None:
+            state.add("PHYSICAL_REQUIRED_QUALIFIER_MISSING", PlanReadiness.LIMITED)
+        if contract.action_id not in {IntentType.LOOKUP, IntentType.SCREEN, IntentType.RANK}:
+            state.add("RELATION_ACTION_UNSUPPORTED", PlanReadiness.LIMITED)
     field_roles: list[tuple[str, str, object | None]] = []
     policy_roles: list[tuple[str, SemanticSqlPolicyKind, str]] = []
     if contract.action_id is IntentType.LOOKUP:
         if contract.projections.default_profile_id:
             policy_roles.append((contract.projections.default_profile_id, SemanticSqlPolicyKind.DEFAULT, "SQL_POLICY_NOT_REGISTERED"))
-            state.add("PROJECTION_PROFILE_NOT_EXPANDED", PlanReadiness.BLOCKED)
+            if (contract.projections.default_profile_id != "default-product-projection.v1"
+                    or not contract.scope.relation_conditions):
+                state.add("PROJECTION_PROFILE_NOT_EXPANDED", PlanReadiness.BLOCKED)
         field_roles.extend((item, "projection", None) for item in contract.projections.field_concept_ids)
     elif contract.action_id is IntentType.SCREEN:
         _collect_predicate(contract.predicate, field_roles, policy_roles)
@@ -283,6 +300,12 @@ def assess_plan_readiness(
         resolved_bindings.extend(
             _assess_field(field_id, role, role_value, families, bindings, state)
         )
+    if contract.scope.relation_conditions and not resolved_bindings and any(
+        value is not None for value in (contract.qualifiers.period_id,
+                                       contract.qualifiers.currency_id,
+                                       contract.qualifiers.unit_id)
+    ):
+        state.add("PHYSICAL_QUALIFIER_UNSUPPORTED", PlanReadiness.LIMITED)
     for binding in resolved_bindings:
         for policy_id in (
             binding.unit_conversion_policy_id,
@@ -515,6 +538,8 @@ def _collect_predicate(
     fields: list[tuple[str, str, object | None]],
     policies: list[tuple[str, SemanticSqlPolicyKind, str]],
 ) -> None:
+    if predicate is None:
+        return
     if isinstance(predicate, PredicateAtomV2):
         fields.append((predicate.field_concept_id, "predicate", predicate))
         policies.append((predicate.null_policy_id, SemanticSqlPolicyKind.MISSINGNESS, "SQL_POLICY_NOT_REGISTERED"))
@@ -573,6 +598,13 @@ def _assess_field(
                     and literal.unit_id not in binding.accepted_semantic_unit_ids
                 ):
                     state.add("SEMANTIC_UNIT_NOT_SUPPORTED", PlanReadiness.BLOCKED)
+                if (
+                    literal.kind is SemanticValueKind.DECIMAL
+                    and literal.unit_id is None
+                    and binding.unit_conversion_policy_id
+                    == "semantic-percent-to-percentage-point.v1"
+                ):
+                    state.add("SEMANTIC_VALUE_UNIT_REQUIRED", PlanReadiness.LIMITED)
         if role == "aggregation" and role_value is not None:
             if role_value.function_id not in binding.supported_aggregate_ids:
                 state.add("PHYSICAL_AGGREGATE_UNSUPPORTED", PlanReadiness.LIMITED)
@@ -630,6 +662,13 @@ def _assess_qualifiers(contract, bindings, state: _Assessment) -> None:
             state.add("PHYSICAL_REQUIRED_QUALIFIER_MISSING", PlanReadiness.LIMITED)
         if not requested <= set(binding.supported_qualifier_ids):
             state.add("PHYSICAL_QUALIFIER_UNSUPPORTED", PlanReadiness.LIMITED)
+        if (
+            qualifiers.period_id is not None
+            and binding.semantic_concept_id
+            == "trailing_1y_historical_cumulative_return"
+            and qualifiers.period_id != "P1Y"
+        ):
+            state.add("PERIOD_QUALIFIER_NOT_SUPPORTED", PlanReadiness.LIMITED)
         if qualifiers.unit_id is not None and (
             not binding.accepted_semantic_unit_ids
             or qualifiers.unit_id not in binding.accepted_semantic_unit_ids
