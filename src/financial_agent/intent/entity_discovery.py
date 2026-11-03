@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -24,6 +25,9 @@ from .normalization import (
 MAX_CATALOG_SURFACES = MAX_ENTITY_MENTIONS * 4
 _GENERIC_SURFACES = frozenset(
     {"ETF", "ETN", "펀드", "채권", "주식", "미국", "국내", "해외", "상품", "전자", "후자"}
+)
+_CURRENCY_FIELD_CUE_RE = re.compile(
+    r"(?<!\w)(?:거래\s*통화|통화)(?:\s*(?:가|는|를|로|[:=]))?\s*$"
 )
 
 
@@ -143,7 +147,14 @@ def _source_spans(
             ).upper()
             if (
                 source_key == surface
-                and _ascii_boundaries(original, start, end, surface)
+                and _source_boundaries(original, start, end, surface)
+                and not (
+                    surface in {"KRW", "USD"}
+                    and unicodedata.normalize("NFKC", original[start:end]) == surface
+                    and _CURRENCY_FIELD_CUE_RE.search(
+                        unicodedata.normalize("NFKC", original[:start])
+                    )
+                )
                 and not any(
                     other_start <= start and end <= other_end
                     for other_start, other_end in ranges
@@ -158,7 +169,7 @@ def _source_spans(
     return tuple(sorted(ranges))
 
 
-def _ascii_boundaries(original: str, start: int, end: int, surface: str) -> bool:
+def _source_boundaries(original: str, start: int, end: int, surface: str) -> bool:
     def is_ascii_word(character: str) -> bool:
         normalized = unicodedata.normalize("NFKC", character)
         return bool(normalized) and all(
@@ -166,6 +177,8 @@ def _ascii_boundaries(original: str, start: int, end: int, surface: str) -> bool
             for item in normalized
         )
 
+    # Removing internal name spacing must not join the tail of a prose word to
+    # the next word. Keep Korean particles after genuine names unrestricted.
     return not (
         (
             is_ascii_word(surface[0])
@@ -176,6 +189,14 @@ def _ascii_boundaries(original: str, start: int, end: int, surface: str) -> bool
             is_ascii_word(surface[-1])
             and end < len(original)
             and is_ascii_word(original[end])
+        )
+        or (
+            start > 0
+            and any(character.isspace() for character in original[start:end])
+            and (
+                unicodedata.normalize("NFKC", original[start - 1]).isalnum()
+                or original[start - 1] == "_"
+            )
         )
     )
 

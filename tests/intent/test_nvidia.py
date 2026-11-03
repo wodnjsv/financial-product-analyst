@@ -141,7 +141,7 @@ async def test_adapter_sends_one_json_request_with_explicit_schema() -> None:
 ])
 async def test_v3_model_schema_omits_only_identifier_enums_without_mutating_original(version_schema) -> None:
     identifier_fields = (
-        'mention_id', 'unmapped_mention_ids', 'evidence_ids', 'semantic_ids',
+        'mention_id', 'unmapped_mention_ids', 'evidence_ids',
         'candidate_entity_ids', 'selected_candidate_ids', 'reference_id',
         'selector_literal_candidate_id',
     )
@@ -150,6 +150,7 @@ async def test_v3_model_schema_omits_only_identifier_enums_without_mutating_orig
         'minItems': 1, 'maxItems': 2, 'uniqueItems': True,
     }
     preserved_fields = {
+        'semantic_ids': deepcopy(identifier_array),
         'state': {'type': 'string', 'enum': ['selected', 'ambiguous']},
         'semantic_role': {'type': 'string', 'enum': ['subject_product']},
         'reason_code': {'type': 'string', 'enum': ['explicit']},
@@ -451,7 +452,8 @@ async def test_nvidia_provenance_reaches_hybrid_preparation_validation_and_solve
     assert model_schemas[0] == model_schemas[1]
     model_schema = json.loads(model_schemas[0])
     model_link = model_schema['properties']['frames']['items']['properties']['semantic_links']['items']['oneOf'][0]
-    assert model_link['properties']['semantic_ids']['items'] == {'type': 'string'}
+    assert 'fee_rate' in model_link['properties']['semantic_ids']['items']['enum']
+    assert 'domestic_etf' not in model_link['properties']['semantic_ids']['items']['enum']
     assert prepared.prompt.response_schema == original_schema
     assert repair.response_schema == original_schema
     proposal['frames'][0]['semantic_links'][0]['semantic_ids'] = ['domestic_etf']
@@ -619,7 +621,7 @@ async def test_relation_object_type_in_frame_subject_is_still_rejected_after_rep
         assert 'frame.entity_type_ids=["ETF"]' in system
         assert 'expected_entity_type_ids=["AssetManager"]' in system
         assert 'holdsSecurity uses ["Security"]' in system
-    assert NVIDIA_HYBRID_ADAPTER_VERSION == 'nvidia-chat-json-proposal-v5'
+    assert NVIDIA_HYBRID_ADAPTER_VERSION == 'nvidia-chat-json-proposal-v8'
 
 
 @pytest.mark.asyncio
@@ -671,4 +673,4 @@ async def test_frame_subject_hint_with_extra_ancestor_types_is_rejected(after_re
         assert 'For frame_subject, expected_entity_type_ids must match frame.entity_type_ids' in system
         assert 'without extra broad ancestor types' in system
         assert 'frame.entity_type_ids=["ETF"] and expected_entity_type_ids=["ETF"]' in system
-    assert NVIDIA_HYBRID_ADAPTER_VERSION == 'nvidia-chat-json-proposal-v5'
+    assert NVIDIA_HYBRID_ADAPTER_VERSION == 'nvidia-chat-json-proposal-v8'

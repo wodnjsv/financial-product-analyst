@@ -989,6 +989,10 @@ async def test_load_stage03b_uses_named_environment_boundaries(
         "postgresql://user:PRIVATE-PASSWORD@example.invalid/db",
     )
     monkeypatch.setenv("FINANCIAL_AGENT_DATASET_VERSION", "combined-test")
+    monkeypatch.setenv(
+        "FINANCIAL_AGENT_ACCEPTANCE_REPORT_PATH",
+        "/tmp/stage03-acceptance.json",
+    )
     monkeypatch.setattr(cli, "_source_inputs", lambda: _inputs())
     monkeypatch.setattr(
         cli,
@@ -1023,7 +1027,7 @@ async def test_load_stage03b_uses_named_environment_boundaries(
             active=False,
         )
 
-    def require_current(report: object) -> None:
+    def require_local_acceptance(report: object) -> None:
         observed["acceptance_report"] = report
 
     monkeypatch.setattr(cli, "build_stage03b_dataset", build, raising=False)
@@ -1032,8 +1036,16 @@ async def test_load_stage03b_uses_named_environment_boundaries(
     )
     monkeypatch.setattr(
         cli,
-        "require_current_rebaseline_acceptance",
-        require_current,
+        "require_stage03_local_acceptance",
+        require_local_acceptance,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cli,
+        "write_database_acceptance_report",
+        lambda report, path: observed.update(
+            {"written_report": report, "written_path": path}
+        ),
         raising=False,
     )
 
@@ -1041,6 +1053,8 @@ async def test_load_stage03b_uses_named_environment_boundaries(
     assert observed["dataset_version"] == "combined-test"
     assert observed["build_report"].passed is True
     assert observed["acceptance_report"].reproducibility_hash == "a" * 64
+    assert observed["written_report"] is observed["acceptance_report"]
+    assert observed["written_path"] == Path("/tmp/stage03-acceptance.json")
     assert capsys.readouterr().out == (
         "STAGE03B_BUILD_OK sources=2 rows=5 status=building active=0 "
         f"acceptance={'a' * 64} products=53095 exact_reused=217 "

@@ -23,6 +23,7 @@ from financial_agent.intent.entity_repository import (
     _search_statement,
 )
 from financial_agent.intent.normalization import normalize_request
+from financial_agent.intent.literals import extract_literals
 from financial_agent.intent.service import IntentResolverService, _entity_mentions, _hybrid_entity_mentions
 from financial_agent.intent.mention_spans import generate_mention_spans
 from financial_agent.intent.view import ActiveDatasetPin, _validated_hybrid_output_capabilities, build_hybrid_manifest
@@ -117,6 +118,25 @@ async def test_discovery_keeps_exact_original_spans_and_all_repeated_occurrences
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("question,surface", [
+    ("미국 주식에 투자하면서 연금거래가 가능하고 판매중이며 거래정지가 아닌 국내 ETF만 보여줘.", "서연"),
+    ("수익률에 대해 서술해줘", "해서"),
+    ("미국 주식형 펀드를 알려줘", "국주"),
+])
+async def test_spacing_normalization_does_not_join_fragments_of_adjacent_prose_words(question: str, surface: str) -> None:
+    mentions = await EntityMentionDiscovery(FakeEngine([surface])).discover(context(question))
+    assert mentions == ()
+
+
+@pytest.mark.asyncio
+async def test_spaced_korean_names_keep_particles_and_repeated_original_offsets() -> None:
+    question = "서 연의 정보와 서\t연을 비교해줘"
+    mentions = await EntityMentionDiscovery(FakeEngine(["서연"])).discover(context(question))
+    assert [mention.text for mention in mentions] == ["서 연", "서\t연"]
+    assert [(mention.start_char, mention.end_char) for mention in mentions] == [(0, 3), (9, 12)]
+
+
+@pytest.mark.asyncio
 async def test_longer_names_suppress_nested_mentions_without_losing_separate_short_names() -> None:
     question = "삼성전자와 삼성전자우를 비교해줘"
     mentions = await EntityMentionDiscovery(FakeEngine(["삼성", "삼성전자", "삼성전자우"])).discover(context(question))
@@ -150,6 +170,73 @@ async def test_generic_surfaces_and_partial_ascii_identifiers_do_not_create_enti
     question = "ETF 펀드 미국 해외 상품 AAAPL, 10695000 대신 AAPL을 찾아줘"
     mentions = await EntityMentionDiscovery(FakeEngine(["ETF", "펀드", "미국", "해외", "상품", "AA", "AAPL", "069500"])).discover(context(question))
     assert [mention.text for mention in mentions] == ["AAPL"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question,code", [
+    ("해외 ETF의 거래통화 ＵＳＤ 여부를 확인해줘.", "USD"),
+    ("해외 ETF의 통화가 USD인지 확인해줘.", "USD"),
+    ("국내 ETF의 거래 통화: ＫＲＷ 여부를 확인해줘.", "KRW"),
+])
+async def test_explicit_currency_field_code_remains_a_literal_with_original_offsets(question: str, code: str) -> None:
+    source = context(question)
+    mentions = await EntityMentionDiscovery(FakeEngine([code])).discover(source)
+    literals = extract_literals(normalize_request(source.model_copy(update={"named_entities": mentions})))
+
+    assert mentions == ()
+    assert len(literals) == 1
+    literal = literals[0]
+    start = question.index("ＵＳＤ" if "ＵＳＤ" in question else "ＫＲＷ" if "ＫＲＷ" in question else code)
+    assert (literal.kind, literal.canonical_value, literal.currency) == ("currency", code, code)
+    assert (literal.start_char, literal.end_char) == (start, start + 3)
+    assert literal.original_text == question[start:start + 3]
+    assert literal.literal_id == f"lit-s1-{start}-{start + 3}-currency"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("question", [
+    "USD의 총보수를 알려줘.", "티커가 USD인 해외 ETF를 알려줘.",
+    "정식상품명 USD의 정보를 알려줘.", "통화상품 USD의 정보를 알려줘.",
+])
+async def test_currency_code_without_an_explicit_currency_field_cue_keeps_entity_mask(question: str) -> None:
+    source = context(question)
+    mentions = await EntityMentionDiscovery(FakeEngine(["USD"])).discover(source)
+
+    assert [mention.text for mention in mentions] == ["USD"]
+    assert extract_literals(normalize_request(source.model_copy(update={"named_entities": mentions}))) == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spelling", ["usd", "U S D"])
+async def test_currency_cue_does_not_drop_alias_spellings_unsupported_by_literal_extraction(spelling: str) -> None:
+    source = context(f"거래통화 {spelling}의 정보를 알려줘.")
+    mentions = await EntityMentionDiscovery(FakeEngine(["USD"])).discover(source)
+
+    assert [mention.text for mention in mentions] == [spelling]
+    assert extract_literals(normalize_request(source.model_copy(update={"named_entities": mentions}))) == ()
+
+
+@pytest.mark.asyncio
+async def test_repeated_ticker_and_explicit_currency_code_have_distinct_source_ownership() -> None:
+    question = "티커가 USD인 ETF의 거래통화 USD 여부를 알려줘."
+    source = context(question)
+    mentions = await EntityMentionDiscovery(FakeEngine(["USD"])).discover(source)
+    literals = extract_literals(normalize_request(source.model_copy(update={"named_entities": mentions})))
+
+    assert [(mention.text, mention.start_char, mention.end_char) for mention in mentions] == [("USD", 4, 7)]
+    assert [(literal.kind, literal.original_text, literal.start_char, literal.end_char) for literal in literals] == [
+        ("currency", "USD", 19, 22),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_explicit_currency_cue_does_not_remove_a_longer_registered_product_name() -> None:
+    question = "거래통화 Synthetic USD ETF의 정보를 알려줘."
+    source = context(question)
+    mentions = await EntityMentionDiscovery(FakeEngine(["USD", "SYNTHETICUSDETF"])).discover(source)
+
+    assert [mention.text for mention in mentions] == ["Synthetic USD ETF"]
+    assert extract_literals(normalize_request(source.model_copy(update={"named_entities": mentions}))) == ()
 
 
 @pytest.mark.asyncio

@@ -160,17 +160,19 @@ def _validate_offered_ids(
         proposal.references or proposal.context_links or proposal.slot_mutations
     ):
         raise ResolverContractError("MODEL_OUTPUT_DISABLED")
-    for frame in proposal.frames:
+    for ordinal, frame in enumerate(proposal.frames):
         _require_subset(frame.segment_ids, segment_ids)
         _validate_choice(
             frame.action_choice.state,
             frame.action_choice.selected_ids,
             view.action_ids,
+            path=f"frames.{ordinal}.action_choice.selected_ids",
         )
         _validate_choice(
             frame.product_family_choice.state,
             frame.product_family_choice.selected_ids,
             view.product_family_ids,
+            path=f"frames.{ordinal}.product_family_choice.selected_ids",
         )
         try:
             require_valid_action_cardinality(
@@ -231,6 +233,12 @@ def _validate_offered_ids(
             elif hint.candidate_entity_ids or hint.selected_candidate_ids:
                 raise ResolverContractError("MODEL_UNKNOWN_ID")
     _validate_reference_ordinals(proposal, reference_ids)
+    missing_references = reference_ids - {item.reference_id for item in proposal.references}
+    if missing_references:
+        raise ResolverContractError("MODEL_INVALID_FRAME_REFERENCE", validation_feedback=({
+            "path": "references", "rule": "source_reference_missing",
+            "required_reference_ids": sorted(missing_references),
+        },))
     for reference in proposal.references:
         candidate = next(
             item
@@ -257,9 +265,16 @@ def _validate_offered_ids(
         _require_subset(flag.evidence_ids, evidence_ids)
 
 
-def _validate_choice(state: ChoiceState, selected: tuple[str, ...], allowed: object) -> None:
+def _validate_choice(
+    state: ChoiceState, selected: tuple[str, ...], allowed: object,
+    *, path: str = "selected_ids",
+) -> None:
     if (state is ChoiceState.SELECTED) != bool(selected):
-        raise ResolverContractError("MODEL_SCHEMA_INVALID")
+        raise ResolverContractError("MODEL_SCHEMA_INVALID", validation_feedback=({
+            "path": path, "rule": "axis_choice_state_cardinality",
+            "selected_state_min_items": 1, "unselected_state_max_items": 0,
+            "allowed_values": sorted(allowed),
+        },))
     _require_subset(selected, allowed)
 
 
@@ -279,7 +294,7 @@ def _validate_reference_ordinals(
     for reference in proposal.references:
         _require_subset((reference.reference_id,), reference_ids)
         _require_ordinals(reference.producer_frame_ordinals, frame_count)
-    for link in proposal.context_links:
+    for ordinal, link in enumerate(proposal.context_links):
         _require_subset((link.reference_id,), reference_ids)
         _require_ordinals((link.producer_frame_ordinal, link.consumer_frame_ordinal), frame_count)
         if (
@@ -288,7 +303,20 @@ def _validate_reference_ordinals(
             or link.source_role
             not in proposal.frames[link.producer_frame_ordinal].produced_result_hints
         ):
-            raise ResolverContractError("MODEL_INVALID_FRAME_REFERENCE")
+            raise ResolverContractError("MODEL_INVALID_FRAME_REFERENCE", validation_feedback=({
+                "path": f"context_links.{ordinal}",
+                "rule": "context_link_requires_backward_declared_producer",
+                "valid_frame_ordinals": list(range(frame_count)),
+                "producer_before_consumer": True,
+                "allowed_producer_frame_ordinals": sorted(
+                    item for item in producer_ordinals.get(link.reference_id, set())
+                    if item < link.consumer_frame_ordinal
+                ),
+                "allowed_source_roles": sorted({
+                    item.value
+                    for item in proposal.frames[link.producer_frame_ordinal].produced_result_hints
+                }),
+            },))
     for mutation in proposal.slot_mutations:
         _require_ordinals((mutation.consumer_frame_ordinal,), frame_count)
         if mutation.source_frame_ordinal:
@@ -381,13 +409,18 @@ def _validate_applicability(
     links_by_frame: tuple[tuple[ProposedSemanticLinkV3, ...], ...],
     catalog: SemanticCatalogSnapshot,
 ) -> None:
-    for frame, links in zip(proposal.frames, links_by_frame, strict=True):
+    for ordinal, (frame, links) in enumerate(zip(proposal.frames, links_by_frame, strict=True)):
         families = set(frame.product_family_choice.selected_ids)
         for link in links:
             for semantic_id in link.semantic_ids:
                 concept = catalog.concepts_by_id[semantic_id]
                 if not families <= set(concept.allowed_product_families):
-                    raise ResolverContractError("MODEL_INAPPLICABLE_CONCEPT")
+                    raise ResolverContractError("MODEL_INAPPLICABLE_CONCEPT", validation_feedback=({
+                        "path": f"frames.{ordinal}.semantic_links",
+                        "rule": "concept_product_family_mismatch",
+                        "semantic_id": semantic_id, "mention_id": link.mention_id,
+                        "allowed_product_family_ids": sorted(concept.allowed_product_families),
+                    },))
                 allowed_types = (
                     set(concept.subject_ontology_types)
                     if concept.kind == "relation"
@@ -397,7 +430,12 @@ def _validate_applicability(
                     _type_is_compatible(type_id, allowed_types, catalog)
                     for type_id in frame.entity_type_ids
                 ):
-                    raise ResolverContractError("MODEL_INAPPLICABLE_CONCEPT")
+                    raise ResolverContractError("MODEL_INAPPLICABLE_CONCEPT", validation_feedback=({
+                        "path": f"frames.{ordinal}.entity_type_ids",
+                        "rule": "concept_subject_type_mismatch",
+                        "semantic_id": semantic_id, "mention_id": link.mention_id,
+                        "allowed_entity_type_ids": sorted(allowed_types),
+                    },))
 
 
 def _validate_relation_endpoints(
@@ -410,7 +448,7 @@ def _validate_relation_endpoints(
         group.mention_id: {item.entity_id: item for item in group.items}
         for group in view.entity_candidates
     }
-    for frame, links in zip(proposal.frames, links_by_frame, strict=True):
+    for ordinal, (frame, links) in enumerate(zip(proposal.frames, links_by_frame, strict=True)):
         relation_ids = {
             semantic_id
             for link in links
@@ -418,7 +456,20 @@ def _validate_relation_endpoints(
             if catalog.concepts_by_id[semantic_id].kind == "relation"
         }
         if relation_ids and not frame.entity_type_ids:
-            raise ResolverContractError("MODEL_INVALID_RELATION")
+            raise ResolverContractError("MODEL_INVALID_RELATION", validation_feedback=({
+                "path": f"frames.{ordinal}.entity_type_ids",
+                "rule": "relation_subject_type_missing",
+                "relation_subject_types": [
+                    {
+                        "relation_id": relation_id,
+                        "allowed_entity_type_ids": sorted(
+                            set(catalog.concepts_by_id[relation_id].subject_ontology_types)
+                            & set(view.entity_type_ids)
+                        ),
+                    }
+                    for relation_id in sorted(relation_ids)
+                ],
+            },))
         for hint in frame.entity_hints:
             if hint.mention_id:
                 by_id = candidates[hint.mention_id[0]]
@@ -442,7 +493,12 @@ def _validate_relation_endpoints(
                     raise ResolverContractError("MODEL_INVALID_ENTITY_TYPE")
                 continue
             if len(hint.relation_id) != 1 or hint.relation_id[0] not in relation_ids:
-                raise ResolverContractError("MODEL_INVALID_RELATION")
+                raise ResolverContractError("MODEL_INVALID_RELATION", validation_feedback=({
+                    "path": f"frames.{ordinal}.semantic_links",
+                    "rule": "relation_semantic_link_missing",
+                    "required_relation_ids": list(hint.relation_id),
+                    "object_mention_ids": list(hint.mention_id),
+                },))
             relation = catalog.concepts_by_id[hint.relation_id[0]]
             allowed = set(relation.object_ontology_types)
             if not all(

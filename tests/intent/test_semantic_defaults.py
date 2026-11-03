@@ -23,11 +23,12 @@ def test_registry_contains_only_the_pinned_active_dataset_aum_policy() -> None:
     assert tuple(registry.policies_by_id) == ("active-dataset-as-of.v1",)
     policy = registry.policies_by_id["active-dataset-as-of.v1"]
     assert policy.kind == "default"
-    assert policy.eligible_semantic_ids == ("aum",)
+    assert policy.eligible_semantic_ids == ("aum", "remaining_days")
     assert policy.eligible_product_family_ids == (
         "domestic_etf",
         "overseas_etf",
         "public_fund",
+        "domestic_bond",
     )
 
 

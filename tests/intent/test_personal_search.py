@@ -10,18 +10,21 @@ from tests.intent.test_personal_search_results import REFS, fact, row
 
 
 class Runner:
-    def __init__(self, rows=None):
+    def __init__(self, rows=None, *, population_count=None):
         self.calls = []
         self.rows = (row(),) if rows is None else rows
+        self.population_count = population_count
 
     async def execute(self, request, plan, **kwargs):
         self.calls.append((request, plan))
         return MappedSqlResult(result_rows=self.rows, evidence_refs=REFS if self.rows else (),
-                               exclusions=(), warnings=())
+                               exclusions=(), warnings=(), screen_population_count=(
+                                   self.population_count if self.population_count is not None else len(self.rows)
+                               ) if request.render_manifest.screen_display_limit is not None else None)
 
 
 class Repository:
-    async def load(self, dataset, refs):
+    async def load(self, dataset, refs, **kwargs):
         return (fact(),) if refs else ()
 
 
@@ -79,12 +82,14 @@ async def test_empty_query_is_explicit_and_not_an_execution_failure():
 
 
 @pytest.mark.asyncio
-async def test_display_limit_is_not_a_sql_limit():
-    runner = Runner()
+async def test_bounded_screen_displays_one_but_preserves_full_population_count():
+    runner = Runner(population_count=42)
     result = await searcher(Adapter('domestic_etf', 'fee_rate', action='screen', entity=False), runner).search(
         '국내 ETF 중 총보수가 0.1% 이하인 상품을 찾아줘', display_limit=1,
     )
-    assert 'LIMIT' not in runner.calls[0][0].statement
+    assert runner.calls[0][0].render_manifest.screen_display_limit == 1
+    assert 'count(*) OVER' in runner.calls[0][0].statement
+    assert '전체 일치 42건' in result.text
     assert '표시 1건' in result.text
 
 
@@ -143,7 +148,15 @@ async def test_empty_screen_benignly_skips_dependent_rank_and_returns_text():
         async def resolve(self, question, question_id):
             return SimpleNamespace(
                 compilation=compilation, model_id='synthetic',
+                attempt=SimpleNamespace(view=SimpleNamespace(active_dataset_pin=SimpleNamespace(
+                    dataset_version=plan.dataset_version, manifest_hash=plan.dataset_pin)),
+                    candidates=SimpleNamespace(frames=(
+                    SimpleNamespace(frame_id='frame-1', complete_candidates=(first,)),
+                    SimpleNamespace(frame_id='frame-2', complete_candidates=(second,)),
+                ))),
                 context=SimpleNamespace(question=question, dataset_version=plan.dataset_version,
+                                        request_key=plan.request_key, run_id=plan.run_id,
+                                        cutoff_date=plan.cutoff_date,
                                         deadline_at=NOW + timedelta(seconds=55)),
                 to_dict=lambda: {'route': compilation.route.value,
                                  'disposition': compilation.recommended_answer_disposition.value,

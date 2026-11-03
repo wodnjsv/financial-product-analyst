@@ -214,6 +214,8 @@ async def test_sql_producer_result_is_bound_into_dependent_sql_request() -> None
             )
 
     engine = FakeEngine([])
+    engine.connection.pin_rows = [{'dataset_version': plan.dataset_version,
+                                   'manifest_hash': plan.dataset_pin, 'cutoff_date': plan.cutoff_date}]
     runner = DependencyRunner(ReadOnlySqlRunner(engine, SQL_COMPILER))
     executor = SqlCapabilityExecutor(
         runner,
@@ -235,7 +237,8 @@ async def test_sql_producer_result_is_bound_into_dependent_sql_request() -> None
     ]
     assert bound_values == [("product-1", "product-2")]
     assert engine.connect_count == 1
-    business_parameters = engine.connection.executions[1][1]
+    business_parameters = next(parameters for statement, parameters, _ in engine.connection.executions
+                               if statement == consumer_request.statement)
     assert ["product-1", "product-2"] in business_parameters.values()
 
 

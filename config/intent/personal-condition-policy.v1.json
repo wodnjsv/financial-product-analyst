@@ -1,0 +1,16 @@
+{
+  "policy_version": "personal-condition-policy.v1",
+  "region_japan": "Japan",
+  "asset_class_equity": "Equity",
+  "credit_threshold": "AA-",
+  "credit_threshold_operator": "gte",
+  "credit_threshold_values": ["AAA", "AA+", "AA0", "AA-"],
+  "credit_threshold_policy_id": "personal-credit-grade-aa-minus.v1",
+  "bond_saleability_policy_id": "personal-organizer-bond-saleability.v1",
+  "bond_saleability_family": "domestic_bond",
+  "bond_saleability_condition": "purchasable",
+  "bond_saleability_cutoff_source": "validated_dataset_cutoff",
+  "bond_saleability_maturity_operator": "gt",
+  "bond_saleability_remaining_days_operator": "gt",
+  "bond_saleability_remaining_days_value": "0"
+}

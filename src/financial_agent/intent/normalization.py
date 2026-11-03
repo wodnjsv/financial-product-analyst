@@ -1,6 +1,7 @@
 """Deterministic request normalization with original code-point provenance."""
 
 from dataclasses import dataclass
+import re
 import unicodedata
 
 from financial_agent.contracts.request import RequestContext
@@ -9,11 +10,20 @@ from financial_agent.contracts.request import RequestContext
 MAX_QUESTION_CODE_POINTS = 4_096
 MAX_SEGMENTS = 16
 
-_REFERENCE_SURFACES = (
+_REFERENCE_SURFACES = tuple(sorted((
     "나머지 상품",
     "그 상품들",
     "위 상품들",
+    "해당 상품들",
     "그 운용사",
+    "해당 운용사",
+    "해당 운용기관",
+    "그 회사",
+    "해당 회사",
+    "그 목록",
+    "위 목록",
+    "그 지역",
+    "그중",
     "그 결과",
     "각 상품",
     "이 상품",
@@ -24,6 +34,14 @@ _REFERENCE_SURFACES = (
     "나머지",
     "각각",
     "이거",
+    "그거",
+    *(f"{determiner} {noun}{plural}"
+      for determiner in ("이", "그", "해당")
+      for noun in ("국내 ETF", "해외 ETF", "ETF", "채권", "공모펀드", "공모 펀드")
+      for plural in ("", "들")),
+), key=len, reverse=True))
+_REFERENCE_SUFFIX = re.compile(
+    r"(?:들)?(?:의|은|는|을|를|와|과|이|가|도|만|별|에서|에게|부터|까지|마다|처럼|랑|으로|보다|로|에)?(?!\w)"
 )
 
 
@@ -139,6 +157,18 @@ def normalize_request(context: RequestContext) -> NormalizedRequest:
             start = segment.normalized_text.find(surface)
             while start >= 0:
                 end = start + len(surface)
+                if (
+                    (start > 0 and (segment.normalized_text[start - 1].isalnum()
+                                    or segment.normalized_text[start - 1] == "_"))
+                    or not _REFERENCE_SUFFIX.match(segment.normalized_text, end)
+                ):
+                    start = segment.normalized_text.find(surface, start + 1)
+                    continue
+                if surface == "각각" and _distributes_explicit_scope(
+                    segment.normalized_text, start, occupied
+                ):
+                    start = segment.normalized_text.find(surface, start + 1)
+                    continue
                 if not any(
                     start < occupied_end and end > occupied_start
                     for occupied_start, occupied_end in occupied
@@ -176,6 +206,30 @@ def normalize_request(context: RequestContext) -> NormalizedRequest:
         context=context,
         segments=segments,
         reference_candidates=tuple(candidates),
+    )
+
+
+def _distributes_explicit_scope(
+    text: str, start: int, occupied: list[tuple[int, int]]
+) -> bool:
+    """Keep distributive 'each' attached to source-explicit objects."""
+    preceding = text[:start].rstrip()
+    if any(
+        end == len(preceding)
+        and text[begin:end].startswith(("이 ", "그 ", "위 ", "해당 ", "각 "))
+        for begin, end in occupied
+    ):
+        return True
+    clause = re.split(r"[.!?;]", preceding)[-1].strip()
+    noun = r"\w+(?:\s+\w+){0,3}"
+    return bool(
+        re.search(rf"{noun}(?:,\s*{noun})+(?:을|를|으로|로)$", clause)
+        or re.search(
+            r"(?:ETF|ETN|채권|펀드|상품|전자|후자)(?:들)?(?:와|과)\s+"
+            r"(?:\w+\s+){0,2}(?:ETF|ETN|채권|펀드|상품|전자|후자)"
+            r"(?:들)?(?:을|를|으로|로)?$",
+            clause,
+        )
     )
 
 

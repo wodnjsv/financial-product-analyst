@@ -38,6 +38,10 @@ class _Mappings:
     def all(self):
         raise AssertionError("unbounded all() is forbidden")
 
+    def one_or_none(self):
+        assert len(self._rows) <= 1
+        return self._rows[0] if self._rows else None
+
 
 class _Result:
     def __init__(self, rows):
@@ -60,8 +64,14 @@ class _Context:
 
 
 class FakeConnection:
-    def __init__(self, rows):
+    def __init__(self, rows, pin_rows=None):
         self.rows = rows
+        self.pin_rows = pin_rows if pin_rows is not None else [{
+            "dataset_version": ACTIVE_DATASET.dataset_version,
+            "manifest_hash": ACTIVE_DATASET.manifest_hash,
+            "cutoff_date": date(2026, 8, 24),
+            "status": "building",
+        }]
         self.driver_sql = []
         self.executions = []
 
@@ -72,16 +82,19 @@ class FakeConnection:
         self.driver_sql.append(statement)
 
     async def execute(self, statement, parameters):
-        result = _Result([] if str(statement).startswith("SELECT set_config") else self.rows)
-        self.executions.append((str(statement), parameters, result))
         if str(statement).startswith("SELECT set_config"):
-            return result
+            result = _Result([])
+        elif "FROM operations.dataset_version" in str(statement):
+            result = _Result(self.pin_rows)
+        else:
+            result = _Result(self.rows)
+        self.executions.append((str(statement), parameters, result))
         return result
 
 
 class FakeEngine:
-    def __init__(self, rows):
-        self.connection = FakeConnection(rows)
+    def __init__(self, rows, pin_rows=None):
+        self.connection = FakeConnection(rows, pin_rows)
         self.connect_count = 0
 
     def connect(self):
@@ -110,12 +123,16 @@ async def test_runner_revalidates_then_sets_read_only_timeout_and_executes_once(
     result = await runner.execute(request, plan)
 
     assert result.result_rows[0].fields[1].value.value == Decimal("0")
-    assert engine.connection.driver_sql == ["SET TRANSACTION READ ONLY"]
-    assert len(engine.connection.executions) == 2
+    assert engine.connection.driver_sql == [
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+    ]
+    assert len(engine.connection.executions) == 3
     assert engine.connection.executions[0][0].startswith("SELECT set_config")
     assert engine.connection.executions[0][1] == {"statement_timeout": "4321ms"}
-    assert engine.connection.executions[1][0] == request.statement
-    assert engine.connection.executions[1][2].mapping_result.fetch_sizes == [10_001]
+    assert "FROM operations.dataset_version" in engine.connection.executions[1][0]
+    assert engine.connection.executions[1][1] == {"dataset_version": request.dataset_version}
+    assert engine.connection.executions[2][0] == request.statement
+    assert engine.connection.executions[2][2].mapping_result.fetch_sizes == [10_001]
     assert request.model_dump_json() == before
 
 
@@ -153,9 +170,9 @@ async def test_runner_does_not_retry_after_database_failure() -> None:
 
     class FailingConnection(FakeConnection):
         async def execute(self, statement, parameters):
+            if str(statement) != request.statement:
+                return await super().execute(statement, parameters)
             self.executions.append((str(statement), parameters))
-            if str(statement).startswith("SELECT set_config"):
-                return _Result([])
             raise RuntimeError("database unavailable")
 
     engine = FakeEngine([])
@@ -194,9 +211,73 @@ async def test_runner_fetches_only_cap_plus_one_and_rejects_overflow() -> None:
     runner = ReadOnlySqlRunner(engine, COMPILER, max_rows=2)
     with pytest.raises(SqlExecutionError, match="SQL_RESULT_ROW_LIMIT_EXCEEDED"):
         await runner.execute(request, plan)
-    business_result = engine.connection.executions[1][2]
+    business_result = engine.connection.executions[2][2]
     assert business_result.mapping_result.fetch_sizes == [3]
+    assert len(engine.connection.executions) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pin_rows",
+    (
+        [],
+        [{"dataset_version": "different", "manifest_hash": ACTIVE_DATASET.manifest_hash,
+          "cutoff_date": date(2026, 8, 24)}],
+        [{"dataset_version": ACTIVE_DATASET.dataset_version, "manifest_hash": "f" * 64,
+          "cutoff_date": date(2026, 8, 24)}],
+        [{"dataset_version": ACTIVE_DATASET.dataset_version, "manifest_hash": None,
+          "cutoff_date": date(2026, 8, 24)}],
+        [{"dataset_version": ACTIVE_DATASET.dataset_version,
+          "manifest_hash": ACTIVE_DATASET.manifest_hash, "cutoff_date": date(2026, 7, 11)}],
+        [{"dataset_version": ACTIVE_DATASET.dataset_version,
+          "manifest_hash": ACTIVE_DATASET.manifest_hash, "cutoff_date": None}],
+    ),
+)
+async def test_dataset_pin_change_blocks_product_query_without_retry(pin_rows) -> None:
+    plan, request = _plan_and_request()
+    engine = FakeEngine([_lookup_row()], pin_rows)
+
+    with pytest.raises(SqlExecutionError, match="^DATASET_PIN_CHANGED$") as failure:
+        await ReadOnlySqlRunner(engine, COMPILER).execute(request, plan)
+
+    assert engine.connect_count == 1
     assert len(engine.connection.executions) == 2
+    assert not any(item[0] == request.statement for item in engine.connection.executions)
+    assert failure.value.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_pin_is_checked_even_when_the_product_result_is_empty() -> None:
+    plan, request = _plan_and_request()
+    engine = FakeEngine([])
+
+    result = await ReadOnlySqlRunner(engine, COMPILER).execute(request, plan)
+
+    assert result.result_rows == ()
+    assert "FROM operations.dataset_version" in engine.connection.executions[1][0]
+    assert engine.connection.executions[2][0] == request.statement
+
+
+@pytest.mark.asyncio
+async def test_pin_query_failure_blocks_products_with_existing_execution_failure() -> None:
+    plan, request = _plan_and_request()
+
+    class FailingPinConnection(FakeConnection):
+        async def execute(self, statement, parameters):
+            if "FROM operations.dataset_version" in str(statement):
+                self.executions.append((str(statement), parameters))
+                raise RuntimeError("database unavailable")
+            return await super().execute(statement, parameters)
+
+    engine = FakeEngine([])
+    engine.connection = FailingPinConnection([])
+
+    with pytest.raises(SqlExecutionError, match="^SQL_EXECUTION_FAILED$"):
+        await ReadOnlySqlRunner(engine, COMPILER).execute(request, plan)
+
+    assert engine.connect_count == 1
+    assert len(engine.connection.executions) == 2
+    assert not any(item[0] == request.statement for item in engine.connection.executions)
 
 
 def test_lookup_sql_preserves_missing_status_for_result_exclusions() -> None:

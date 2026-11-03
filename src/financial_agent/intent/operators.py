@@ -8,7 +8,7 @@ import re
 from financial_agent.contracts.base import ContractModel, Identifier
 
 from .literals import LiteralCandidate
-from .normalization import NormalizedRequest, NormalizedSegment
+from .normalization import NormalizedRequest, NormalizedSegment, named_entity_source_ranges
 from .query_contract_registry import EXPECTED_OPERATOR_DEFINITIONS, OperatorArity
 from .query_contracts import QueryOperatorId, SemanticValueKind
 
@@ -28,6 +28,15 @@ _HARD_CLAUSE_BOUNDARY_RE = re.compile(
     r"[;!?]|(?<!\d)\.|\.(?!\d)|그리고|및|또는|하지만"
 )
 _COMMA_RE = re.compile(r",")
+_PRESENCE_RE = re.compile(
+    r"(?<![A-Za-z가-힣])(?:AUM|순자산(?:총액)?)(?:이|가)?\s*있는"
+    r"(?=$|[\s,.!?;]|(?:상품|종목|것)(?:$|[\s,.!?;]|을|를|만|은|는))", re.IGNORECASE
+)
+_PRESENCE_NEGATION_RE = re.compile(
+    r"\s*(?:(?:상품|종목|것)(?:들)?(?:을|를|은|는|만)?\s*)?(?:제외|아닌|아니)"
+)
+_NEGATIVE_SUFFIX_RE = re.compile(r"\s*(?:(?:이|가|은|는)\s*)?(?:아닌|아니|없|제외|하지\s*않)")
+_CATEGORICAL_KINDS = frozenset({'region', 'asset_class', 'currency', 'availability_status'})
 
 
 class OperatorCandidate(ContractModel):
@@ -36,6 +45,8 @@ class OperatorCandidate(ContractModel):
     arity: OperatorArity
     evidence_span_id: Identifier
     compatible_value_candidate_ids: tuple[Identifier, ...]
+    compatible_field_concept_ids: tuple[Identifier, ...] = ()
+    source_rejection_code: Identifier | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +77,21 @@ def extract_operator_candidates(
             (segment_index, start, candidate)
             for start, candidate in _exclusion_candidates(segment, located)
         )
+        candidates.extend(
+            (segment_index, start, candidate)
+            for start, candidate in _categorical_candidates(segment, located)
+        )
+        entity_ranges = named_entity_source_ranges(request.context, segment)
+        for match in _PRESENCE_RE.finditer(segment.normalized_text):
+            original_start, original_end = segment.to_original_span(match.start(), match.end())
+            if any(original_start < end and original_end > start for start, end in entity_ranges):
+                continue
+            candidates.append((segment_index, match.start(), _candidate(
+                segment, match.start(), match.end(), QueryOperatorId.IS_PRESENT, OperatorArity.ZERO, (),
+                field_concept_ids=('aum',),
+                source_rejection_code=('SOURCE_CONDITION_NEGATION_UNSUPPORTED'
+                    if _PRESENCE_NEGATION_RE.match(segment.normalized_text[match.end():]) else None),
+            )))
     return tuple(candidate for _, _, candidate in sorted(candidates, key=lambda item: item[:2]))
 
 
@@ -238,7 +264,35 @@ def _compatible_values(
         value
         for value in values
         if SemanticValueKind(value.value_kind) in allowed_value_kinds
+        or (value.kind == 'credit_grade' and operator_id in {
+            QueryOperatorId.LT, QueryOperatorId.LTE, QueryOperatorId.GT, QueryOperatorId.GTE,
+        })
     )
+
+
+def _categorical_candidates(segment, literals):
+    candidates = []
+    text = segment.normalized_text
+    for item in literals:
+        if item.literal.kind not in _CATEGORICAL_KINDS:
+            continue
+        suffix = text[item.normalized_end:]
+        if _COMPARISON_RE.match(suffix.lstrip()):
+            continue
+        negative = _NEGATIVE_SUFFIX_RE.match(suffix)
+        if negative:
+            # Existing exclusion emits its own bounded operator; compound
+            # negation is not rewritten into several independent exclusions.
+            if '제외' in negative.group():
+                continue
+            operator = QueryOperatorId.NEQ
+        else:
+            operator = QueryOperatorId.EQ
+        candidates.append((item.normalized_start, _candidate(
+            segment, item.normalized_start, item.normalized_end,
+            operator, OperatorArity.ONE, (item.literal,),
+        )))
+    return tuple(candidates)
 
 
 def _operator_arity(operator_id: QueryOperatorId) -> OperatorArity:
@@ -252,6 +306,7 @@ def _candidate(
     operator_id: QueryOperatorId,
     arity: OperatorArity,
     values: tuple[LiteralCandidate, ...],
+    *, field_concept_ids: tuple[str, ...] = (), source_rejection_code: str | None = None,
 ) -> OperatorCandidate:
     original_start, original_end = segment.to_original_span(start, end)
     evidence_span_id = f"operator-{segment.segment_id}-{original_start}-{original_end}"
@@ -263,4 +318,6 @@ def _candidate(
         arity=arity,
         evidence_span_id=evidence_span_id,
         compatible_value_candidate_ids=tuple(item.literal_id for item in values),
+        compatible_field_concept_ids=field_concept_ids,
+        source_rejection_code=source_rejection_code,
     )

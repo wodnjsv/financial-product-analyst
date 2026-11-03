@@ -51,3 +51,4 @@ output/
 outputs/
 document-source-audit*.json
 document-source-locators*.json
+.gstack/

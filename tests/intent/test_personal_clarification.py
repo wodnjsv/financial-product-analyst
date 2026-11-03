@@ -128,11 +128,19 @@ def test_unresolved_name_asks_for_exact_spelling_and_does_not_select_a_candidate
     assert actual.context.named_entities[0].text == "티거 200"
 
 
-def test_unknown_lexical_meaning_does_not_get_a_guessed_product_correction():
-    messages = personal_clarifications(result(codes=("SEMANTIC_CONCEPT_UNMAPPED",)))
+def test_unmapped_meaning_reports_service_failure_without_blame_or_guessed_correction():
+    actual = result(family="overseas_etf", codes=("INTENT_NOT_RESOLVED", "SEMANTIC_CONCEPT_UNMAPPED"))
+    actual.context.segments = (Object(text="일본 주식형 해외 ETF 중 총보수 0.5% 이하이고 AUM이 있는 상품만 찾아줘."),)
+    messages = personal_clarifications(actual)
     assert [item["code"] for item in messages] == ["REQUEST_MEANING_UNRESOLVED"]
-    assert "오타" in messages[0]["message"]
+    assert "현재 서비스" in messages[0]["message"]
+    assert "지원되는 의미" in messages[0]["message"]
+    assert "조회 계획" in messages[0]["message"]
+    assert "오타" not in messages[0]["message"]
+    assert "다시 적어" not in messages[0]["message"]
+    assert "데이터가 없" not in messages[0]["message"]
     assert "TIGER" not in messages[0]["message"]
+    assert actual.compilation is None
 
 
 @pytest.mark.parametrize("code", ["REFERENCE_UNRESOLVED", "REFERENCE_AMBIGUOUS"])
@@ -150,6 +158,20 @@ def test_generic_family_message_and_compound_missing_requirement_are_both_preser
     ]
 
 
+@pytest.mark.parametrize("codes,expected", [
+    (("QUERY_CONTRACT_NOT_COMPLETE", "PREDICATE_OPERATOR_REQUIRED"), "FILTER_COMPARISON_INCOMPLETE"),
+    (("QUERY_CONTRACT_NOT_COMPLETE", "REQUESTED_FIELD_ROLE_MISSING"), "REQUEST_REQUIREMENTS_INCOMPLETE"),
+])
+def test_incomplete_service_plan_does_not_blame_user_wording_or_claim_absent_data(codes, expected):
+    actual = result(codes=codes)
+    messages = personal_clarifications(actual)
+    assert [item["code"] for item in messages] == [expected]
+    assert "현재 서비스" in messages[0]["message"]
+    assert "적어 주세요" not in messages[0]["message"]
+    assert "데이터가 없" not in messages[0]["message"]
+    assert actual.compilation is None
+
+
 def test_valid_executable_plan_is_not_reinterpreted_by_the_clarification_formatter():
     actual = result()
     actual.compilation = Object(logical_query_plan=object())
@@ -163,6 +185,15 @@ def test_valid_executable_plan_is_not_reinterpreted_by_the_clarification_formatt
 
 def test_physical_data_limitation_is_not_misreported_as_a_user_clarification():
     assert personal_clarifications(result(codes=("PHYSICAL_BINDING_NOT_REGISTERED",))) == ()
+
+
+def test_policy_rejection_does_not_suggest_scope_changes_can_enable_the_request():
+    actual = result(codes=("POLICY_BLOCKED", "REFERENCE_UNRESOLVED"),
+                    state=ChoiceState.AMBIGUOUS,
+                    rejections=(Object(reason_code="REQUIRED_QUALIFIER_MISSING",
+                                       role_id="field.aum.qualifier.as_of"),))
+    actual.context.named_entities = (Object(mention_id="unresolved-name"),)
+    assert personal_clarifications(actual) == ()
 
 
 @pytest.mark.asyncio

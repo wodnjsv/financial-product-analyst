@@ -37,8 +37,11 @@ def fact(**changes):
         'unit': 'percentage_point', 'currency': None, 'applicable_date': DATE,
         'vintage_date': DATE, 'published_at': None, 'available_at': None,
         'cutoff_status': 'eligible', 'eligible_for_claim': True,
-        'source_title': '합성 상품 마스터', 'source_locator_root': 'synthetic.xlsx',
-        'locator_uri_or_object_key': 'synthetic.xlsx', 'locator_sheet': 'ETF',
+        'publisher': 'synthetic-organizer', 'publisher_type': 'organizer',
+        'source_type': 'dataset', 'authority_tier': 'organizer',
+        'content_checksum': 'a' * 64, 'subject_product_family': 'domestic_etf',
+        'source_title': '합성 상품 마스터', 'source_locator_root': 'pref01n001_data.xlsx',
+        'locator_uri_or_object_key': 'pref01n001_data.xlsx', 'locator_sheet': 'ETF',
         'locator_row': 2, 'locator_column': 'cu_charge_rt',
         'canonical_name': '합성 ETF', 'observation_id': 'observation-1',
         'entity_id': 'product-1', 'metric_id': 'organizer.pref01n001.total_fee_rate',
@@ -125,13 +128,42 @@ def test_display_cap_does_not_change_full_match_count():
     text = render_semantic_rows(verified * 3, total_count=3, display_limit=1, ranked=False)
     assert '전체 일치 3건 · 표시 1건' in text
     text = render_semantic_rows(verified * 3, total_count=3, display_limit=1, ranked=True)
-    assert '상위 결과 3건 · 표시 1건' in text
+    assert '순위 결과 3건 · 표시 1건' in text
     assert '전체 일치' not in text
+
+
+def test_compiler_count_can_exceed_the_bounded_verified_display():
+    verified = validate((row(),), (fact(),))
+    text = render_semantic_rows(verified, total_count=42, display_limit=1,
+                               ranked=False, bounded_screen=True)
+    assert '전체 일치 42건 · 표시 1건' in text
+    with pytest.raises(LocalSemanticResultError):
+        render_semantic_rows(verified, total_count=42, display_limit=1, ranked=False)
+    with pytest.raises(LocalSemanticResultError):
+        render_semantic_rows(verified, total_count=42, display_limit=5,
+                             ranked=False, bounded_screen=True)
 
 
 def test_empty_screen_has_explicit_zero_count():
     assert validate((), ()) == ()
     assert '전체 일치 0건' in render_semantic_rows((), total_count=0, display_limit=3, ranked=False)
+
+
+def test_rank_discloses_all_undated_rows_without_changing_values_or_order():
+    undated_row = row().model_copy(update={'fields': (
+        row().fields[0], row().fields[1].model_copy(update={'applicable_date': None}),
+    )})
+    verified = validate((undated_row,), (fact(applicable_date=None, observation_date=None),))
+    text = render_semantic_rows(verified * 3, total_count=3, display_limit=1, ranked=True)
+    assert '순위 결과 3건 · 표시 1건' in text
+    assert '기준일 미제공 3건: 저장된 원천값의 순위이며 현재 기준 비교는 확인할 수 없습니다.' in text
+    assert '총보수: 0.1% · 실제 기준일: 미제공' in text
+
+
+def test_dated_rank_has_no_undated_comparison_note():
+    verified = validate((row(),), (fact(),))
+    text = render_semantic_rows(verified, total_count=1, display_limit=1, ranked=True)
+    assert '기준일 미제공' not in text
 
 
 MISSING = Exclusion(subject_id='product-1', rule_id='exclude_missing.v1',
@@ -152,7 +184,7 @@ def test_verified_missing_lookup_preserves_name_source_and_missing_reason():
     text = render_semantic_rows(verified, total_count=1, display_limit=3, ranked=False)
     assert '합성 ETF' in text
     assert '총보수: 미제공 (SOURCE_VALUE_MISSING)' in text
-    assert 'synthetic.xlsx' in text
+    assert 'pref01n001_data.xlsx' in text
     assert '시트=ETF · 행=2 · 열=cu_charge_rt' in text
     assert '총보수: 0%' not in text
     assert 'None%' not in text
@@ -208,6 +240,7 @@ def test_partial_lookup_keeps_present_values_separate_from_missing_fields():
     absent = missing_fact()
     absent.update(evidence_id='evidence-2', observation_id='observation-2',
                   metric_id=metric, predicate_id=metric,
+                  locator_column='du_last_aum',
                   unit=aum.storage_unit_id, observation_unit=aum.storage_unit_id)
     refs = REFS + ('evidence:evidence-2', 'observation:observation-2',
                    f'metric-definition:{metric}:2')
@@ -225,6 +258,8 @@ RELATION_REFS = ('evidence:evidence-1', 'source:source-1', 'relation:relation-1'
 
 def relation_fact(**changes):
     payload = fact(evidence_kind='relation', predicate_id='holdsSecurity',
+                publisher='synthetic-krx', publisher_type='exchange', authority_tier='official',
+                source_locator_root='synthetic.csv', locator_uri_or_object_key='synthetic.csv',
                 value_or_object_id={'type': 'string', 'value': 'security-1'},
                 normalized_value={'type': 'string', 'value': 'code=005930;name=합성 종목'},
                 relation_id='relation-1', relation_subject_id='product-1',

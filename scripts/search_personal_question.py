@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from pathlib import Path
 import re
 from typing import Sequence
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from financial_agent.intent.personal_runtime import create_personal_intent_service
 from financial_agent.intent.personal_search import create_personal_search
+from financial_agent.intent.personal_search import PersonalSearchError
 from financial_agent.intent.personal_cli import load_nvidia_config, local_database_url
 
 
@@ -28,9 +30,25 @@ async def _search(args):
         result = await create_personal_search(intent, root, engine).search(
             args.question, args.question_id, args.display_limit,
         )
+        if args.verification_report:
+            if result.verification_report is None:
+                raise PersonalSearchError('VERIFICATION_REPORT_MISSING')
+            _write_report(args.verification_report, result.verification_report)
         return result.text
     finally:
         await engine.dispose()
+
+
+def _write_report(path, report, *, code=None):
+    payload = {'execution_error': code,
+               'verification': report.model_dump(mode='json') if report is not None else None}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('x', encoding='utf-8') as output:
+            json.dump(payload, output, ensure_ascii=False, indent=2)
+            output.write('\n')
+    except OSError:
+        raise PersonalSearchError('VERIFICATION_REPORT_WRITE_FAILED') from None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -40,14 +58,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument('--api-key-file', type=Path)
     parser.add_argument('--database-url', default='postgresql+psycopg://localhost/financial_agent_local')
     parser.add_argument('--display-limit', type=int, default=5)
+    parser.add_argument('--verification-report', type=Path,
+                        help='Save the stage report as JSON to a new local file.')
     args = parser.parse_args(argv)
     try:
+        if args.verification_report and args.verification_report.exists():
+            raise PersonalSearchError('VERIFICATION_REPORT_ALREADY_EXISTS')
         print(asyncio.run(_search(args)))
     except Exception as error:
         code = getattr(error, 'code', 'PERSONAL_SEARCH_FAILED')
         if not isinstance(code, str) or re.fullmatch(r'[A-Z][A-Z0-9_]{0,95}', code) is None:
             code = 'PERSONAL_SEARCH_FAILED'
         print(f'실행 실패: {code}')
+        if args.verification_report and not args.verification_report.exists():
+            try:
+                _write_report(args.verification_report, getattr(error, 'verification_report', None), code=code)
+            except PersonalSearchError:
+                print('검증 보고서 저장 실패: VERIFICATION_REPORT_WRITE_FAILED')
         if code == 'SQL_RESULT_ROW_LIMIT_EXCEEDED':
             print('조회 결과가 로컬 한도 10,000건을 초과했습니다. 상품명·날짜·조건으로 범위를 좁혀 주세요.')
         elif code == 'PERSONAL_SQL_TIMEOUT':

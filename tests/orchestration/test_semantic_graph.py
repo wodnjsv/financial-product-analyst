@@ -52,7 +52,7 @@ def sql_compilation():
     payload["qualifiers"] = {
         "period_id": None,
         "currency_id": "KRW",
-        "unit_id": "KRW",
+        "unit_id": None,
         "as_of_date": "2026-08-24",
     }
     candidate = QueryContractCandidate(

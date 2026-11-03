@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import json
 
 import pytest
 
@@ -60,6 +61,24 @@ def test_remote_database_is_rejected_before_factory(monkeypatch, capsys):
                      'postgresql://external.example/financial_agent_local']) == 1
     assert capsys.readouterr().out == '실행 실패: LOCAL_DATABASE_TARGET_REQUIRED\n'
     assert 'url' not in captured
+
+
+def test_provider_failure_report_has_no_fake_passed_stages_or_payload(monkeypatch, capsys, tmp_path):
+    install(monkeypatch, PersonalSearchError('MODEL_RATE_LIMITED'))
+    path = tmp_path / 'verification.json'
+    assert cli.main(['--question', '합성 질문', '--verification-report', str(path)]) == 1
+    assert json.loads(path.read_text()) == {'execution_error': 'MODEL_RATE_LIMITED', 'verification': None}
+    assert 'MODEL_RATE_LIMITED' in capsys.readouterr().out
+
+
+def test_report_does_not_overwrite_existing_file_or_call_service(monkeypatch, capsys, tmp_path):
+    captured = install(monkeypatch)
+    path = tmp_path / 'existing.txt'
+    path.write_text('original')
+    assert cli.main(['--question', '합성 질문', '--verification-report', str(path)]) == 1
+    assert path.read_text() == 'original'
+    assert 'request' not in captured
+    assert 'VERIFICATION_REPORT_ALREADY_EXISTS' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize('code', ['SQL_RESULT_ROW_LIMIT_EXCEEDED', 'PERSONAL_SQL_TIMEOUT'])

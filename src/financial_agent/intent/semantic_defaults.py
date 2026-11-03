@@ -83,9 +83,9 @@ def load_semantic_default_policy_registry(
     policy = policies[ACTIVE_DATASET_AS_OF_POLICY_ID]
     if (
         policy.kind != "default"
-        or policy.eligible_semantic_ids != ("aum",)
+        or policy.eligible_semantic_ids != ("aum", "remaining_days")
         or policy.eligible_product_family_ids
-        != ("domestic_etf", "overseas_etf", "public_fund")
+        != ("domestic_etf", "overseas_etf", "public_fund", "domestic_bond")
     ):
         raise ValueError("semantic default policy registry definition mismatch")
 

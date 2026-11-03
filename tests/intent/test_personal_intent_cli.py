@@ -187,6 +187,9 @@ class QueryResult:
     def one_or_none(self):
         return self.row
 
+    def all(self):
+        return []
+
 
 class PinConnection:
     def __init__(self, row, failure=None):
@@ -237,13 +240,13 @@ async def test_factory_uses_actual_pin_and_nvidia_provenance(monkeypatch, status
     assert captured['cutoff_date'] == date(2026, 8, 24)
     assert captured['model_id'] == 'z-ai/glm-5.3-flash'
     resolver = captured['resolver']
-    assert resolver._manifest.adapter_version == 'nvidia-chat-json-proposal-v5'
-    assert resolver._semantic_default_registry is None
-    assert resolver._dataset_semantic_defaults is None
+    assert resolver._manifest.adapter_version == 'nvidia-chat-json-proposal-v8'
+    assert resolver._semantic_default_registry is not None
+    assert resolver._dataset_semantic_defaults.defaults == ()
     assert type(resolver._adapter).__name__ == 'NvidiaStructuredOutputAdapter'
     statements = engine.connection.statements
     assert statements[0][0] == 'SET TRANSACTION READ ONLY'
-    assert statements[-1][1] == {'dataset_version': 'personal-2026-08-24-v1'}
+    assert statements[-1][1]['dataset_version'] == 'personal-2026-08-24-v1'
     assert not any('INSERT' in statement or 'UPDATE' in statement for statement, _ in statements)
 
 

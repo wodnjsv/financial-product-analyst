@@ -17,6 +17,7 @@ from financial_agent.intent.query_contracts import (
     PredicateAtomV2,
     PredicateNodeV2,
     PredicateNotV2,
+    QueryOperatorId,
     SolvedQueryContractCandidateV2,
     SemanticValueKind,
 )
@@ -296,10 +297,14 @@ def assess_plan_readiness(
             field_roles.append((contract.explanation.topic_concept_id, "explanation_topic", None))
 
     resolved_bindings: list[PhysicalBindingDefinition] = []
+    quantitative_bindings: list[PhysicalBindingDefinition] = []
     for field_id, role, role_value in field_roles:
-        resolved_bindings.extend(
-            _assess_field(field_id, role, role_value, families, bindings, state)
-        )
+        matched = _assess_field(field_id, role, role_value, families, bindings, state)
+        resolved_bindings.extend(matched)
+        if not (role == "predicate" and role_value.operator_id in {
+            QueryOperatorId.IS_MISSING, QueryOperatorId.IS_PRESENT,
+        }):
+            quantitative_bindings.extend(matched)
     if contract.scope.relation_conditions and not resolved_bindings and any(
         value is not None for value in (contract.qualifiers.period_id,
                                        contract.qualifiers.currency_id,
@@ -331,7 +336,7 @@ def assess_plan_readiness(
             facts,
             state,
         )
-    _assess_currency_normalization(contract, resolved_bindings, state)
+    _assess_currency_normalization(contract, quantitative_bindings, state)
     if contract.action_id is IntentType.RANK and any(
         item.product_family_id is ProductFamily.PUBLIC_FUND
         and item.semantic_concept_id == "aum"
@@ -657,11 +662,18 @@ def _assess_qualifiers(contract, bindings, state: _Assessment) -> None:
         and requested & {SemanticQualifierId.CURRENCY, SemanticQualifierId.UNIT}
     ):
         state.add("QUALIFIER_ACTION_UNSUPPORTED", PlanReadiness.BLOCKED)
+    if bindings and any(not any(qualifier in binding.supported_qualifier_ids
+                               for binding in bindings) for qualifier in requested):
+        state.add("PHYSICAL_QUALIFIER_UNSUPPORTED", PlanReadiness.LIMITED)
+    if qualifiers.unit_id is not None and bindings and not any(
+        SemanticQualifierId.UNIT in binding.supported_qualifier_ids
+        and qualifiers.unit_id in binding.accepted_semantic_unit_ids
+        for binding in bindings
+    ):
+        state.add("SEMANTIC_UNIT_NOT_SUPPORTED", PlanReadiness.BLOCKED)
     for binding in bindings:
         if not set(binding.required_qualifier_ids) <= requested:
             state.add("PHYSICAL_REQUIRED_QUALIFIER_MISSING", PlanReadiness.LIMITED)
-        if not requested <= set(binding.supported_qualifier_ids):
-            state.add("PHYSICAL_QUALIFIER_UNSUPPORTED", PlanReadiness.LIMITED)
         if (
             qualifiers.period_id is not None
             and binding.semantic_concept_id
@@ -669,11 +681,6 @@ def _assess_qualifiers(contract, bindings, state: _Assessment) -> None:
             and qualifiers.period_id != "P1Y"
         ):
             state.add("PERIOD_QUALIFIER_NOT_SUPPORTED", PlanReadiness.LIMITED)
-        if qualifiers.unit_id is not None and (
-            not binding.accepted_semantic_unit_ids
-            or qualifiers.unit_id not in binding.accepted_semantic_unit_ids
-        ):
-            state.add("SEMANTIC_UNIT_NOT_SUPPORTED", PlanReadiness.BLOCKED)
 
 
 def _assess_aggregate_grain(

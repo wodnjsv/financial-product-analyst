@@ -17,8 +17,9 @@ MODEL_INVALID_SEMANTIC_COVERAGE = "MODEL_INVALID_SEMANTIC_COVERAGE"
 class ResolverContractError(RuntimeError):
     """A stable resolver failure that is safe to expose to orchestration."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, validation_feedback: tuple[dict, ...] = ()) -> None:
         self.code = code
+        self.validation_feedback = validation_feedback
         super().__init__(code)
 
 

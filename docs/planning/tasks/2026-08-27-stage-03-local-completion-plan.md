@@ -8,15 +8,15 @@
 > below.
 
 **Goal:** Freeze the remaining current official sources, enforce organizer
-missingness as authoritative, and produce two matching inactive local Stage 03
-PostgreSQL builds that are safe inputs to Stage 04.
+missingness as authoritative, and produce one verified inactive local Stage 03
+PostgreSQL build that is a safe input to Stage 04.
 
 **Architecture:** Keep the latest four organizer masters as the product-fact
 authority and permit official sources only through a small explicit
 enrichment allowlist. Reuse the existing source-specific adapters, immutable
 manifests, Stage 02 ledger, and combined build; do not create a connector
 framework, new storage schema, or NCP dataset. Finalize support coverage before
-the two clean local builds.
+the clean local build.
 
 **Tech Stack:** Python 3.12, Pydantic, openpyxl, SQLAlchemy 2, psycopg 3,
 PostgreSQL 15, pytest, KRX official files/API responses, ECOS `731Y001`, SEC
@@ -95,11 +95,11 @@ Series/Class and Form N-PORT datasets.
    ingested.
 7. Every internal question case and each organizer-announced evaluation family
    has one measured support state and source/limitation reason.
-8. Two clean PostgreSQL 15 builds have identical manifest, reproducibility,
-   PostgreSQL, and Evidence component hashes and identical representative query
-   results.
-9. Both builds remain inactive `building` versions and pass database-object and
-   `group_roles` postflight checks.
+8. One clean PostgreSQL 15 build records its manifest, reproducibility,
+   PostgreSQL, and Evidence component hashes and passes the representative
+   query gates.
+9. The build remains an inactive `building` version and passes database-object
+   and `group_roles` postflight checks.
 10. Focused, ordinary non-live, real-source, schema, compile, diff, forbidden
     data, and secret audits pass before the branch is committed or pushed.
 
@@ -622,7 +622,12 @@ git commit -m "test: freeze stage 03 question coverage"
 
 ---
 
-### Task 7: Build and Compare Two Clean Inactive Local Datasets
+### Task 7: Build and Validate One Clean Inactive Local Dataset
+
+> 2026-08-27 user update: database B and the two-build comparison are no
+> longer required. Completion is determined by one clean A build plus source,
+> organizer-authority, representative-query, database-object, and inactive-state
+> gates.
 
 **Files:**
 
@@ -632,26 +637,22 @@ git commit -m "test: freeze stage 03 question coverage"
 - Modify: `tests/ingestion/test_official_pipeline.py`
 - Modify: `tests/ingestion/test_capacity_probe.py`
 - Create: `tests/ingestion/test_real_stage03_completion.py`
-- Local ignored outputs:
-  `data/generated/local-postgres/stage03-final-a/` and
-  `data/generated/local-postgres/stage03-final-b/`
+- Local ignored output:
+  `data/generated/local-postgres/stage03-final-a/`
 
 **Interfaces:**
 
 - Consumes: the eight organizer workbooks and only the manifests approved by
   Tasks 2 through 5.
-- Produces: two separate PostgreSQL 15 `building` datasets and a safe aggregate
-  comparison report containing hashes, counts, coverage totals, and no raw
-  values.
+- Produces: one PostgreSQL 15 `building` dataset and a safe aggregate acceptance
+  report containing hashes, counts, coverage totals, and no raw values.
 
-- [ ] **Step 1: Write failing final-build invariants**
+- [x] **Step 1: Write failing final-build invariants**
 
 Add tests for:
 
 ```python
-assert report_a.dataset_manifest_hash == report_b.dataset_manifest_hash
-assert report_a.component_hashes == report_b.component_hashes
-assert state_a == state_b == ("building", False)
+assert state_a == ("building", False)
 assert "KRX_ETF_DAILY" not in approved_source_codes
 assert organizer_missing_external_substitute_count == 0
 ```
@@ -675,36 +676,49 @@ FINANCIAL_AGENT_TEST_DATABASE_URL="$LOCAL_STAGE03_TEST_DATABASE_URL" \
   tests/ingestion/test_capacity_probe.py -m postgres -q
 ```
 
-- [ ] **Step 3: Build database A from an empty PostgreSQL 15 cluster**
+- [x] **Step 3: Build database A from an empty PostgreSQL 15 cluster**
 
 Run migrations through the current head, run `group_roles` preflight, create a
 new dataset version, and execute one combined build. Do not reuse the existing
 KRX-only database and do not activate the dataset.
 
-- [ ] **Step 4: Build database B from a second empty PostgreSQL 15 cluster**
+- [x] **Step 4: Validate deterministic and Evidence results**
 
-Use the same frozen inputs and a different database and dataset version. Do not
-copy database A.
+Require the approved manifest hash, source counts, table counts, component
+hashes, Evidence origins, organizer missingness and zero preservation, and
+ordered representative query result payloads. Record the measured duration and
+storage size; do not turn local measurements into NCP claims.
 
-- [ ] **Step 5: Compare deterministic and Evidence results**
+Measured on 2026-08-28 for `stage03-final-a`:
 
-Require equality for the manifest hash, source counts, table counts,
-reproducibility hash, PostgreSQL component hash, Evidence component hash, and
-ordered representative query result payloads. Record measured durations and
-storage sizes; do not turn local measurements into NCP claims.
+- dataset state: `building`, inactive;
+- build passed: `true`;
+- application storage: `21,762,736,128` bytes;
+- organizer external-substitute violations: `0`;
+- organizer non-value observations: `1,041,653`;
+- organizer zero observations: `123,877`;
+- Samsung Electronics domestic ETF AUM top five: `5` products, resolved by
+  KRX standard issue code `KR7005930003` and organizer AUM;
+- SEC bounded holding products: `6,034`;
+- public-fund holding coverage: `0` (`requires_data` boundary retained);
+- acceptance reproducibility hash:
+  `e142605e08546330e2ef3e96580036acbc369177fa8072656933a21d55657931`.
 
-- [ ] **Step 6: Run database object and permission checks on both builds**
+The original A build completed its database writes but its first acceptance
+render failed in representative-row hashing. A read-only recovery preserved the
+completed database, reconstructed and saved the exact build report once, and
+reran only the failed acceptance path. Database B was not built.
+
+- [ ] **Step 5: Run database object and permission checks on A**
 
 ```bash
 .venv/bin/python scripts/export_database_objects.py \
   --check --database-url-env LOCAL_STAGE03_A_DATABASE_URL
-.venv/bin/python scripts/export_database_objects.py \
-  --check --database-url-env LOCAL_STAGE03_B_DATABASE_URL
 ```
 
-Run post-migration preflight with `permission_layout=group_roles` for both URLs.
+Run post-migration preflight with `permission_layout=group_roles` for A.
 
-- [ ] **Step 7: Commit the final-build gate**
+- [ ] **Step 6: Commit the final-build gate**
 
 ```bash
 git add \
@@ -799,8 +813,8 @@ write, or deployment requires separate user approval.
 - [ ] ETF holdings remain source-lot preserving and coverage-aware.
 - [ ] Public-fund holdings has a deterministic approval-or-`requires_data`
   outcome with no unofficial fallback.
-- [ ] The exact two-build interfaces, hashes, and inactive state agree across
-  Tasks 7 and 8.
+- [ ] The single A build passes every source, authority, query, object, and
+  inactive-state gate across Tasks 7 and 8.
 - [ ] The plan contains no NCP write or activation step.
 - [ ] The plan contains no raw organizer value, external raw value, secret, or
   generated-data path intended for Git.

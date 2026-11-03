@@ -27,6 +27,7 @@ from financial_agent.planning.logical_query import (
 )
 from financial_agent.planning.physical_bindings import (
     EvidenceLocator,
+    SemanticQualifierId,
     population_metric_ownership_lineage_ref,
     representative_share_edge_lineage_ref,
 )
@@ -50,6 +51,7 @@ class MappedSqlResult(ContractModel):
     evidence_refs: tuple[Identifier, ...]
     exclusions: tuple[Exclusion, ...]
     warnings: tuple[ResultWarning, ...]
+    screen_population_count: int | None = None
 
 
 def map_sql_rows(
@@ -70,6 +72,21 @@ def map_sql_rows(
     operation = task.operation
     descriptors = _field_descriptors(request)
     expected_columns = _expected_columns(request, descriptors)
+    display_limit = request.render_manifest.screen_display_limit
+    population_count = None
+    if display_limit is not None:
+        values = tuple(row.get("screen_population_count") for row in rows)
+        if any(type(value) is not int or value < len(rows) for value in values):
+            raise SqlResultMappingError("SCREEN_POPULATION_COUNT_INVALID")
+        counts = set(values)
+        if rows:
+            if len(counts) != 1:
+                raise SqlResultMappingError("SCREEN_POPULATION_COUNT_MISMATCH")
+            population_count = next(iter(counts))
+        else:
+            population_count = 0
+        if len(rows) != min(population_count, display_limit):
+            raise SqlResultMappingError("SCREEN_DISPLAY_CARDINALITY_MISMATCH")
 
     result_rows: list[ResultRow] = []
     exclusions: list[Exclusion] = []
@@ -193,6 +210,7 @@ def map_sql_rows(
         evidence_refs=tuple(sorted(lineage)),
         exclusions=tuple(exclusions),
         warnings=tuple(warnings),
+        screen_population_count=population_count,
     )
 
 
@@ -250,6 +268,8 @@ def _expected_columns(
     operation = request.render_manifest.logical_task.operation
     if not isinstance(operation, LogicalAggregateOperationV2):
         columns = {"product_id", "product_name"}
+        if request.render_manifest.screen_display_limit is not None:
+            columns.add("screen_population_count")
         for index, _ in enumerate(request.render_manifest.logical_task.scope.relation_conditions):
             columns.update({f"relation_ids_{index}", f"relation_evidence_ids_{index}",
                             f"relation_source_ids_{index}"})
@@ -371,12 +391,14 @@ def _validate_physical_metadata(request, row, descriptors) -> None:
             if (
                 value is not None
                 and qualifiers.currency_id is not None
+                and SemanticQualifierId.CURRENCY in binding.supported_qualifier_ids
                 and row[f"currency_{index}"] != qualifiers.currency_id
             ):
                 raise SqlResultMappingError("RETURNED_CURRENCY_OWNERSHIP_MISMATCH")
             if (
                 value is not None
                 and qualifiers.as_of_date is not None
+                and SemanticQualifierId.AS_OF in binding.supported_qualifier_ids
                 and row[f"applicable_date_{index}"] != qualifiers.as_of_date
             ):
                 raise SqlResultMappingError("RETURNED_DATE_OWNERSHIP_MISMATCH")

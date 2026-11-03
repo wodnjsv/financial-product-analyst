@@ -58,7 +58,8 @@ from financial_agent.documents.source_manifest import (
 from financial_agent.ingestion.capacity_probe import (
     CapacityProbeError,
     measure_database_acceptance,
-    require_current_rebaseline_acceptance,
+    require_stage03_local_acceptance,
+    write_database_acceptance_report,
 )
 from financial_agent.ingestion.final_rebuild import (
     FinalRebuildError,
@@ -847,7 +848,7 @@ async def _load_stage03b_command() -> int:
         )
         if report.passed:
             acceptance = await measure_database_acceptance(engine, report)
-            require_current_rebaseline_acceptance(acceptance)
+            require_stage03_local_acceptance(acceptance)
     finally:
         await engine.dispose()
     if not report.passed:
@@ -855,6 +856,9 @@ async def _load_stage03b_command() -> int:
         return 2
     if acceptance is None:
         raise CapacityProbeError("DATABASE_ACCEPTANCE_GATE_FAILED") from None
+    report_path = os.getenv("FINANCIAL_AGENT_ACCEPTANCE_REPORT_PATH")
+    if report_path is not None and report_path.strip():
+        write_database_acceptance_report(acceptance, Path(report_path))
     rows = sum(counts["rows"] for counts in report.source_counts.values())
     print(
         f"STAGE03B_BUILD_OK sources={len(report.source_counts)} "

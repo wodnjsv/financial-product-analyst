@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date
+import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -19,10 +21,37 @@ from financial_agent.ingestion.mapping.common import make_record_hash
 from financial_agent.ingestion.models import BuildReport, MappedRow
 from financial_agent.ingestion.writer import DatasetBuildWriter
 from financial_agent.ingestion.pipeline import CUTOFF_DATE
+from financial_agent.contracts.canonical import canonical_sha256
 from tests.ingestion.test_writer import _synthetic_row
 
 
 GIB = 1024**3
+
+
+def test_representative_query_rowset_hash_preserves_the_complete_row_list() -> None:
+    rows = [
+        {"subject_id": "product-a", "aum": "100"},
+        {"subject_id": "product-b", "aum": "90"},
+    ]
+
+    assert capacity_probe._canonical_rowset_sha256(rows) == canonical_sha256(
+        {"rows": rows}
+    )
+
+
+def test_representative_query_rowset_hash_accepts_four_column_sec_rows() -> None:
+    rows = [
+        {
+            "subject_id": "product-a",
+            "coverage_status": "covered",
+            "scope_completeness": "complete",
+            "applicable_date": "2026-06-30",
+        }
+    ]
+
+    assert capacity_probe._canonical_rowset_sha256(rows) == canonical_sha256(
+        {"rows": rows}
+    )
 
 
 def _acceptance_report(
@@ -77,6 +106,31 @@ def _acceptance_report(
         exact_reused_identity_count=217,
         ambiguous_identifier_counts_by_scheme={"ISIN": 63, "LIPPER": 63},
         aligned_ambiguous_pair_count=63,
+        approved_source_codes=(
+            "ECOS_731Y001",
+            "KRX_ETF_PDF",
+            "KRX_KOSDAQ_BASIC",
+            "KRX_KOSPI_BASIC",
+            "PRBD01N001",
+            "PREF01N001",
+            "PREF02N001",
+            "PRFD01N001",
+            "SEC_NPORT_2026Q2",
+            "SEC_SERIES_CLASS_20260601",
+        ),
+        organizer_nonvalue_observation_count=20,
+        organizer_missing_external_substitute_count=0,
+        organizer_zero_observation_count=10,
+        representative_query_counts={
+            "public_fund_holding_coverage": 0,
+            "samsung_domestic_etf_aum_top5": 5,
+            "sec_bounded_holding_products": 10,
+        },
+        representative_query_hashes={
+            "public_fund_holding_coverage": "1" * 64,
+            "samsung_domestic_etf_aum_top5": "2" * 64,
+            "sec_bounded_holding_products": "3" * 64,
+        },
     )
 
 
@@ -114,6 +168,66 @@ def test_database_acceptance_repeatability_rejects_count_drift() -> None:
         capacity_probe.require_matching_database_acceptance(first, second)
 
     assert captured.value.code == "DATABASE_ACCEPTANCE_MISMATCH"
+
+
+def test_database_acceptance_report_contains_only_aggregates(
+    tmp_path: Path,
+) -> None:
+    report = _acceptance_report()
+    path = tmp_path / "acceptance.json"
+
+    capacity_probe.write_database_acceptance_report(report, path)
+
+    payload = json.loads(path.read_text("utf-8"))
+    assert payload["reproducibility_hash"] == report.reproducibility_hash
+    assert "database_url" not in payload
+    assert "raw_values" not in payload
+
+
+def test_stage03_local_acceptance_accepts_one_complete_inactive_build() -> None:
+    capacity_probe.require_stage03_local_acceptance(
+        _acceptance_report(dataset_version="current-build-a")
+    )
+
+
+@pytest.mark.parametrize(
+    ("changes", "error_code"),
+    (
+        (
+            {"approved_source_codes": ("KRX_ETF_DAILY",)},
+            "STAGE03_SOURCE_BOUNDARY_FAILED",
+        ),
+        (
+            {"organizer_missing_external_substitute_count": 1},
+            "STAGE03_ORGANIZER_AUTHORITY_FAILED",
+        ),
+        (
+            {"organizer_nonvalue_observation_count": 0},
+            "STAGE03_ORGANIZER_MISSINGNESS_PRESERVATION_FAILED",
+        ),
+        (
+            {"organizer_zero_observation_count": 0},
+            "STAGE03_ORGANIZER_ZERO_PRESERVATION_FAILED",
+        ),
+        (
+            {"dataset_status": "ready"},
+            "STAGE03_INACTIVE_STATE_FAILED",
+        ),
+    ),
+)
+def test_stage03_local_acceptance_rejects_final_gate_drift(
+    changes: dict[str, object],
+    error_code: str,
+) -> None:
+    report = replace(
+        _acceptance_report(dataset_version="current-build-b"),
+        **changes,
+    )
+
+    with pytest.raises(CapacityProbeError) as captured:
+        capacity_probe.require_stage03_local_acceptance(report)
+
+    assert captured.value.code == error_code
 
 
 def test_current_rebaseline_acceptance_enforces_organizer_authority_gates() -> None:
@@ -332,3 +446,17 @@ async def test_database_acceptance_measures_repeatable_database_aggregates(
         "LIPPER": 0,
     }
     assert first.aligned_ambiguous_pair_count == 0
+    assert first.approved_source_codes == ("SYNTHETIC",)
+    assert first.organizer_nonvalue_observation_count == 0
+    assert first.organizer_missing_external_substitute_count == 0
+    assert first.organizer_zero_observation_count == 0
+    assert first.representative_query_counts == {
+        "public_fund_holding_coverage": 0,
+        "samsung_domestic_etf_aum_top5": 0,
+        "sec_bounded_holding_products": 0,
+    }
+    assert set(first.representative_query_hashes) == {
+        "public_fund_holding_coverage",
+        "samsung_domestic_etf_aum_top5",
+        "sec_bounded_holding_products",
+    }

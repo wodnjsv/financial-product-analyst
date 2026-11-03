@@ -14,6 +14,7 @@ from financial_agent.planning.physical_bindings import PhysicalReadinessFacts
 
 from .compiler import SemanticSqlCompiler
 from .contracts import CompiledSqlRequest, DeferredSqlParameter, SqlValueKind
+from .dataset_pin import DatasetPinChanged, assert_dataset_pin
 from .result_mapping import MAX_RETURNED_ROWS, MappedSqlResult, map_sql_rows
 
 
@@ -88,7 +89,9 @@ class ReadOnlySqlRunner:
         try:
             async with self._engine.connect() as connection:
                 async with connection.begin():
-                    await connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+                    await connection.exec_driver_sql(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                    )
                     await connection.execute(
                         sa.text(
                             "SELECT set_config('statement_timeout', "
@@ -96,10 +99,16 @@ class ReadOnlySqlRunner:
                         ),
                         {"statement_timeout": f"{effective_timeout}ms"},
                     )
+                    await assert_dataset_pin(
+                        connection, request.dataset_version,
+                        request.dataset_pin, logical_plan.cutoff_date,
+                    )
                     raw_result = await connection.execute(
                         sa.text(request.statement), parameters
                     )
                     rows = raw_result.mappings().fetchmany(self._max_rows + 1)
+        except DatasetPinChanged:
+            raise SqlExecutionError("DATASET_PIN_CHANGED") from None
         except Exception as error:
             raise SqlExecutionError("SQL_EXECUTION_FAILED") from error
 

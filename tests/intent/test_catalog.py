@@ -99,8 +99,8 @@ EXPECTED_FAMILIES_BY_CONCEPT = {
     "yield_rate": {"domestic_bond"},
 }
 
-V2_CATALOG_HASH = "524d96a05dd0ffe45c2ee6e4ba028c69f1341f10a143dad510a5cf7d7ae45142"
-V2_OVERLAY_HASH = "ae2a7216009fe32c7c3393f54e1c5986cde2db750f54b170b1f1f50896ee9441"
+V2_CATALOG_HASH = "b0d70022b0416a8aa1b07664763e00873ce5294f69fc30816a7ff01beb572e4e"
+V2_OVERLAY_HASH = "fcdc054c40fae52ec1993e77619246de49dd5c7cb371ec78a1db5c258d86b499"
 
 
 def copy_catalog_and_ontology_without_tests(destination: Path) -> Path:
@@ -191,7 +191,7 @@ def test_v4_overlay_covers_every_runtime_axis_once() -> None:
             "product_family",
             "국내채권",
             "국내에서 발행·유통되는 채권 상품 범위",
-            tuple(sorted(("국내채권", "채권"))),
+            tuple(sorted(("국내채권", "채권", "원화채권"))),
         ),
         "domestic_etf": (
             "product_family",

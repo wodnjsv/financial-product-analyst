@@ -219,8 +219,15 @@ def _exact_mentions(
             continue
         spacing_pattern = r"\s*".join(re.escape(character) for character in surface)
         for match in re.finditer(spacing_pattern, text, flags=re.IGNORECASE):
+            if ''.join(surface.split()) == '원화채권' and not _krw_bond_scope_match(text, match.start(), match.end()):
+                continue
             spans.add((match.start(), match.end()))
     return tuple(_mention_from_span(segment, start, end) for start, end in sorted(spans))
+
+
+def _krw_bond_scope_match(text, start, end):
+    pattern = r'(?<![가-힣A-Za-z0-9])원\s*화\s*채\s*권(?=$|[\s,.!?;]|(?:중|의|은|는|을|를|만|에서)(?=$|[\s,.!?;]))'
+    return any(match.start() == start and match.end() == end for match in re.finditer(pattern, text))
 
 
 def _exact_matches(

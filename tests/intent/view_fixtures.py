@@ -35,7 +35,7 @@ def complete_axis_definitions() -> tuple[AxisDefinition, ...]:
 def hybrid_manifest_versions() -> dict[str, str]:
     """Return the complete pinned version map for the shadow V3 resolver."""
     return {
-        "normalizer_version": "intent-normalizer-v2-entity-spans",
+        "normalizer_version": "intent-normalizer-v4-condition-operands",
         "candidate_policy_version": "intent-hints-v5-explicit-family",
         "resolver_schema_version": "3.0",
         "prompt_version": "intent-resolver-ko-v10-grounded-routing",

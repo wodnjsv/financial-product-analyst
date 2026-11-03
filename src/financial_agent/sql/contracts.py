@@ -184,9 +184,15 @@ class PhysicalSqlRenderManifest(_StrictModel):
     evidence_projection_ids: tuple[EvidenceLocator, ...] = Field(strict=False)
     count_lineage_metric_definition_refs: tuple[Identifier, ...] = ()
     prior_result_entity_ids: tuple[Identifier, ...] | None = None
+    screen_display_limit: int | None = Field(default=None, ge=1, le=50)
 
     @model_validator(mode="after")
     def validate_manifest(self):
+        if self.screen_display_limit is not None and (
+            self.template_id is not SqlRenderTemplateId.SCREEN
+            or self.logical_task.produced_result_bindings
+        ):
+            raise ValueError("SQL_BOUNDED_SCREEN_SCOPE_INVALID")
         if self.logical_plan_id == self.logical_task.task_id:
             raise ValueError("SQL_MANIFEST_PLAN_TASK_OWNERSHIP_MISMATCH")
         if self.logical_task_semantic_hash != logical_task_semantic_hash(

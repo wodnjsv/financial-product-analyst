@@ -14,7 +14,7 @@ from .candidates import (
 )
 from .catalog import SemanticCatalogSnapshot
 from .literals import LiteralCandidate, extract_literals
-from .normalization import NormalizedRequest
+from .normalization import NormalizedRequest, named_entity_source_ranges
 from .operators import extract_operator_candidates
 
 
@@ -24,6 +24,9 @@ class ExactSemanticLock(ContractModel):
     canonical_id: Identifier
     evidence_span_ids: tuple[Identifier, ...]
     source: Literal["canonical", "direct_alias", "literal"]
+    compatible_value_candidate_ids: tuple[Identifier, ...] = ()
+    compatible_field_concept_ids: tuple[Identifier, ...] = ()
+    source_rejection_code: Identifier | None = None
 
 
 def build_exact_semantic_locks(
@@ -45,10 +48,16 @@ def build_exact_semantic_locks(
     )
     operators = extract_operator_candidates(request, resolved_literals)
     locks: list[ExactSemanticLock] = []
+    entity_ranges = {segment.segment_id: named_entity_source_ranges(request.context, segment)
+                     for segment in request.segments}
     for group in candidates.by_mention:
         for candidate in group.items:
             role = _semantic_role(candidate, catalog)
             if role is None or candidate.match_kind not in {"canonical_id", "direct_alias"}:
+                continue
+            if (role == 'product_family' and ''.join(group.mention.normalized_text.split()) == '원화채권'
+                    and any(group.mention.start_char < end and group.mention.end_char > start
+                            for start, end in entity_ranges[group.mention.segment_id])):
                 continue
             locks.append(
                 ExactSemanticLock(
@@ -82,6 +91,9 @@ def build_exact_semantic_locks(
             canonical_id=candidate.operator_id.value,
             evidence_span_ids=(candidate.evidence_span_id,),
             source="canonical",
+            compatible_value_candidate_ids=candidate.compatible_value_candidate_ids,
+            compatible_field_concept_ids=candidate.compatible_field_concept_ids,
+            source_rejection_code=candidate.source_rejection_code,
         )
         for candidate in operators
     )
@@ -98,6 +110,11 @@ def validate_exact_semantic_locks(
     for lock in ordered:
         if not lock.evidence_span_ids:
             raise ValueError("EXACT_LOCK_CONFLICT")
+        if lock.role != 'operator' and (lock.compatible_value_candidate_ids
+                or lock.compatible_field_concept_ids or lock.source_rejection_code is not None):
+            raise ValueError('EXACT_LOCK_CONFLICT')
+        if len(set(lock.compatible_value_candidate_ids)) != len(lock.compatible_value_candidate_ids):
+            raise ValueError('EXACT_LOCK_CONFLICT')
         for evidence_span_id in lock.evidence_span_ids:
             key = (lock.role, evidence_span_id)
             existing = claims.setdefault(key, lock.canonical_id)

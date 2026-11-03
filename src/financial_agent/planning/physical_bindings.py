@@ -82,12 +82,17 @@ EXPECTED_SEMANTIC_REGISTRY_PINS = QueryRegistryPinsV2(
     policy_registry_hash="1dbb8eedf8340aae5b359692cd04c869d07d66681e3609a25623f7208513ce3a",
 )
 EXPECTED_CATALOG_VERSION = "semantic-query-catalog.v1"
-EXPECTED_CATALOG_HASH = "524d96a05dd0ffe45c2ee6e4ba028c69f1341f10a143dad510a5cf7d7ae45142"
+EXPECTED_CATALOG_HASH = "b0d70022b0416a8aa1b07664763e00873ce5294f69fc30816a7ff01beb572e4e"
 EXPECTED_CATALOG_PROJECTION_HASH = (
     "86068f09df86b6dc982d6b721490982530ddceba575fe70881e0d57529ae3e94"
 )
 EXPECTED_BINDING_DEFINITION_HASHES = MappingProxyType(
     {
+        "overseas-etf-region.v1": "7e094bf01053c317e2fa5d5e8c9e7834dc4a7bfd4b9f3ad08a8173a2b610c5d7",
+        "overseas-etf-asset-class.v1": "e2868412d92e52bd5e5414e815dc3a2d1cb4afe52d23c6442797b98082c556cb",
+        "domestic-bond-currency.v1": "68e3ebad3a7f3997b0e2309398691b7c60026714feacbd28efa9f6f0c0273fa4",
+        "domestic-bond-credit-grade.v1": "b3a63ef4f5dd38b945ed48ab78a2507b255c40b7e073d4f3a609855875d655b8",
+        "domestic-bond-remaining-days.v1": "da9304eda6fddf46dc022051e8f31c806d97a74c7beb50221646d765ea43cda2",
         "domestic-etf-aum.v1": "5ca7edfbf435b6aa493b046511dbf30f1156ac281278e82dba435daa0cf5a99a",
         "domestic-etf-fee-rate.v1": "e4c378fbe5494569b0bb18956c261570f12afc55d306a389d0add180e6c2add2",
         "overseas-etf-aum.v1": "eab62e8bc8c99f757adb18d193b4710c382c03f75ae49ab1298ffbec91854adb",
@@ -101,6 +106,31 @@ EXPECTED_BINDING_DEFINITION_HASHES = MappingProxyType(
 )
 EXPECTED_MAPPER_BINDINGS = MappingProxyType(
     {
+        "overseas-etf-region.v1": (
+            OVERSEAS_ETP_METRIC_SPECS,
+            "wu_inv_rgn",
+            "organizer.pref02n001.investment_region",
+        ),
+        "overseas-etf-asset-class.v1": (
+            OVERSEAS_ETP_METRIC_SPECS,
+            "wu_inv_ast_type",
+            "organizer.pref02n001.investment_asset_type",
+        ),
+        "domestic-bond-currency.v1": (
+            DOMESTIC_BOND_METRIC_SPECS,
+            "curr_cd",
+            "organizer.prbd01n001.currency",
+        ),
+        "domestic-bond-credit-grade.v1": (
+            DOMESTIC_BOND_METRIC_SPECS,
+            "crd_grd",
+            "organizer.prbd01n001.credit_grade_representative",
+        ),
+        "domestic-bond-remaining-days.v1": (
+            DOMESTIC_BOND_METRIC_SPECS,
+            "remaining_days",
+            "organizer.prbd01n001.remaining_days",
+        ),
         "domestic-etf-aum.v1": (
             DOMESTIC_ETP_METRIC_SPECS,
             "du_last_aum",
@@ -255,7 +285,10 @@ class PhysicalBindingDefinition(_StrictModel):
                 not self.unit_conversion_policy_id
                 or (
                     not self.storage_unit_id
-                    and self.semantic_value_kind is not SemanticValueKind.DATE
+                    and self.semantic_value_kind not in {
+                        SemanticValueKind.DATE, SemanticValueKind.STRING,
+                        SemanticValueKind.BOOLEAN,
+                    }
                 )
             ):
                 raise ValueError("verified binding requires unit policy")
@@ -758,6 +791,8 @@ def _validate_mapper_binding(binding: PhysicalBindingDefinition) -> None:
         is not {
             "numeric": SemanticValueKind.DECIMAL,
             "date": SemanticValueKind.DATE,
+            "text": SemanticValueKind.STRING,
+            "boolean": SemanticValueKind.BOOLEAN,
         }.get(mapper_value_kind)
         or binding.storage_unit_id != mapper_unit_id
     ):
@@ -773,6 +808,7 @@ def _catalog_value_kind(value_kind: str) -> SemanticValueKind:
         "text": SemanticValueKind.STRING,
         "classification": SemanticValueKind.STRING,
         "status": SemanticValueKind.STRING,
+        "currency": SemanticValueKind.STRING,
         "identifier": SemanticValueKind.IDENTIFIER,
     }
     try:

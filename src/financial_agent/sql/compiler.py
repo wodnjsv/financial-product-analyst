@@ -111,6 +111,7 @@ class _Context:
     count_lineage_metric_definition_refs: tuple[str, ...]
     prior_result_entity_ids: tuple[str, ...] | None
     scope_families: tuple[ProductFamily, ...]
+    screen_display_limit: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,6 +205,7 @@ class SemanticSqlCompiler:
         task_id: str,
         *,
         readiness_facts: PhysicalReadinessFacts | None = None,
+        screen_display_limit: int | None = None,
     ) -> SqlCompilationOutcome:
         try:
             self._validate_registry_pins(plan)
@@ -241,6 +243,7 @@ class SemanticSqlCompiler:
                 ),
                 prior_result_entity_ids=None,
                 scope_families=scope_families,
+                screen_display_limit=screen_display_limit,
             )
             rendered = _render_context(context)
             manifest_facts = (
@@ -279,6 +282,7 @@ class SemanticSqlCompiler:
                     rendered.count_lineage_metric_definition_refs
                 ),
                 prior_result_entity_ids=None,
+                screen_display_limit=screen_display_limit,
             )
             manifest_draft = PhysicalSqlRenderManifest.model_construct(
                 manifest_id="pending", **manifest_kwargs
@@ -352,6 +356,7 @@ class SemanticSqlCompiler:
             logical_plan,
             request.task_id,
             readiness_facts=readiness_facts,
+            screen_display_limit=request.render_manifest.screen_display_limit,
         )
         if outcome.request is None:
             code = outcome.rejection.code if outcome.rejection is not None else "UNKNOWN"
@@ -763,6 +768,7 @@ def render_physical_sql_manifest(
         ),
         prior_result_entity_ids=manifest.prior_result_entity_ids,
         scope_families=manifest.effective_product_family_ids,
+        screen_display_limit=manifest.screen_display_limit,
     )
     try:
         return _render_context(context)
@@ -928,7 +934,13 @@ def _compile_statement(context: _Context):
         statement = sa.select(*selected).select_from(base).where(*where)
     elif isinstance(operation, LogicalScreenOperationV2):
         concepts = _predicate_concepts(operation.predicate)
+        population_base = base
         base, expressions = _join_fields(context, base, family, concepts)
+        if context.screen_display_limit is not None:
+            for concept in concepts:
+                _, binding, _, alias = expressions[concept]
+                population_base = population_base.join(alias, _observation_join(context, alias, binding))
+                where.append(_screen_evidence_exists(context, alias, concept))
         if operation.predicate is not None:
             where.append(
                 lower_predicate(
@@ -1047,7 +1059,30 @@ def _compile_statement(context: _Context):
     if not isinstance(operation, LogicalAggregateOperationV2):
         if relation_columns:
             statement = statement.add_columns(*relation_columns)
-        statement = _apply_qualifiers(context, statement)
+        qualifier_filters = _qualifier_filters(context)
+        statement = statement.where(*qualifier_filters) if qualifier_filters else statement
+    if context.screen_display_limit is not None:
+        if not isinstance(operation, LogicalScreenOperationV2) or task.produced_result_bindings:
+            raise SqlCompileRejection("SQL_BOUNDED_SCREEN_SCOPE_INVALID")
+        if type(context.screen_display_limit) is not int or not 1 <= context.screen_display_limit <= 50:
+            raise SqlCompileRejection("SQL_BOUNDED_SCREEN_LIMIT_INVALID")
+        # Count distinct matching products without hydrating all their evidence
+        # arrays. Use the same predicates/qualifiers and an indexed origin proof.
+        population = sa.select(product.c.entity_id.label("product_id")).select_from(
+            population_base
+        ).where(*where, *qualifier_filters).distinct().cte("screen_population")
+        display = sa.select(
+            population.c.product_id,
+            sa.func.count().over().label("screen_population_count"),
+        ).order_by(population.c.product_id.asc()).limit(
+            context.params.bind(context.screen_display_limit, prefix="screen_display_limit")
+        ).cte("screen_display").prefix_with("MATERIALIZED", dialect="postgresql")
+        statement = statement.add_columns(display.c.screen_population_count).join(
+            display, display.c.product_id == product.c.entity_id,
+        ).distinct(product.c.entity_id).order_by(
+            product.c.entity_id.asc(),
+            *(alias.c.observation_id.asc() for alias in context.observation_aliases.values()),
+        )
     evidence = _evidence_ids(context)
     return statement, evidence
 
@@ -1211,6 +1246,30 @@ def _observation_join(context, alias, binding):
 def _join_observation_with_evidence(context, base, alias, binding):
     base = base.join(alias, _observation_join(context, alias, binding))
     return _join_evidence(context, base, alias, binding)
+
+
+def _screen_evidence_exists(context, alias, concept):
+    """Use subject/metric and evidence-origin PKs for population qualification."""
+    record = evidence_record.alias(f"screen_evidence_{concept}")
+    source = source_record.alias(f"screen_source_{concept}")
+    origin = evidence_observation_origin.alias(f"screen_origin_{concept}")
+    return sa.exists(sa.select(sa.literal_column("1")).select_from(
+        record.join(source, sa.and_(
+            source.c.dataset_version == record.c.dataset_version,
+            source.c.source_id == record.c.source_id,
+        )).join(origin, sa.and_(
+            origin.c.dataset_version == record.c.dataset_version,
+            origin.c.evidence_id == record.c.evidence_id,
+        ))
+    ).where(
+        record.c.dataset_version == alias.c.dataset_version,
+        record.c.subject_id == alias.c.entity_id,
+        record.c.predicate_id == alias.c.metric_id,
+        record.c.evidence_kind == context.params.bind("observation", prefix="screen_evidence_kind"),
+        record.c.cutoff_status == context.params.bind("eligible", prefix="screen_cutoff_status"),
+        source.c.eligible_for_claim.is_(True),
+        origin.c.observation_id == alias.c.observation_id,
+    ).correlate(alias))
 
 
 def _join_evidence(context, base, alias, binding):
@@ -2071,11 +2130,6 @@ def _attach_flat_aggregate_evidence(
     return statement
 
 
-def _apply_qualifiers(context: _Context, statement):
-    filters = _qualifier_filters(context)
-    return statement.where(*filters) if filters else statement
-
-
 def _qualifier_filters(context: _Context):
     qualifiers = context.task.qualifiers
     requested = {
@@ -2115,10 +2169,18 @@ def _qualifier_filters(context: _Context):
     )
     if supplied and not supported_by_any_binding:
         raise SqlCompileRejection("PHYSICAL_QUALIFIER_UNSUPPORTED")
+    if qualifiers.unit_id is not None and not any(
+        SemanticQualifierId.UNIT in binding.supported_qualifier_ids
+        and qualifiers.unit_id in binding.accepted_semantic_unit_ids
+        for binding in bindings
+    ):
+        raise SqlCompileRejection("SEMANTIC_UNIT_NOT_SUPPORTED")
     for binding in bindings:
         if not set(binding.required_qualifier_ids) <= supplied:
             raise SqlCompileRejection("PHYSICAL_REQUIRED_QUALIFIER_MISSING")
         consumed = supplied & set(binding.supported_qualifier_ids)
+        if qualifiers.unit_id not in binding.accepted_semantic_unit_ids:
+            consumed.discard(SemanticQualifierId.UNIT)
         if (
             binding.currency_normalization_required
             and SemanticQualifierId.CURRENCY in consumed
@@ -2142,40 +2204,27 @@ def _qualifier_filters(context: _Context):
     filters = []
     for binding_id, alias in context.observation_aliases.items():
         binding = context.bindings.binding_sets_by_key[binding_id]
-        supported = set(binding.supported_qualifier_ids)
-        if (
-            qualifiers.period_id is not None
-            and SemanticQualifierId.PERIOD in supported
-        ):
-            # This source metric already represents a cumulative P1Y return;
-            # no source period_start exists and none may be synthesized.
-            if binding.semantic_concept_id != "trailing_1y_historical_cumulative_return":
-                raise SqlCompileRejection("PERIOD_LOWERING_NOT_REGISTERED")
-            if qualifiers.period_id != "P1Y":
-                raise SqlCompileRejection("PERIOD_QUALIFIER_NOT_SUPPORTED")
-        if (
-            qualifiers.currency_id is not None
-            and SemanticQualifierId.CURRENCY in supported
-        ):
-            filters.append(
-                alias.c.currency
-                == context.params.bind(
-                    qualifiers.currency_id, prefix="currency"
-                )
-            )
-        if qualifiers.unit_id is not None and SemanticQualifierId.UNIT in supported:
-            filters.append(
-                alias.c.unit
-                == context.params.bind(binding.storage_unit_id, prefix="unit")
-            )
-        if (
-            qualifiers.as_of_date is not None
-            and SemanticQualifierId.AS_OF in supported
-        ):
-            filters.append(
-                alias.c.applicable_date
-                == context.params.bind(qualifiers.as_of_date, prefix="as_of")
-            )
+        filters.extend(_binding_qualifier_filters(context, binding, alias))
+    return filters
+
+
+def _binding_qualifier_filters(context, binding, alias):
+    qualifiers = context.task.qualifiers
+    supported = set(binding.supported_qualifier_ids)
+    filters = []
+    if qualifiers.period_id is not None and SemanticQualifierId.PERIOD in supported:
+        # Source-owned cumulative P1Y has no period_start to synthesize.
+        if binding.semantic_concept_id != "trailing_1y_historical_cumulative_return":
+            raise SqlCompileRejection("PERIOD_LOWERING_NOT_REGISTERED")
+        if qualifiers.period_id != "P1Y":
+            raise SqlCompileRejection("PERIOD_QUALIFIER_NOT_SUPPORTED")
+    if qualifiers.currency_id is not None and SemanticQualifierId.CURRENCY in supported:
+        filters.append(alias.c.currency == context.params.bind(qualifiers.currency_id, prefix="currency"))
+    if (qualifiers.unit_id is not None and SemanticQualifierId.UNIT in supported
+            and qualifiers.unit_id in binding.accepted_semantic_unit_ids):
+        filters.append(alias.c.unit == context.params.bind(binding.storage_unit_id, prefix="unit"))
+    if qualifiers.as_of_date is not None and SemanticQualifierId.AS_OF in supported:
+        filters.append(alias.c.applicable_date == context.params.bind(qualifiers.as_of_date, prefix="as_of"))
     return filters
 
 

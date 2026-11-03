@@ -36,6 +36,7 @@ def test_extracts_supported_literal_forms_in_source_order_without_overlap() -> N
         (literal.kind, literal.canonical_value, literal.currency)
         for literal in literals
     ] == [
+        ("sort_direction", "desc", None),
         ("result_limit", "5", None),
         ("rank_position", "1", None),
         ("percentage", "30", None),
@@ -63,8 +64,12 @@ def test_extracts_supported_literal_forms_in_source_order_without_overlap() -> N
 def test_literal_id_and_original_evidence_span_do_not_use_normalized_offsets() -> None:
     request = normalized_request("ＡＵＭ   상위 ５개를 보여줘")
 
-    literal = extract_literals(request)[0]
+    direction, literal = extract_literals(request)
 
+    assert direction.literal_id == "lit-s1-6-8-sort_direction"
+    assert direction.original_text == "상위"
+    assert (direction.start_char, direction.end_char) == (6, 8)
+    assert direction.canonical_value == "desc"
     assert literal.literal_id == "lit-s1-9-11-result_limit"
     assert literal.original_text == "５개"
     assert (literal.start_char, literal.end_char) == (9, 11)
@@ -184,6 +189,7 @@ def test_entity_literal_mask_preserves_original_unicode_ranges() -> None:
 
     assert [(item.original_text, item.canonical_value) for item in literals] == [
         ("１년", "P1Y"),
+        ("상위", "desc"),
         ("５개", "5"),
     ]
 

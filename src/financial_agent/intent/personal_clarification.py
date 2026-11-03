@@ -73,6 +73,8 @@ def personal_clarifications(result: PersonalIntentResult) -> tuple[dict[str, str
         return ()
     resolution = result.attempt.resolution
     codes = set(result.issue_codes) | {issue.code for issue in resolution.issues}
+    if "POLICY_BLOCKED" in codes:
+        return ()
     rejections = result.attempt.candidates.rejections
     messages: dict[str, str] = {}
     if {"REFERENCE_UNRESOLVED", "REFERENCE_AMBIGUOUS"} & codes:
@@ -108,11 +110,17 @@ def personal_clarifications(result: PersonalIntentResult) -> tuple[dict[str, str
         rejection.reason_code == "REQUESTED_FIELD_ROLE_MISSING" for rejection in rejections
     ):
         messages["REQUEST_REQUIREMENTS_INCOMPLETE"] = (
-            "요청한 지표·조건을 모두 담은 조회 계획을 만들지 못했습니다. 필요한 지표와 각 조건을 명확히 적어 주세요."
+            "현재 서비스가 요청한 지표·조건을 모두 담은 조회 계획을 만들지 못했습니다. 해당 조건의 해석과 조회 지원 범위를 확인해야 합니다."
+        )
+    if "PREDICATE_OPERATOR_REQUIRED" in codes or any(
+        rejection.reason_code == "PREDICATE_OPERATOR_REQUIRED" for rejection in rejections
+    ):
+        messages["FILTER_COMPARISON_INCOMPLETE"] = (
+            "현재 서비스가 조건값과 비교 연산을 실행 가능한 식으로 구성하지 못했습니다. DB 조회는 실행하지 않았습니다."
         )
     if not messages and {"SEMANTIC_CONCEPT_UNMAPPED", "SEMANTIC_CRITICAL_SLOT_MISSING",
                          "AMBIGUITY_UNRESOLVED", "QUERY_CONTRACT_NOT_COMPLETE"} & codes:
         messages["REQUEST_MEANING_UNRESOLVED"] = (
-            "질문의 뜻을 확정할 수 없습니다. 상품명(오타 포함), 상품군, 지표와 조건을 확인해 다시 적어 주세요."
+            "현재 서비스가 질문을 지원되는 의미와 조회 계획에 연결하지 못했습니다. 의미 해석과 조회 지원 범위를 확인해야 합니다."
         )
     return tuple({"code": code, "message": message} for code, message in messages.items())

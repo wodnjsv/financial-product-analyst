@@ -263,7 +263,14 @@ def _validate_link(
         reference.expected_target_kind != (target_kind,)
         or reference.expected_cardinality != (target_cardinality,)
     ):
-        _invalid_graph()
+        raise ResolverContractError("INVALID_CONTEXT_GRAPH", validation_feedback=({
+            "path": "context_links", "rule": "context_link_reference_target_shape_mismatch",
+            "link_type": hint.link_type.value, "source_role": hint.source_role.value,
+            "reference_expected_target_kind": [item.value for item in reference.expected_target_kind],
+            "reference_expected_cardinality": [item.value for item in reference.expected_cardinality],
+            "required_target_kind": [target_kind.value],
+            "required_cardinality": [target_cardinality.value],
+        },))
     _validate_selector(hint, source.cardinality, literal_kinds_by_id)
     return ValidatedContextLink(
         context_link_id=hint.context_link_id,
@@ -285,38 +292,41 @@ def _link_target(
 ) -> tuple[ReferenceTargetKind, Cardinality]:
     if hint.link_type is ContextLinkType.CONSUME_SINGLE_RESULT:
         if source != _RoleShape(ReferenceTargetKind.RESULT_SET, Cardinality.MANY):
-            _invalid_graph()
+            _invalid_link_target(hint, source, (_RoleShape(ReferenceTargetKind.RESULT_SET, Cardinality.MANY),))
         return ReferenceTargetKind.ENTITY, Cardinality.ONE
     if hint.link_type is ContextLinkType.CONSUME_RESULT_SET:
         if source != _RoleShape(ReferenceTargetKind.RESULT_SET, Cardinality.MANY):
-            _invalid_graph()
+            _invalid_link_target(hint, source, (_RoleShape(ReferenceTargetKind.RESULT_SET, Cardinality.MANY),))
         return ReferenceTargetKind.RESULT_SET, Cardinality.MANY
     if hint.link_type is ContextLinkType.DERIVE_ENTITY:
         if source != _RoleShape(ReferenceTargetKind.RELATED_ENTITY, Cardinality.ONE):
-            _invalid_graph()
+            _invalid_link_target(hint, source, (_RoleShape(ReferenceTargetKind.RELATED_ENTITY, Cardinality.ONE),))
         return ReferenceTargetKind.RELATED_ENTITY, Cardinality.ONE
     if hint.link_type is ContextLinkType.DERIVE_METRIC_VALUE:
         if source != _RoleShape(ReferenceTargetKind.METRIC_VALUE, Cardinality.ONE):
-            _invalid_graph()
+            _invalid_link_target(hint, source, (_RoleShape(ReferenceTargetKind.METRIC_VALUE, Cardinality.ONE),))
         return ReferenceTargetKind.METRIC_VALUE, Cardinality.ONE
     if hint.link_type is ContextLinkType.INHERIT_SCOPE:
         if source not in {
             _RoleShape(ReferenceTargetKind.ENTITY, Cardinality.ONE),
             _RoleShape(ReferenceTargetKind.RESULT_SET, Cardinality.MANY),
         }:
-            _invalid_graph()
+            _invalid_link_target(hint, source, (
+                _RoleShape(ReferenceTargetKind.ENTITY, Cardinality.ONE),
+                _RoleShape(ReferenceTargetKind.RESULT_SET, Cardinality.MANY),
+            ))
         return source.target_kind, source.cardinality
     if hint.link_type is ContextLinkType.REFER_EXCLUSION_SET:
         if source != _RoleShape(ReferenceTargetKind.EXCLUSION_SET, Cardinality.MANY):
-            _invalid_graph()
+            _invalid_link_target(hint, source, (_RoleShape(ReferenceTargetKind.EXCLUSION_SET, Cardinality.MANY),))
         return ReferenceTargetKind.EXCLUSION_SET, Cardinality.MANY
     if hint.link_type is ContextLinkType.REFER_EVIDENCE:
         if source != _RoleShape(ReferenceTargetKind.EVIDENCE_RECORDS, Cardinality.MANY):
-            _invalid_graph()
+            _invalid_link_target(hint, source, (_RoleShape(ReferenceTargetKind.EVIDENCE_RECORDS, Cardinality.MANY),))
         return ReferenceTargetKind.EVIDENCE_RECORDS, Cardinality.MANY
     if hint.link_type is ContextLinkType.REPLACE_SLOT:
         if not hint.target_slot_kind:
-            _invalid_graph()
+            _invalid_link_target(hint, source, ())
         if (
             hint.target_slot_kind == (SlotKind.ENTITY,)
             and source
@@ -340,9 +350,29 @@ def _link_target(
             }
         ):
             return source.target_kind, source.cardinality
-        _invalid_graph()
+        _invalid_link_target(hint, source, ())
     _invalid_graph()
     raise AssertionError("unreachable")
+
+
+def _invalid_link_target(
+    hint: ContextLinkHint, source: _RoleShape, allowed_shapes: tuple[_RoleShape, ...]
+) -> None:
+    issue = {
+        "path": "context_links", "rule": "context_link_source_shape_mismatch",
+        "link_type": hint.link_type.value, "source_role": hint.source_role.value,
+        "source_target_kind": source.target_kind.value, "source_cardinality": source.cardinality.value,
+        "allowed_source_roles": sorted(role.value for role, shape in _ROLE_SHAPES.items() if shape in allowed_shapes),
+    }
+    if hint.link_type is ContextLinkType.REPLACE_SLOT:
+        issue["rule"] = "context_link_source_or_target_slot_mismatch"
+        issue.pop("allowed_source_roles")
+        issue["allowed_target_slot_kinds"] = (
+            [SlotKind.ENTITY.value, SlotKind.SIMILARITY_ANCHOR.value]
+            if source in {_ROLE_SHAPES[SourceRole.SELECTED_PRODUCT], _ROLE_SHAPES[SourceRole.RELATION_TARGET]}
+            else [SlotKind.METRIC.value] if source == _ROLE_SHAPES[SourceRole.METRIC_VALUE] else []
+        )
+    raise ResolverContractError("INVALID_CONTEXT_GRAPH", validation_feedback=(issue,))
 
 
 def _validate_selector(
@@ -354,7 +384,11 @@ def _validate_selector(
     literal_id = hint.selector_literal_candidate_id[0] if hint.selector_literal_candidate_id else None
     if source_cardinality is Cardinality.ONE:
         if selector is not None or literal_id is not None:
-            _invalid_graph()
+            raise ResolverContractError("INVALID_CONTEXT_GRAPH", validation_feedback=({
+                "path": "context_links", "rule": "singleton_source_disallows_selector",
+                "source_role": hint.source_role.value, "required_selector": [],
+                "required_selector_literal_candidate_id": [],
+            },))
         return
     if hint.link_type is ContextLinkType.CONSUME_SINGLE_RESULT:
         if selector not in _SINGLE_SELECTORS:

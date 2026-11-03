@@ -6,14 +6,21 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 import json
+import re
 from typing import Mapping, Sequence
 from types import MappingProxyType
+from zoneinfo import ZoneInfo
 
 from pydantic import TypeAdapter
 
+from financial_agent.contracts.enums import ProductFamily
 from financial_agent.contracts.execution import Exclusion, ResultRow
 from financial_agent.contracts.values import ScalarValue, decode_contract_value
-from financial_agent.planning.physical_bindings import PhysicalBindingDefinition
+from financial_agent.ingestion.mapping.domestic_bond import SPEC as DOMESTIC_BOND_SPEC
+from financial_agent.ingestion.mapping.domestic_etp import SPEC as DOMESTIC_ETP_SPEC
+from financial_agent.ingestion.mapping.overseas_etp import SPEC as OVERSEAS_ETP_SPEC
+from financial_agent.ingestion.mapping.public_fund import SPEC as PUBLIC_FUND_SPEC
+from financial_agent.planning.physical_bindings import EXPECTED_MAPPER_BINDINGS, PhysicalBindingDefinition
 from financial_agent.intent.query_contracts import RelationConditionV2
 
 
@@ -29,9 +36,15 @@ class VerifiedSemanticRow:
 
 
 _SCALAR = TypeAdapter(ScalarValue)
+_SEOUL = ZoneInfo('Asia/Seoul')
+_ORGANIZER_SPECS = {spec.source_code: spec for spec in (
+    DOMESTIC_BOND_SPEC, DOMESTIC_ETP_SPEC, OVERSEAS_ETP_SPEC, PUBLIC_FUND_SPEC,
+)}
 _LABELS = {
     'fee_rate': '총보수', 'aum': '순자산', 'maturity_date': '만기일',
     'trailing_1y_historical_cumulative_return': '과거 1년 누적수익률',
+    'region': '지역', 'asset_class': '자산 유형', 'currency': '통화',
+    'credit_grade': '신용등급', 'remaining_days': '잔존일수',
 }
 
 
@@ -49,10 +62,16 @@ def validate_semantic_rows(
     for item in facts:
         by_product.setdefault(item['subject_id'], []).append(item)
     verified = []
+    row_ids, product_ids = set(), set()
     for row in rows:
         if len(row.entity_ids) != 1:
             raise LocalSemanticResultError()
         product_id = row.entity_ids[0]
+        field_ids = [field.field_id for field in row.fields]
+        if row.row_id in row_ids or product_id in product_ids or len(field_ids) != len(set(field_ids)):
+            raise LocalSemanticResultError()
+        row_ids.add(row.row_id)
+        product_ids.add(product_id)
         names = [decode_contract_value(f.value) for f in row.fields if f.field_id == 'product_name']
         if len(names) != 1:
             raise LocalSemanticResultError()
@@ -108,6 +127,11 @@ def validate_semantic_rows(
 
 
 def _validate_fact(item, refs, binding, field, product_id, dataset_version, cutoff):
+    _validate_source_metadata(item)
+    if item.get('subject_product_family') != binding.product_family_id.value:
+        raise LocalSemanticResultError()
+    if item['metric_id'].startswith('organizer.'):
+        _validate_organizer_ownership(item, binding)
     definition = f"{item['metric_id']}:{item['metric_definition_version']}"
     required = {
         f"evidence:{item['evidence_id']}", f"source:{item['source_id']}",
@@ -118,11 +142,31 @@ def _validate_fact(item, refs, binding, field, product_id, dataset_version, cuto
     field_unit = item['observation_unit'] if missing else field.unit_id
     field_currency = item['observation_currency'] if missing else field.currency
     field_date = item['observation_date'] if missing else field.applicable_date
-    storage_value = item['date_value'] if binding.semantic_value_kind.value == 'date' else item['numeric_value']
+    storage_column = {
+        'date': 'date_value', 'decimal': 'numeric_value', 'integer': 'numeric_value',
+        'string': 'text_value', 'boolean': 'boolean_value',
+    }.get(binding.semantic_value_kind.value)
+    if storage_column is None:
+        raise LocalSemanticResultError()
+    storage_value = item.get(storage_column)
     try:
         normalized = decode_contract_value(_SCALAR.validate_json(json.dumps(item['normalized_value'])))
     except (ValueError, TypeError):
         raise LocalSemanticResultError() from None
+    expected_type = {'date': date, 'decimal': Decimal, 'integer': int,
+                     'string': str, 'boolean': bool}[binding.semantic_value_kind.value]
+    if not missing and any(type(actual) is not expected_type
+                           for actual in (value, storage_value, normalized)):
+        raise LocalSemanticResultError()
+    stored_values = tuple(item.get(column) for column in (
+        'numeric_value', 'text_value', 'boolean_value', 'date_value', 'timestamp_value',
+    ))
+    if sum(actual is not None for actual in stored_values) != (0 if missing else 1):
+        raise LocalSemanticResultError()
+    if item['value_status'] == 'zero' and (
+        binding.semantic_value_kind.value not in ('decimal', 'integer') or value != 0
+    ):
+        raise LocalSemanticResultError()
     # Maturity is itself a future date; it must not masquerade as a source date.
     maturity = binding.semantic_concept_id == 'maturity_date'
     evidence_date = None if maturity and value is not None and value > cutoff else field_date
@@ -152,9 +196,7 @@ def _validate_fact(item, refs, binding, field, product_id, dataset_version, cuto
         raise LocalSemanticResultError()
 
     for key in ('vintage_date', 'published_at', 'available_at'):
-        actual = item[key]
-        if isinstance(actual, datetime):
-            actual = actual.date()
+        actual = _source_date(item[key])
         if actual is not None and actual > cutoff:
             raise LocalSemanticResultError()
     if (not maturity or missing) and field_date is not None and field_date > cutoff:
@@ -170,6 +212,8 @@ def _validate_fact(item, refs, binding, field, product_id, dataset_version, cuto
 
 
 def _validate_relation_fact(item, refs, condition, product_id, dataset_version, cutoff, as_of):
+    _validate_source_metadata(item)
+    _validate_relation_ownership(item, condition.relation_id)
     required = {f"relation:{item['relation_id']}", f"evidence:{item['evidence_id']}", f"source:{item['source_id']}"}
     try:
         target = decode_contract_value(_SCALAR.validate_json(json.dumps(item['value_or_object_id'])))
@@ -190,22 +234,84 @@ def _validate_relation_fact(item, refs, condition, product_id, dataset_version, 
     ):
         raise LocalSemanticResultError()
     for key in ('vintage_date', 'published_at', 'available_at', 'applicable_date'):
-        actual = item[key]
-        if isinstance(actual, datetime):
-            actual = actual.date()
+        actual = _source_date(item[key])
         if actual is not None and actual > cutoff:
             raise LocalSemanticResultError()
+
+
+def _validate_source_metadata(item):
+    if any(not isinstance(item.get(field), str) or not item[field].strip()
+           for field in ('publisher', 'publisher_type', 'source_type', 'authority_tier')):
+        raise LocalSemanticResultError()
+    checksum = item.get('content_checksum')
+    if not isinstance(checksum, str) or re.fullmatch(r'[0-9a-f]{64}', checksum) is None:
+        raise LocalSemanticResultError()
+
+
+def _validate_organizer_ownership(item, binding):
+    owner = EXPECTED_MAPPER_BINDINGS.get(binding.id)
+    if owner is None:
+        raise LocalSemanticResultError()
+    _, column, metric_id = owner
+    spec = _ORGANIZER_SPECS.get(metric_id.split('.')[1].upper())
+    if (
+        (item['publisher_type'], item['source_type'], item['authority_tier'])
+        != ('organizer', 'dataset', 'organizer')
+        or spec is None or item['metric_id'] != metric_id
+        or item['locator_uri_or_object_key'] != spec.data_file_name
+        or item['source_locator_root'] != spec.data_file_name
+        or item['locator_column'] != column
+    ):
+        raise LocalSemanticResultError()
+
+
+def _validate_relation_ownership(item, relation_id):
+    family = item.get('subject_product_family')
+    if not isinstance(family, str):
+        raise LocalSemanticResultError()
+    if relation_id == 'managedBy':
+        expected = (
+            ('organizer', 'dataset', 'organizer')
+            if family in {value.value for value in ProductFamily} else None
+        )
+    else:
+        expected = {
+            'domestic_etf': ('exchange', 'dataset', 'official'),
+            'overseas_etf': ('regulator', 'dataset', 'official'),
+        }.get(family)
+    if expected is None or (item['publisher_type'], item['source_type'], item['authority_tier']) != expected:
+        raise LocalSemanticResultError()
+
+
+def _source_date(value):
+    if isinstance(value, datetime):
+        if value.utcoffset() is None:
+            raise LocalSemanticResultError()
+        return value.astimezone(_SEOUL).date()
+    if value is not None and type(value) is not date:
+        raise LocalSemanticResultError()
+    return value
 
 
 def render_semantic_rows(
     rows: Sequence[VerifiedSemanticRow], *, total_count: int, display_limit: int,
     ranked: bool,
+    bounded_screen: bool = False,
 ) -> str:
-    if not 1 <= display_limit <= 50 or total_count != len(rows):
+    valid_count = (
+        type(total_count) is int and total_count >= 0 and not ranked
+        and len(rows) == min(total_count, display_limit)
+    ) if bounded_screen else total_count == len(rows)
+    if not 1 <= display_limit <= 50 or not valid_count:
         raise LocalSemanticResultError()
     displayed = rows[:display_limit]
-    count_label = '상위 결과' if ranked else '전체 일치'
+    count_label = '순위 결과' if ranked else '전체 일치'
     lines = [f'{count_label} {total_count}건 · 표시 {len(displayed)}건']
+    undated = sum(any(field.field_id not in ('product_name', 'maturity_date')
+                      and field.applicable_date is None for field in verified.row.fields)
+                  for verified in rows) if ranked else 0
+    if undated:
+        lines.append(f'기준일 미제공 {undated}건: 저장된 원천값의 순위이며 현재 기준 비교는 확인할 수 없습니다.')
     for index, verified in enumerate(displayed, 1):
         row = verified.row
         name = next(decode_contract_value(f.value) for f in row.fields if f.field_id == 'product_name')

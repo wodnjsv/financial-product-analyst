@@ -322,6 +322,12 @@ async def test_current_krx_holdings_load_and_samsung_query_are_inactive(
         JOIN catalog.entity AS product
           ON product.dataset_version = holding.dataset_version
          AND product.entity_id = holding.subject_id
+        JOIN catalog.identifier AS security_identifier
+          ON security_identifier.dataset_version = security.dataset_version
+         AND security_identifier.entity_id = security.entity_id
+         AND security_identifier.scheme = 'KRX_STANDARD_ISSUE_CODE'
+         AND security_identifier.identifier_value =
+             :samsung_standard_issue_code
         JOIN observation.observation_record AS aum
           ON aum.dataset_version = holding.dataset_version
          AND aum.entity_id = holding.subject_id
@@ -341,7 +347,6 @@ async def test_current_krx_holdings_load_and_samsung_query_are_inactive(
          AND aum_evidence.evidence_id = aum_origin.evidence_id
         WHERE holding.dataset_version = :dataset_version
           AND holding.predicate_id = 'holdsSecurity'
-          AND security.normalized_name = '삼성전자'
         ORDER BY
             aum.numeric_value DESC,
             product.normalized_name,
@@ -353,7 +358,10 @@ async def test_current_krx_holdings_load_and_samsung_query_are_inactive(
         rows = (
             await connection.execute(
                 query,
-                {"dataset_version": dataset_version},
+                {
+                    "dataset_version": dataset_version,
+                    "samsung_standard_issue_code": "KR7005930003",
+                },
             )
         ).mappings().all()
         active_count = await connection.scalar(

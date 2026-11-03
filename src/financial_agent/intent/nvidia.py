@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
+from time import perf_counter
 
 import httpx
 
@@ -18,6 +20,8 @@ from .errors import (
 )
 from .model import ModelInvocationResult, StructuredOutputEnvelope
 from .nvidia_config import NvidiaResolverConfig
+
+_LOGGER = logging.getLogger(__name__)
 
 
 _V3_OUTPUT_GUIDANCE = (
@@ -36,6 +40,15 @@ _V3_OUTPUT_GUIDANCE = (
     "For frame_subject, expected_entity_type_ids must match frame.entity_type_ids "
     "without extra broad ancestor types, e.g. frame.entity_type_ids=[\"ETF\"] "
     "and expected_entity_type_ids=[\"ETF\"]. "
+    "A generic product family such as domestic ETF is not a named product. "
+    "Do not add a frame_subject entity hint for that family. Entity-hint "
+    "mention_id may contain only a view.entity_candidates[].mention_id; "
+    "general view.mention_spans IDs are not interchangeable with entity mentions. "
+    "For manager/holding family screens, keep the offered relation_object hint "
+    "and select the subject family/type in the frame without inventing a subject name. "
+    "Also include a selected semantic_link for that same relation ID (managedBy "
+    "or holdsSecurity), using an offered source mention. A relation_id inside "
+    "an entity hint alone does not establish the frame's relation meaning. "
     "Keep action IDs only in action_choice.selected_ids and product-family IDs "
     "only in product_family_choice.selected_ids. semantic_links[].semantic_ids "
     "contains only compact_semantic_catalog.concepts[].semantic_id values; "
@@ -44,7 +57,37 @@ _V3_OUTPUT_GUIDANCE = (
     'product_family_choice.selected_ids=["domestic_etf"]; '
     'semantic_links[].semantic_ids=["trailing_1y_historical_cumulative_return"]. '
     "The domestic_etf family mention needs no semantic link. These examples are "
-    "field values, not complete outputs; use only IDs offered in the current view.\n"
+    "field values, not complete outputs; use only IDs offered in the current view. "
+    "Represent every view.reference_candidates ID in references. If there is no "
+    "antecedent in this request, use status=unresolved and producer_frame_ordinals=[]; "
+    "never ignore a demonstrative or invent a prior result. "
+    "references[].grammatical_number, expected_target_kind and expected_cardinality "
+    "are optional single-item arrays, not strings. Examples: grammatical_number=[\"singular\"], "
+    "expected_target_kind=[\"entity\"], expected_cardinality=[\"one\"]; or "
+    "grammatical_number=[\"plural\"], expected_target_kind=[\"result_set\"], "
+    "expected_cardinality=[\"many\"]. Use [] when the optional value is unknown. "
+    "Ambiguous axis choices have selected_ids=[]; do not choose an unsupported "
+    "family to hide ambiguity. Each source mention belongs either to a semantic "
+    "link or to unmapped_mention_ids, never both or multiple links. With no "
+    "unmapped source meaning, semantic_coverage is covered with reason=none; "
+    "ambiguous semantic links still retain their distinct concept alternatives. "
+    "Every semantic_id in a selected or ambiguous link must apply to all selected "
+    "frame product families and subject types. Do not include an inapplicable "
+    "alternative in ambiguity. Keep unresolved source meaning unmapped instead "
+    "of replacing unsupported meaning with a nearby registered concept. "
+    "Partial/unmapped coverage requires a genuinely unmapped source mention "
+    "and a non-none reason. Context links connect an earlier producer frame to "
+    "a later consumer, never the same frame. A singleton relation_target has "
+    "selector=[] and selector_literal_candidate_id=[]. To reuse the same singleton "
+    "entity, selected_product uses inherit_scope; relation_target uses derive_entity. "
+    "consume_single_result selects from candidates or top_k_products with an explicit "
+    "single-result selector; consume_result_set consumes those result-set roles. "
+    "metric_value uses derive_metric_value, excluded_products uses refer_exclusion_set "
+    "and evidence_records uses refer_evidence. The producer must declare the actual "
+    "source role and the reference must match the link's target kind/cardinality. "
+    "Do not change a product reference into a related entity or invent a role to make "
+    "a link executable. These constraints also "
+    "apply during repair.\n"
 )
 
 
@@ -70,6 +113,8 @@ class NvidiaStructuredOutputAdapter:
         ):
             raise ModelInvocationError(MODEL_CONFIGURATION_INVALID)
         body = self._request_body(envelope)
+        started = perf_counter()
+        status = None
         try:
             # HTTP phase timeouts alone do not bound the entire invocation.
             async with asyncio.timeout(timeout_seconds):
@@ -86,17 +131,31 @@ class NvidiaStructuredOutputAdapter:
                         },
                         json=body,
                     )
-                if response.status_code == 429:
+                status = response.status_code
+                if status == 429:
                     raise ModelInvocationError(MODEL_RATE_LIMITED)
                 if 400 <= response.status_code < 500:
                     raise ModelInvocationError(MODEL_CONFIGURATION_INVALID)
                 if not 200 <= response.status_code < 300:
                     raise ModelInvocationError(MODEL_PROVIDER_UNAVAILABLE)
                 return _parse_success(response)
-        except (TimeoutError, httpx.TimeoutException):
+        except (TimeoutError, httpx.TimeoutException) as error:
+            kind = next((name for cls, name in (
+                (httpx.ReadTimeout, "read_timeout"), (httpx.ConnectTimeout, "connect_timeout"),
+                (httpx.WriteTimeout, "write_timeout"), (httpx.PoolTimeout, "pool_timeout"),
+            ) if isinstance(error, cls)), "wall_timeout")
+            _log_failure(MODEL_TIMEOUT, kind, status, started)
             raise ModelInvocationError(MODEL_TIMEOUT) from None
-        except httpx.HTTPError:
+        except httpx.HTTPError as error:
+            kind = next((name for cls, name in (
+                (httpx.ConnectError, "connect_error"), (httpx.ReadError, "read_error"),
+                (httpx.RemoteProtocolError, "remote_protocol_error"),
+            ) if isinstance(error, cls)), "http_error")
+            _log_failure(MODEL_PROVIDER_UNAVAILABLE, kind, status, started)
             raise ModelInvocationError(MODEL_PROVIDER_UNAVAILABLE) from None
+        except ModelInvocationError as error:
+            _log_failure(error.code, "http_status" if status != 200 else "response_schema", status, started)
+            raise
 
     def _request_body(self, envelope: StructuredOutputEnvelope) -> dict[str, object]:
         if (
@@ -143,27 +202,34 @@ class NvidiaStructuredOutputAdapter:
 
 
 def _model_response_schema(schema: dict[str, object]) -> object:
-    """Omit repeated V3 ID lists only in the model's schema presentation."""
+    """Keep role-specific IDs while omitting repeated general evidence enums."""
     if not _is_v3_response_schema(schema):
         return schema
     identifier_fields = {
-        "mention_id", "unmapped_mention_ids", "evidence_ids", "semantic_ids",
+        "mention_id", "unmapped_mention_ids", "evidence_ids",
         "candidate_entity_ids", "selected_candidate_ids", "reference_id",
         "selector_literal_candidate_id",
     }
 
-    def copy(value: object, identifier_field: bool = False) -> object:
+    def copy(value: object, identifier_field: bool = False, path: tuple[str, ...] = ()) -> object:
         if isinstance(value, dict):
             return {
-                key: copy(item, identifier_field or key in identifier_fields)
+                key: copy(item, identifier_field or key in identifier_fields, path + (key,))
                 for key, item in value.items()
-                if not (identifier_field and key == "enum")
+                if not (identifier_field and key == "enum"
+                        and not ("entity_hints" in path and "mention_id" in path))
             }
         if isinstance(value, list):
-            return [copy(item, identifier_field) for item in value]
+            return [copy(item, identifier_field, path) for item in value]
         return value
 
     return copy(schema)
+
+
+def _log_failure(code: str, kind: str, status: int | None, started: float) -> None:
+    # Never log URLs, headers, exception text or provider response bodies.
+    _LOGGER.warning("NVIDIA invocation failed code=%s kind=%s http_status=%s elapsed_ms=%s",
+                    code, kind, status, round((perf_counter() - started) * 1000))
 
 
 def _is_v3_response_schema(schema: dict[str, object]) -> bool:

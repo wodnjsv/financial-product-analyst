@@ -136,6 +136,81 @@ not provide a verified replacement in the bounded comparison. Retain JSON mode,
 the GLM default, and strict local validation. Details and final offline results
 are in the [task plan](../planning/tasks/2026-10-02-nvidia-intent-routing.md).
 
+### Relation repair follow-up — 2026-10-11
+
+Adapter V6 distinguishes general listing-family spans from named entity-hint
+spans and retains the latter's allowed IDs in the model schema. Concept enums
+also remain, so family IDs do not belong in metric/relation semantic links.
+A relation object needs a selected semantic link for the same relation; the
+hint's relation_id alone is insufficient. Nothing is silently inserted.
+
+Schema repair receives bounded source-owned validation_errors with paths and
+allowed IDs. Missing relation links receive the registered relation/object
+mention IDs. Unknown model text is not echoed. Server validation and the one
+repair allowance remain unchanged. Provider warnings include only code, kind,
+http_status and elapsed_ms; no key, response body or exception text is logged.
+
+Final actual normal-service examples passed named fee lookup 1 (missing value),
+manager filter 243 and sampled holding filter 9, each with one model call in
+15.362/12.714/9.247s. This is real API/DB acceptance for three examples, not a
+universal guarantee. The final offline suite passed 3,589 tests, with 4 skipped
+and 516 deselected. See [the repair task](../planning/tasks/2026-10-11-nvidia-repair-feedback.md)
+for intermediate failures, synthetic repair checks and exact boundaries.
+
+### Existing authored question audit — 2026-10-11
+
+All 217 distinct original questions were run through actual NVIDIA and the
+personal search service: core 52, latest held-out 160 and five hybrid-link cases.
+Older held-out versions repeat the same 160 questions. The V6/V2 baseline made
+282 calls, including repairs; five oversized inputs made zero external calls.
+There were 45 model/contract failures and 16 deadline failures. Other nonexecuted
+cases are not certified correct answers merely because validation returned.
+
+Adapter V7 and normalizer V3 preserve source demonstratives, explicit lower/upper
+direction and currency literals with an adjacent currency-field cue. A USD
+ticker without that cue still remains an entity. Whitespace normalization no
+longer joins the tail of prose to a company name. Every offered reference must
+be represented, including unresolved references. Repair feedback covers known
+axis, applicability, coverage and context invariants without echoing arbitrary
+model content; rejection rules and the one-repair allowance stay unchanged.
+
+The user explicitly approved the expanded metadata-only transmission by replying
+“다시 진행해” to the concrete 217-question request. The approved V7/V3 full
+rerun completed all217 questions with277 actual calls:141 without factual
+answers,16 policy-blocked,5 pre-model input rejections,20 contract/system
+failures,34 timeouts and one independently source-verified lower10 answer.
+Nonexecution and safe rejection are not semantic correctness scores. Compared
+with the baseline, contract/system failures fell45 to20 while timeouts rose16
+to34; this does not establish general integration stability.
+
+V8 adds singular/plural reference-array examples, existing role/link
+compatibility guidance and bounded invalid-link feedback. A nonempty comparison
+field guard prevents an uncaught validation error without inferring a missing
+period. The separate48-case actual rerun completed with60 calls:13 without
+factual answers,1 policy-blocked,1 source-verified answer,3 contract failures,
+4 timeouts and26 provider rate-limit failures. All48 source questions were
+unchanged; this subset is not a full V8 accuracy result. No automatic retry loop
+or relaxed deadline was added. The final generic failure-message correction
+is verified offline separately from these frozen live records.
+
+The final target-kind/cardinality mismatch feedback adds only registered enum
+values at an existing rejection; it does not fix a model value automatically.
+Strict stored-response replay still rejects all three original contract errors.
+An explicit compatible synthetic reference passes separately. The final offline
+suite passed3,727 tests with4 skipped and516 deselected in82.84s. One unchanged
+REL-MGR-001 live probe on the latest code returned HTTP429 before a first model
+response (one API attempt,zero SQL); it cannot certify the final repair feedback.
+The frozen48-case counts are unchanged.
+
+The one executed answer in each corrected batch preserved ETF-only scope,
+P1Y,ASC and limit10, and matched independent ledger IDs,values,units,dates and
+displayed sources. Its -100% values belong to source rows with zero closes and
+elapsed trading-end dates. Seven rows lack actual dates and three have older
+dates; V8 output warns about the seven missing dates. Source faithfulness does
+not certify current performance or the economic meaning of those values.
+See [the audit task](../planning/tasks/2026-10-11-existing-question-regression.md)
+for preserved failures, implementation checks and unresolved capabilities.
+
 Provider documentation:
 [hosted GLM-5.3-Flash API](https://docs.api.nvidia.com/nim/reference/z-ai-glm-5-3-flash-infer)
 and [GLM serving guide](https://docs.nvidia.com/nim/vision-language-models/latest/get-started/advanced/get-started-glm-5-3-flash.html).

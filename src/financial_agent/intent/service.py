@@ -125,6 +125,23 @@ _REPAIR_INSTRUCTIONS = {
 }
 _HYBRID_REPAIR_INSTRUCTIONS = {
     **_REPAIR_INSTRUCTIONS,
+    MODEL_SCHEMA_INVALID: (
+        "Use validation_errors to correct field combinations. Selected axis "
+        "choices require selected IDs; ambiguous or unspecified choices require "
+        "empty selected_ids. Do not resolve missing source meaning by guessing."
+    ),
+    MODEL_INVALID_FRAME_REFERENCE: (
+        "Represent every offered source reference in references, including those "
+        "without an antecedent. Use status=unresolved and empty producer_frame_ordinals "
+        "when no source-grounded target exists. Never omit a reference or invent its target. "
+        "Use validation_errors for the missing source reference IDs."
+    ),
+    "INVALID_CONTEXT_GRAPH": (
+        "Use validation_errors to preserve valid context bindings. A singleton "
+        "source has selector=[] and selector_literal_candidate_id=[]. Context "
+        "links must point from an earlier producer frame to a later consumer; "
+        "never invent an antecedent to make an unresolved reference executable."
+    ),
     "MODEL_UNKNOWN_ID": (
         "Select only offered mention, semantic, entity, reference, and evidence IDs."
     ),
@@ -135,10 +152,17 @@ _HYBRID_REPAIR_INSTRUCTIONS = {
         "Leave every request-disabled entity or reference branch empty."
     ),
     "MODEL_INAPPLICABLE_CONCEPT": (
-        "Select only concepts applicable to the selected product families and types."
+        "Select only concepts applicable to the selected product families and types. "
+        "Use validation_errors to identify the conflicting concept and registered "
+        "subject types. Preserve source-owned family locks; mark an unsupported "
+        "meaning unmapped rather than changing the family or guessing a concept."
     ),
     "MODEL_INVALID_RELATION": (
-        "Use only relation endpoints compatible with the registered relation."
+        "Use only relation endpoints compatible with the registered relation. "
+        "Each relation_object hint must have the same registered relation ID in "
+        "a selected frame.semantic_links entry with an offered source mention. "
+        "Use validation_errors to add a missing relation link, keeping the "
+        "valid object candidate, subject family and dates unchanged."
     ),
 }
 
@@ -823,13 +847,19 @@ class IntentResolverService:
         try:
             Draft202012Validator(prepared.prompt.response_schema).validate(payload)
         except JsonSchemaValidationError:
-            raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID) from None
+            raise ResolverContractError(
+                MODEL_PROPOSAL_SCHEMA_INVALID,
+                validation_feedback=_hybrid_schema_feedback(prepared.prompt.response_schema, payload),
+            ) from None
         try:
             proposal = IntentResolutionProposalV3.model_validate_json(
                 json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             )
-        except ValidationError:
-            raise ResolverContractError(MODEL_PROPOSAL_SCHEMA_INVALID) from None
+        except ValidationError as error:
+            raise ResolverContractError(
+                MODEL_PROPOSAL_SCHEMA_INVALID,
+                validation_feedback=_hybrid_contract_feedback(error),
+            ) from None
         draft = assemble_hybrid_proposal(
             proposal, prepared.normalized, prepared.view, self._catalog
         )
@@ -981,7 +1011,12 @@ def build_hybrid_repair_envelope(
             "mention IDs to registered compact-catalog semantic IDs. Every frame "
             "must include all required keys, especially non-empty segment_ids "
             "selected from offered context.segments segment_id values, even for "
-            "a single segment or unsupported intent."
+            "a single segment or unsupported intent. General product-family scope is not a named entity. "
+            "Do not create a frame_subject entity hint for a generic ETF family. "
+            "Entity-hint mention IDs must come from view.entity_candidates; "
+            "keep manager/security relation_object hints and their offered IDs. "
+            "Use validation_errors to correct the named field; preserve valid relations. "
+            "Product-family IDs belong only in product_family_choice, not semantic_links."
         )
     original_prompt_hash = canonical_sha256(
         {
@@ -1001,6 +1036,7 @@ def build_hybrid_repair_envelope(
                 "original_prompt_hash": original_prompt_hash,
                 "failure_code": failure.code,
                 "correction_instruction": instruction,
+                "validation_errors": list(failure.validation_feedback),
             },
             ensure_ascii=False,
             separators=(",", ":"),
@@ -1008,6 +1044,71 @@ def build_hybrid_repair_envelope(
         ),
         response_schema=prepared.prompt.response_schema,
     )
+
+
+def _hybrid_schema_feedback(schema: dict, payload: dict) -> tuple[dict, ...]:
+    """Bound feedback to schema/source IDs, never echo arbitrary model content."""
+    offered_ids, property_names = set(), set()
+
+    def collect(node):
+        if isinstance(node, dict):
+            offered_ids.update(v for v in node.get("enum", ()) if isinstance(v, str))
+            property_names.update(node.get("properties", {}))
+            for value in node.values():
+                collect(value)
+        elif isinstance(node, list):
+            for value in node:
+                collect(value)
+
+    collect(schema)
+    feedback = []
+    for error in Draft202012Validator(schema).iter_errors(payload):
+        errors = [(error, tuple(error.absolute_path))]
+        if error.validator == "oneOf" and isinstance(error.instance, dict):
+            branches = [branch for branch in error.schema["oneOf"]
+                        if error.instance.get("state") in
+                        branch.get("properties", {}).get("state", {}).get("enum", ())]
+            if len(branches) == 1:
+                errors = [(item, tuple(error.absolute_path) + tuple(item.absolute_path))
+                          for item in Draft202012Validator(branches[0]).iter_errors(error.instance)]
+        for item, path in errors:
+            issue = {"path": ".".join(str(part) if isinstance(part, int) or part in property_names
+                                       else "unregistered_field" for part in path),
+                     "rule": item.validator}
+            if item.validator == "enum":
+                issue["allowed_values"] = list(item.validator_value[:128])
+                issue["rejected_id"] = (item.instance if isinstance(item.instance, str)
+                                        and item.instance in offered_ids else "<unoffered>")
+            elif item.validator == "type":
+                issue["expected_type"] = item.validator_value
+            elif item.validator == "required":
+                issue["missing_fields"] = [field for field in item.validator_value
+                                           if field not in item.instance]
+            feedback.append(issue)
+            if len(feedback) == 6:
+                return tuple(feedback)
+    return tuple(feedback)
+
+
+def _hybrid_contract_feedback(error: ValidationError) -> tuple[dict, ...]:
+    """Known server invariant codes only; exclude model input and exception prose."""
+    rules = {
+        "semantic links must use each mention at most once": "semantic_mention_must_be_unique",
+        "a mention cannot be both linked and unmapped": "linked_and_unmapped_are_disjoint",
+        "covered semantic coverage requires no OOD reason or mentions": "covered_requires_none_reason_and_no_unmapped_mentions",
+        "uncovered semantic coverage requires an OOD reason and mention": "partial_or_unmapped_requires_reason_and_source_mention",
+        "selected semantic link requires exactly one semantic ID": "selected_link_requires_one_concept",
+        "ambiguous semantic link requires distinct semantic IDs": "ambiguous_link_requires_distinct_concepts",
+    }
+    feedback, generic = [], []
+    for item in error.errors(include_url=False, include_input=False):
+        arguments = getattr(item.get("ctx", {}).get("error"), "args", ())
+        rule = rules.get(arguments[0], "model_contract_invalid") if arguments and isinstance(arguments[0], str) else "model_contract_invalid"
+        target = generic if rule == "model_contract_invalid" else feedback
+        target.append({"path": ".".join(str(part) for part in item["loc"]), "rule": rule})
+        if len(feedback) == 6:
+            break
+    return tuple(feedback or generic[:6])
 
 
 def reconcile_exact_axis_locks(

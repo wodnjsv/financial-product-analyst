@@ -16,6 +16,7 @@ from financial_agent.contracts.enums import Cardinality, IntentType, ProductFami
 from .axis_locks import ExactSemanticLock, validate_exact_semantic_locks
 from .catalog import SemanticCatalogSnapshot
 from .compact_catalog import compact_catalog_matches_snapshot
+from .condition_normalization import CONDITION_LITERAL_CONCEPTS, load_personal_condition_policy
 from .query_contract_registry import (
     EXPECTED_POLICY_KINDS,
     OperatorArity,
@@ -24,6 +25,7 @@ from .query_contract_registry import (
 )
 from .query_contracts import (
     AggregationBucketPolicyId,
+    MAX_PREDICATE_ATOMS,
     AggregationFunction,
     AggregationSpecV2,
     ComparisonSpecV2,
@@ -34,6 +36,7 @@ from .query_contracts import (
     OrderingSpecV2,
     PredicateAllOfV2,
     PredicateAtomV2,
+    PredicateNodeV2,
     ProjectionSpecV2,
     ProvenanceSourceKind,
     QueryOperatorId,
@@ -150,6 +153,12 @@ class _LiteralOffer:
 
 
 @dataclass(frozen=True, slots=True)
+class _PredicateOffer:
+    predicate: PredicateNodeV2 | None
+    provenance: tuple[ResolvedInputProvenanceV2, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class _AsOfDefaultResult:
     qualifier_options: tuple[QueryQualifiersV2, ...]
     qualifier_states: dict[str, str]
@@ -176,7 +185,7 @@ class _CandidateAccumulator:
     candidates: dict[str, QueryContractCandidate]
 
     def add(self, contract: SolvedQueryContractCandidateV2) -> None:
-        missing_role = _missing_requested_field_role(contract, self.field_roles)
+        missing_role = _missing_requested_field_role(contract, self.field_roles, self.resolution.cutoff_date)
         if missing_role is not None:
             mention_id, concept_ids = missing_role
             self.rejections.append(
@@ -196,14 +205,14 @@ class _CandidateAccumulator:
         candidate_id = query_contract_candidate_id(contract)
         enriched = contract.model_copy(
             update={
-                "provenance": _resolved_input_provenance(
+                "provenance": _merge_provenance(contract.provenance, _resolved_input_provenance(
                     contract,
                     self.exact_locks,
                     self.view,
                     self.frame,
                     self.resolution,
                     self.default_as_of_source_refs,
-                )
+                ))
             }
         )
         existing = self.candidates.get(candidate_id)
@@ -457,10 +466,12 @@ def _solve_frame(
         )
     if any(lock.role == "field" for lock in exact_locks) and not fields:
         return _frame_result(frame.frame_id, (), tuple(rejections))
+    fields = _availability_expansion_fields(fields, view, exact_locks, scopes[0], semantic_catalog)
     try:
         qualifier_options, qualifier_states = _qualifier_options(
             resolution, frame, view, exact_locks, rejections, variants[0].id,
             predicate_date_ids=_predicate_date_literal_ids(fields, view, exact_locks, registry),
+            predicate_currency_ids=_predicate_currency_literal_ids(fields, view, exact_locks),
         )
     except _CandidateBoundReached as error:
         return _frame_result(
@@ -554,11 +565,13 @@ def _solve_frame(
                     generated = _screen(
                         frame, variant.id, scope, qualifiers, fields, view,
                         exact_locks, registry, pins, rejections,
+                        resolution.cutoff_date,
                     )
                 elif action is IntentType.RANK:
                     generated = _rank(
                         frame, variant.id, scope, qualifiers, fields, view,
                         exact_locks, registry, pins, rejections,
+                        resolution.cutoff_date,
                     )
                 elif action is IntentType.COMPARE:
                     generated = _compare(
@@ -568,6 +581,7 @@ def _solve_frame(
                     generated = _aggregate(
                         frame, variant.id, scope, qualifiers, fields, view,
                         exact_locks, pins, registry, rejections,
+                        resolution.cutoff_date,
                     )
                 elif action is IntentType.SIMILAR:
                     generated = _similar(
@@ -1061,12 +1075,15 @@ def _field_combinations(
 def _missing_requested_field_role(
     contract: SolvedQueryContractCandidateV2,
     field_roles: tuple[tuple[str, tuple[str, ...]], ...],
+    cutoff_date: date | None = None,
 ) -> tuple[str, tuple[str, ...]] | None:
     selected_values = {
         str(value)
         for _, value in _semantic_leaves(contract.model_dump(mode="json"))
         if value is not None
     }
+    if _has_registered_availability_expansion(contract, cutoff_date):
+        selected_values.add('availability_status')
     return next(
         (
             (mention_id, concept_ids)
@@ -1119,23 +1136,24 @@ def _lookup(frame, variant_id, scope, qualifiers, fields, pins):
 
 
 def _screen(
-    frame, variant_id, scope, qualifiers, fields, view, locks, registry, pins, rejections
+    frame, variant_id, scope, qualifiers, fields, view, locks, registry, pins, rejections, cutoff_date
 ):
     predicates = _predicate_candidates(
         frame, variant_id, fields, view, locks, registry, rejections,
-        required=not bool(scope.relation_conditions)
+        required=not bool(scope.relation_conditions), scope=scope, cutoff_date=cutoff_date,
     )
     return (
         _ScreenQueryContractCandidateV2(
-            **_base(frame, variant_id, scope, qualifiers, QueryResultShape.PRODUCT_LIST, pins),
-            predicate=predicate,
+            **_base(frame, variant_id, scope, qualifiers, QueryResultShape.PRODUCT_LIST, pins,
+                    predicate_offer=predicate),
+            predicate=predicate.predicate,
         )
         for predicate in predicates
     )
 
 
 def _predicate_candidates(
-    frame, variant_id, fields, view, locks, registry, rejections, *, required
+    frame, variant_id, fields, view, locks, registry, rejections, *, required, scope, cutoff_date
 ):
     operators = tuple(lock for lock in locks if lock.role == "operator")
     literals_by_id = {item.literal_id: item for item in view.literal_candidates}
@@ -1145,13 +1163,13 @@ def _predicate_candidates(
         if lock.role == "literal"
         and literals_by_id.get(lock.canonical_id) is not None
         and literals_by_id[lock.canonical_id].kind
-        not in {"result_limit", "sort_direction", "period", "currency"}
+        not in {"result_limit", "sort_direction", "period"}
     )
     if not operators:
         if required:
             rejections.append(_rejection(frame, variant_id, "predicate.operator", (), "PREDICATE_OPERATOR_REQUIRED"))
             return ()
-        return (None,)
+        return (_PredicateOffer(None),)
     unknown = tuple(lock.canonical_id for lock in operators if lock.canonical_id not in registry.operators_by_id)
     if unknown:
         rejections.append(_rejection(frame, variant_id, "predicate.operator", unknown, "EXACT_LOCK_NOT_OFFERED"))
@@ -1170,21 +1188,55 @@ def _predicate_candidates(
             _LiteralOffer(item)
             for item in view.literal_candidates
             if item.segment_id in frame.segment_ids
-            and item.kind not in {"result_limit", "sort_direction", "period", "currency"}
+            and item.kind not in {"result_limit", "sort_direction", "period"}
         )
-    atom_groups: list[tuple[PredicateAtomV2, ...]] = []
+    atom_groups: list[tuple[_PredicateOffer, ...]] = []
     for operator_lock in operators:
+        if operator_lock.source_rejection_code is not None:
+            rejections.append(_rejection(frame, variant_id, 'predicate.operator',
+                                         (operator_lock.canonical_id,), operator_lock.source_rejection_code))
+            return ()
         definition = registry.operators_by_id[operator_lock.canonical_id]
         operator = QueryOperatorId(operator_lock.canonical_id)
+        if operator_lock.compatible_value_candidate_ids:
+            associated = tuple(
+                _LiteralOffer(literals_by_id[literal_id])
+                for literal_id in operator_lock.compatible_value_candidate_ids
+                if literal_id in literals_by_id
+                and literals_by_id[literal_id].segment_id in frame.segment_ids
+            )
+            if len(associated) != len(operator_lock.compatible_value_candidate_ids):
+                rejections.append(_rejection(frame, variant_id, 'predicate.value',
+                                             operator_lock.compatible_value_candidate_ids, 'EXACT_LOCK_NOT_OFFERED'))
+                return ()
+        else:
+            associated = literals
+        special = _normalized_condition_predicate(
+            fields, associated, operator_lock, operator, locks, scope, cutoff_date,
+        )
+        if special is not None:
+            if not special:
+                rejections.append(_rejection(frame, variant_id, 'predicate',
+                                             (operator_lock.canonical_id,), 'FIELD_OPERATOR_VALUE_INCOMPATIBLE'))
+                return ()
+            atom_groups.append(special)
+            continue
         compatible_fields = tuple(
             item for item in fields if _field_operator_compatible(item.concept, operator)
+            and (not operator_lock.compatible_field_concept_ids
+                 or item.concept.concept_id in operator_lock.compatible_field_concept_ids)
         )
         compatible_literals = tuple(
-            item for item in literals
+            item for item in associated
             if _literal_kind(item.literal) in set(definition.allowed_value_kinds)
         )
+        if operator_lock.compatible_value_candidate_ids:
+            compatible_fields = tuple(item for item in compatible_fields if all(
+                _field_literal_compatible(item.concept, value.literal) for value in compatible_literals
+            ))
         compatible_fields = _nearest_fields(compatible_fields, operator_lock, view)
-        compatible_literals = _nearest_literals(compatible_literals, operator_lock, view, definition.arity)
+        if not operator_lock.compatible_value_candidate_ids:
+            compatible_literals = _nearest_literals(compatible_literals, operator_lock, view, definition.arity)
         atoms: list[PredicateAtomV2] = []
         for field in compatible_fields:
             value_groups = _literal_groups(compatible_literals, definition.arity)
@@ -1216,16 +1268,135 @@ def _predicate_candidates(
                 )
             )
             return ()
-        atom_groups.append(tuple(atoms))
+        atom_groups.append(tuple(_PredicateOffer(atom) for atom in atoms))
 
     return (
-        atoms[0] if len(atoms) == 1 else PredicateAllOfV2(children=atoms)
-        for atoms in product(*atom_groups)
+        _combined_predicate_offer(offers)
+        for offers in product(*atom_groups)
     )
 
 
+def _combined_predicate_offer(offers):
+    atoms = tuple(
+        atom for offer in offers
+        for atom in (offer.predicate.children if isinstance(offer.predicate, PredicateAllOfV2)
+                     else (offer.predicate,))
+        if atom is not None
+    )
+    if len(atoms) > MAX_PREDICATE_ATOMS:
+        raise _CandidateBoundReached('predicate')
+    return _PredicateOffer(
+        atoms[0] if len(atoms) == 1 else PredicateAllOfV2(children=atoms),
+        tuple(item for offer in offers for item in offer.provenance),
+    )
+
+
+def _condition_normalization_provenance(field_id, policy_id, operator_lock, literal, locks):
+    sources = (
+        (ProvenanceSourceKind.REGISTRY_DEFAULT, policy_id),
+        (ProvenanceSourceKind.EXACT_LOCK, operator_lock.lock_id),
+        *((ProvenanceSourceKind.EXACT_LOCK, lock.lock_id) for lock in locks
+          if lock.role == 'literal' and lock.canonical_id == literal.literal_id),
+    )
+    return tuple(ResolvedInputProvenanceV2(
+        semantic_input_id=f'predicate.normalization.{field_id}.source.{index}',
+        source_kind=kind, source_ref=source,
+    ) for index, (kind, source) in enumerate(sources))
+
+
+def _normalized_condition_predicate(fields, literals, operator_lock, operator, locks, scope, cutoff_date):
+    special_literals = tuple(item.literal for item in literals
+                             if item.literal.kind in {'credit_grade', 'availability_status'})
+    if not special_literals:
+        return None
+    if len(special_literals) != 1:
+        return ()
+    literal = special_literals[0]
+    matching = tuple(item for item in fields if item.concept.concept_id == literal.kind)
+    if not matching:
+        return ()
+    policy = load_personal_condition_policy()
+    if literal.kind == 'credit_grade':
+        if operator is not QueryOperatorId.GTE:
+            return None
+        if (literal.canonical_value != policy.credit_threshold
+                or any(item.concept.normalization_rule != 'credit_grade_order' for item in matching)):
+            return ()
+        atom = PredicateAtomV2(
+            field_concept_id='credit_grade', operator_id=QueryOperatorId.IN,
+            values=tuple(TypedSemanticValue(kind=SemanticValueKind.STRING, string=value)
+                         for value in policy.credit_threshold_values),
+            null_policy_id='exclude_missing.v1',
+        )
+        return (_PredicateOffer(atom, _condition_normalization_provenance(
+            'credit_grade', policy.credit_threshold_policy_id, operator_lock, literal, locks,
+        )),)
+    if (operator is not QueryOperatorId.EQ
+            or literal.canonical_value != policy.bond_saleability_condition
+            or scope.product_family_ids != (ProductFamily.DOMESTIC_BOND,)
+            or type(cutoff_date) is not date
+            or not {'maturity_date', 'remaining_days'} <= {item.concept.concept_id for item in fields}):
+        return ()
+    atoms = (
+        PredicateAtomV2(field_concept_id='maturity_date', operator_id=QueryOperatorId.GT,
+                        value=TypedSemanticValue(kind=SemanticValueKind.DATE, date=cutoff_date),
+                        null_policy_id='exclude_missing.v1'),
+        PredicateAtomV2(field_concept_id='remaining_days', operator_id=QueryOperatorId.GT,
+                        value=TypedSemanticValue(kind=SemanticValueKind.DECIMAL, decimal='0', unit_id='day'),
+                        null_policy_id='exclude_missing.v1'),
+    )
+    return (_PredicateOffer(PredicateAllOfV2(children=atoms), _condition_normalization_provenance(
+        'availability_status', policy.bond_saleability_policy_id, operator_lock, literal, locks,
+    )),)
+
+
+def _availability_expansion_fields(fields, view, locks, scope, semantic_catalog):
+    """Expose the policy's real operands to normal qualifier and physical checks."""
+    if scope.product_family_ids != (ProductFamily.DOMESTIC_BOND,):
+        return fields
+    availability_fields = tuple(item for item in fields if item.concept.concept_id == 'availability_status')
+    if not availability_fields:
+        return fields
+    literals = {item.literal_id: item for item in view.literal_candidates}
+    policy = load_personal_condition_policy()
+    if not any(lock.role == 'operator' and lock.canonical_id == 'eq'
+               and any(literal_id in literals and literals[literal_id].kind == 'availability_status'
+                       and literals[literal_id].canonical_value == policy.bond_saleability_condition
+                       for literal_id in lock.compatible_value_candidate_ids) for lock in locks):
+        return fields
+    concepts = _offered_concepts(view, semantic_catalog)
+    anchor = availability_fields[0]
+    existing = {item.concept.concept_id for item in fields}
+    return (*fields, *(_FieldOffer(
+        concept=concepts[field_id], mention_id=anchor.mention_id,
+        segment_id=anchor.segment_id, start_char=anchor.start_char, end_char=anchor.end_char,
+    ) for field_id in ('maturity_date', 'remaining_days') if field_id in concepts and field_id not in existing))
+
+
+def _has_registered_availability_expansion(contract, cutoff_date):
+    policy = load_personal_condition_policy()
+    if (contract.scope.product_family_ids != (ProductFamily.DOMESTIC_BOND,)
+            or not any(item.source_kind is ProvenanceSourceKind.REGISTRY_DEFAULT
+                       and item.source_ref == policy.bond_saleability_policy_id
+                       and item.semantic_input_id.startswith('predicate.normalization.availability_status')
+                       for item in contract.provenance)):
+        return False
+    predicate = getattr(contract, 'predicate', None)
+    atoms = predicate.children if isinstance(predicate, PredicateAllOfV2) else (predicate,)
+    maturity = tuple(item for item in atoms if isinstance(item, PredicateAtomV2)
+                     and item.field_concept_id == 'maturity_date' and item.operator_id is QueryOperatorId.GT
+                     and item.value is not None and item.value.kind is SemanticValueKind.DATE
+                     and item.value.date == cutoff_date)
+    remaining = tuple(item for item in atoms if isinstance(item, PredicateAtomV2)
+                      and item.field_concept_id == 'remaining_days' and item.operator_id is QueryOperatorId.GT
+                      and item.value is not None and item.value.kind is SemanticValueKind.DECIMAL
+                      and item.value.decimal == policy.bond_saleability_remaining_days_value
+                      and item.value.unit_id == 'day')
+    return bool(maturity and remaining)
+
+
 def _rank(
-    frame, variant_id, scope, qualifiers, fields, view, locks, registry, pins, rejections
+    frame, variant_id, scope, qualifiers, fields, view, locks, registry, pins, rejections, cutoff_date
 ):
     usable = tuple(item for item in fields if item.concept.kind in {"metric", "attribute"})
     direction_values = tuple(
@@ -1258,7 +1429,8 @@ def _rank(
     if any(item.reason_code == "EXACT_LITERAL_CONFLICT" for item in rejections):
         return ()
     predicates = _predicate_candidates(
-        frame, variant_id, fields, view, locks, registry, rejections, required=False
+        frame, variant_id, fields, view, locks, registry, rejections, required=False,
+        scope=scope, cutoff_date=cutoff_date,
     )
     def generated():
         for predicate in predicates:
@@ -1273,6 +1445,7 @@ def _rank(
                                 qualifiers,
                                 QueryResultShape.TOP_K,
                                 pins,
+                                predicate_offer=predicate,
                             ),
                             ordering=(
                                 OrderingSpecV2(
@@ -1291,7 +1464,7 @@ def _rank(
                             limit_policy_id=(
                                 None if limit else "default-limit-5.v1"
                             ),
-                            predicate=predicate,
+                            predicate=predicate.predicate,
                         )
 
     return generated()
@@ -1317,19 +1490,20 @@ def _compare(frame, variant_id, scope, qualifiers, fields, pins):
             ),
         )
         for field_choices in _field_combinations(fields)
-        if all(field.concept.kind in {"metric", "attribute"} for field in field_choices)
+        if field_choices and all(field.concept.kind in {"metric", "attribute"} for field in field_choices)
     )
 
 
 def _aggregate(
-    frame, variant_id, scope, qualifiers, fields, view, locks, pins, registry, rejections
+    frame, variant_id, scope, qualifiers, fields, view, locks, pins, registry, rejections, cutoff_date
 ):
     public_fund = ProductFamily.PUBLIC_FUND in scope.product_family_ids
     grain = "representative-product.v1" if public_fund else "source-product.v1"
     dedup = "public-fund-representative-share.v1" if public_fund else "no-dedup.v1"
     usable = tuple(item for item in fields if item.concept.kind in {"metric", "attribute"})
     predicates = _predicate_candidates(
-        frame, variant_id, fields, view, locks, registry, rejections, required=False
+        frame, variant_id, fields, view, locks, registry, rejections, required=False,
+        scope=scope, cutoff_date=cutoff_date,
     )
     def generated():
         for predicate in predicates:
@@ -1347,6 +1521,7 @@ def _aggregate(
                             **_base(
                                 frame, variant_id, scope, qualifiers,
                                 QueryResultShape.SINGLE_VALUE, pins,
+                                predicate_offer=predicate,
                             ),
                             aggregation=AggregationSpecV2(
                                 function_id=function,
@@ -1354,12 +1529,13 @@ def _aggregate(
                                 population_grain_id=grain,
                                 dedup_policy_id=dedup,
                             ),
-                            predicate=predicate,
+                            predicate=predicate.predicate,
                         )
                 yield _AggregateQueryContractCandidateV2(
                     **_base(
                         frame, variant_id, scope, qualifiers,
                         QueryResultShape.SINGLE_VALUE, pins,
+                        predicate_offer=predicate,
                     ),
                     aggregation=AggregationSpecV2(
                         function_id=AggregationFunction.COUNT,
@@ -1367,12 +1543,13 @@ def _aggregate(
                         population_grain_id=grain,
                         dedup_policy_id=dedup,
                     ),
-                    predicate=predicate,
+                    predicate=predicate.predicate,
                 )
                 yield _AggregateQueryContractCandidateV2(
                     **_base(
                         frame, variant_id, scope, qualifiers,
                         QueryResultShape.SINGLE_VALUE, pins,
+                        predicate_offer=predicate,
                     ),
                     aggregation=AggregationSpecV2(
                         function_id=AggregationFunction.COUNT_DISTINCT,
@@ -1380,7 +1557,7 @@ def _aggregate(
                         population_grain_id=grain,
                         dedup_policy_id=dedup,
                     ),
-                    predicate=predicate,
+                    predicate=predicate.predicate,
                 )
             elif variant_id == "aggregate.grouped.v2":
                 for grouping in usable:
@@ -1392,6 +1569,7 @@ def _aggregate(
                             **_base(
                                 frame, variant_id, scope, qualifiers,
                                 QueryResultShape.GROUPED_TABLE, pins,
+                                predicate_offer=predicate,
                             ),
                             aggregation=AggregationSpecV2(
                                 function_id=function,
@@ -1402,7 +1580,7 @@ def _aggregate(
                                 population_grain_id=grain,
                                 dedup_policy_id=dedup,
                             ),
-                            predicate=predicate,
+                            predicate=predicate.predicate,
                         )
                 for function in (
                     AggregationFunction.SUM,
@@ -1420,6 +1598,7 @@ def _aggregate(
                                 **_base(
                                     frame, variant_id, scope, qualifiers,
                                     QueryResultShape.GROUPED_TABLE, pins,
+                                    predicate_offer=predicate,
                                 ),
                                 aggregation=AggregationSpecV2(
                                     function_id=function,
@@ -1430,7 +1609,7 @@ def _aggregate(
                                     population_grain_id=grain,
                                     dedup_policy_id=dedup,
                                 ),
-                                predicate=predicate,
+                                predicate=predicate.predicate,
                             )
             elif variant_id == "aggregate.distribution.v2":
                 for field in usable:
@@ -1438,6 +1617,7 @@ def _aggregate(
                         **_base(
                             frame, variant_id, scope, qualifiers,
                             QueryResultShape.DISTRIBUTION, pins,
+                            predicate_offer=predicate,
                         ),
                         aggregation=AggregationSpecV2(
                             function_id=AggregationFunction.DISTRIBUTION,
@@ -1446,7 +1626,7 @@ def _aggregate(
                             population_grain_id=grain,
                             dedup_policy_id=dedup,
                         ),
-                        predicate=predicate,
+                        predicate=predicate.predicate,
                     )
 
     return generated()
@@ -1528,7 +1708,7 @@ def _explain(frame, variant_id, scope, qualifiers, fields, pins):
     )
 
 
-def _base(frame, variant_id, scope, qualifiers, result_shape, pins):
+def _base(frame, variant_id, scope, qualifiers, result_shape, pins, *, predicate_offer=None):
     provenance = [
         ResolvedInputProvenanceV2(
             semantic_input_id="scope",
@@ -1540,6 +1720,8 @@ def _base(frame, variant_id, scope, qualifiers, result_shape, pins):
             source_ref=scope.prior_result_binding or frame.frame_id,
         )
     ]
+    if predicate_offer is not None:
+        provenance.extend(predicate_offer.provenance)
     return {
         "contract_variant_id": variant_id,
         "frame_id": frame.frame_id,
@@ -1584,6 +1766,14 @@ def _predicate_date_literal_ids(fields, view, locks, registry) -> frozenset[str]
     return frozenset(consumed)
 
 
+def _predicate_currency_literal_ids(fields, view, locks) -> frozenset[str]:
+    if not any(item.concept.concept_id == 'currency' for item in fields):
+        return frozenset()
+    currencies = {item.literal_id for item in view.literal_candidates if item.kind == 'currency'}
+    return frozenset(literal_id for lock in locks if lock.role == 'operator' and lock.canonical_id in {'eq', 'neq', 'in', 'not_in'}
+                     for literal_id in lock.compatible_value_candidate_ids if literal_id in currencies)
+
+
 def _qualifier_options(
     resolution: ValidatedIntentResolutionV2 | ValidatedIntentResolutionV3,
     frame: ValidatedIntentFrameV2,
@@ -1592,6 +1782,7 @@ def _qualifier_options(
     rejections: list[CandidateRejection],
     variant_id: str,
     *, predicate_date_ids: frozenset[str] = frozenset(),
+    predicate_currency_ids: frozenset[str] = frozenset(),
 ) -> tuple[tuple[QueryQualifiersV2, ...], dict[str, str]]:
     role_specs = (
         ("qualifier.period", {"period"}, lambda item: item.canonical_value),
@@ -1615,6 +1806,7 @@ def _qualifier_options(
             for item in view.literal_candidates
             if item.segment_id in frame.segment_ids and item.kind in kinds
             and not (role_id == "qualifier.as_of" and item.literal_id in predicate_date_ids)
+            and not (role_id == "qualifier.currency" and item.literal_id in predicate_currency_ids)
         )
         offered_by_id = {item.literal_id: item for item in offered}
         exact = tuple(
@@ -2020,7 +2212,7 @@ def _typed_value(literal: ResolverViewLiteralCandidate) -> TypedSemanticValue:
         values["date"] = date.fromisoformat(literal.canonical_value)
     else:
         values["string"] = literal.canonical_value
-    unit = "percent" if literal.kind == "percentage" else literal.currency
+    unit = "percent" if literal.kind == "percentage" else None if literal.kind == 'currency' else literal.currency
     return TypedSemanticValue(kind=kind, unit_id=unit, **values)
 
 
@@ -2086,6 +2278,9 @@ def _field_operator_compatible(concept: ResolverViewConcept, operator: QueryOper
 def _field_literal_compatible(
     concept: ResolverViewConcept, literal: ResolverViewLiteralCandidate
 ) -> bool:
+    condition_field = CONDITION_LITERAL_CONCEPTS.get(literal.kind)
+    if condition_field is not None and concept.concept_id != condition_field:
+        return False
     field_kind = _field_value_kind(concept)
     literal_kind = _literal_kind(literal)
     return field_kind is literal_kind or {
@@ -2251,11 +2446,11 @@ def _resolved_input_provenance(
         matching_locks = tuple(
             lock
             for lock in exact_locks
-            if lock.canonical_id == rendered
+            if (lock.canonical_id == rendered
             or (
                 (literal := literals_by_id.get(lock.canonical_id)) is not None
                 and literal.canonical_value == rendered
-            )
+            )) and _predicate_operator_lock_matches(path, payload, lock, literals_by_id)
         )
         sources: list[tuple[ProvenanceSourceKind, str]] = [
             (ProvenanceSourceKind.EXACT_LOCK, lock.lock_id)
@@ -2301,7 +2496,7 @@ def _resolved_input_provenance(
         )
         for index, (source_kind, source_ref) in enumerate(unique_sources):
             if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", source_ref):
-                source_ref = f"semantic-{canonical_sha256(source_ref)[:16]}"
+                source_ref = f"semantic-{canonical_sha256({'value': source_ref})[:16]}"
             records.append(
                 ResolvedInputProvenanceV2(
                     semantic_input_id=(
@@ -2312,6 +2507,25 @@ def _resolved_input_provenance(
                 )
             )
     return tuple(records)
+
+
+def _predicate_operator_lock_matches(path, payload, lock, literals):
+    """Keep equal operator IDs attached to their own atom's source operands."""
+    if lock.role != 'operator' or not path.startswith('predicate') or not path.endswith('.operator_id'):
+        return True
+    atom = payload
+    for part in path.rsplit('.', 1)[0].split('.'):
+        atom = atom[int(part)] if isinstance(atom, list) else atom[part]
+    if lock.compatible_field_concept_ids and atom['field_concept_id'] not in lock.compatible_field_concept_ids:
+        return False
+    if not lock.compatible_value_candidate_ids:
+        return True
+    values = (atom['value'],) if atom.get('value') is not None else atom.get('values', ())
+    canonical = tuple(str(value[value['kind']]) for value in values)
+    associated = tuple(literals[item] for item in lock.compatible_value_candidate_ids if item in literals)
+    return (tuple(item.canonical_value for item in associated) == canonical
+            and all(CONDITION_LITERAL_CONCEPTS.get(item.kind, atom['field_concept_id']) == atom['field_concept_id']
+                    for item in associated))
 
 
 def _merge_provenance(

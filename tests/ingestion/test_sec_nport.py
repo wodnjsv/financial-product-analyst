@@ -246,6 +246,32 @@ def test_capacity_probe_rejects_a_sample_larger_than_the_matched_population(
     assert captured.value.code == "SEC_NPORT_SAMPLE_INSUFFICIENT"
 
 
+def test_nport_mapper_scopes_shared_filing_claims_to_each_organizer_product(
+    tmp_path: Path,
+) -> None:
+    mapped = _map_files(
+        tmp_path,
+        bindings=(
+            _binding(product_id="organizer-product-a"),
+            _binding(product_id="organizer-product-b"),
+        ),
+    )
+
+    relations = _records(mapped, "relation.relation_record")
+    observations = _records(mapped, "observation.observation_record")
+    evidence = _records(mapped, "evidence.evidence_record")
+
+    assert {
+        row["subject_id"]
+        for row in relations
+        if row["predicate_id"] == "holdsSecurity"
+    } == {"organizer-product-a", "organizer-product-b"}
+    assert len({row["observation_id"] for row in observations}) == len(
+        observations
+    )
+    assert len({row["evidence_id"] for row in evidence}) == len(evidence)
+
+
 def test_nport_extractor_writes_only_the_five_approved_files(
     tmp_path: Path,
 ) -> None:
